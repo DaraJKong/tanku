@@ -11,6 +11,8 @@ Ideas that aren't in the specification. They are ranked by likely usefulness and
 | Pings | Medium | A key that marks a spot or an enemy for teammates. | Co-op playtest |
 | Camera that turns with the corridor | Low | The view rotates by itself to keep progress pointing one way. Saves key presses, but takes control away and can disorient. | Compare with manual rotation in the corridor prototype |
 | Piercing levels | Low | A bullet pierces one more bullet per level instead of any number. | Toy prototype, if plain piercing proves too strong |
+| Glow around bullets | Low | Bloom on bullets and lights. Bullets are bright and flat for now, which already reads well. Costs frame time on the web. | Compare screenshots with and without it |
+| Smaller web build | Low | The web build is 38 MB, 9 MB compressed. `wasm-opt` would shrink it. | Measure the loading time first |
 | Reflecting shield | Low | The shield sends bullets back. Fun, but hard to balance with friendly fire. | Variant of the shield prototype |
 | Life refill | Low | A checkpoint gives one life back, up to three. A tuning lever if solo is too harsh. | Solo playtests |
 | Repair kits | Low | A limited, shared number of repairs. A tuning lever if co-op is too easy. | Co-op playtests |

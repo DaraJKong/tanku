@@ -2,25 +2,37 @@
 
 A cooperative top-down tank game for one to four players, built with Rust and Bevy. The players fight their way through an endless, procedurally generated corridor of enemy tanks, and one hit destroys a tank.
 
-The project is at its very beginning: the workspace builds and there is no game yet. The specification is in [docs/PROJECT.md](docs/PROJECT.md).
+The solo game is playable: the corridor, the generated enemies and their brains, lives and checkpoints, the menus and the sound cues are in. Co-op, achievements and the other modes are not. The specification is in [docs/PROJECT.md](docs/PROJECT.md).
 
 ## Workspace
 
 | Crate | Role |
 |---|---|
-| `tanku_core` | Library shared by the client and the server |
-| `tanku_server` | The authoritative server: a library that the client embeds for solo and hosted games, and a headless binary |
-| `tanku_client` | The game |
+| `tanku_core` | The rules both sides share: stats, progression, map and enemy generation, simulation types |
+| `tanku_server` | The authoritative simulation: a library that the client embeds for solo and hosted games, and a headless binary |
+| `tanku_client` | The game: rendering, input, interface and sound |
 
-## Building
-
-The toolchain is pinned to a nightly in `rust-toolchain.toml`, because development builds use the Cranelift backend and `-Zshare-generics` to compile faster. `rustup` installs it on first use. On Linux, linking needs `clang` and `mold`.
-
-Run the game:
+## Playing
 
 ```bash
 cargo run -p tanku_client
 ```
+
+| Action | Default |
+|---|---|
+| Move | WASD or the arrow keys |
+| Aim | Mouse |
+| Shoot | Left click |
+| Place a mine | Right click |
+| Shield | Space |
+| Turn the view | Q and E |
+| Menu | Esc |
+
+Settings and records are kept in the user's configuration directory, under `tanku`.
+
+## Building
+
+The toolchain is pinned to a nightly in `rust-toolchain.toml`, because development builds use the Cranelift backend and `-Zshare-generics` to compile faster. `rustup` installs it on first use. On Linux, linking needs `clang` and `mold`, and sound needs the ALSA development files.
 
 Run the headless server:
 
@@ -33,6 +45,28 @@ Development builds link Bevy dynamically. A release build leaves the development
 ```bash
 cargo build --release --no-default-features -p tanku_client
 ```
+
+### Web
+
+The web build needs the `wasm-bindgen` tool, installed once into `target/tools`:
+
+```bash
+cargo install wasm-bindgen-cli --version 0.2.129 --root target/tools --locked
+```
+
+Build the game into `target/web-dist`:
+
+```bash
+tanku_client/web/build.sh
+```
+
+Serve it locally:
+
+```bash
+python3 -m http.server --directory target/web-dist
+```
+
+The web build doesn't keep settings or records yet.
 
 ## Checks
 
@@ -55,6 +89,20 @@ cargo test --workspace
 ```
 
 The server-only check exists because a workspace build gives the server the client's Bevy features.
+
+Benchmarks measure generation and the simulation, and take under a minute:
+
+```bash
+cargo bench -p tanku_core -p tanku_server
+```
+
+## Looking at the game without playing
+
+Development builds read a script from `TANKU_DEV_SCRIPT`: commands separated by semicolons that start a run, jump to a sector, drive the tank and save screenshots. The commands are listed at the top of `tanku_client/src/dev.rs`.
+
+```bash
+TANKU_DEV_SCRIPT="start TANKU; wait 1; warp 12; wait 1; peek 0; wait 1; shot sector12.png; quit" cargo run -p tanku_client
+```
 
 ## License
 
