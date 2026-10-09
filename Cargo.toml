@@ -22,6 +22,11 @@ tanku_server = { path = "tanku_server", default-features = false }
 # clap = { version = "4.6", features = ["derive"] } # headless client mode
 # criterion = "0.8"
 
+# Bevy systems take many parameters and queries have long types by nature.
+[workspace.lints.clippy]
+too_many_arguments = "allow"
+type_complexity = "allow"
+
 # Enable a small amount of optimization in the dev profile.
 [profile.dev]
 opt-level = 1

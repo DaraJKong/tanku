@@ -3,24 +3,60 @@
 //! The client embeds this library for solo and hosted games, and the `tanku_server` binary runs
 //! it headless.
 
+pub mod brain;
+mod bullets;
+pub mod field;
+mod mines;
+mod run;
+mod sectors;
+mod tanks;
+#[cfg(test)]
+mod tests;
+
 use bevy::prelude::*;
+use tanku_core::sim::{Run, RunPhase};
+
+/// What was hit this tick and still has to be removed.
+#[derive(Resource, Default)]
+pub struct Casualties {
+    /// Destroyed tanks.
+    pub tanks: Vec<Entity>,
+    /// Mines and crates that were set off.
+    pub detonations: Vec<Entity>,
+}
 
 /// The authoritative simulation. Needs `tanku_core::CorePlugin`.
 pub struct ServerPlugin;
 
 impl Plugin for ServerPlugin {
-    fn build(&self, _app: &mut App) {}
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tanku_core::CorePlugin;
-
-    #[test]
-    fn headless_app_ticks() {
-        let mut app = App::new();
-        app.add_plugins((MinimalPlugins, CorePlugin, ServerPlugin));
-        app.update();
+    fn build(&self, app: &mut App) {
+        let in_progress =
+            |run: Option<Res<Run>>| run.is_some_and(|run| run.phase != RunPhase::Over);
+        app.init_resource::<Casualties>().add_systems(
+            FixedUpdate,
+            (
+                run::handle_requests,
+                (
+                    field::rebuild_colliders,
+                    tanks::idle,
+                    brain::think,
+                    tanks::shields,
+                    tanks::drive,
+                    tanks::separate,
+                    tanks::operate,
+                    bullets::fly,
+                    bullets::collide,
+                    mines::tick,
+                    mines::blast,
+                    run::casualties,
+                    sectors::advance,
+                    field::unload,
+                    run::clock,
+                )
+                    .chain()
+                    .run_if(in_progress),
+            )
+                .chain(),
+        );
     }
 }

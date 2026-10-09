@@ -4,6 +4,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 bevy = { workspace = true, features = ["3d", "ui"] }
 tanku_core.workspace = true
