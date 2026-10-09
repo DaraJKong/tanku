@@ -3,6 +3,7 @@
 use bevy::{ecs::message::Messages, prelude::*};
 use tanku_core::{
     CorePlugin,
+    rng::{Purpose, Stream},
     rules::{BARRIER_GATHER_DISTANCE, RESPAWN_DELAY, SHIELD_DURATION, TICK_RATE},
     sim::{
         Barrier, Block, Bullet, Enemy, Gun, Mine, Motion, Player, Position, PreviousPosition, Run,
@@ -13,6 +14,7 @@ use tanku_core::{
 
 use crate::{
     Casualties, ServerPlugin,
+    brain::Brain,
     field::{Field, InSector},
 };
 
@@ -148,6 +150,16 @@ fn spawn_enemy(app: &mut App, at: Vec2, levels: &[(Stat, u8)]) -> Entity {
             InSector(0),
         ))
         .id()
+}
+
+/// An enemy that is awake and thinks with the experience of a late sector.
+fn spawn_veteran(app: &mut App, at: Vec2, levels: &[(Stat, u8)]) -> Entity {
+    let enemy = spawn_enemy(app, at, levels);
+    let brain = Brain::new(Stream::new(1, Purpose::Brain, 0, 0), 60);
+    app.world_mut()
+        .entity_mut(enemy)
+        .insert((brain, Enemy { awake: true }));
+    enemy
 }
 
 /// Destroys every enemy of a sector, as a player would.
@@ -701,6 +713,77 @@ fn abandoning_a_run_removes_everything() {
     let world = app.world_mut();
     assert_eq!(world.query::<&InSector>().iter(world).count(), 0);
     assert!(player(&mut app).is_none());
+}
+
+#[test]
+fn a_sentry_shoots_the_player_it_sees() {
+    let mut app = start("TEST");
+    spawn_veteran(
+        &mut app,
+        Vec2::new(0.0, 13.0),
+        &[(Stat::Turret, 6), (Stat::Muzzle, 4)],
+    );
+    tick(&mut app, seconds(6.0));
+    assert!(run(&app).lives < 3);
+    let shots = count(&events(&mut app), |event| {
+        matches!(
+            event,
+            SimEvent::Shot {
+                team: Team::Enemies,
+                ..
+            }
+        )
+    });
+    assert!(shots > 0);
+}
+
+/// Fires a player's bullet straight at an enemy from the north. Returns the enemy and the app
+/// a third of a second later, when even a slow brain has seen the bullet coming.
+fn shoot_at_enemy(levels: &[(Stat, u8)]) -> (App, Entity) {
+    let mut app = start("TEST");
+    let entity = player(&mut app).unwrap();
+    // The player waits out of the way, where no mine reflex is triggered.
+    teleport(&mut app, entity, Vec2::new(-5.0, 2.0));
+    let enemy = spawn_veteran(&mut app, Vec2::new(0.0, 8.0), levels);
+    spawn_bullet(
+        &mut app,
+        Team::Players,
+        Vec2::new(0.0, 15.5),
+        Vec2::NEG_Y * 10.0,
+        false,
+    );
+    tick(&mut app, seconds(0.33));
+    (app, enemy)
+}
+
+#[test]
+fn a_soldier_dodges_a_bullet_flying_straight_at_it() {
+    let body = [(Stat::Engine, 5), (Stat::Tracks, 6)];
+    let drive_of = |brain: u8| {
+        let levels = [body.as_slice(), &[(Stat::Brain, brain)]].concat();
+        let (mut app, enemy) = shoot_at_enemy(&levels);
+        let drive = app.world().get::<TankCommand>(enemy).unwrap().drive;
+        tick(&mut app, seconds(1.2));
+        (drive, alive(&app, enemy))
+    };
+    // The bullet flies south, so the way out is east or west. A grunt keeps to its own plan,
+    // which here is to back away from the player.
+    let (grunt, _) = drive_of(1);
+    assert!(grunt.y.abs() > 0.5, "the grunt drives {grunt}");
+    let (soldier, survived) = drive_of(2);
+    assert!(soldier.x.abs() > 0.9, "the soldier drives {soldier}");
+    assert!(survived);
+}
+
+#[test]
+fn a_grunt_raises_its_shield_by_reflex() {
+    let (mut app, enemy) = shoot_at_enemy(&[(Stat::Shield, 3), (Stat::Brain, 1)]);
+    tick(&mut app, seconds(1.2));
+    assert!(alive(&app, enemy));
+    let blocked = count(&events(&mut app), |event| {
+        matches!(event, SimEvent::ShieldBlocked { .. })
+    });
+    assert_eq!(blocked, 1);
 }
 
 /// A position that changes with everything that moves.

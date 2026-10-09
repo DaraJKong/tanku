@@ -328,8 +328,14 @@ pub fn think(
 
             if let (true, Some((_, time, escape))) = (reacting, incoming) {
                 if tier >= 2 {
-                    // Dodge a bullet that flies straight at the tank.
-                    drive = escape;
+                    // Dodge a bullet that flies straight at the tank, to the other side of its
+                    // path if the near side is walled in.
+                    let open = |way: Vec2| steer(&field, tank, me, way) == way;
+                    drive = if open(escape) || !open(-escape) {
+                        escape
+                    } else {
+                        -escape
+                    };
                 }
                 let too_late = if tier >= 2 { 0.2 } else { 0.3 };
                 raise_shield = time < too_late;
@@ -346,5 +352,63 @@ pub fn think(
             mine: tier >= 1 && distance < 6.0,
             shield: raise_shield && can_shield,
         };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::field::{Collider, Solid};
+
+    /// A room 20 m wide and 10 m deep, cut in two by a wall that leaves a gap at the top.
+    fn divided_room() -> Field {
+        let wall = |a: (f32, f32), b: (f32, f32)| Collider {
+            a: a.into(),
+            b: b.into(),
+            solid: Solid::Wall,
+        };
+        let mut field = Field::new(0);
+        field.colliders = vec![
+            wall((0.0, 0.0), (20.0, 0.0)),
+            wall((20.0, 0.0), (20.0, 10.0)),
+            wall((20.0, 10.0), (0.0, 10.0)),
+            wall((0.0, 10.0), (0.0, 0.0)),
+            wall((10.0, 0.0), (10.0, 6.0)),
+        ];
+        field
+    }
+
+    #[test]
+    fn a_bank_shot_goes_around_a_wall() {
+        let field = divided_room();
+        let (origin, target) = (Vec2::new(5.0, 3.0), Vec2::new(15.0, 3.0));
+        assert!(!field.sees(origin, target));
+        assert_eq!(bank_shot(&field, origin, target, 0, 0.0), None);
+        // Off the far wall, over the divider: the mirror image of the target is at (15, 17).
+        let angle = bank_shot(&field, origin, target, 1, 0.0).unwrap();
+        let expected = (Vec2::new(15.0, 17.0) - origin).to_angle();
+        assert!(geom::angle_difference(angle, expected).abs() < 4.0f32.to_radians());
+    }
+
+    #[test]
+    fn leading_a_target_aims_ahead_of_it() {
+        let predicted = lead(Vec2::ZERO, Vec2::new(10.0, 0.0), Vec2::new(0.0, 5.0), 10.0);
+        // The bullet needs a little more than a second, during which the target moves 5 m/s.
+        assert!(predicted.y > 5.0 && predicted.y < 6.5);
+        assert_eq!(predicted.x, 10.0);
+    }
+
+    #[test]
+    fn steering_goes_around_what_is_right_ahead() {
+        let field = divided_room();
+        let tank = Tank {
+            genome: tanku_core::stats::Genome::empty(0),
+            team: Team::Enemies,
+            sector: 0,
+        };
+        let from = Vec2::new(8.0, 3.0);
+        assert_eq!(steer(&field, &tank, from, Vec2::NEG_X), Vec2::NEG_X);
+        let around = steer(&field, &tank, from, Vec2::X);
+        assert!(around != Vec2::X && around != Vec2::ZERO);
     }
 }

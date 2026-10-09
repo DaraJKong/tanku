@@ -9,3 +9,10 @@ workspace = true
 
 [dependencies]
 bevy = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "generation"
+harness = false
