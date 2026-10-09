@@ -144,10 +144,15 @@ pub fn triangulate(points: &[Vec2]) -> Vec<[u32; 3]> {
         .map(|i| points[i].perp_dot(points[(i + 1) % count]))
         .sum();
     let winding = area.signum();
+    // A corner on the edge of a triangle counts as inside it: cutting such an ear would leave a
+    // polygon that touches itself.
     let inside = |p: Vec2, a: Vec2, b: Vec2, c: Vec2| {
-        [(a, b), (b, c), (c, a)]
-            .iter()
-            .all(|&(from, to)| (to - from).perp_dot(p - from) * winding > 0.0)
+        p != a
+            && p != b
+            && p != c
+            && [(a, b), (b, c), (c, a)]
+                .iter()
+                .all(|&(from, to)| (to - from).perp_dot(p - from) * winding >= 0.0)
     };
     let mut left: Vec<usize> = (0..count).collect();
     let mut triangles = Vec::new();
@@ -410,17 +415,20 @@ mod tests {
 
     #[test]
     fn triangles_cover_every_sector_exactly() {
-        let mut corridor = Corridor::new(7);
-        for index in 0..150 {
+        for (seed, index) in (0..8).flat_map(|seed| (0..150).map(move |index| (seed, index))) {
+            let mut corridor = Corridor::new(seed);
             let plan = corridor.plan(index);
             let outline: Vec<Vec2> = plan.outline.iter().map(|point| point.as_vec2()).collect();
+            // Corners in a straight line can be left over: they enclose nothing.
             let triangles = triangulate(&outline);
-            assert_eq!(triangles.len(), outline.len() - 2, "sector {index}");
             let covered: f32 = triangles
                 .iter()
                 .map(|triangle| area(&triangle.map(|corner| outline[corner as usize])))
                 .sum();
-            assert!((covered - area(&outline)).abs() < 0.01, "sector {index}");
+            assert!(
+                (covered - area(&outline)).abs() < 0.01,
+                "seed {seed}, sector {index}"
+            );
         }
     }
 
