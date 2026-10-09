@@ -8,7 +8,7 @@ license.workspace = true
 workspace = true
 
 [dependencies]
-bevy = { workspace = true, features = ["3d", "ui"] }
+bevy = { workspace = true, features = ["3d", "ui", "bevy_audio", "wav"] }
 tanku_core.workspace = true
 tanku_server.workspace = true
 
