@@ -1,0 +1,17 @@
+[package]
+name = "tanku_server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# Headless: no window and no renderer.
+bevy = { workspace = true, features = ["std", "multi_threaded", "bevy_log"] }
+tanku_core.workspace = true
+
+# Development conveniences, enabled by default.
+# Build releases with `--no-default-features`.
+[features]
+default = ["development", "debug"]
+development = ["bevy/dynamic_linking"]
+debug = ["bevy/debug"]

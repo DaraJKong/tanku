@@ -1,0 +1,6 @@
+# Nightly, because development builds use the Cranelift backend and `-Zshare-generics`
+# (see `.cargo/config.toml`).
+[toolchain]
+channel = "nightly-2026-09-29"
+components = ["clippy", "rust-analyzer", "rust-src", "rustc-codegen-cranelift-preview", "rustfmt"]
+targets = ["wasm32-unknown-unknown"]

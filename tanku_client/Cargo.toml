@@ -1,0 +1,17 @@
+[package]
+name = "tanku_client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+bevy = { workspace = true, features = ["3d", "ui"] }
+tanku_core.workspace = true
+tanku_server.workspace = true
+
+# Development conveniences, enabled by default.
+# Build releases with `--no-default-features`.
+[features]
+default = ["development", "debug"]
+development = ["bevy/dynamic_linking"]
+debug = ["bevy/debug"]

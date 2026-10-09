@@ -1,0 +1,50 @@
+[workspace]
+members = ["tanku_client", "tanku_core", "tanku_server"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+# Versions are declared once here; each crate picks the features it needs.
+[workspace.dependencies]
+# Bevy stays on 0.19 until lightyear supports 0.20.
+bevy = { version = "0.19", default-features = false }
+bevy_rand = { version = "0.15", features = ["wyrand"] }
+lightyear = "0.30"
+rand = "0.10"
+tanku_core = { path = "tanku_core" }
+# Without default features, so that a release client doesn't inherit the server's development ones.
+tanku_server = { path = "tanku_server", default-features = false }
+
+# Approved, to add back with the first benchmark:
+# clap = { version = "4.6", features = ["derive"] } # headless client mode
+# criterion = "0.8"
+
+# Enable a small amount of optimization in the dev profile.
+[profile.dev]
+opt-level = 1
+
+# Enable a large amount of optimization in the dev profile for dependencies.
+[profile.dev.package."*"]
+opt-level = 3
+
+# Enable more optimization in the release profile at the cost of compile time.
+[profile.release]
+# Compile the entire crate as one unit.
+# Slows compile times, marginal improvements.
+codegen-units = 1
+# Do a second optimization pass over the entire program, including dependencies.
+# Slows compile times, marginal improvements.
+lto = "thin"
+
+# Optimize for size in the wasm-release profile to reduce load times and bandwidth usage on web.
+[profile.wasm-release]
+# Default to release profile values.
+inherits = "release"
+# Optimize with size in mind (also try "z", sometimes it is better).
+# Slightly slows compile times, great improvements to file size and runtime performance.
+opt-level = "s"
+# Strip all debugging information from the binary to slightly reduce file size.
+strip = "debuginfo"
