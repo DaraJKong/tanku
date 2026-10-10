@@ -4,7 +4,8 @@ use bevy::prelude::*;
 use tanku_core::{
     geom,
     rules::{BULLET_RADIUS, MINE_RADIUS, SHIELD_RADIUS, TANK_RADIUS, TICK},
-    sim::{Blow, Bullet, Mine, Position, PreviousPosition, Shield, SimEvent, Tank, Weapon},
+    sim::{Blow, Bullet, Mine, Position, PreviousPosition, Shield, SimEvent, Tank, Team, Weapon},
+    stats::Genome,
 };
 
 use crate::{
@@ -58,6 +59,17 @@ pub fn fly_past_walls(
     FlightReport {
         end: Flight::Flying,
         bounces,
+    }
+}
+
+/// What a bullet does to the solid thing that stopped it: it sets off a crate, and the blast is
+/// the doing of the tank that fired the bullet, when that tank is known.
+pub fn strike(casualties: &mut Casualties, solid: Solid, shooter: Option<(Genome, Team)>) {
+    if let Solid::Crate(explosive) = solid {
+        casualties.detonations.push(explosive);
+        if let Some(shooter) = shooter {
+            casualties.culprits.push((explosive, shooter));
+        }
     }
 }
 
@@ -161,13 +173,8 @@ pub fn fly(
             events.write(SimEvent::Ricochet { at: bounce });
         }
         if let Flight::Stopped(solid) = report.end {
-            if let Solid::Crate(explosive) = solid {
-                casualties.detonations.push(explosive);
-                if let Some(maker) = maker {
-                    let culprit = (maker.0, bullet.team);
-                    casualties.culprits.push((explosive, culprit));
-                }
-            }
+            let shooter = maker.map(|maker| (maker.0, bullet.team));
+            strike(&mut casualties, solid, shooter);
             events.write(SimEvent::BulletDestroyed { at: position.0 });
             commands.entity(entity).try_despawn();
         }

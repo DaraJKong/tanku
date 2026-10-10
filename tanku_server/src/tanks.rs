@@ -16,7 +16,7 @@ use tanku_core::{
 };
 
 use crate::{
-    Maker,
+    Casualties, Maker,
     bullets::{self, Flight},
     field::{Field, InSector},
 };
@@ -147,6 +147,7 @@ pub fn separate(field: Res<Field>, mut tanks: Query<(&Tank, &mut Position, &mut 
 pub fn operate(
     mut commands: Commands,
     field: Res<Field>,
+    mut casualties: ResMut<Casualties>,
     mut tanks: Query<(
         Entity,
         &Tank,
@@ -208,7 +209,9 @@ pub fn operate(
                         InSector(tank.sector),
                     ));
                 }
-                _ => {
+                // A shot that ends in the barrel hits what stopped it all the same.
+                Flight::Stopped(solid) => {
+                    bullets::strike(&mut casualties, solid, Some((*genome, tank.team)));
                     events.write(SimEvent::BulletDestroyed { at });
                 }
             }

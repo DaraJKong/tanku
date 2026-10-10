@@ -661,10 +661,11 @@ fn spawn_bullet_of(app: &mut App, maker: Genome, at: Vec2, velocity: Vec2) {
 }
 
 /// An explosive crate in the start bay.
-fn spawn_crate(app: &mut App, at: Vec2) {
+fn spawn_crate(app: &mut App, at: Vec2) -> Entity {
     let explosive = (ExplosiveCrate { sector: 0 }, Position(at), InSector(0));
-    app.world_mut().spawn(explosive);
+    let explosive = app.world_mut().spawn(explosive).id();
     app.world_mut().resource_mut::<Field>().stale = true;
+    explosive
 }
 
 #[test]
@@ -754,6 +755,38 @@ fn a_crate_is_the_doing_of_the_tank_that_set_it_off() {
         team: Team::Enemies,
     };
     assert_eq!(wait_for_the_loss(&mut app, 2.0), Some(blow));
+}
+
+#[test]
+fn a_shot_that_ends_in_the_barrel_sets_off_the_crate_that_stopped_it() {
+    let mut app = start("TEST");
+    // The crate stands 0.1 m in front of the tank, so the bullet never leaves the barrel.
+    let crate_at = START + Vec2::new(2.0, 0.0);
+    let explosive = spawn_crate(&mut app, crate_at);
+    let aim = TankCommand {
+        aim: crate_at,
+        ..default()
+    };
+    command(&mut app, aim);
+    tick(&mut app, seconds(0.3));
+    events(&mut app);
+    command(&mut app, TankCommand { fire: true, ..aim });
+    tick(&mut app, 1);
+    let events = events(&mut app);
+    assert_eq!(bullets(&mut app), 0);
+    let blasts = count(
+        &events,
+        |event| matches!(event, SimEvent::Blast { at } if *at == crate_at),
+    );
+    assert_eq!(blasts, 1);
+    assert!(!alive(&app, explosive));
+    // The tank is within the blast, and that is its own doing.
+    let blow = Blow {
+        weapon: Weapon::Crate,
+        genome: Genome::PLAYER,
+        team: Team::Players,
+    };
+    assert_eq!(wait_for_the_loss(&mut app, 0.1), Some(blow));
 }
 
 #[test]
