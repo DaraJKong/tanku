@@ -61,11 +61,13 @@ pub enum Hush {
     BassOnly,
 }
 
-/// A note to start: its pitch in semitones, where 69 is the A of 440 Hz, and its length.
+/// A note to start: its pitch in semitones, where 69 is the A of 440 Hz, its length, and how
+/// loud it is, up to 255.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Tone {
     pub pitch: u8,
     pub steps: u8,
+    pub level: u8,
 }
 
 /// What starts on one step.
@@ -97,6 +99,10 @@ static LEAD: [[[Line; BARS]; 2]; 4] = [
 ];
 
 const HIT: u8 = 255;
+/// The arpeggio of the pluck stays under the melody.
+const ARPEGGIO: u8 = 150;
+/// The octave that the lead adds at the highest threat is quieter than the line itself.
+const OCTAVE: u8 = 130;
 /// The kick of the calm is softer than the kick of a fight.
 const CALM_KICK: u8 = 180;
 const HAT: u8 = 190;
@@ -364,6 +370,7 @@ impl Director {
         Tone {
             pitch: score::bass_root(self.mode, self.chord()),
             steps: STEPS as u8,
+            level: HIT,
         }
     }
 
@@ -385,7 +392,13 @@ impl Director {
                 .take_while(|&&next| next == chord);
             let steps = (bars.count() * STEPS) as u8;
             let held = score::close_triad(self.mode, chord, A4);
-            out.lead = held.map(|pitch| Some(Tone { pitch, steps }));
+            out.lead = held.map(|pitch| {
+                Some(Tone {
+                    pitch,
+                    steps,
+                    level: HIT,
+                })
+            });
             out.soft = true;
         }
     }
@@ -412,11 +425,13 @@ impl Director {
             out.pluck = Some(Tone {
                 pitch: chord[step % 3],
                 steps: 1,
+                level: ARPEGGIO,
             });
         } else if PLUCK_ARPEGGIO[step] != b'.' {
             out.pluck = Some(Tone {
                 pitch: chord[step / 2 % 3],
                 steps: 2,
+                level: ARPEGGIO,
             });
         }
 
@@ -428,6 +443,7 @@ impl Director {
                 if self.threat == HIGHEST_THREAT {
                     out.lead[1] = Some(Tone {
                         pitch: tone.pitch + 12,
+                        level: OCTAVE,
                         ..tone
                     });
                 }
@@ -441,6 +457,7 @@ impl Director {
         (cell.degree != 0).then(|| Tone {
             pitch: tonic + self.mode.semitones(cell.degree),
             steps: cell.steps,
+            level: HIT,
         })
     }
 
@@ -457,7 +474,11 @@ impl Director {
         };
         let rest = pattern[step + 1..].iter();
         let steps = 1 + rest.take_while(|&&symbol| symbol == b'.').count() as u8;
-        Some(Tone { pitch, steps })
+        Some(Tone {
+            pitch,
+            steps,
+            level: HIT,
+        })
     }
 }
 
@@ -539,7 +560,8 @@ mod tests {
                 steps[0].bass,
                 Some(Tone {
                     pitch: 45,
-                    steps: 16
+                    steps: 16,
+                    level: HIT
                 })
             );
             // The loop is eight bars long.
@@ -631,7 +653,8 @@ mod tests {
                 steps[0].bass,
                 Some(Tone {
                     pitch: 45,
-                    steps: 16
+                    steps: 16,
+                    level: HIT
                 })
             );
             assert!(steps[..line].iter().all(|step| !drums(step)));

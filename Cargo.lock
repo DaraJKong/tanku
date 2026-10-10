@@ -5067,6 +5067,9 @@ dependencies = [
 [[package]]
 name = "tanku_audio"
 version = "0.3.0"
+dependencies = [
+ "criterion",
+]
 
 [[package]]
 name = "tanku_client"
