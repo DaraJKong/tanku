@@ -21,11 +21,11 @@ const SLOTS: usize = 4;
 /// How far past the end of its barrier a balloon stands, in meters.
 const REACH: f32 = 1.1;
 /// Radius of a balloon, in pixels.
-const RADIUS: f32 = 16.0;
+const RADIUS: f32 = 18.0;
 /// How far the line that splits a balloon goes on toward its barrier.
 const LEAD: f32 = 10.0;
-/// How far from that line the two numbers stand.
-const NUMBER_OFFSET: f32 = 8.0;
+/// The gap between that line and each of the two numbers.
+const NUMBER_GAP: f32 = 2.0;
 /// The gap between a balloon and the caption of its barrier.
 const CAPTION_GAP: f32 = 8.0;
 /// A tag this far outside the screen isn't drawn.
@@ -101,6 +101,13 @@ fn caption_place(ends: [Vec2; 2]) -> (usize, Vec2) {
     }
 }
 
+/// How something is held on its point, by its own size: by its middle, or by the middle of
+/// the side that looks back when it stands away from the point in a direction.
+fn held_from(away: Vec2) -> Val2 {
+    let part = |along: f32| percent((-50.0 + 50.0 * along).round());
+    Val2::new(part(away.x), part(away.y))
+}
+
 /// A node without a size, which is moved to a point of the screen with what it holds.
 fn anchor() -> impl Bundle {
     (
@@ -166,8 +173,8 @@ fn build(mut commands: Commands) {
                         divider_place,
                         BackgroundColor(line),
                     ),
-                    (Part::Near, theme::figure("", 12.0, line), near, near_place),
-                    (Part::Far, theme::figure("", 12.0, line), far, far_place),
+                    (Part::Near, theme::figure("", 11.0, line), near, near_place),
+                    (Part::Far, theme::figure("", 11.0, line), far, far_place),
                 ],
             ));
         }
@@ -298,16 +305,23 @@ fn place(
             else {
                 continue;
             };
-            // Where the part lies around the middle of the balloon, and what it says.
-            let (offset, content) = match part {
-                Part::Ring => (Vec2::ZERO, None),
-                Part::Divider => (spot.inward * LEAD / 2.0, None),
-                Part::Near => (-spot.beyond * NUMBER_OFFSET, Some(&near)),
-                Part::Far => (spot.beyond * NUMBER_OFFSET, Some(&far)),
+            // Where the part lies around the middle of the balloon, on which side of the
+            // line that splits it, and what it says.
+            let (offset, side, content) = match part {
+                Part::Ring => (Vec2::ZERO, Vec2::ZERO, None),
+                Part::Divider => (spot.inward * LEAD / 2.0, Vec2::ZERO, None),
+                Part::Near => (-spot.beyond * NUMBER_GAP, -spot.beyond, Some(&near)),
+                Part::Far => (spot.beyond * NUMBER_GAP, spot.beyond, Some(&far)),
             };
             let (left, top) = (px(offset.x.round()), px(offset.y.round()));
             if node.left != left || node.top != top {
                 (node.left, node.top) = (left, top);
+            }
+            // A number stands clear of the line, however long it is: it is held by the
+            // middle of the side that faces the line, not by its own middle.
+            let held = held_from(side);
+            if turn.translation != held {
+                turn.translation = held;
             }
             if let Part::Divider = part {
                 let along = Rot2::radians(spot.inward.to_angle());
@@ -405,6 +419,19 @@ mod tests {
         assert_eq!(caption(&barrier(12, false)), "BARRIER 12 \u{b7} LOCKED");
         assert_eq!(caption(&barrier(12, true)), "BARRIER 12 \u{b7} OPEN");
         assert_ne!(color(&barrier(12, false)), color(&barrier(12, true)));
+    }
+
+    #[test]
+    fn a_number_stands_on_its_side_of_the_line_whatever_its_length() {
+        // Held by its middle when it goes nowhere.
+        assert_eq!(held_from(Vec2::ZERO), Val2::new(percent(-50), percent(-50)));
+        // Above the line, it rests on it: its bottom is on its point.
+        assert_eq!(
+            held_from(Vec2::NEG_Y),
+            Val2::new(percent(-50), percent(-100))
+        );
+        // On the right of the line, it starts at its point.
+        assert_eq!(held_from(Vec2::X), Val2::new(percent(0), percent(-50)));
     }
 
     #[test]
