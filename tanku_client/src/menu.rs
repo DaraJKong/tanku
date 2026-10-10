@@ -10,7 +10,7 @@ use tanku_core::{
 
 use crate::{
     Overlay, Screen,
-    camera::View,
+    camera::{PastBarriers, View},
     cli::Options,
     exhibit::{self, Exhibit, Show},
     report,
@@ -48,6 +48,8 @@ enum Press {
     ResetBindings,
     /// In a playtest: turns the infinite lives on or off.
     InfiniteLives,
+    /// In a playtest: goes to the next way of showing what is past a barrier.
+    PastBarriers,
     /// In a playtest: moves the sector to skip to by this many.
     Destination(i32),
     /// In a playtest: skips to that sector.
@@ -499,6 +501,7 @@ fn pause_menu(
     run: Option<Res<Run>>,
     playtest: Option<Res<Playtest>>,
     destination: Res<Destination>,
+    past_barriers: Res<PastBarriers>,
 ) {
     panel(
         &mut commands,
@@ -514,6 +517,10 @@ fn pause_menu(
                 row(parent, "Infinite lives", |row| {
                     let state = on_off(playtest.infinite_lives);
                     small(row, state, 70.0, Press::InfiniteLives);
+                });
+                // An experiment, which a playtest compares with the view as it was.
+                row(parent, "View past barriers", |row| {
+                    small(row, past_barriers.name(), 150.0, Press::PastBarriers);
                 });
                 row(parent, "Sector to skip to", |row| {
                     for change in [-10, -1, 1, 10] {
@@ -540,15 +547,16 @@ fn refresh_pause(
     run: Option<Res<Run>>,
     playtest: Res<Playtest>,
     destination: Res<Destination>,
+    past_barriers: Res<PastBarriers>,
     root: Query<Entity, With<PauseRoot>>,
 ) {
-    if !playtest.is_changed() && !destination.is_changed() {
+    if !playtest.is_changed() && !destination.is_changed() && !past_barriers.is_changed() {
         return;
     }
     for entity in &root {
         commands.entity(entity).despawn();
     }
-    pause_menu(commands, run, Some(playtest), destination);
+    pause_menu(commands, run, Some(playtest), destination, past_barriers);
 }
 
 /// The seed of a new run: the one that the command line gave to a playtest, or else a random
@@ -799,6 +807,7 @@ fn press(
     mut records: ResMut<Records>,
     mut playtest: Option<ResMut<Playtest>>,
     mut destination: ResMut<Destination>,
+    mut past_barriers: ResMut<PastBarriers>,
     options: Res<Options>,
     run: Option<Res<Run>>,
     time: Res<Time<Real>>,
@@ -865,6 +874,7 @@ fn press(
                     playtest.infinite_lives = !playtest.infinite_lives;
                 }
             }
+            Press::PastBarriers => *past_barriers = past_barriers.next(),
             Press::Destination(change) => {
                 let sector = destination.0.saturating_add_signed(change);
                 destination.0 = sector.clamp(1, PLAYTEST_LAST_SECTOR);

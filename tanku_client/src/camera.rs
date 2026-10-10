@@ -1,4 +1,9 @@
 //! The camera: it looks down at the player's tank and turns in quarter turns.
+//!
+//! An experiment: once a sector is quiet, the view runs ahead of a tank that comes close to
+//! its barrier, so that the players can study the next group before they cross. It can also
+//! show more ground there, from further away. [`PastBarriers`] says which, and a playtest
+//! changes it from the pause menu.
 
 use std::f32::consts::FRAC_PI_2;
 
@@ -6,7 +11,10 @@ use bevy::{
     core_pipeline::tonemapping::Tonemapping, ecs::system::SystemParam, prelude::*,
     window::PrimaryWindow,
 };
-use tanku_core::sim::Player;
+use tanku_core::{
+    geom,
+    sim::{Barrier, Bullet, Enemy, Player, Run, Tank, Team},
+};
 
 use crate::{scene, settings::Settings, theme};
 
@@ -18,9 +26,58 @@ const FIELD_OF_VIEW: f32 = 20.0;
 const VISIBLE_GROUND: f32 = 30.0;
 /// How far the view shifts toward the cursor, as a share of the distance and in meters at most.
 const LOOK_AHEAD: (f32, f32) = (0.03125, 0.75);
+/// How far from the barrier of a quiet sector the tank is when the view starts to show what
+/// is past it, and when it shows all it will.
+const APPROACH: (f32, f32) = (13.0, 5.0);
+/// How fast the view goes there, and how fast it comes back to the tank: the shares of the way
+/// that are left after a second are `e` to the power of minus these.
+const PAST_RATES: (f32, f32) = (2.5, 0.8);
 
 #[derive(Component)]
 pub struct MainCamera;
+
+/// How the view shows what is past the barrier of a quiet sector to a tank that waits there.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PastBarriers {
+    /// It doesn't: the view stays on the tank.
+    Off,
+    /// The view runs ahead of the tank.
+    Ahead,
+    /// The view runs ahead and shows more ground, from further away.
+    #[default]
+    Wide,
+}
+
+impl PastBarriers {
+    /// How far the view runs ahead of the tank, and the ground it shows from the bottom to
+    /// the top of the screen, both in meters. Either way the tank stays on the screen, as far
+    /// from the edge it has its back to.
+    fn reach(self) -> (f32, f32) {
+        match self {
+            Self::Off => (0.0, VISIBLE_GROUND),
+            Self::Ahead => (10.0, VISIBLE_GROUND),
+            Self::Wide => (15.0, 1.5 * VISIBLE_GROUND),
+        }
+    }
+
+    /// What the button that changes it says.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Off => "Off",
+            Self::Ahead => "Ahead",
+            Self::Wide => "Ahead and wide",
+        }
+    }
+
+    /// The next way, for a button that goes through them.
+    pub fn next(self) -> Self {
+        match self {
+            Self::Off => Self::Ahead,
+            Self::Ahead => Self::Wide,
+            Self::Wide => Self::Off,
+        }
+    }
+}
 
 #[derive(Resource, Default)]
 pub struct View {
@@ -32,6 +89,10 @@ pub struct View {
     pub span: Option<f32>,
     yaw: f32,
     focus: Vec2,
+    /// How far the view has run ahead of the tank, past the barrier of its sector, and how
+    /// much more ground it shows there than the game does, in meters.
+    past: Vec2,
+    wider: f32,
     /// Time during which the view stays where it was told to look.
     hold: f32,
     shake: f32,
@@ -134,6 +195,7 @@ impl OnScreen<'_, '_> {
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<View>()
+        .init_resource::<PastBarriers>()
         .insert_resource(ClearColor(theme::VOID))
         .add_systems(Startup, setup)
         .add_systems(Update, follow.after(scene::place));
@@ -172,11 +234,34 @@ pub fn aim(
     }
 }
 
+/// How much of what is past a barrier the view shows to a tank that is this far from it, from
+/// 0 to 1: nothing from far away, then more and more as the tank comes close.
+fn closeness(distance: f32) -> f32 {
+    let (far, near) = APPROACH;
+    let closeness = ((far - distance) / (far - near)).clamp(0.0, 1.0);
+    closeness * closeness * (3.0 - 2.0 * closeness)
+}
+
+/// Where the camera stands to look at a point of the ground, with this many meters of
+/// ground from the bottom to the top of the screen.
+fn eye(focus: Vec2, yaw: f32, span: f32) -> Transform {
+    let pitch = PITCH.to_radians();
+    let distance = span * pitch.sin() / (2.0 * (FIELD_OF_VIEW.to_radians() / 2.0).tan());
+    let offset = Quat::from_rotation_y(yaw) * Vec3::new(0.0, pitch.sin(), pitch.cos()) * distance;
+    let focus = scene::to_world(focus, 0.0);
+    Transform::from_translation(focus + offset).looking_at(focus, Vec3::Y)
+}
+
 pub fn follow(
     time: Res<Time>,
     settings: Res<Settings>,
+    past_barriers: Res<PastBarriers>,
+    run: Option<Res<Run>>,
     mut view: ResMut<View>,
     player: Query<&Transform, (With<Player>, Without<MainCamera>)>,
+    barriers: Query<&Barrier>,
+    enemies: Query<&Tank, With<Enemy>>,
+    bullets: Query<&Bullet>,
     mut camera: Single<&mut Transform, With<MainCamera>>,
 ) {
     let seconds = time.delta_secs();
@@ -186,7 +271,36 @@ pub fn follow(
     {
         let at = scene::to_ground(player.translation);
         let ahead = ((view.aim - at) * LOOK_AHEAD.0).clamp_length_max(LOOK_AHEAD.1);
-        let target = at + ahead;
+        // The way out of the sector the tank is in, once the sector is quiet: no enemy is
+        // left there, and none of their bullets still flies.
+        let sector = run.as_ref().map(|run| run.sector);
+        let quiet = sector.filter(|sector| {
+            let mut shots = bullets.iter().filter(|bullet| bullet.team == Team::Enemies);
+            enemies.iter().all(|tank| tank.sector != *sector)
+                && shots.all(|bullet| bullet.sector != *sector)
+        });
+        let way_out = quiet.and_then(|sector| {
+            let mut barriers = barriers.iter();
+            barriers.find(|barrier| barrier.sector == sector)
+        });
+        let (ahead_of_it, ground) = past_barriers.reach();
+        let (past, wider) = way_out.map_or((Vec2::ZERO, 0.0), |barrier| {
+            let distance = geom::distance_to_segment(at, barrier.from, barrier.to);
+            let shown = closeness(distance);
+            (
+                barrier.outward * ahead_of_it * shown,
+                (ground - VISIBLE_GROUND) * shown,
+            )
+        });
+        let rate = if past.length() > view.past.length() {
+            PAST_RATES.0
+        } else {
+            PAST_RATES.1
+        };
+        let step = 1.0 - (-rate * seconds).exp();
+        view.past = view.past.lerp(past, step);
+        view.wider += (wider - view.wider) * step;
+        let target = at + ahead + view.past;
         // A jump means a new run or a respawn: go there at once.
         view.focus = if view.focus.distance(target) > 40.0 {
             target
@@ -204,13 +318,8 @@ pub fn follow(
     };
     let jitter = Vec2::new(view.jitter(), view.jitter()) * strength;
 
-    let pitch = PITCH.to_radians();
-    let span = view.span.unwrap_or(VISIBLE_GROUND);
-    let distance = span * pitch.sin() / (2.0 * (FIELD_OF_VIEW.to_radians() / 2.0).tan());
-    let offset =
-        Quat::from_rotation_y(view.yaw) * Vec3::new(0.0, pitch.sin(), pitch.cos()) * distance;
-    let focus = scene::to_world(view.focus + jitter, 0.0);
-    **camera = Transform::from_translation(focus + offset).looking_at(focus, Vec3::Y);
+    let span = view.span.unwrap_or(VISIBLE_GROUND + view.wider);
+    **camera = eye(view.focus + jitter, view.yaw, span);
 }
 
 #[cfg(test)]
@@ -225,6 +334,7 @@ mod tests {
         let mut app = App::new();
         app.init_resource::<Time>()
             .init_resource::<View>()
+            .init_resource::<PastBarriers>()
             .insert_resource(Settings::default())
             .add_systems(Update, follow);
         app.world_mut().spawn((MainCamera, Transform::default()));
@@ -233,6 +343,282 @@ mod tests {
             Transform::from_translation(scene::to_world(TANK, 0.0)),
         ));
         app
+    }
+
+    /// A run in which the player is in this sector.
+    fn run_in(sector: u32) -> Run {
+        Run {
+            seed_text: "TEST".into(),
+            seed: 1,
+            sector,
+            cleared: 0,
+            checkpoint: 0,
+            lives: 3,
+            kills: 0,
+            ticks: 0,
+            phase: tanku_core::sim::RunPhase::Playing,
+            lost_to: None,
+        }
+    }
+
+    /// The barrier of the test: it closes sector 3 to the north, 20 m wide, and the tank of
+    /// the test waits 3 m in front of its middle.
+    fn barrier(sector: u32, north: f32) -> Barrier {
+        Barrier {
+            sector,
+            from: Vec2::new(-10.0, north),
+            to: Vec2::new(10.0, north),
+            outward: Vec2::Y,
+            unlocked: false,
+        }
+    }
+
+    /// A world in which the tank waits at the barrier of its sector, with this way of
+    /// showing what is past it.
+    fn world_at_a_barrier(way: PastBarriers) -> App {
+        let mut app = world_with_a_tank();
+        app.insert_resource(way).insert_resource(run_in(3));
+        // The cursor is on the tank, so that the view doesn't lean toward it.
+        app.world_mut().resource_mut::<View>().aim = TANK;
+        app.world_mut().spawn(barrier(3, TANK.y + 3.0));
+        // The barrier behind the tank, and the one of the next sector, far ahead.
+        app.world_mut().spawn(barrier(2, TANK.y - 60.0));
+        app.world_mut().spawn(barrier(4, TANK.y + 63.0));
+        app
+    }
+
+    /// Lets this much time pass, a frame at a time.
+    fn wait(app: &mut App, seconds: f32) {
+        let frame = std::time::Duration::from_secs_f32(1.0 / 60.0);
+        for _ in 0..(seconds * 60.0).round() as u32 {
+            app.world_mut().resource_mut::<Time>().advance_by(frame);
+            app.update();
+        }
+    }
+
+    /// How far ahead of the tank the view looks, to the north, and from how far the camera
+    /// looks at the ground.
+    fn looks(app: &mut App) -> (f32, f32) {
+        let focus = app.world().resource::<View>().focus();
+        let world = app.world_mut();
+        let mut camera = world.query_filtered::<&Transform, With<MainCamera>>();
+        let eye = camera.single(world).unwrap().translation;
+        (focus.y - TANK.y, eye.distance(scene::to_world(focus, 0.0)))
+    }
+
+    /// From how far the camera looks at this much ground.
+    fn from_afar(ground: f32) -> f32 {
+        eye(Vec2::ZERO, 0.0, ground).translation.length()
+    }
+
+    fn near(found: f32, wanted: f32) -> bool {
+        (found - wanted).abs() < 0.05 * wanted.abs().max(1.0)
+    }
+
+    #[test]
+    fn the_view_shows_nothing_past_a_barrier_from_far_away() {
+        let (far, near) = APPROACH;
+        assert_eq!(closeness(far), 0.0);
+        assert_eq!(closeness(far + 30.0), 0.0);
+        assert_eq!(closeness(near), 1.0);
+        assert_eq!(closeness(0.0), 1.0);
+        // It shows more and more as the tank comes close.
+        for step in 0..20 {
+            let distance = near + (far - near) * step as f32 / 20.0;
+            assert!(
+                closeness(distance) > closeness(distance + 0.4),
+                "{distance}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_view_runs_ahead_of_a_tank_that_waits_at_the_barrier_of_a_cleared_sector() {
+        for way in [PastBarriers::Off, PastBarriers::Ahead, PastBarriers::Wide] {
+            let mut app = world_at_a_barrier(way);
+            wait(&mut app, 4.0);
+            let (ahead, ground) = way.reach();
+            let (found, afar) = looks(&mut app);
+            assert!(near(found, ahead), "{way:?}: {found}");
+            assert!(near(afar, from_afar(ground)), "{way:?}: {afar}");
+            // The tank stays on the screen, well inside its edge.
+            let world = app.world_mut();
+            let mut camera = world.query_filtered::<&Transform, With<MainCamera>>();
+            let eye = *camera.single(world).unwrap();
+            assert!(shows(&eye, 16.0 / 9.0, TANK - Vec2::Y * 3.0), "{way:?}");
+        }
+    }
+
+    #[test]
+    fn the_view_stays_on_a_tank_that_still_has_enemies_around() {
+        let mut app = world_at_a_barrier(PastBarriers::Wide);
+        let enemy = Tank {
+            genome: tanku_core::stats::Genome::empty(10),
+            team: tanku_core::sim::Team::Enemies,
+            sector: 3,
+        };
+        let enemy = app.world_mut().spawn((enemy, Enemy { awake: true })).id();
+        wait(&mut app, 4.0);
+        let (found, afar) = looks(&mut app);
+        assert!(found.abs() < 0.05 && near(afar, from_afar(VISIBLE_GROUND)));
+        // Enemies of other sectors don't hold it back: the dormant ones are what it shows.
+        app.world_mut().get_mut::<Tank>(enemy).unwrap().sector = 4;
+        wait(&mut app, 4.0);
+        assert!(near(looks(&mut app).0, PastBarriers::Wide.reach().0));
+    }
+
+    #[test]
+    fn the_view_stays_on_a_tank_while_a_bullet_of_the_enemies_still_flies() {
+        let mut app = world_at_a_barrier(PastBarriers::Ahead);
+        let bullet = |team: Team| Bullet {
+            owner: Entity::PLACEHOLDER,
+            team,
+            sector: 3,
+            velocity: Vec2::X,
+            bounces_left: 1,
+            pierces_left: 0,
+            bounced: false,
+        };
+        let last_shot = app.world_mut().spawn(bullet(Team::Enemies)).id();
+        // The player's own bullets are theirs to watch.
+        app.world_mut().spawn(bullet(Team::Players));
+        wait(&mut app, 4.0);
+        assert!(looks(&mut app).0.abs() < 0.05);
+        app.world_mut().despawn(last_shot);
+        wait(&mut app, 4.0);
+        assert!(near(looks(&mut app).0, PastBarriers::Ahead.reach().0));
+    }
+
+    #[test]
+    fn the_view_stays_on_a_tank_that_is_far_from_the_barrier() {
+        let mut app = world_at_a_barrier(PastBarriers::Wide);
+        // The barrier is now further than the view starts to care.
+        let world = app.world_mut();
+        let mut barriers = world.query::<&mut Barrier>();
+        for mut barrier in barriers.iter_mut(world) {
+            if barrier.sector == 3 {
+                barrier.from.y += APPROACH.0;
+                barrier.to.y += APPROACH.0;
+            }
+        }
+        wait(&mut app, 4.0);
+        let (found, afar) = looks(&mut app);
+        assert!(found.abs() < 0.05 && near(afar, from_afar(VISIBLE_GROUND)));
+    }
+
+    #[test]
+    fn the_view_comes_back_slowly_once_the_tank_is_through() {
+        let mut app = world_at_a_barrier(PastBarriers::Ahead);
+        wait(&mut app, 4.0);
+        let ahead = PastBarriers::Ahead.reach().0;
+        // The tank is now in the next sector, whose barrier is far.
+        app.world_mut().resource_mut::<Run>().sector = 4;
+        wait(&mut app, 0.5);
+        let found = looks(&mut app).0;
+        assert!(found > 0.5 * ahead && found < 0.8 * ahead, "{found}");
+        wait(&mut app, 8.0);
+        assert!(looks(&mut app).0 < 0.05);
+    }
+
+    /// Whether a point of the ground is on a screen of this shape, its width over its
+    /// height, for a camera that stands there.
+    fn shows(eye: &Transform, shape: f32, point: Vec2) -> bool {
+        let world = scene::to_world(point, 0.0);
+        let seen = eye.compute_affine().inverse().transform_point3(world);
+        let reach = (FIELD_OF_VIEW.to_radians() / 2.0).tan() * -seen.z;
+        seen.z < 0.0 && seen.y.abs() <= reach && seen.x.abs() <= reach * shape
+    }
+
+    /// The share of the enemies of the next group that a tank sees while it waits at a barrier,
+    /// for each way of showing what is past it: with north at the top of the screen, then with
+    /// the view turned so that the way out is on the right. It also tells in what share of the
+    /// groups at least one enemy shows, and in what share all of them do.
+    fn what_shows_past_barriers(seeds: u64, sectors: u32) -> Vec<(PastBarriers, [[f32; 3]; 2])> {
+        use tanku_core::{
+            map::{Corridor, SectorKind},
+            progression,
+        };
+        // A wide screen, and a tank on the flag of its sector, or where one would be.
+        const SHAPE: f32 = 16.0 / 9.0;
+        const WAIT: f32 = 4.0;
+        let ways = [PastBarriers::Off, PastBarriers::Ahead, PastBarriers::Wide];
+        let mut seen = [[[0u32; 3]; 2]; 3];
+        let (mut enemies, mut groups) = (0, 0);
+        for seed in 0..seeds {
+            let mut corridor = Corridor::new(seed);
+            for index in 0..sectors {
+                let plan = corridor.plan(index).clone();
+                let next = corridor.layout(index + 1);
+                let arena = next.plan.kind == SectorKind::Arena;
+                let count = progression::enemy_count(index + 1, 1, arena) as usize;
+                let spawns = next.spawns.iter().take(count);
+                let group: Vec<Vec2> = spawns.map(|at| at.as_vec2()).collect();
+                let (from, to) = (plan.gate.0.as_vec2(), plan.gate.1.as_vec2());
+                let outward = (to - from).normalize().perp();
+                let tank = (from + to) / 2.0 - outward * WAIT;
+                let shown = closeness(geom::distance_to_segment(tank, from, to));
+                enemies += group.len() as u32;
+                groups += 1;
+                // The turn of the view that puts the way out on the right of the screen.
+                let right = (outward.to_angle() / FRAC_PI_2).round() * FRAC_PI_2;
+                for (way, counts) in ways.iter().zip(&mut seen) {
+                    let (ahead, ground) = way.reach();
+                    let focus = tank + outward * ahead * shown;
+                    let span = VISIBLE_GROUND + (ground - VISIBLE_GROUND) * shown;
+                    for (yaw, counts) in [0.0, right].into_iter().zip(counts) {
+                        let eye = eye(focus, yaw, span);
+                        let on_screen = group.iter().filter(|at| shows(&eye, SHAPE, **at));
+                        let on_screen = on_screen.count();
+                        counts[0] += on_screen as u32;
+                        counts[1] += (on_screen > 0) as u32;
+                        counts[2] += (on_screen == group.len()) as u32;
+                    }
+                }
+            }
+        }
+        let shares = |counts: [u32; 3]| {
+            [
+                counts[0] as f32 / enemies as f32,
+                counts[1] as f32 / groups as f32,
+                counts[2] as f32 / groups as f32,
+            ]
+        };
+        let seen = seen.map(|counts| counts.map(shares));
+        ways.into_iter().zip(seen).collect()
+    }
+
+    /// Prints what shows past barriers, over many corridors:
+    /// `cargo test -p tanku_client past_barriers -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn print_what_shows_past_barriers() {
+        for (way, turns) in what_shows_past_barriers(300, 30) {
+            for (turn, shares) in ["north at the top", "the way out on the right"]
+                .iter()
+                .zip(turns)
+            {
+                let [enemies, some, all] = shares.map(|share| 100.0 * share);
+                println!(
+                    "{:>14}, {turn:>24}: {enemies:5.1}% of the enemies, a part of {some:5.1}% of \
+                     the groups, all of {all:5.1}%",
+                    way.name(),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_view_shows_more_of_the_next_group_when_it_runs_ahead() {
+        let seen = what_shows_past_barriers(20, 30);
+        let enemies = |way: usize, turn: usize| seen[way].1[turn][0];
+        for turn in 0..2 {
+            // Each way shows more than the one before.
+            assert!(enemies(0, turn) < enemies(1, turn) && enemies(1, turn) < enemies(2, turn));
+        }
+        // With north at the top, the view on the tank shows next to nothing of the next
+        // group, which is what the experiment is about.
+        assert!(enemies(0, 0) < 0.06, "{}", enemies(0, 0));
+        assert!(enemies(1, 0) > 0.2 && enemies(2, 0) > 0.5);
     }
 
     #[test]
