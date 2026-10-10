@@ -117,6 +117,19 @@ impl OnScreen<'_, '_> {
     pub fn size(&self) -> Option<Vec2> {
         Some(self.camera.0.logical_viewport_size()? / self.scale.0)
     }
+
+    /// The point of the ground under a point of the screen.
+    pub fn ground(&self, screen: Vec2) -> Option<Vec2> {
+        let (camera, transform) = *self.camera;
+        let seen_from = GlobalTransform::from(*transform);
+        let ray = camera
+            .viewport_to_world(&seen_from, screen * self.scale.0)
+            .ok()?;
+        (ray.direction.y < -1e-4).then(|| {
+            let reach = -ray.origin.y / ray.direction.y;
+            scene::to_ground(ray.origin + *ray.direction * reach)
+        })
+    }
 }
 
 pub fn plugin(app: &mut App) {

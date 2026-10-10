@@ -31,7 +31,7 @@ const MARKED_ENEMIES: usize = 2;
 /// Distance between the panels and the edge of the screen, and between that edge and the
 /// fine line that frames the sheet.
 const MARGIN: f32 = 48.0;
-const SHEET_EDGE: f32 = 16.0;
+pub const SHEET_EDGE: f32 = 16.0;
 /// Length that the scale shows, in meters.
 const SCALE: f32 = 5.0;
 /// The dial around the player's tank: its radius, and the width of its arc.

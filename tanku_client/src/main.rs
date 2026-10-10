@@ -9,6 +9,7 @@ mod hud;
 mod input;
 mod menu;
 mod models;
+mod ruler;
 mod scene;
 mod settings;
 mod storage;
@@ -76,6 +77,7 @@ fn main() {
             effects::plugin,
             hud::plugin,
             tags::plugin,
+            ruler::plugin,
             menu::plugin,
             audio::plugin,
         ));
