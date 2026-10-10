@@ -30,7 +30,7 @@ use crate::{
     theme,
 };
 
-const WALL_HEIGHT: f32 = 1.2;
+pub const WALL_HEIGHT: f32 = 1.2;
 const WALL_THICKNESS: f32 = 0.4;
 const BLOCK_HEIGHT: f32 = 1.1;
 /// An explosive crate is lower than a block, and a little smaller than the square it stands on.

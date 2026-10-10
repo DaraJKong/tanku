@@ -2,7 +2,10 @@
 
 use std::f32::consts::FRAC_PI_2;
 
-use bevy::{core_pipeline::tonemapping::Tonemapping, prelude::*, window::PrimaryWindow};
+use bevy::{
+    core_pipeline::tonemapping::Tonemapping, ecs::system::SystemParam, prelude::*,
+    window::PrimaryWindow,
+};
 use tanku_core::sim::Player;
 
 use crate::{scene, settings::Settings, theme};
@@ -89,6 +92,33 @@ impl View {
     }
 }
 
+/// Where the world is on the screen, for what the interface draws over the game: the tags
+/// of the barriers and the ruler.
+///
+/// It reads the camera where [`follow`] has just put it. The engine only works that out once
+/// the systems of a frame have run, which is a frame late for a mark that must stay on what it
+/// marks while the view moves. A system that uses it runs after [`follow`].
+#[derive(SystemParam)]
+pub struct OnScreen<'w, 's> {
+    camera: Single<'w, 's, (&'static Camera, &'static Transform), With<MainCamera>>,
+    scale: Res<'w, UiScale>,
+}
+
+impl OnScreen<'_, '_> {
+    /// The place of a point of the world, in the pixels of the interface.
+    pub fn point(&self, world: Vec3) -> Option<Vec2> {
+        let (camera, transform) = *self.camera;
+        let seen_from = GlobalTransform::from(*transform);
+        let at = camera.world_to_viewport(&seen_from, world).ok()?;
+        Some(at / self.scale.0)
+    }
+
+    /// The size of the screen, in the pixels of the interface.
+    pub fn size(&self) -> Option<Vec2> {
+        Some(self.camera.0.logical_viewport_size()? / self.scale.0)
+    }
+}
+
 pub fn plugin(app: &mut App) {
     app.init_resource::<View>()
         .insert_resource(ClearColor(theme::VOID))
@@ -129,7 +159,7 @@ pub fn aim(
     }
 }
 
-fn follow(
+pub fn follow(
     time: Res<Time>,
     settings: Res<Settings>,
     mut view: ResMut<View>,

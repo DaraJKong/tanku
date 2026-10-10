@@ -12,6 +12,7 @@ mod models;
 mod scene;
 mod settings;
 mod storage;
+mod tags;
 mod theme;
 
 use bevy::prelude::*;
@@ -74,6 +75,7 @@ fn main() {
             models::plugin,
             effects::plugin,
             hud::plugin,
+            tags::plugin,
             menu::plugin,
             audio::plugin,
         ));
