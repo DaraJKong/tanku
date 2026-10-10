@@ -25,36 +25,54 @@ pub const CHANNELS: u16 = 2;
 
 /// The music from its start, in the main menu, and the conductor that goes with it.
 pub fn music() -> (Music, Conductor) {
-    with(Director::default(), Context::default())
+    let conductor = Conductor::default();
+    (conductor.music(), conductor)
 }
 
 /// The music of a game that has been in a context for a long time: it starts in the section
 /// of that context, and nothing announces it.
 pub fn music_from(context: Context) -> (Music, Conductor) {
-    with(Director::settled(context), context)
+    let conductor = Conductor(Arc::new(AtomicU32::new(pack(context))));
+    (conductor.follow(Director::settled(context)), conductor)
 }
 
-fn with(director: Director, context: Context) -> (Music, Conductor) {
-    let context = Arc::new(AtomicU32::new(pack(context)));
-    let music = Music {
-        context: context.clone(),
-        director,
-        synth: Synth::default(),
-        frame: 0,
-        next_step: 0,
-    };
-    (music, Conductor(context))
-}
-
-/// The end of the music that the game holds, to tell it what happens.
+/// The end of the music that the game holds, to tell it what happens. It starts in the main
+/// menu.
 #[derive(Clone)]
 pub struct Conductor(Arc<AtomicU32>);
+
+impl Default for Conductor {
+    fn default() -> Self {
+        Self(Arc::new(AtomicU32::new(pack(Context::default()))))
+    }
+}
 
 impl Conductor {
     /// Tells the music the context of the game. It never waits: the music reads the context
     /// at the start of its next step.
     pub fn set(&self, context: Context) {
         self.0.store(pack(context), Ordering::Relaxed);
+    }
+
+    /// What the music was last told.
+    pub fn context(&self) -> Context {
+        unpack(self.0.load(Ordering::Relaxed))
+    }
+
+    /// The music that this conductor leads, from the start of the piece. Whoever plays the
+    /// sound asks for it, which may be after the game has started to tell what happens.
+    pub fn music(&self) -> Music {
+        self.follow(Director::default())
+    }
+
+    fn follow(&self, director: Director) -> Music {
+        Music {
+            context: self.0.clone(),
+            director,
+            synth: Synth::default(),
+            frame: 0,
+            next_step: 0,
+        }
     }
 }
 
@@ -123,7 +141,31 @@ mod tests {
                     threat: bits >> 3,
                 };
                 assert_eq!(unpack(pack(context)), context);
+                let conductor = Conductor::default();
+                conductor.set(context);
+                assert_eq!(conductor.context(), context);
             }
         }
+    }
+
+    #[test]
+    fn the_music_can_be_asked_for_after_the_game_has_started() {
+        // Both ends are made at once, or the sound end later: the frames are the same.
+        let fight = Context {
+            place: Place::Corridor,
+            fight: true,
+            threat: 2,
+            ..Context::default()
+        };
+        let (mut at_once, conductor) = music();
+        conductor.set(fight);
+        let later = Conductor::default();
+        later.set(fight);
+        let mut later = later.music();
+        let mut frames = [vec![0.0; 2 * 44_100], vec![0.0; 2 * 44_100]];
+        at_once.render(&mut frames[0]);
+        later.render(&mut frames[1]);
+        assert!(frames[0].iter().any(|sample| *sample != 0.0));
+        assert_eq!(frames[0], frames[1]);
     }
 }

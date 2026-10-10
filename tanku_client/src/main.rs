@@ -10,6 +10,7 @@ mod hud;
 mod input;
 mod menu;
 mod models;
+mod music;
 mod report;
 mod ruler;
 mod scars;
@@ -85,8 +86,8 @@ fn main() {
             ruler::plugin,
             menu::plugin,
             report::plugin,
-            audio::plugin,
-        ));
+        ))
+        .add_plugins((audio::plugin, music::plugin));
     if options.playtest {
         // The lives count again once the pause menu says so.
         app.insert_resource(Playtest {

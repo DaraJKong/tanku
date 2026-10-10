@@ -1,6 +1,6 @@
 # Tanku: music specification
 
-Status: step 1 of the [steps](#steps) is built and has been listened to three times. The crate holds the score, the director, rough instruments and the listening tool. Nothing plays in the game, and [PROJECT.md](PROJECT.md) still says that music comes later.
+Status: step 1 of the [steps](#steps) is built: its sketch was listened to four times, and its notes are accepted. Step 2 is under way. The game plays the music on the desktop, where it follows the place and the fight: nobody has played with it yet. Every fight has the same threat until step 3, and the web build has no music until step 5. [PROJECT.md](PROJECT.md) still says that music comes later.
 
 The music of Tanku is one piece that never stops. The game makes it while it plays, from two short motifs and six instruments that it computes itself, so no sound file ships. The piece is the same for every seed and on every platform. What changes is its arrangement, which follows the run: where the players are, whether they are fighting, and how smart the enemies in front of them are.
 
@@ -191,11 +191,11 @@ The context is all that the music knows about the game. The client writes it eve
 
 | Part | Values | Meaning |
 |---|---|---|
-| Place | Menu, bay, corridor, arena | The sector the run has reached. The main menu and the game over screen count as the menu, and a switchback is a corridor. |
+| Place | Menu, bay, corridor, arena | The sector the run has reached. The main menu and the game over screen count as the menu, and so does a run from the moment it is over. A switchback is a corridor. |
 | Fight | On or off | On while at least one enemy is awake |
-| Threat | 0 to 4 | The highest brain tier among the enemies that are awake |
-| Down | On or off | In solo, the player's tank is destroyed and not back yet |
-| Muffled | On or off | A menu is open over the game |
+| Threat | 0 to 4 | The highest brain tier among the enemies that are awake. Until step 3 it is 2 in every fight. |
+| Down | On or off | In solo, the player's tank is destroyed and on its way back |
+| Muffled | On or off | The pause menu is open over the game. The settings leave the music clear, so that its volume is set by ear. |
 
 In multiplayer the context is the team's, so every player hears the same arrangement, and a fight starts for everyone when the first player crosses. A wrecked player hears the music muffled until repaired.
 
@@ -238,9 +238,9 @@ Three rules make the music answer fast and stay in time:
 | The fight ends | The fight plays on to its next beat, half a second away at most. Then the [connection](#connection): in two beats that slow down to the tempo of the bridge, the bass, the pluck and the lead, if it was playing, go together to degree 5. The kick keeps the beat under them and the other drums stop. | When the connection is over: the bridge starts on its first beat |
 | The threat changes | Nothing | On the next bar line: lead, bass and pluck change |
 | The player's tank is destroyed | Everything stops but the bass, which holds the root of the chord | On the bar line after the tank is back: the context decides again |
-| The run ends | The same | On the next bar line: the intro starts |
+| The run ends | The same | On the next bar line: the intro starts. The game over screen comes 1.4 s after the end, so the intro is there before it or soon after. |
 | A run starts | Nothing: the intro goes on | The count of phrases starts over |
-| A menu opens over the game | Within 0.2 s the music loses what is above 600 Hz and half its loudness. It gets them back when the menu closes. | Nothing |
+| The pause menu opens over the game | Within 0.2 s the music loses what is above 600 Hz and half its loudness. It gets them back when the menu closes, or when the settings open from it. | Nothing |
 
 The fight sections are counted in phrases: the two of the verse, then the two of the chorus, then the verse again. A fight opens on the phrase after the one where the last fight ended. The first fight of a run opens the verse, so every run begins the same way, and the short fights of the first sectors walk through the whole piece instead of repeating its first bars.
 
@@ -309,10 +309,12 @@ tanku_audio
 The crate has two ends. The game holds a `Conductor` and writes the context into it. The sound thread holds the `Music` and asks it for frames:
 
 ```rust
-let (music, conductor) = tanku_audio::music();
+let conductor = Conductor::default();
 // In the client, every frame:
 conductor.set(Context { place: Place::Corridor, fight: true, threat: 2, ..Context::default() });
-// On the sound thread, whenever the device wants more:
+// On the sound thread, once the sound library is ready to play:
+let mut music = conductor.music();
+// And whenever the device wants more:
 music.render(&mut frames);
 ```
 
@@ -325,9 +327,9 @@ music.render(&mut frames);
 | Development builds | The crate is compiled with full optimization, like the dependencies, because it runs in real time |
 | Start | Nothing is computed ahead, so the music adds nothing to the time the game takes to start or to restart |
 
-In the client, the music is an asset that implements Bevy's `Decodable`, which Bevy mixes with the cues. A system writes the context from `Screen`, `Overlay`, `Run`, the `Sector` the run has reached and the genomes of the enemies that are awake. Nothing changes in the server or in the simulation. A scripted run and the headless server have no music.
+In the client, the music is an asset that implements Bevy's `Decodable`, which Bevy mixes with the cues. It is played once and has no end. A system writes the context every frame from `Screen`, `Overlay`, `Run`, the `Sector` the run has reached and the enemies that are awake, and from step 3 on from their genomes. Another keeps the music in step with the volume of the game, because Bevy counts that volume into a sound only when the sound starts. Nothing changes in the server or in the simulation. A scripted run and the headless server have no music.
 
-On the web, the browser lets no sound play before the first click or key, so the music starts there. The web build also mixes its sound on the main thread, 46 ms at a time: a frame that takes longer than about 50 ms leaves a gap in the music. The cues have the same limit today, but a gap in a held note is heard far more than one in a short cue.
+The web build has no music until step 5. There, the browser lets no sound play before the first click or key, so the music will start with it. The web build also mixes its sound on the main thread, 46 ms at a time: a frame that takes longer than about 50 ms leaves a gap in the music. The cues have the same limit today, but a gap in a held note is heard far more than one in a short cue.
 
 A tool renders the music without the game:
 
@@ -348,6 +350,13 @@ It writes one sound file per arrangement, a tour through a made-up run with the 
 - **Connected.** For every note the lead can be on, the connection goes to degree 5 one step of the scale at a time and never turns back.
 - **Sound in both modes.** The motifs use the five degrees, the chords are major or minor, and every melody, with its skeleton and its ornaments, passes the check on semitones above the root.
 - **Cost.** A benchmark renders ten seconds of a fight in an arena at threat 4.
+
+The client has its own:
+
+- **Told right.** The context follows the screen, the run, the kind of its sector and the enemies that are awake. A run that is over counts as the menu, and only the pause menu muffles.
+- **Unchanged on the way.** The sound library reads the very samples that the crate renders.
+- **Under the cues.** The loudest arrangement peaks 12 dB below the shot of a player, within half a decibel.
+- **Heard.** On request, a test plays the piece on the sound device of the machine at no volume, and checks that the device asks for more: `cargo test -p tanku_client reaches_the_sound_device -- --ignored`.
 
 ## Steps
 

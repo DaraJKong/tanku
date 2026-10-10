@@ -9,6 +9,7 @@ workspace = true
 
 [dependencies]
 bevy = { workspace = true, features = ["3d", "ui", "bevy_audio", "wav"] }
+tanku_audio.workspace = true
 tanku_core.workspace = true
 tanku_server.workspace = true
 

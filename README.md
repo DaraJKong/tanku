@@ -2,7 +2,7 @@
 
 A cooperative top-down tank game for one to four players, built with Rust and Bevy. The players fight their way through an endless, procedurally generated corridor of enemy tanks, and one hit destroys a tank.
 
-The solo game is playable: the corridor, the generated enemies and their brains, lives and checkpoints, the menus and the sound cues are in. Co-op, achievements and the other modes are not. The specification is in [docs/PROJECT.md](docs/PROJECT.md).
+The solo game is playable: the corridor, the generated enemies and their brains, lives and checkpoints, the menus, the sound cues and, on the desktop, the music are in. Co-op, achievements and the other modes are not. The specification is in [docs/PROJECT.md](docs/PROJECT.md).
 
 ## Workspace
 
@@ -11,7 +11,7 @@ The solo game is playable: the corridor, the generated enemies and their brains,
 | `tanku_core` | The rules both sides share: stats, progression, map and enemy generation, simulation types |
 | `tanku_server` | The authoritative simulation: a library that the client embeds for solo and hosted games, and a headless binary |
 | `tanku_client` | The game: rendering, input, interface and sound |
-| `tanku_audio` | The sound that the game computes. For now it holds the music, which doesn't play in the game yet. |
+| `tanku_audio` | The sound that the game computes. For now it holds the music, which the client plays. |
 
 ## Playing
 
@@ -137,7 +137,7 @@ TANKU_DEV_SCRIPT="start TANKU; wait 1; warp 12; wait 1; peek 0; wait 1; shot sec
 
 ## Listening to the music
 
-The music is specified in [docs/MUSIC.md](docs/MUSIC.md). It doesn't play in the game yet: a tool writes it to sound files, to judge it by ear first.
+The music is specified in [docs/MUSIC.md](docs/MUSIC.md). The game plays it on the desktop. A tool also writes it to sound files, to hear an arrangement without playing up to it:
 
 ```bash
 cargo run -p tanku_audio --example render

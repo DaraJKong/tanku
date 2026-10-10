@@ -5076,6 +5076,7 @@ name = "tanku_client"
 version = "0.3.0"
 dependencies = [
  "bevy",
+ "tanku_audio",
  "tanku_core",
  "tanku_server",
  "web-sys",

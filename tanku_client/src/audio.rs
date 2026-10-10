@@ -51,11 +51,23 @@ impl Noise {
     }
 }
 
-/// Renders a waveform to a WAV file in memory: mono, 16 bits.
-fn render(seconds: f32, wave: impl Fn(f32, &mut Noise) -> f32) -> AudioSource {
+/// The samples of a waveform, each from -1 to 1.
+fn samples(seconds: f32, wave: impl Fn(f32, &mut Noise) -> f32) -> Vec<f32> {
     let count = (seconds * SAMPLE_RATE as f32) as u32;
     let mut noise = Noise(12345);
-    let data_size = count * 2;
+    let sample = |index: u32| {
+        let t = index as f32 / SAMPLE_RATE as f32;
+        // A short fade at the end avoids a click.
+        let fade = ((seconds - t) / 0.01).min(1.0);
+        (wave(t, &mut noise) * fade).clamp(-1.0, 1.0)
+    };
+    (0..count).map(sample).collect()
+}
+
+/// Renders a waveform to a WAV file in memory: mono, 16 bits.
+fn render(seconds: f32, wave: impl Fn(f32, &mut Noise) -> f32) -> AudioSource {
+    let samples = samples(seconds, wave);
+    let data_size = samples.len() as u32 * 2;
     let mut bytes = Vec::with_capacity(44 + data_size as usize);
     bytes.extend(b"RIFF");
     bytes.extend((36 + data_size).to_le_bytes());
@@ -69,11 +81,7 @@ fn render(seconds: f32, wave: impl Fn(f32, &mut Noise) -> f32) -> AudioSource {
     bytes.extend(16u16.to_le_bytes());
     bytes.extend(b"data");
     bytes.extend(data_size.to_le_bytes());
-    for index in 0..count {
-        let t = index as f32 / SAMPLE_RATE as f32;
-        // A short fade at the end avoids a click.
-        let fade = ((seconds - t) / 0.01).min(1.0);
-        let sample = (wave(t, &mut noise) * fade).clamp(-1.0, 1.0);
+    for sample in samples {
         bytes.extend(((sample * i16::MAX as f32) as i16).to_le_bytes());
     }
     AudioSource {
@@ -86,10 +94,28 @@ fn sweep(t: f32, from: f32, to: f32, seconds: f32) -> f32 {
     (TAU * (from * t + (to - from) * t * t / (2.0 * seconds))).sin()
 }
 
+fn decay(t: f32, rate: f32) -> f32 {
+    (-t * rate).exp()
+}
+
+/// Seconds that the shot of a player lasts.
+const SHOT: f32 = 0.16;
+
+/// The shot of a player.
+fn shot(t: f32, noise: &mut Noise) -> f32 {
+    0.5 * sweep(t, 420.0, 90.0, SHOT) * decay(t, 22.0) + 0.3 * noise.next() * decay(t, 60.0)
+}
+
+/// The highest level that the shot of a player reaches. The music is set against it.
+#[cfg(test)]
+pub fn loudest_shot() -> f32 {
+    let levels = samples(SHOT, shot).into_iter().map(f32::abs);
+    levels.fold(0.0, f32::max)
+}
+
 fn setup(mut commands: Commands, mut sources: ResMut<Assets<AudioSource>>) {
     let mut cue =
         |seconds: f32, wave: &dyn Fn(f32, &mut Noise) -> f32| sources.add(render(seconds, wave));
-    let decay = |t: f32, rate: f32| (-t * rate).exp();
     let note = |t: f32, start: f32, pitch: f32| {
         if t < start {
             0.0
@@ -98,9 +124,7 @@ fn setup(mut commands: Commands, mut sources: ResMut<Assets<AudioSource>>) {
         }
     };
     commands.insert_resource(Cues {
-        shot: cue(0.16, &|t, noise| {
-            0.5 * sweep(t, 420.0, 90.0, 0.16) * decay(t, 22.0) + 0.3 * noise.next() * decay(t, 60.0)
-        }),
+        shot: cue(SHOT, &shot),
         enemy_shot: cue(0.18, &|t, noise| {
             0.5 * sweep(t, 300.0, 60.0, 0.18) * decay(t, 20.0) + 0.3 * noise.next() * decay(t, 50.0)
         }),
