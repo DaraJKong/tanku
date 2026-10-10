@@ -71,7 +71,7 @@ fn spawn(
             }
             SimEvent::Ricochet { at } => (at, 0.8, 0.6, 0.12, &glows.spark),
             SimEvent::BulletDestroyed { at } => (at, 0.8, 0.8, 0.15, &glows.spark),
-            SimEvent::ShieldBlocked { at } => (at, 0.6, 3.4, 0.2, &glows.cold),
+            SimEvent::ShieldBlocked { at } => (at, 0.6, 3.4, 0.2, &glows.spark),
             SimEvent::PlayerRespawned { at } => (at, 0.6, 4.0, 0.5, &glows.cold),
             SimEvent::FlagCaptured { at } => (at, 0.6, 5.0, 0.5, &glows.good),
             _ => continue,

@@ -5,7 +5,7 @@
 
 use std::f32::consts::FRAC_PI_2;
 
-use bevy::prelude::*;
+use bevy::{light::NotShadowCaster, prelude::*};
 use tanku_core::{
     rules::SHIELD_RADIUS,
     sim::{Enemy, Motion, Player, Shield, ShieldState, Tank},
@@ -160,7 +160,7 @@ fn build(
             light(theme::SHIELD),
         );
         let bubble = materials.add(StandardMaterial {
-            base_color: theme::PLAYER_BULLET.with_alpha(0.3),
+            base_color: theme::SHIELD.with_alpha(0.16),
             alpha_mode: AlphaMode::Blend,
             unlit: true,
             ..default()
@@ -292,12 +292,21 @@ fn build(
                         }
                     });
 
+                // The bubble is faint and casts no shadow, so that the tank shows through it.
+                // A bright line marks how far it reaches.
                 root.spawn((
                     Bubble,
                     Mesh3d(shapes.sphere.clone()),
                     MeshMaterial3d(bubble),
                     Transform::from_xyz(0.0, 0.5, 0.0).with_scale(Vec3::splat(2.0 * SHIELD_RADIUS)),
                     Visibility::Hidden,
+                    NotShadowCaster,
+                    children![(
+                        Mesh3d(shapes.circle.clone()),
+                        MeshMaterial3d(shield.clone()),
+                        Transform::from_scale(Vec3::new(1.0, 0.3, 1.0)),
+                        NotShadowCaster,
+                    )],
                 ));
             });
     }
