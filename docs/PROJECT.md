@@ -101,7 +101,7 @@ Enemy groups grow with the number of players (see [Progression](#progression)). 
 |---|---|---|
 | Normal | The rules of this document | Available from the start |
 | Chosen seed | The players type a seed instead of getting a random one. | Reaching sector 10 |
-| Free mode | Each player redistributes the 58 points of the player tank before the run. | Reaching sector 20 |
+| Free mode | Each player redistributes the 59 points of the player tank before the run. | Reaching sector 20 |
 | Hard mode | Sector budgets start at 40 and are capped at 130, all software tiers are available from sector 1, and experience is that of 20 sectors further. | Reaching sector 30 |
 | Impossible mode | Later. Enemies adapt to the players during the run (see [Impossible mode](#impossible-mode)). | Reaching sector 20 in hard mode |
 
@@ -211,7 +211,7 @@ Level 0 of each stat is free. Costs are cumulative: each number is the total pri
 | Engine | Top speed in m/s | 0, 2, 3, 4, 5, 6, 7, 8 | 0, 2, 4, 6, 8, 11, 14, 17 |
 | Tracks | Hull turn rate in °/s | 90, 135, 180, 225, 270, 315, 360 | 0, 1, 2, 3, 4, 5, 6 |
 | Turret | Turret turn rate in °/s (enemies only) | 45, 60, 90, 120, 180, 270, 360 | 0, 1, 2, 3, 5, 7, 10 |
-| Muzzle | Bullet speed in m/s | 6, 7.5, 9, 12, 14, 16, 18, 20 | 0, 1, 2, 4, 6, 8, 11, 14 |
+| Muzzle | Bullet speed in m/s | 6, 7.5, 9, 12, 14, 16, 18, 20 | 0, 1, 3, 6, 9, 12, 16, 21 |
 | Magazine | Rounds held | 1, 2, 3, 4, 5, 6 | 0, 3, 6, 9, 12, 15 |
 | Loader | Seconds to reload one round | 4.0, 3.2, 2.5, 2.0, 1.6, 1.25, 1.0, 0.8 | 0, 1, 2, 4, 6, 9, 12, 16 |
 | Ricochet | Bounces per bullet | 0, 1, 2, 3 | 0, 4, 10, 18 |
@@ -219,7 +219,7 @@ Level 0 of each stat is free. Costs are cumulative: each number is the total pri
 | Shield | Stun / cooldown in s | none, 1.5 / 10, 1.2 / 9, 0.9 / 8, 0.6 / 7, 0.3 / 6 | 0, 6, 9, 12, 15, 18 |
 | Piercing | Bullets that each of its bullets pierces | 0, 1 | 0, 4 |
 
-Every stat stops at its highest level. These limits keep the game sound: a bullet, for instance, never gets fast enough to pass through a wall. Buying every hardware stat at its highest level costs 128 points.
+Every stat stops at its highest level. These limits keep the game sound: a bullet, for instance, never gets fast enough to pass through a wall. Buying every hardware stat at its highest level costs 135 points.
 
 ### Software stats
 
@@ -255,19 +255,19 @@ Prices are right when two enemy tanks of equal budget are about equally dangerou
 
 ### Player tank
 
-The player tank spends 58 points. Free mode lets each player redistribute them over every hardware stat except Turret.
+The player tank spends 59 points. Free mode lets each player redistribute them over every hardware stat except Turret.
 
 | Stat | Level | Value | Cost |
 |---|---|---|---|
 | Engine | 4 | 5 m/s | 8 |
 | Tracks | 5 | 315°/s | 5 |
-| Muzzle | 2 | 9 m/s | 2 |
+| Muzzle | 2 | 9 m/s | 3 |
 | Magazine | 4 | 5 rounds | 12 |
 | Loader | 6 | 1.0 s per round | 12 |
 | Ricochet | 1 | 1 bounce | 4 |
 | Mines | 2 | 2 mines | 6 |
 | Shield | 2 | 1.2 s stun, 9 s cooldown | 9 |
-| **Total** | | | **58** |
+| **Total** | | | **59** |
 
 ### Enemy generation
 
@@ -288,12 +288,12 @@ The price list can express the enemy roster of Tanks!, in roughly the order in w
 |---|---|---|---|
 | Sentry (brown) | Stationary, 9 m/s bullets with 1 bounce, no brain | 10 | 1 |
 | Rover (gray) | 2 m/s, same gun, brain 1 | 15 | 2 |
-| Sniper (teal) | 2 m/s, 18 m/s bullets without bounce, brain 2, ballistics 1 | 25 | 6 |
-| Burster (pink) | 4 m/s, 3 rounds, brain 2 | 33 | 6 |
-| Miner (yellow) | 6 m/s, 4 mines, brain 1 | 37 | 7 |
-| Banker (green) | Stationary, 18 m/s bullets with 2 bounces, ballistics 3 | 44 | 13 |
-| Raider (purple) | 6 m/s, 5 rounds, 2 mines, brain 3 | 70 | 18 |
-| Hunter (black) | 8 m/s, 18 m/s bullets, 2 mines, brain 4 | 89 | 32 |
+| Sniper (teal) | 2 m/s, 18 m/s bullets without bounce, brain 2, ballistics 1 | 31 | 6 |
+| Burster (pink) | 4 m/s, 3 rounds, brain 2 | 34 | 6 |
+| Miner (yellow) | 6 m/s, 4 mines, brain 1 | 39 | 7 |
+| Banker (green) | Stationary, 18 m/s bullets with 2 bounces, ballistics 3 | 50 | 13 |
+| Raider (purple) | 6 m/s, 5 rounds, 2 mines, brain 3 | 72 | 19 |
+| Hunter (black) | 8 m/s, 18 m/s bullets, 2 mines, brain 4 | 96 | 46 |
 
 ### Appearance
 
@@ -336,7 +336,7 @@ The sector budget is the most points an enemy of sector $n$ can have:
 
 $$B(n) = B_{\max} - (B_{\max} - B_0)\, e^{-(n-1)/15}$$
 
-with $B_0 = 10$ and $B_{\max} = 100$ in normal mode. It rises fast at first and flattens toward the cap. The cap stays below the 128 points of a fully equipped tank, so even late enemies must specialize. Every stat also stops at its own highest level.
+with $B_0 = 10$ and $B_{\max} = 100$ in normal mode. It rises fast at first and flattens toward the cap. The cap stays below the 135 points of a fully equipped tank, so even late enemies must specialize. Every stat also stops at its own highest level.
 
 The number of enemies in a sector is $N(n) = \min(6,\ 1 + \lfloor n/3 \rfloor)$ in solo and $\lceil N(n)\,(1 + 0.5\,(P - 1)) \rceil$ with $P$ players. Arenas hold 1.5 times as many.
 
