@@ -81,6 +81,7 @@ fn main() {
             infinite_lives: true,
         });
     }
+    app.insert_resource(options);
     #[cfg(feature = "development")]
     app.add_plugins(dev::plugin);
     app.run();

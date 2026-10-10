@@ -9,6 +9,7 @@ use tanku_core::{
 
 use crate::{
     Overlay, Screen,
+    cli::Options,
     settings::{Action, Binding, Records, Settings},
     theme,
 };
@@ -237,7 +238,12 @@ fn record_line(records: &Records) -> String {
     }
 }
 
-fn main_menu(mut commands: Commands, records: Res<Records>, playtest: Option<Res<Playtest>>) {
+fn main_menu(
+    mut commands: Commands,
+    records: Res<Records>,
+    playtest: Option<Res<Playtest>>,
+    options: Res<Options>,
+) {
     panel(
         &mut commands,
         DespawnOnExit(Screen::Menu),
@@ -262,6 +268,13 @@ fn main_menu(mut commands: Commands, records: Res<Records>, playtest: Option<Res
                     theme::ACCENT,
                 );
                 line(parent, "A playtest sets no record", theme::TEXT_DIM);
+                if let Some(seed) = &options.seed {
+                    line(
+                        parent,
+                        format!("Every run is on seed {seed}"),
+                        theme::TEXT_DIM,
+                    );
+                }
             }
         },
     );
@@ -329,6 +342,13 @@ fn refresh_pause(
         commands.entity(entity).despawn();
     }
     pause_menu(commands, run, Some(playtest), destination);
+}
+
+/// The seed of a new run: the one that the command line gave to a playtest, or else a random
+/// one.
+fn new_seed(options: &Options, entropy: u64) -> String {
+    let chosen = options.seed.clone();
+    chosen.unwrap_or_else(|| seed::random_seed_text(entropy))
 }
 
 /// Keeps the record of a run, unless it was a playtest. Returns whether the record is new.
@@ -512,6 +532,7 @@ fn press(
     mut records: ResMut<Records>,
     mut playtest: Option<ResMut<Playtest>>,
     mut destination: ResMut<Destination>,
+    options: Res<Options>,
     run: Option<Res<Run>>,
     time: Res<Time<Real>>,
     mut requests: MessageWriter<RunRequest>,
@@ -530,7 +551,7 @@ fn press(
                 let seed = match (*press, &run) {
                     (Press::Retry, Some(run)) => run.seed_text.clone(),
                     // The moment of the click is all the entropy a seed needs.
-                    _ => seed::random_seed_text(time.elapsed().as_nanos() as u64),
+                    _ => new_seed(&options, time.elapsed().as_nanos() as u64),
                 };
                 requests.write(RunRequest::Start { seed });
                 next_screen.set(Screen::Playing);
@@ -674,6 +695,18 @@ mod tests {
     use tanku_core::sim::RunPhase;
 
     use super::*;
+
+    #[test]
+    fn a_seed_from_the_command_line_serves_every_run() {
+        let chosen = Options {
+            playtest: true,
+            seed: Some("85GVTHQA".into()),
+        };
+        assert_eq!(new_seed(&chosen, 1), "85GVTHQA");
+        assert_eq!(new_seed(&chosen, 2), "85GVTHQA");
+        let random = Options::default();
+        assert_ne!(new_seed(&random, 1), new_seed(&random, 2));
+    }
 
     #[test]
     fn a_playtest_sets_no_record() {
