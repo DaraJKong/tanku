@@ -1,9 +1,12 @@
-//! The sound cues. Each one is a short waveform computed when the game starts, so the game
-//! ships without sound files.
-
-use std::f32::consts::TAU;
+//! The sound cues. The crate `tanku_audio` computes their waveforms when the game starts, so
+//! the game ships without sound files. This module plays them: it knows where a sound comes
+//! from and how loud it is.
 
 use bevy::{audio::Volume, prelude::*};
+use tanku_audio::{
+    cues::{self, Cue},
+    wav,
+};
 use tanku_core::sim::{SimEvent, Team};
 
 use crate::camera::View;
@@ -12,28 +15,17 @@ use crate::camera::View;
 #[derive(Resource)]
 pub struct Muted;
 
-const SAMPLE_RATE: u32 = 22_050;
 /// Distance at which a sound is at its quietest.
 const HEARING_RANGE: f32 = 50.0;
 
+/// Every cue as a sound that is ready to play, in the order of the cues.
 #[derive(Resource)]
-struct Cues {
-    shot: Handle<AudioSource>,
-    enemy_shot: Handle<AudioSource>,
-    ricochet: Handle<AudioSource>,
-    pop: Handle<AudioSource>,
-    mine_placed: Handle<AudioSource>,
-    mine_triggered: Handle<AudioSource>,
-    blast: Handle<AudioSource>,
-    shield_raised: Handle<AudioSource>,
-    shield_blocked: Handle<AudioSource>,
-    shield_overloaded: Handle<AudioSource>,
-    cleared: Handle<AudioSource>,
-    captured: Handle<AudioSource>,
-    unlocked: Handle<AudioSource>,
-    respawned: Handle<AudioSource>,
-    run_over: Handle<AudioSource>,
-    click: Handle<AudioSource>,
+struct Cues(Vec<Handle<AudioSource>>);
+
+impl Cues {
+    fn sound(&self, cue: Cue) -> Handle<AudioSource> {
+        self.0[cue as usize].clone()
+    }
 }
 
 pub fn plugin(app: &mut App) {
@@ -41,137 +33,13 @@ pub fn plugin(app: &mut App) {
         .add_systems(Update, (play, click));
 }
 
-/// White noise from a small generator of its own, so that every build makes the same sounds.
-struct Noise(u32);
-
-impl Noise {
-    fn next(&mut self) -> f32 {
-        self.0 = self.0.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-        (self.0 >> 8) as f32 / (1 << 23) as f32 - 1.0
-    }
-}
-
-/// The samples of a waveform, each from -1 to 1.
-fn samples(seconds: f32, wave: impl Fn(f32, &mut Noise) -> f32) -> Vec<f32> {
-    let count = (seconds * SAMPLE_RATE as f32) as u32;
-    let mut noise = Noise(12345);
-    let sample = |index: u32| {
-        let t = index as f32 / SAMPLE_RATE as f32;
-        // A short fade at the end avoids a click.
-        let fade = ((seconds - t) / 0.01).min(1.0);
-        (wave(t, &mut noise) * fade).clamp(-1.0, 1.0)
-    };
-    (0..count).map(sample).collect()
-}
-
-/// Renders a waveform to a WAV file in memory: mono, 16 bits.
-fn render(seconds: f32, wave: impl Fn(f32, &mut Noise) -> f32) -> AudioSource {
-    let samples = samples(seconds, wave);
-    let data_size = samples.len() as u32 * 2;
-    let mut bytes = Vec::with_capacity(44 + data_size as usize);
-    bytes.extend(b"RIFF");
-    bytes.extend((36 + data_size).to_le_bytes());
-    bytes.extend(b"WAVEfmt ");
-    bytes.extend(16u32.to_le_bytes());
-    bytes.extend(1u16.to_le_bytes()); // PCM
-    bytes.extend(1u16.to_le_bytes()); // one channel
-    bytes.extend(SAMPLE_RATE.to_le_bytes());
-    bytes.extend((SAMPLE_RATE * 2).to_le_bytes());
-    bytes.extend(2u16.to_le_bytes());
-    bytes.extend(16u16.to_le_bytes());
-    bytes.extend(b"data");
-    bytes.extend(data_size.to_le_bytes());
-    for sample in samples {
-        bytes.extend(((sample * i16::MAX as f32) as i16).to_le_bytes());
-    }
-    AudioSource {
-        bytes: bytes.into(),
-    }
-}
-
-/// A sine whose pitch slides from one frequency to another over a duration.
-fn sweep(t: f32, from: f32, to: f32, seconds: f32) -> f32 {
-    (TAU * (from * t + (to - from) * t * t / (2.0 * seconds))).sin()
-}
-
-fn decay(t: f32, rate: f32) -> f32 {
-    (-t * rate).exp()
-}
-
-/// Seconds that the shot of a player lasts.
-const SHOT: f32 = 0.16;
-
-/// The shot of a player.
-fn shot(t: f32, noise: &mut Noise) -> f32 {
-    0.5 * sweep(t, 420.0, 90.0, SHOT) * decay(t, 22.0) + 0.3 * noise.next() * decay(t, 60.0)
-}
-
-/// The highest level that the shot of a player reaches. The music is set against it.
-#[cfg(test)]
-pub fn loudest_shot() -> f32 {
-    let levels = samples(SHOT, shot).into_iter().map(f32::abs);
-    levels.fold(0.0, f32::max)
-}
-
+/// Computes the cues, each as a WAV file in memory.
 fn setup(mut commands: Commands, mut sources: ResMut<Assets<AudioSource>>) {
-    let mut cue =
-        |seconds: f32, wave: &dyn Fn(f32, &mut Noise) -> f32| sources.add(render(seconds, wave));
-    let note = |t: f32, start: f32, pitch: f32| {
-        if t < start {
-            0.0
-        } else {
-            (TAU * pitch * t).sin() * decay(t - start, 9.0)
-        }
+    let sound = |cue: Cue| AudioSource {
+        bytes: wav::encode_as(&cue.samples(), 1, cues::SAMPLE_RATE).into(),
     };
-    commands.insert_resource(Cues {
-        shot: cue(SHOT, &shot),
-        enemy_shot: cue(0.18, &|t, noise| {
-            0.5 * sweep(t, 300.0, 60.0, 0.18) * decay(t, 20.0) + 0.3 * noise.next() * decay(t, 50.0)
-        }),
-        ricochet: cue(0.2, &|t, _| {
-            0.35 * sweep(t, 1900.0, 2900.0, 0.2) * decay(t, 24.0)
-        }),
-        pop: cue(0.07, &|t, noise| 0.3 * noise.next() * decay(t, 70.0)),
-        mine_placed: cue(0.09, &|t, _| 0.4 * (TAU * 620.0 * t).sin() * decay(t, 40.0)),
-        mine_triggered: cue(0.6, &|t, _| {
-            if t % 0.1 < 0.05 {
-                0.4 * (TAU * 1500.0 * t).sin()
-            } else {
-                0.0
-            }
-        }),
-        blast: cue(0.8, &|t, noise| {
-            let rumble = (TAU * 52.0 * t).sin() * decay(t, 7.0);
-            0.6 * rumble + 0.5 * noise.next() * decay(t, 9.0)
-        }),
-        shield_raised: cue(0.25, &|t, _| {
-            0.35 * sweep(t, 400.0, 1800.0, 0.25) * (1.0 - t / 0.25)
-        }),
-        shield_blocked: cue(0.16, &|t, _| {
-            0.3 * ((TAU * 900.0 * t).sin() + (TAU * 1350.0 * t).sin()) * decay(t, 20.0)
-        }),
-        shield_overloaded: cue(0.45, &|t, noise| {
-            (0.35 * sweep(t, 700.0, 120.0, 0.45) + 0.15 * noise.next()) * (1.0 - t / 0.45)
-        }),
-        cleared: cue(0.5, &|t, _| {
-            0.3 * (note(t, 0.0, 660.0) + note(t, 0.14, 880.0))
-        }),
-        captured: cue(0.6, &|t, _| {
-            0.3 * (note(t, 0.0, 660.0) + note(t, 0.1, 880.0) + note(t, 0.2, 1320.0))
-        }),
-        unlocked: cue(0.45, &|t, _| {
-            0.3 * (note(t, 0.0, 880.0) + note(t, 0.12, 1320.0))
-        }),
-        respawned: cue(0.4, &|t, _| {
-            0.3 * sweep(t, 300.0, 900.0, 0.4) * (1.0 - t / 0.4)
-        }),
-        run_over: cue(1.0, &|t, _| {
-            0.3 * (note(t, 0.0, 440.0) + note(t, 0.25, 330.0) + note(t, 0.5, 220.0))
-        }),
-        click: cue(0.04, &|t, _| {
-            0.3 * (TAU * 1000.0 * t).sin() * decay(t, 80.0)
-        }),
-    });
+    let sounds = Cue::ALL.map(|cue| sources.add(sound(cue)));
+    commands.insert_resource(Cues(sounds.to_vec()));
 }
 
 fn play(
@@ -185,24 +53,24 @@ fn play(
             SimEvent::Shot {
                 at,
                 team: Team::Players,
-            } => (&cues.shot, Some(at)),
+            } => (Cue::Shot, Some(at)),
             SimEvent::Shot {
                 at,
                 team: Team::Enemies,
-            } => (&cues.enemy_shot, Some(at)),
-            SimEvent::Ricochet { at } => (&cues.ricochet, Some(at)),
-            SimEvent::BulletDestroyed { at, .. } => (&cues.pop, Some(at)),
-            SimEvent::MinePlaced { at } => (&cues.mine_placed, Some(at)),
-            SimEvent::MineTriggered { at } => (&cues.mine_triggered, Some(at)),
-            SimEvent::Blast { at } | SimEvent::TankDestroyed { at, .. } => (&cues.blast, Some(at)),
-            SimEvent::ShieldRaised { at } => (&cues.shield_raised, Some(at)),
-            SimEvent::ShieldBlocked { at } => (&cues.shield_blocked, Some(at)),
-            SimEvent::ShieldOverloaded { at } => (&cues.shield_overloaded, Some(at)),
-            SimEvent::SectorCleared { sector } if sector > 0 => (&cues.cleared, None),
-            SimEvent::FlagCaptured { .. } => (&cues.captured, None),
-            SimEvent::BarrierUnlocked { sector } if sector > 0 => (&cues.unlocked, None),
-            SimEvent::PlayerRespawned { .. } => (&cues.respawned, None),
-            SimEvent::RunOver => (&cues.run_over, None),
+            } => (Cue::EnemyShot, Some(at)),
+            SimEvent::Ricochet { at } => (Cue::Ricochet, Some(at)),
+            SimEvent::BulletDestroyed { at, .. } => (Cue::Pop, Some(at)),
+            SimEvent::MinePlaced { at } => (Cue::MinePlaced, Some(at)),
+            SimEvent::MineTriggered { at } => (Cue::MineTriggered, Some(at)),
+            SimEvent::Blast { at } | SimEvent::TankDestroyed { at, .. } => (Cue::Blast, Some(at)),
+            SimEvent::ShieldRaised { at } => (Cue::ShieldRaised, Some(at)),
+            SimEvent::ShieldBlocked { at } => (Cue::ShieldBlocked, Some(at)),
+            SimEvent::ShieldOverloaded { at } => (Cue::ShieldOverloaded, Some(at)),
+            SimEvent::SectorCleared { sector } if sector > 0 => (Cue::Cleared, None),
+            SimEvent::FlagCaptured { .. } => (Cue::Captured, None),
+            SimEvent::BarrierUnlocked { sector } if sector > 0 => (Cue::Unlocked, None),
+            SimEvent::PlayerRespawned { .. } => (Cue::Respawned, None),
+            SimEvent::RunOver => (Cue::RunOver, None),
             _ => continue,
         };
         // What happens far from the middle of the screen is quieter, but never silent: sound
@@ -210,7 +78,7 @@ fn play(
         let nearness = at.map_or(1.0, |at| 1.0 - at.distance(view.focus()) / HEARING_RANGE);
         let volume = Volume::Linear(nearness.clamp(0.25, 1.0));
         commands.spawn((
-            AudioPlayer::new(cue.clone()),
+            AudioPlayer::new(cues.sound(cue)),
             PlaybackSettings::DESPAWN.with_volume(volume),
         ));
     }
@@ -226,8 +94,37 @@ fn click(
         .any(|interaction| *interaction == Interaction::Pressed)
     {
         commands.spawn((
-            AudioPlayer::new(cues.click.clone()),
+            AudioPlayer::new(cues.sound(Cue::Click)),
             PlaybackSettings::DESPAWN,
         ));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bevy::audio::Source;
+
+    use super::*;
+
+    #[test]
+    fn the_sound_library_reads_every_cue_back() {
+        let mut app = App::new();
+        app.init_resource::<Assets<AudioSource>>()
+            .add_systems(Startup, setup);
+        app.update();
+        let cues = app.world().resource::<Cues>();
+        let sources = app.world().resource::<Assets<AudioSource>>();
+        for cue in Cue::ALL {
+            let sound = sources.get(&cues.sound(cue)).unwrap().decoder();
+            assert_eq!(sound.channels().get(), 1, "{cue:?}");
+            assert_eq!(sound.sample_rate().get(), cues::SAMPLE_RATE, "{cue:?}");
+            // What it reads is the cue, to a step of a file of 16 bits.
+            let read: Vec<f32> = sound.collect();
+            let computed = cue.samples();
+            assert_eq!(read.len(), computed.len(), "{cue:?}");
+            for (read, computed) in read.iter().zip(&computed) {
+                assert!((read - computed).abs() < 2.0 / i16::MAX as f32, "{cue:?}");
+            }
+        }
     }
 }

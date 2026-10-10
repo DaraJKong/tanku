@@ -11,7 +11,7 @@ The solo game is playable: the corridor, the generated enemies and their brains,
 | `tanku_core` | The rules both sides share: stats, progression, map and enemy generation, simulation types |
 | `tanku_server` | The authoritative simulation: a library that the client embeds for solo and hosted games, and a headless binary |
 | `tanku_client` | The game: rendering, input, interface and sound |
-| `tanku_audio` | The sound that the game computes. For now it holds the music, which the client plays. |
+| `tanku_audio` | The sound that the game computes: the music and the waveforms of the sound cues, which the client plays |
 
 ## Playing
 

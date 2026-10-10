@@ -1,10 +1,15 @@
-//! The sound that Tanku computes while it plays. No sound file ships with the game.
+//! The sound that Tanku computes. No sound file ships with the game.
 //!
 //! The music is one piece that never stops and is the same on every platform. The game holds
 //! a [`Conductor`] and tells it what happens, and whoever plays the sound holds the [`Music`]
 //! and asks it for frames. Its specification is in `docs/MUSIC.md`.
+//!
+//! The sound cues are in [`cues`]: short waveforms that the game computes when it starts and
+//! plays itself.
 
+pub mod cues;
 pub mod director;
+mod math;
 pub mod score;
 pub mod synth;
 pub mod wav;

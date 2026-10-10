@@ -193,6 +193,7 @@ fn tell(
 #[cfg(test)]
 mod tests {
     use bevy::audio::AudioPlugin;
+    use tanku_audio::cues::Cue;
     use tanku_core::{
         enemy,
         map::Corridor,
@@ -306,7 +307,8 @@ mod tests {
                 .iter()
                 .fold(peak, |peak, sample| peak.max(sample.abs()));
         }
-        let shot = crate::audio::loudest_shot();
+        let shot = Cue::Shot.samples().into_iter().map(f32::abs);
+        let shot = shot.fold(0.0, f32::max);
         let settings = Settings::default();
         // The volume of the game sets both, so it doesn't count.
         let under = 20.0 * (shot / (peak * loudness(&settings))).log10();

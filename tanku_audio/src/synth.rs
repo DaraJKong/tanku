@@ -2,8 +2,8 @@
 //!
 //! Everything here adds, subtracts, multiplies and divides 32-bit floats, which gives the same
 //! result on every platform. Nothing calls a library function such as `sin` or `exp`, whose
-//! last bit differs from one platform to the next: sines and decays come from the few lines
-//! below.
+//! last bit differs from one platform to the next: sines come from `math`, and decays from
+//! the few lines below.
 //!
 //! A sound is also a function of what was played and of nothing else. A note of a given pitch
 //! is the same every time and so is every hit of a drum, which makes a loop of the piece
@@ -14,6 +14,7 @@ use std::f32::consts::TAU;
 use crate::{
     SAMPLE_RATE,
     director::{Step, Tone},
+    math::{Noise, frequency, sine},
 };
 
 const RATE: f32 = SAMPLE_RATE as f32;
@@ -101,41 +102,6 @@ const MUFFLE_RATE: f32 = 1.0 / (0.2 * RATE);
 /// The mix is left alone below this level and bent above it, so that it never clips.
 const KNEE: f32 = 0.6;
 
-/// The sine of an angle given in turns, between 0 and 1.
-const fn sine(turns: f32) -> f32 {
-    // Folded onto a quarter turn either side of zero, where a short series is exact to a few
-    // millionths.
-    let folded = if turns < 0.25 {
-        turns
-    } else if turns < 0.75 {
-        0.5 - turns
-    } else {
-        turns - 1.0
-    };
-    let x = folded * TAU;
-    let x2 = x * x;
-    x * (1.0 - x2 / 6.0 * (1.0 - x2 / 20.0 * (1.0 - x2 / 42.0 * (1.0 - x2 / 72.0))))
-}
-
-/// The frequency of a pitch in Hz. Pitches count semitones, and 69 is the A of 440 Hz.
-fn frequency(pitch: u8) -> f32 {
-    // The 12 semitones from that A up. The other octaves are these doubled or halved, which
-    // is exact.
-    const OCTAVE: [f32; 12] = [
-        440.0, 466.163_76, 493.883_3, 523.251_16, 554.365_23, 587.329_5, 622.253_97, 659.255_1,
-        698.456_5, 739.988_83, 783.990_84, 830.609_4,
-    ];
-    let above = pitch as i32 - 69;
-    let octave = above.div_euclid(12);
-    let doubled = (1u32 << octave.unsigned_abs()) as f32;
-    let hz = OCTAVE[above.rem_euclid(12) as usize];
-    if octave < 0 {
-        hz / doubled
-    } else {
-        hz * doubled
-    }
-}
-
 /// What a level keeps from one frame to the next when it loses about two thirds of itself in
 /// this many seconds.
 const fn fall(seconds: f32) -> f32 {
@@ -182,16 +148,6 @@ fn limit(level: f32) -> f32 {
     }
     let over = (size - KNEE) / (1.0 - KNEE);
     (KNEE + (1.0 - KNEE) * over / (1.0 + over)).copysign(level)
-}
-
-/// White noise from a generator of its own.
-struct Noise(u32);
-
-impl Noise {
-    fn next(&mut self) -> f32 {
-        self.0 = self.0.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-        (self.0 >> 8) as f32 / (1 << 23) as f32 - 1.0
-    }
 }
 
 /// The loudness of a note over its life. It rises when the note starts, stays while the note
@@ -798,29 +754,6 @@ mod tests {
         // The top of the curve through the best lag and its two neighbors.
         let (before, at, after) = (likeness(best - 1), likeness(best), likeness(best + 1));
         best as f32 + (0.5 * (before - after) / (before - 2.0 * at + after)) as f32
-    }
-
-    #[test]
-    fn the_sine_is_exact_to_a_few_millionths() {
-        for index in 0..=10_000 {
-            let turns = index as f32 / 10_000.0;
-            let exact = (turns as f64 * std::f64::consts::TAU).sin();
-            assert!((sine(turns) as f64 - exact).abs() < 5e-6, "{turns}");
-        }
-    }
-
-    #[test]
-    fn pitches_are_those_of_equal_temperament() {
-        assert_eq!(frequency(69), 440.0);
-        assert_eq!(frequency(45), 110.0);
-        assert_eq!(frequency(93), 1760.0);
-        for pitch in 36..=100u8 {
-            let exact = 440.0 * 2f64.powf((pitch as f64 - 69.0) / 12.0);
-            assert!(
-                (frequency(pitch) as f64 / exact - 1.0).abs() < 1e-6,
-                "{pitch}"
-            );
-        }
     }
 
     #[test]

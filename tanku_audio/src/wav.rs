@@ -15,24 +15,30 @@ pub fn write(path: impl AsRef<Path>, frames: &[f32]) -> io::Result<()> {
     file.flush()
 }
 
-/// The bytes of a WAV file of 16 bits.
+/// The bytes of a WAV file of 16 bits that holds frames of music.
 pub fn encode(frames: &[f32]) -> Vec<u8> {
+    encode_as(frames, CHANNELS, SAMPLE_RATE)
+}
+
+/// The bytes of a WAV file of 16 bits that holds samples for some channels in turn, at some
+/// rate. A sound cue has one channel and a rate of its own.
+pub fn encode_as(samples: &[f32], channels: u16, rate: u32) -> Vec<u8> {
     const BYTES: u32 = 2;
-    let size = frames.len() as u32 * BYTES;
+    let size = samples.len() as u32 * BYTES;
     let mut bytes = Vec::with_capacity(44 + size as usize);
     bytes.extend(b"RIFF");
     bytes.extend((36 + size).to_le_bytes());
     bytes.extend(b"WAVEfmt ");
     bytes.extend(16u32.to_le_bytes());
     bytes.extend(1u16.to_le_bytes()); // PCM
-    bytes.extend(CHANNELS.to_le_bytes());
-    bytes.extend(SAMPLE_RATE.to_le_bytes());
-    bytes.extend((SAMPLE_RATE * CHANNELS as u32 * BYTES).to_le_bytes());
-    bytes.extend((CHANNELS * BYTES as u16).to_le_bytes());
+    bytes.extend(channels.to_le_bytes());
+    bytes.extend(rate.to_le_bytes());
+    bytes.extend((rate * channels as u32 * BYTES).to_le_bytes());
+    bytes.extend((channels * BYTES as u16).to_le_bytes());
     bytes.extend((8 * BYTES as u16).to_le_bytes());
     bytes.extend(b"data");
     bytes.extend(size.to_le_bytes());
-    for &sample in frames {
+    for &sample in samples {
         let level = (sample.clamp(-1.0, 1.0) * i16::MAX as f32).round() as i16;
         bytes.extend(level.to_le_bytes());
     }
@@ -56,5 +62,13 @@ mod tests {
         let (pairs, _) = bytes[44..].as_chunks::<2>();
         let samples: Vec<i16> = pairs.iter().map(|&pair| i16::from_le_bytes(pair)).collect();
         assert_eq!(samples, [0, 32_767, -32_767, 16_384]);
+
+        // A cue: one channel, at its own rate.
+        let cue = encode_as(&[0.0, 0.5, -0.5], 1, 22_050);
+        assert_eq!(cue.len(), 44 + 6);
+        assert_eq!(cue[22..24], 1u16.to_le_bytes());
+        assert_eq!(cue[24..28], 22_050u32.to_le_bytes());
+        assert_eq!(cue[28..32], 44_100u32.to_le_bytes());
+        assert_eq!(cue[32..34], 2u16.to_le_bytes());
     }
 }

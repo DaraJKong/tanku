@@ -279,7 +279,9 @@ The kick has no noise in it because every weapon cue has some. The bass stays ab
 
 ## Cues
 
-The waveforms of the cues move to `tanku_audio`, next to the instruments, so that everything the game computes as sound is in one place and shares the same notes. Playing them stays in the client, which knows where a sound comes from and how loud it is.
+The waveforms of the cues are in `tanku_audio`, next to the instruments, so that everything the game computes as sound is in one place and is made with the same math. Playing them stays in the client, which knows where a sound comes from and how loud it is. The move left them as they were: no sample of a cue is further from what it was than eight steps of a sound file of 16 bits, and two steps for all but the warning of a mine.
+
+A cue is in mono, at 22,050 samples per second. The client computes each one when it starts and keeps it as a sound file in memory.
 
 Two cues have a pitch that will sound out of tune over music in A:
 
@@ -295,11 +297,12 @@ Two cues have a pitch that will sound out of tune over music in A:
 |---|---|---|
 | The piece: notes, patterns, sounds | Version | Identical on every platform |
 | The arrangement at a given moment | Version and the context since the game started | Identical on every platform |
+| The cues | Version | Identical on every platform |
 | What reaches the ears | The above and the sound device | Not guaranteed: devices differ in rate and delay |
 
-- **Nothing is random.** The noise of the hi-hat, the snare and the pluck comes from a generator of its own that always starts from the same state, as the noise of the cues does today.
+- **Nothing is random.** The noise of the hi-hat, the snare and the pluck comes from a generator of its own that always starts from the same state, and so does the noise of the cues.
 - **The score is integers.** What each instrument plays on a step is a function of the step number and of the context. Steps are counted in half frames, at 44,100 frames per second: one lasts 11,025 half frames at 120 beats per minute and 12,600 in the bridge. Nothing is rounded along the way, so nothing drifts.
-- **The synthesizer does its own math.** It adds, subtracts, multiplies and divides 32-bit floats, and it reads sines and decays from its own tables. It never calls a library function such as `sin` or `exp`, whose last bit differs between platforms. Its output is therefore the same bit for bit on every platform, which lets a test compare it with a stored value.
+- **The crate does its own math.** The synthesizer and the cues add, subtract, multiply and divide 32-bit floats, and take sines and decays from a few lines of their own. They never call a library function such as `sin` or `exp`, whose last bit differs between platforms. Their output is therefore the same bit for bit on every platform, which lets a test compare it with a stored value.
 
 ## Engine
 
@@ -308,8 +311,9 @@ tanku_audio
 ├── score       the motifs, the chords, the patterns and the rules of derivation
 ├── director    from the context to what each instrument plays on each step
 ├── synth       the six instruments, the echo and the mix
-├── cues        the waveforms of the sound cues, from step 4
-└── wav         writes a sound file, for the listening tool and the tests
+├── cues        the waveforms of the sound cues
+├── math        the sines, the decays and the noise that every sound is made with
+└── wav         writes a sound file, for the game, the listening tool and the tests
 ```
 
 The crate has two ends. The game holds a `Conductor` and writes the context into it. The sound thread holds the `Music` and asks it for frames:
@@ -349,7 +353,7 @@ It writes one sound file per arrangement, a tour through a made-up run with the 
 
 ## Tests and benchmarks
 
-- **Stable.** Sixteen bars of each arrangement match a stored value, as the map of a seed does.
+- **Stable.** Sixteen bars of each arrangement match a stored value, as the map of a seed does, and so does each cue.
 - **In tune.** Every instrument plays the lowest and the highest note of its range within 3 hundredths of a semitone.
 - **Never silent.** Every bar of every arrangement makes sound.
 - **Never too loud.** No frame of any arrangement or of any change goes past full scale, and none is NaN.
@@ -357,12 +361,13 @@ It writes one sound file per arrangement, a tour through a made-up run with the 
 - **On time.** A fight that is announced on each of the 16 steps of a bar gives a roll at once and the fight two beats later. A fight that ends on each of them plays on to its next beat, and gives a connection there and the bridge two beats later.
 - **Connected.** For every note the lead can be on, the connection goes to degree 5 one step of the scale at a time and never turns back.
 - **Sound in both modes.** The motifs use the five degrees, the chords are major or minor, and every melody, with its skeleton and its ornaments, passes the check on semitones above the root.
+- **Whole.** Each cue lasts as long as it says, never goes past full scale and ends without a click.
 - **Cost.** A benchmark renders ten seconds of a fight in an arena at threat 4.
 
 The client has its own:
 
 - **Told right.** The context follows the screen, the run, the kind of its sector and the enemies that are awake. The smartest of them sets the threat, which falls when it is destroyed, and those that sleep don't count. A run that is over counts as the menu, and only the pause menu muffles.
-- **Unchanged on the way.** The sound library reads the very samples that the crate renders.
+- **Unchanged on the way.** The sound library reads the very samples that the crate renders, and reads every cue back from its sound file to a step of 16 bits.
 - **Under the cues.** At the default settings, the loudest arrangement peaks 12 dB below the shot of a player, within half a decibel.
 - **Heard.** On request, a test plays the piece on the sound device of the machine at no volume, and checks that the device asks for more: `cargo test -p tanku_client reaches_the_sound_device -- --ignored`.
 
