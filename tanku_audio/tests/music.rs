@@ -82,7 +82,6 @@ fn restless(music: &mut Music, conductor: &Conductor, seconds: usize) -> Vec<f32
             threat: draw(5) as u8,
             down: draw(6) == 0,
             muffled: draw(6) == 0,
-            place_only: draw(6) == 0,
         });
         // Anything from a few frames to three seconds.
         let mut part = vec![0.0; (1 + draw(3 * SAMPLE_RATE) as usize) * CHANNELS as usize];

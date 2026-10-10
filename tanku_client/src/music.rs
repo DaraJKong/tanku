@@ -30,11 +30,6 @@ const BLOCK: usize = 128 * CHANNELS as usize;
 #[derive(Resource, Default)]
 pub struct Baton(pub Conductor);
 
-/// In a playtest: the music follows the place alone, to compare with the music that follows
-/// the fight too.
-#[derive(Resource, Default)]
-pub struct PlaceOnly(pub bool);
-
 /// The piece, as something that the sound library can play.
 #[derive(Asset, TypePath)]
 struct Piece(Conductor);
@@ -101,7 +96,6 @@ impl Source for Stream {
 pub fn plugin(app: &mut App) {
     app.add_audio_source::<Piece>()
         .init_resource::<Baton>()
-        .init_resource::<PlaceOnly>()
         .add_systems(Startup, start)
         .add_systems(Update, (tell, set_volume));
 }
@@ -151,16 +145,12 @@ fn context(
     run: Option<&Run>,
     kind: Option<SectorKind>,
     awake: bool,
-    place_only: bool,
 ) -> Context {
     // The main menu and the game over screen. A run that is over is no place either: its
     // last moments are still on the screen, and so is the start of the run that follows it.
     let on = |run: &&Run| screen == Screen::Playing && run.phase != RunPhase::Over;
     let Some(run) = run.filter(on) else {
-        return Context {
-            place_only,
-            ..default()
-        };
+        return Context::default();
     };
     Context {
         place: match kind {
@@ -176,7 +166,6 @@ fn context(
         down: run.phase != RunPhase::Playing,
         // The settings leave the music clear, so that its volume is set by ear.
         muffled: overlay == Overlay::Pause,
-        place_only,
     }
 }
 
@@ -188,7 +177,6 @@ fn tell(
     run: Option<Res<Run>>,
     sectors: Query<&Sector>,
     enemies: Query<&Enemy>,
-    place_only: Res<PlaceOnly>,
 ) {
     let run = run.as_deref();
     let reached = run.map_or(0, |run| run.sector);
@@ -197,14 +185,9 @@ fn tell(
         .find(|plan| plan.index == reached)
         .map(|plan| plan.kind);
     let awake = enemies.iter().any(|enemy| enemy.awake);
-    baton.0.set(context(
-        *screen.get(),
-        *overlay.get(),
-        run,
-        kind,
-        awake,
-        place_only.0,
-    ));
+    baton
+        .0
+        .set(context(*screen.get(), *overlay.get(), run, kind, awake));
 }
 
 #[cfg(test)]
@@ -326,11 +309,10 @@ mod tests {
 
     #[test]
     fn the_music_is_told_where_the_run_is() {
-        let told =
-            |screen, run: &Run, kind| context(screen, Overlay::None, Some(run), kind, false, false);
+        let told = |screen, run: &Run, kind| context(screen, Overlay::None, Some(run), kind, false);
         let playing = run(3, RunPhase::Playing);
         // No run, or a screen that isn't the game: the menu.
-        let menu = context(Screen::Menu, Overlay::None, None, None, false, false);
+        let menu = context(Screen::Menu, Overlay::None, None, None, false);
         assert_eq!(menu, Context::default());
         assert_eq!(menu.place, Place::Menu);
         assert_eq!(told(Screen::Menu, &playing, Some(SectorKind::Arena)), menu);
@@ -350,11 +332,11 @@ mod tests {
     fn the_music_is_told_of_fights_and_of_losses() {
         let corridor = Some(SectorKind::Corridor);
         let told = |overlay, run: &Run, awake| {
-            context(Screen::Playing, overlay, Some(run), corridor, awake, false)
+            context(Screen::Playing, overlay, Some(run), corridor, awake)
         };
         let playing = run(3, RunPhase::Playing);
         let calm = told(Overlay::None, &playing, false);
-        assert!(!calm.fight && !calm.down && !calm.muffled && !calm.place_only);
+        assert!(!calm.fight && !calm.down && !calm.muffled);
         let fight = told(Overlay::None, &playing, true);
         assert!(fight.fight && !fight.down);
         assert_eq!(fight.threat, THREAT);
@@ -370,28 +352,14 @@ mod tests {
         // The pause menu muffles the music, and the settings don't.
         assert!(told(Overlay::Pause, &playing, true).muffled);
         assert!(!told(Overlay::Settings, &playing, true).muffled);
-        let settings_of_the_menu =
-            context(Screen::Menu, Overlay::Settings, None, None, false, false);
+        let settings_of_the_menu = context(Screen::Menu, Overlay::Settings, None, None, false);
         assert!(!settings_of_the_menu.muffled);
-
-        // A playtest passes its experiment on, wherever the game is.
-        assert!(context(Screen::Menu, Overlay::None, None, None, false, true).place_only);
-        let alone = context(
-            Screen::Playing,
-            Overlay::None,
-            Some(&playing),
-            corridor,
-            false,
-            true,
-        );
-        assert!(alone.place_only && !alone.fight);
     }
 
     #[test]
     fn the_game_tells_the_music_every_frame() {
         let mut app = App::new();
         app.init_resource::<Baton>()
-            .init_resource::<PlaceOnly>()
             .insert_resource(State::new(Screen::Playing))
             .insert_resource(State::new(Overlay::None))
             .add_systems(Update, tell);
@@ -431,9 +399,7 @@ mod tests {
         );
 
         app.world_mut().resource_mut::<Run>().sector = arena;
-        app.world_mut().resource_mut::<PlaceOnly>().0 = true;
         app.update();
         assert_eq!(baton.context().place, Place::Arena);
-        assert!(baton.context().place_only);
     }
 }

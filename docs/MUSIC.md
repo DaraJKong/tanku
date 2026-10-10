@@ -1,6 +1,6 @@
 # Tanku: music specification
 
-Status: steps 1 and 2 of the [steps](#steps) are built. The sketch of step 1 was listened to four times, and its notes are accepted. With step 2 the game plays the music on the desktop, where it follows the place and the fight and has a volume of its own. A first playtest answered one of its two questions: a shot sounds different from the beat, so one is told from the other. The switch of its experiment stays in the playtest menu until one of the two ways is chosen. Every fight has the same threat until step 3, and the web build has no music until step 5.
+Status: steps 1 and 2 of the [steps](#steps) are built. The sketch of step 1 was listened to four times, and its notes are accepted. With step 2 the game plays the music on the desktop, where it follows the place and the fight and has a volume of its own. A playtest answered its questions: the music that follows the fight too was kept over music that follows the place only, and a shot sounds different from the beat, so one is told from the other. Every fight has the same threat until step 3, and the web build has no music until step 5.
 
 The music of Tanku is one piece that never stops. The game makes it while it plays, from two short motifs and six instruments that it computes itself, so no sound file ships. The piece is the same for every seed and on every platform. What changes is its arrangement, which follows the run: where the players are, whether they are fighting, and how smart the enemies in front of them are.
 
@@ -372,15 +372,7 @@ Each step answers a question, and the first one changes nothing in the game.
 | 4, Cues | The waveforms of the cues move to the crate, two cues are retuned, and the warning of a mine ducks the music | Is any cue lost under the music? |
 | 5, Web | The web build with music | Does the music play without gaps in a browser? |
 
-The switch of step 2 is an experiment, to settle by ear whether the music needs to know of the fights. It is in the pause menu of a playtest, under "Music follows", and it goes once the choice is made. On "The fight too", the music is the one of this document. On "The place only", the place alone sets the arrangement, as in the first proposal for this music:
-
-| Place | Music that follows the place only |
-|---|---|
-| Menu or bay | The intro, as specified |
-| Corridor | The verse and the chorus in turn, with the kick as their only drum, whether or not anyone fights |
-| Arena | The verse and the chorus in Aeolian, with the kick, the hi-hat and the snare, for as long as the players are in it |
-
-Nothing but the end of a fight calls for the bridge, so the bridge and the connection never play there: without the fights, only a timer could bring the bridge back, and a timer would put its break anywhere, the start of an arena included. A roll still marks the way out of the bay and the return of a destroyed tank.
+The switch of step 2 was an experiment, to settle by ear whether the music needs to know of the fights, and it is gone. On its other side the place alone set the arrangement, as in the first proposal for this music: the verse and the chorus played wherever the players were outside the bay, with the kick alone in a corridor and all three drums in an arena, and nothing called for the bridge. After a playtest, the music that follows the fight too was kept. [IDEAS.md](IDEAS.md) keeps the other one.
 
 ## Open questions
 

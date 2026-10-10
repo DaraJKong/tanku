@@ -113,7 +113,6 @@ fn pack(context: Context) -> u32 {
         | (context.down as u32) << 3
         | (context.muffled as u32) << 4
         | (context.threat.min(7) as u32) << 5
-        | (context.place_only as u32) << 8
 }
 
 fn unpack(bits: u32) -> Context {
@@ -123,7 +122,6 @@ fn unpack(bits: u32) -> Context {
         down: bits & 1 << 3 != 0,
         muffled: bits & 1 << 4 != 0,
         threat: (bits >> 5) as u8 & 7,
-        place_only: bits & 1 << 8 != 0,
     }
 }
 
@@ -134,14 +132,13 @@ mod tests {
     #[test]
     fn a_context_survives_the_trip_between_the_threads() {
         for place in [Place::Menu, Place::Bay, Place::Corridor, Place::Arena] {
-            for bits in 0..128u8 {
+            for bits in 0..64u8 {
                 let context = Context {
                     place,
                     fight: bits & 1 != 0,
                     down: bits & 2 != 0,
                     muffled: bits & 4 != 0,
-                    place_only: bits & 8 != 0,
-                    threat: bits >> 4,
+                    threat: bits >> 3,
                 };
                 assert_eq!(unpack(pack(context)), context);
                 let conductor = Conductor::default();
