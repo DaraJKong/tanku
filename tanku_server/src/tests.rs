@@ -475,9 +475,9 @@ fn a_shield_stops_bullets_then_overloads() {
     tick(&mut app, seconds(SHIELD_DURATION) + 1);
     assert_eq!(run(&app).lives, 3);
     assert_eq!(bullets(&mut app), 0);
-    let events = events(&mut app);
+    let mut told = events(&mut app);
     assert_eq!(
-        count(&events, |event| matches!(
+        count(&told, |event| matches!(
             event,
             SimEvent::ShieldBlocked { .. }
         )),
@@ -494,6 +494,12 @@ fn a_shield_stops_bullets_then_overloads() {
     );
     tick(&mut app, seconds(1.0));
     assert!(app.world().get::<Shield>(entity).unwrap().is_overloaded());
+    // The game told of the shield going up, and of its overload, once each, where the tank is.
+    told.extend(events(&mut app));
+    let raised = SimEvent::ShieldRaised { at: START };
+    let overloaded = SimEvent::ShieldOverloaded { at: START };
+    assert_eq!(count(&told, |event| *event == raised), 1);
+    assert_eq!(count(&told, |event| *event == overloaded), 1);
     assert_eq!(position(&mut app, entity), START);
     tick(&mut app, seconds(0.4));
     assert!(position(&mut app, entity).y > START.y);
@@ -612,6 +618,9 @@ fn a_tank_has_only_as_many_mines_as_its_stat_allows() {
     tick(&mut app, seconds(1.8));
     let world = app.world_mut();
     assert_eq!(world.query::<&Mine>().iter(world).count(), 2);
+    // The game told of each mine as it was placed.
+    let placed = |event: &SimEvent| matches!(event, SimEvent::MinePlaced { .. });
+    assert_eq!(count(&events(&mut app), placed), 2);
 }
 
 #[test]
@@ -652,6 +661,62 @@ fn a_mine_blows_when_an_opposing_tank_comes_close_or_a_bullet_hits_it() {
     tick(&mut app, seconds(0.8));
     assert!(!alive(&app, enemy), "the blast reaches a dormant enemy");
     assert_eq!(run(&app).lives, 3);
+}
+
+#[test]
+fn a_mine_warns_only_when_an_opposing_tank_sets_it_off() {
+    let warnings = |events: &[SimEvent]| {
+        let near = |at: &Vec2| at.distance(START) < 0.1;
+        count(
+            events,
+            |event| matches!(event, SimEvent::MineTriggered { at } if near(at)),
+        )
+    };
+    let blasts =
+        |events: &[SimEvent]| count(events, |event| matches!(event, SimEvent::Blast { .. }));
+    // The player lays a mine where the run starts, and waits at a safe distance.
+    let lay = || {
+        let mut app = start("TEST");
+        let entity = player(&mut app).unwrap();
+        command(
+            &mut app,
+            TankCommand {
+                mine: true,
+                ..default()
+            },
+        );
+        tick(&mut app, 1);
+        command(&mut app, TankCommand::default());
+        teleport(&mut app, entity, Vec2::new(0.0, 12.0));
+        tick(&mut app, seconds(1.1));
+        events(&mut app);
+        app
+    };
+
+    // An enemy comes close: the warning sounds once, at the mine, and the blast follows 0.6 s
+    // later.
+    let mut app = lay();
+    let enemy = spawn_enemy(&mut app, START + Vec2::X * 1.5, &[]);
+    app.world_mut().get_mut::<Enemy>(enemy).unwrap().awake = true;
+    tick(&mut app, seconds(0.5));
+    let heard = events(&mut app);
+    assert_eq!((warnings(&heard), blasts(&heard)), (1, 0));
+    tick(&mut app, seconds(0.2));
+    let heard = events(&mut app);
+    assert_eq!((warnings(&heard), blasts(&heard)), (0, 1));
+
+    // The fuse runs out: the mine blows without a warning.
+    let mut app = lay();
+    tick(&mut app, seconds(10.0));
+    let heard = events(&mut app);
+    assert_eq!((warnings(&heard), blasts(&heard)), (0, 1));
+
+    // A bullet hits it: no warning either.
+    let mut app = lay();
+    shoot_at(&mut app, START);
+    tick(&mut app, seconds(0.8));
+    let heard = events(&mut app);
+    assert_eq!((warnings(&heard), blasts(&heard)), (0, 1));
 }
 
 #[test]
@@ -975,9 +1040,19 @@ fn clearing_a_sector_scores_and_the_corridor_follows_the_player() {
     let mut app = start("TEST");
     cross_barrier(&mut app);
     assert_eq!(run(&app).sector, 1);
+    events(&mut app);
     clear_sector(&mut app, 1);
     let state = run(&app);
     assert_eq!((state.cleared, state.kills), (1, 1));
+    // The game told of the tank that was destroyed, and of the sector that is cleared.
+    let told = events(&mut app);
+    let destroyed = |event: &SimEvent| {
+        let enemies = Team::Enemies;
+        matches!(event, SimEvent::TankDestroyed { team, .. } if *team == enemies)
+    };
+    assert_eq!(count(&told, destroyed), 1);
+    let cleared = SimEvent::SectorCleared { sector: 1 };
+    assert_eq!(count(&told, |event| *event == cleared), 1);
 
     cross_barrier(&mut app);
     assert_eq!(run(&app).sector, 2);

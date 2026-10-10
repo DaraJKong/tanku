@@ -121,8 +121,9 @@ mod tests {
     use super::*;
     use crate::{Overlay, Screen, music::Baton};
 
-    #[test]
-    fn the_music_makes_room_for_the_warning_of_a_mine() {
+    /// A game in the middle of a run, which plays cues and tells the music. The middle of the
+    /// screen is the point (0, 0) of the map.
+    fn game() -> App {
         let mut app = App::new();
         app.init_resource::<Assets<AudioSource>>()
             .init_resource::<View>()
@@ -146,6 +147,99 @@ mod tests {
             .add_message::<SimEvent>()
             .add_systems(Startup, setup)
             .add_systems(Update, (play.before(music::tell), music::tell));
+        app.update();
+        app
+    }
+
+    /// The cues that the game started to play since the last time it was asked, each with
+    /// how loud.
+    fn played(app: &mut App) -> Vec<(Cue, f32)> {
+        let world = app.world_mut();
+        let mut players = world.query::<(Entity, &AudioPlayer, &PlaybackSettings)>();
+        let found: Vec<_> = players
+            .iter(world)
+            .map(|(entity, player, settings)| (entity, player.0.clone(), settings.volume))
+            .collect();
+        let cues = world.resource::<Cues>();
+        let name = |sound: &Handle<AudioSource>| {
+            let mut all = Cue::ALL.into_iter();
+            all.find(|cue| cues.sound(*cue) == *sound).unwrap()
+        };
+        let heard = found
+            .iter()
+            .map(|(_, sound, volume)| (name(sound), volume.to_linear()));
+        let heard = heard.collect();
+        for (entity, ..) in found {
+            world.despawn(entity);
+        }
+        heard
+    }
+
+    #[test]
+    fn every_event_that_has_a_sound_plays_its_cue() {
+        let mut app = game();
+        // Next to the middle of the screen, and further than a sound is heard from.
+        let (near, far) = (Vec2::new(3.0, 4.0), Vec2::new(0.0, 80.0));
+        let (players, enemies) = (Team::Players, Team::Enemies);
+        let sounds = |at: Vec2| {
+            [
+                (SimEvent::Shot { at, team: players }, Cue::Shot),
+                (SimEvent::Shot { at, team: enemies }, Cue::EnemyShot),
+                (SimEvent::Ricochet { at }, Cue::Ricochet),
+                (SimEvent::BulletDestroyed { at, team: enemies }, Cue::Pop),
+                (SimEvent::MinePlaced { at }, Cue::MinePlaced),
+                (SimEvent::MineTriggered { at }, Cue::MineTriggered),
+                (SimEvent::Blast { at }, Cue::Blast),
+                (SimEvent::TankDestroyed { at, team: enemies }, Cue::Blast),
+                (SimEvent::ShieldRaised { at }, Cue::ShieldRaised),
+                (SimEvent::ShieldBlocked { at }, Cue::ShieldBlocked),
+                (SimEvent::ShieldOverloaded { at }, Cue::ShieldOverloaded),
+            ]
+        };
+        // What happens somewhere is at its loudest next to the middle of the screen, and a
+        // quarter as loud far from it: never silent.
+        for (event, cue) in sounds(near) {
+            app.world_mut().write_message(event);
+            app.update();
+            assert_eq!(played(&mut app), [(cue, 0.9)], "{event:?}");
+        }
+        for (event, cue) in sounds(far) {
+            app.world_mut().write_message(event);
+            app.update();
+            assert_eq!(played(&mut app), [(cue, 0.25)], "{event:?}");
+        }
+        // What happens to the run is as loud wherever the players are.
+        let told = [
+            (SimEvent::SectorCleared { sector: 3 }, Cue::Cleared),
+            (SimEvent::FlagCaptured { at: far }, Cue::Captured),
+            (SimEvent::BarrierUnlocked { sector: 3 }, Cue::Unlocked),
+            (SimEvent::PlayerRespawned { at: far }, Cue::Respawned),
+            (SimEvent::RunOver, Cue::RunOver),
+        ];
+        for (event, cue) in told {
+            app.world_mut().write_message(event);
+            app.update();
+            assert_eq!(played(&mut app), [(cue, 1.0)], "{event:?}");
+        }
+        // These have no sound: the start bay is cleared and open from the start, and the
+        // music is what marks a sector that is entered.
+        let silent = [
+            SimEvent::RunStarted,
+            SimEvent::SectorCleared { sector: 0 },
+            SimEvent::BarrierUnlocked { sector: 0 },
+            SimEvent::SectorEntered { sector: 3 },
+            SimEvent::BlockDestroyed { at: near },
+        ];
+        for event in silent {
+            app.world_mut().write_message(event);
+            app.update();
+            assert_eq!(played(&mut app), [], "{event:?}");
+        }
+    }
+
+    #[test]
+    fn the_music_makes_room_for_the_warning_of_a_mine() {
+        let mut app = game();
         let ducked = |app: &App| app.world().resource::<Baton>().0.context().ducked;
         let frame = |app: &mut App, event: Option<SimEvent>, seconds: f32| {
             let time = Duration::from_secs_f32(seconds);
