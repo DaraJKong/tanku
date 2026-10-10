@@ -1,5 +1,7 @@
 //! Tank stats: their levels, what each level is worth and what it costs.
 
+use serde::{Deserialize, Serialize};
+
 /// Total budget of the player tank.
 pub const PLAYER_BUDGET: u16 = 59;
 
@@ -108,7 +110,7 @@ impl Stat {
 }
 
 /// A tank's full list of stat levels, with the budget that paid for them.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Genome {
     levels: [u8; Stat::COUNT],
     pub budget: u16,

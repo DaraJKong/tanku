@@ -7,6 +7,8 @@ pub mod brain;
 mod bullets;
 pub mod field;
 mod mines;
+#[cfg(feature = "net")]
+pub mod net;
 mod repair;
 mod run;
 mod sectors;

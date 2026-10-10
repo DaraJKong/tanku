@@ -12,6 +12,8 @@ mod input;
 mod menu;
 mod models;
 mod music;
+#[cfg(not(target_arch = "wasm32"))]
+mod net;
 mod report;
 mod ruler;
 mod scars;

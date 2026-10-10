@@ -4,6 +4,7 @@ pub mod enemy;
 pub mod geom;
 pub mod map;
 pub mod progression;
+pub mod protocol;
 pub mod rng;
 pub mod rules;
 pub mod seed;

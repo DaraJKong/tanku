@@ -1,24 +1,25 @@
 //! The state of the simulation, which the server owns and the client reads.
 
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
 
 use crate::{map::SectorLayout, stats::Genome};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Team {
     Players,
     Enemies,
 }
 
 /// Position on the ground plane: `x` is east and `y` is north.
-#[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Position(pub Vec2);
 
 /// Position one tick ago, for smooth rendering between ticks.
-#[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct PreviousPosition(pub Vec2);
 
-#[derive(Component, Clone, Debug)]
+#[derive(Component, Clone, Debug, Serialize, Deserialize)]
 #[require(Position, PreviousPosition, Motion, TankCommand, Shield)]
 pub struct Tank {
     pub genome: Genome,
@@ -27,7 +28,7 @@ pub struct Tank {
     pub sector: u32,
 }
 
-#[derive(Component, Clone, Copy, Debug, Default)]
+#[derive(Component, Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub struct Motion {
     pub velocity: Vec2,
     /// Angle of the hull, counterclockwise from east.
@@ -37,7 +38,7 @@ pub struct Motion {
 }
 
 /// What a player or a brain asks of its tank this tick.
-#[derive(Component, Clone, Copy, Debug, Default)]
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Reflect, Serialize, Deserialize)]
 pub struct TankCommand {
     /// Direction to drive in, no longer than 1.
     pub drive: Vec2,
@@ -50,7 +51,7 @@ pub struct TankCommand {
     pub repair: bool,
 }
 
-#[derive(Component, Clone, Copy, Debug)]
+#[derive(Component, Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Gun {
     pub rounds: u8,
     /// Time spent reloading the next round.
@@ -72,7 +73,7 @@ impl Gun {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub enum ShieldState {
     /// The bubble is down. It can be raised once the cooldown is over.
     #[default]
@@ -81,7 +82,7 @@ pub enum ShieldState {
     Active(f32),
 }
 
-#[derive(Component, Clone, Copy, Debug, Default)]
+#[derive(Component, Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub struct Shield {
     pub state: ShieldState,
     /// Time before the shield can be raised again.
@@ -95,30 +96,30 @@ impl Shield {
 }
 
 /// The tank of a player. Seats number the players of a run from 0.
-#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Player {
     pub seat: u8,
 }
 
 /// A player's tank that was destroyed in a run of several players. It stays where it is, blocks
 /// the way and absorbs bullets until a teammate has repaired it.
-#[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Wreck {
     /// Seconds of repair done so far.
     pub repair: f32,
 }
 
 /// A tank that was just repaired: nothing destroys it for this much longer.
-#[derive(Component, Clone, Copy, Debug, PartialEq)]
+#[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Protected(pub f32);
 
-#[derive(Component, Clone, Copy, Debug)]
+#[derive(Component, Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Enemy {
     /// Enemies are dormant until a player enters their sector.
     pub awake: bool,
 }
 
-#[derive(Component, Clone, Copy, Debug)]
+#[derive(Component, Clone, Copy, Debug, Serialize, Deserialize)]
 #[require(Position, PreviousPosition)]
 pub struct Bullet {
     pub owner: Entity,
@@ -132,7 +133,7 @@ pub struct Bullet {
     pub bounced: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum MineState {
     /// Harmless to drive over for this much longer.
     Arming(f32),
@@ -143,7 +144,7 @@ pub enum MineState {
     Triggered(f32),
 }
 
-#[derive(Component, Clone, Copy, Debug)]
+#[derive(Component, Clone, Copy, Debug, Serialize, Deserialize)]
 #[require(Position)]
 pub struct Mine {
     pub owner: Entity,
@@ -153,14 +154,14 @@ pub struct Mine {
 }
 
 /// A destructible block. Its position is its center.
-#[derive(Component, Clone, Copy, Debug)]
+#[derive(Component, Clone, Copy, Debug, Serialize, Deserialize)]
 #[require(Position)]
 pub struct Block {
     pub sector: u32,
 }
 
 /// An explosive crate. Its position is its center.
-#[derive(Component, Clone, Copy, Debug)]
+#[derive(Component, Clone, Copy, Debug, Serialize, Deserialize)]
 #[require(Position)]
 pub struct ExplosiveCrate {
     pub sector: u32,
@@ -172,8 +173,13 @@ pub struct Sector {
     pub layout: SectorLayout,
 }
 
+/// Which sector a loaded sector is. That is all a server tells of it: the seed gives the rest,
+/// which is the same on every machine.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SectorIndex(pub u32);
+
 /// The energy wall at the end of a sector.
-#[derive(Component, Clone, Copy, Debug)]
+#[derive(Component, Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Barrier {
     pub sector: u32,
     pub from: Vec2,
@@ -184,7 +190,7 @@ pub struct Barrier {
 }
 
 /// The flag of a sector, near its barrier. A solo player who captures it comes back there.
-#[derive(Component, Clone, Copy, Debug)]
+#[derive(Component, Clone, Copy, Debug, Serialize, Deserialize)]
 #[require(Position)]
 pub struct Flag {
     pub sector: u32,
@@ -192,7 +198,7 @@ pub struct Flag {
 }
 
 /// What destroys a tank.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Weapon {
     Bullet,
     /// The blast of a mine.
@@ -203,14 +209,14 @@ pub enum Weapon {
 
 /// The blow that destroyed a tank: the weapon, and the tank behind it. That is the tank that
 /// fired the bullet, the one that laid the mine, or the one that set the crate off.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Blow {
     pub weapon: Weapon,
     pub genome: Genome,
     pub team: Team,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum RunPhase {
     Playing,
     /// The player was destroyed and comes back after this much longer.
@@ -219,7 +225,7 @@ pub enum RunPhase {
 }
 
 /// The run in progress.
-#[derive(Resource, Clone, Debug)]
+#[derive(Resource, Clone, Debug, Serialize, Deserialize)]
 pub struct Run {
     pub seed_text: String,
     pub seed: u64,
@@ -254,7 +260,7 @@ pub struct Playtest {
 }
 
 /// What the client asks of the server.
-#[derive(Message, Clone, Debug)]
+#[derive(Message, Clone, Debug, Serialize, Deserialize)]
 pub enum RunRequest {
     Start {
         seed: String,
@@ -274,7 +280,7 @@ pub enum RunRequest {
 }
 
 /// Things that happened in the simulation, for effects, sounds and the interface.
-#[derive(Message, Clone, Copy, Debug, PartialEq)]
+#[derive(Message, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum SimEvent {
     RunStarted,
     RunOver,

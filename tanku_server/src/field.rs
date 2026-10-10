@@ -12,7 +12,7 @@ use tanku_core::{
     rules::{BLOCK_SIZE, TANK_RADIUS},
     sim::{
         Barrier, Block, Enemy, ExplosiveCrate, Flag, Gun, Motion, Position, PreviousPosition,
-        Sector, Tank, Team,
+        Sector, SectorIndex, Tank, Team,
     },
 };
 
@@ -217,7 +217,7 @@ impl Field {
         } else {
             self.cleared.insert(index);
         }
-        commands.spawn((Sector { layout }, InSector(index)));
+        commands.spawn((Sector { layout }, SectorIndex(index), InSector(index)));
     }
 
     /// The barrier in front of a sector, for a sector that is loaded without the one before it.

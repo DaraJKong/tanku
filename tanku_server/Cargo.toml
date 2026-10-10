@@ -10,6 +10,8 @@ workspace = true
 [dependencies]
 # Headless: no window and no renderer.
 bevy = { workspace = true, features = ["std", "multi_threaded", "bevy_log"] }
+# For games of several players. A web build has no server that others can reach.
+lightyear = { workspace = true, optional = true, features = ["server", "netcode", "udp"] }
 tanku_core.workspace = true
 
 [dev-dependencies]
@@ -22,6 +24,8 @@ harness = false
 # Development conveniences, enabled by default.
 # Build releases with `--no-default-features`.
 [features]
-default = ["development", "debug"]
+default = ["development", "debug", "net"]
+# The network: the server listens for the clients of a game of several players.
+net = ["dep:lightyear"]
 development = ["bevy/dynamic_linking"]
 debug = ["bevy/debug"]

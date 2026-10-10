@@ -13,6 +13,11 @@ tanku_audio.workspace = true
 tanku_core.workspace = true
 tanku_server.workspace = true
 
+# A desktop build hosts and joins games of several players.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+lightyear = { workspace = true, features = ["client", "server", "netcode", "udp"] }
+tanku_server = { workspace = true, features = ["net"] }
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 web-sys = { workspace = true, features = [
     "AudioBuffer",
