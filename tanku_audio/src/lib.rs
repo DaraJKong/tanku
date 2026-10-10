@@ -3,4 +3,7 @@
 //! The music is one piece that never stops and is the same on every platform. Its
 //! specification is in `docs/MUSIC.md`.
 
+pub mod director;
 pub mod score;
+
+pub use director::{Context, Place};
