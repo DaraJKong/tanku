@@ -170,6 +170,14 @@ pub struct Barrier {
     pub unlocked: bool,
 }
 
+/// The flag of a sector, near its barrier. A solo player who captures it comes back there.
+#[derive(Component, Clone, Copy, Debug)]
+#[require(Position)]
+pub struct Flag {
+    pub sector: u32,
+    pub captured: bool,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum RunPhase {
     Playing,
@@ -187,7 +195,7 @@ pub struct Run {
     pub sector: u32,
     /// The score: the furthest sector cleared.
     pub cleared: u32,
-    /// The sector whose barrier is the last checkpoint reached, or 0 for the start bay.
+    /// The sector of the last flag captured, or 0 for the start bay.
     pub checkpoint: u32,
     pub lives: u32,
     pub kills: u32,
@@ -221,6 +229,7 @@ pub enum SimEvent {
     TankDestroyed { at: Vec2, team: Team },
     PlayerRespawned { at: Vec2 },
     SectorCleared { sector: u32 },
+    FlagCaptured { at: Vec2 },
     BarrierUnlocked { sector: u32 },
     SectorEntered { sector: u32 },
 }

@@ -33,6 +33,8 @@ const SIDE_DRIFT: i32 = 6;
 const APRON: i32 = 4;
 /// An arena is deep enough for a group to start far from the entry and clear of the barrier.
 const ARENA_MIN_LENGTH: i32 = 32;
+/// A flag stands this far inside the barrier of its sector.
+const FLAG_DEPTH: i32 = 4;
 
 /// Squared distances below are in half meters, so that the centers of blocks stay integers.
 /// 1.8 m: a lattice path with this clearance is more than 3 m wide everywhere.
@@ -129,6 +131,8 @@ pub struct SectorPlan {
     pub entry_point: IVec2,
     /// A point just inside the barrier.
     pub gate_point: IVec2,
+    /// Where the flag stands, if the sector has one: in front of the middle of the barrier.
+    pub flag_point: IVec2,
     pub min: IVec2,
     pub max: IVec2,
     next_frame: Frame,
@@ -484,22 +488,16 @@ fn plan_sector(seed: u64, index: u32, frame: Frame, entry: i32, spec: &Spec) -> 
     let (left_end, right_end) = (shape.left.last().unwrap().0, shape.right.last().unwrap().0);
 
     // Local ends of the barrier, the left end of the next entry first.
-    let (gate_from, gate_to, gate_point) = match spec.exit {
-        Exit::Ahead => (
-            (left_end, length),
-            (right_end, length),
-            ((left_end + right_end) / 2, length - 2),
-        ),
-        Exit::Right => (
-            (right_end, length),
-            (right_end, length - gate),
-            (right_end - 2, length - gate / 2),
-        ),
-        Exit::Left => (
-            (left_end, length - gate),
-            (left_end, length),
-            (left_end + 2, length - gate / 2),
-        ),
+    let (gate_from, gate_to) = match spec.exit {
+        Exit::Ahead => ((left_end, length), (right_end, length)),
+        Exit::Right => ((right_end, length), (right_end, length - gate)),
+        Exit::Left => ((left_end, length - gate), (left_end, length)),
+    };
+    // A point in front of the middle of the barrier, this far inside the sector.
+    let inside = |depth: i32| match spec.exit {
+        Exit::Ahead => ((left_end + right_end) / 2, length - depth),
+        Exit::Right => (right_end - depth, length - gate / 2),
+        Exit::Left => (left_end + depth, length - gate / 2),
     };
 
     let world = |&(u, v): &(i32, i32)| frame.at(u, v);
@@ -535,7 +533,8 @@ fn plan_sector(seed: u64, index: u32, frame: Frame, entry: i32, spec: &Spec) -> 
         entry: entry_ends,
         gate: gate_ends,
         entry_point: frame.at(entry / 2, 2),
-        gate_point: world(&gate_point),
+        gate_point: world(&inside(2)),
+        flag_point: world(&inside(FLAG_DEPTH)),
         min,
         max,
         next_frame: Frame {
@@ -1117,6 +1116,25 @@ mod tests {
                     .all(|&corner| far_from_segment(corner * 2, ends[0] * 2, ends[1] * 2, 128))
             })
         })
+    }
+
+    #[test]
+    fn flags_stand_in_the_open_in_front_of_their_barrier() {
+        for corridor in corridors() {
+            for plan in &corridor.plans[1..] {
+                let at = format!("sector {}", plan.index);
+                let flag = plan.flag_point;
+                assert!(plan.contains_half(flag * 2), "{at}");
+                let (from, to) = (plan.gate.0.as_vec2(), plan.gate.1.as_vec2());
+                let to_barrier = crate::geom::distance_to_segment(flag.as_vec2(), from, to);
+                assert_eq!(to_barrier, FLAG_DEPTH as f32, "{at}");
+                for &(a, b) in &plan.walls {
+                    let to_wall =
+                        crate::geom::distance_to_segment(flag.as_vec2(), a.as_vec2(), b.as_vec2());
+                    assert!(to_wall >= 3.5, "{at}: {to_wall} m from a wall");
+                }
+            }
+        }
     }
 
     #[test]

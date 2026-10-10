@@ -37,6 +37,11 @@ pub const BLOCK_SIZE: f32 = 2.0;
 /// A barrier unlocks when every living player is this close to it.
 pub const BARRIER_GATHER_DISTANCE: f32 = 8.0;
 
+/// A flag is captured by a player who comes this close to it.
+pub const FLAG_CAPTURE_RADIUS: f32 = 2.0;
+
 pub const SOLO_LIVES: u32 = 3;
 /// Delay between the destruction of the solo player and the respawn.
 pub const RESPAWN_DELAY: f32 = 1.5;
+/// A player's tank can't shoot for this long after it appears.
+pub const SPAWN_FIRE_DELAY: f32 = 0.5;

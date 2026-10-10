@@ -2,7 +2,7 @@
 
 use bevy::prelude::*;
 use tanku_core::{
-    rules::{RESPAWN_DELAY, SOLO_LIVES, TICK},
+    rules::{RESPAWN_DELAY, SOLO_LIVES, SPAWN_FIRE_DELAY, TICK},
     seed,
     sim::{
         Gun, Motion, Player, Position, PreviousPosition, Run, RunPhase, RunRequest, SimEvent, Tank,
@@ -32,11 +32,12 @@ fn clear(
 fn enter(commands: &mut Commands, field: &mut Field, sector: u32) -> Vec2 {
     field.loaded.clear();
     field.load_entry_barrier(commands, sector);
-    field.load(commands, sector);
-    field.load(commands, sector + 1);
+    // The player comes back in the sector of the last flag captured.
+    field.load(commands, sector, true);
+    field.load(commands, sector + 1, false);
 
     let plan = field.corridor.plan(sector);
-    // A player who comes back at a checkpoint starts next to its barrier.
+    // The tank appears between that flag and the barrier.
     let position = if sector == 0 {
         field::entry_position(plan)
     } else {
@@ -57,7 +58,11 @@ fn enter(commands: &mut Commands, field: &mut Field, sector: u32) -> Vec2 {
             turret: facing,
             ..default()
         },
-        Gun::loaded(&Genome::PLAYER),
+        // The click or the key that started the run must not fire a shot.
+        Gun {
+            cooldown: SPAWN_FIRE_DELAY,
+            ..Gun::loaded(&Genome::PLAYER)
+        },
     ));
     position
 }

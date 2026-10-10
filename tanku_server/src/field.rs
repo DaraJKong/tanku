@@ -11,8 +11,8 @@ use tanku_core::{
     rng::{Purpose, Stream},
     rules::{BLOCK_SIZE, TANK_RADIUS},
     sim::{
-        Barrier, Block, Enemy, ExplosiveCrate, Gun, Motion, Position, PreviousPosition, Sector,
-        Tank, Team,
+        Barrier, Block, Enemy, ExplosiveCrate, Flag, Gun, Motion, Position, PreviousPosition,
+        Sector, Tank, Team,
     },
 };
 
@@ -143,15 +143,25 @@ impl Field {
         }
     }
 
-    /// Loads a sector: its walls, its barrier, its obstacles and, unless it is cleared, its
-    /// dormant enemies.
-    pub fn load(&mut self, commands: &mut Commands, index: u32) {
+    /// Loads a sector: its walls, its barrier, its flag if it has one, its obstacles and,
+    /// unless it is cleared, its dormant enemies. `captured` tells whether its flag already is.
+    pub fn load(&mut self, commands: &mut Commands, index: u32, captured: bool) {
         if !self.loaded.insert(index) {
             return;
         }
         self.stale = true;
         let layout = self.corridor.layout(index);
         spawn_barrier(commands, &layout.plan);
+        if progression::is_checkpoint(index) {
+            commands.spawn((
+                Flag {
+                    sector: index,
+                    captured,
+                },
+                Position(layout.plan.flag_point.as_vec2()),
+                InSector(index),
+            ));
+        }
         let center = |corner: &IVec2| Position(corner.as_vec2() + Vec2::splat(BLOCK_SIZE / 2.0));
         for corner in &layout.blocks {
             commands.spawn((Block { sector: index }, center(corner), InSector(index)));
