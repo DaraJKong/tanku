@@ -2,13 +2,13 @@
 
 A cooperative top-down tank game for one to four players, built with Rust and Bevy. The players fight their way through an endless, procedurally generated corridor of enemy tanks, and one hit destroys a tank.
 
-The solo game is playable: the corridor, the generated enemies and their brains, lives and checkpoints, the menus, the sound cues and the music are in. Co-op, achievements and the other modes are not. The specification is in [docs/PROJECT.md](docs/PROJECT.md).
+The solo game is playable: the corridor, the generated enemies and their brains, lives and checkpoints, the menus, the sound cues and the music are in. Co-op has begun: a desktop build hosts a game that others join by its address. Achievements and the other modes are not in. The specification is in [docs/PROJECT.md](docs/PROJECT.md).
 
 ## Workspace
 
 | Crate | Role |
 |---|---|
-| `tanku_core` | The rules both sides share: stats, progression, map and enemy generation, simulation types |
+| `tanku_core` | The rules both sides share: stats, progression, map and enemy generation, simulation types, and what goes over the network |
 | `tanku_server` | The authoritative simulation: a library that the client embeds for solo and hosted games, and a headless binary |
 | `tanku_client` | The game: rendering, input, interface and sound |
 | `tanku_audio` | The sound that the game computes: the music and the waveforms of the sound cues, which the client plays |
@@ -26,10 +26,25 @@ cargo run -p tanku_client
 | Shoot | Left click |
 | Place a mine | Right click |
 | Shield | Space |
+| Repair a teammate | Hold Left Shift next to their wreck |
 | Turn the view | Q and E |
 | Menu | Esc |
 
 Settings and records are kept in the user's configuration directory, under `tanku`.
+
+### With friends
+
+Up to four players share a run. One of them hosts the game, and the others join it:
+
+1. The host picks "Host a game" in the main menu. The lobby shows the address of the machine on its network.
+2. Each of the others picks "Join a game" and types that address.
+3. The host starts the run once everyone is in the lobby. Nobody joins a run in progress.
+
+All players need the same version of the game. The game listens on UDP port 28405. To play over the internet, that port of the host's router must lead to the host's machine, and the others type the host's public address.
+
+Two games on one machine can play together, which is the quickest way to try it: the second one joins `127.0.0.1`.
+
+The web build doesn't join games yet.
 
 ### Playtest
 
@@ -139,6 +154,16 @@ A scripted run opens no window and needs no display: it draws into an image of 1
 
 ```bash
 TANKU_DEV_SCRIPT="start TANKU; wait 1; warp 12; wait 1; peek 0; wait 1; shot sector12.png; quit" cargo run -p tanku_client
+```
+
+Two scripted games can play together: one hosts on a port, and the other joins it.
+
+```bash
+TANKU_DEV_SCRIPT="host 28999; wait 6; press Start; wait 5; shot host.png; quit" cargo run -p tanku_client
+```
+
+```bash
+TANKU_DEV_SCRIPT="wait 2; join 127.0.0.1:28999; wait 9; shot guest.png; quit" cargo run -p tanku_client
 ```
 
 The command `tape` keeps the music that the run would have played from there on. When the script quits, the music goes to a sound file, and the list of what the game told the music, with the time of each change, to a text file of the same name:

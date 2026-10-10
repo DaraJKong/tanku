@@ -9,8 +9,8 @@ use tanku_core::{
     progression,
     seed::VERSION,
     sim::{
-        Enemy, Gun, Mine, Player, Playtest, Position, Run, Shield, ShieldState, SimEvent, Tank,
-        Team, Wreck,
+        Enemy, Gun, Player, Playtest, Position, Run, Shield, ShieldState, SimEvent, Tank, Team,
+        Wreck,
     },
     stats::Stat,
 };
@@ -18,7 +18,7 @@ use tanku_core::{
 use crate::{
     Screen,
     camera::{MainCamera, View},
-    crew::Own,
+    crew::{LocalSeat, Own},
     draft::{Draft, LIFT},
     scene,
     settings::{Action, Settings},
@@ -60,9 +60,20 @@ enum Bar {
     Shield,
 }
 
+/// A part of the interface that takes the color of the player at this screen.
+#[derive(Component)]
+struct Accented;
+
+/// The color of the player at this screen: the one of their seat.
+fn accent(seat: &LocalSeat) -> Color {
+    theme::PLAYERS[seat.0 as usize % theme::PLAYERS.len()]
+}
+
 /// A text that follows the game.
 #[derive(Component, Clone, Copy)]
 enum Readout {
+    /// Which player the weapons are those of.
+    Player,
     /// How the game is played: alone, with others, or as a playtest.
     Mode,
     /// What the squares next to it count: the lives of a single player, or the team.
@@ -116,6 +127,7 @@ pub fn plugin(app: &mut App) {
             (
                 status,
                 weapons,
+                tint,
                 toasts,
                 mark_enemies,
                 instruments,
@@ -259,6 +271,7 @@ fn bar(bar: Bar) -> impl Bundle {
         BorderColor::all(theme::RULE),
         children![(
             bar,
+            Accented,
             Node {
                 width: percent(0),
                 height: percent(100),
@@ -283,6 +296,7 @@ fn weapons_panel() -> impl Bundle {
                 row(false),
                 children![
                     (
+                        Accented,
                         Node {
                             width: px(12),
                             height: px(12),
@@ -291,7 +305,7 @@ fn weapons_panel() -> impl Bundle {
                         },
                         BackgroundColor(theme::ACCENT),
                     ),
-                    theme::title("PLAYER 1", 15.0, theme::TEXT),
+                    (Readout::Player, theme::title("", 15.0, theme::TEXT)),
                 ],
             ),
             (
@@ -357,7 +371,11 @@ fn title_block() -> impl Bundle {
                         children![
                             caption("GAME"),
                             theme::title("TANKU", 26.0, theme::TEXT),
-                            (Readout::Mode, theme::label("", 13.0, theme::ACCENT)),
+                            (
+                                Readout::Mode,
+                                Accented,
+                                theme::label("", 13.0, theme::ACCENT)
+                            ),
                         ],
                     ),
                     (
@@ -385,7 +403,11 @@ fn title_block() -> impl Bundle {
                                     pip(Pip::Mate(1)),
                                     pip(Pip::Mate(2)),
                                     pip(Pip::Mate(3)),
-                                    (Readout::Lives, theme::label("", 13.0, theme::ACCENT)),
+                                    (
+                                        Readout::Lives,
+                                        Accented,
+                                        theme::label("", 13.0, theme::ACCENT)
+                                    ),
                                 ],
                             ),
                         ],
@@ -606,6 +628,7 @@ fn status(
     run: Option<Res<Run>>,
     playtest: Option<Res<Playtest>>,
     settings: Res<Settings>,
+    seat: Res<LocalSeat>,
     crew: Query<(&Player, Has<Wreck>)>,
     mut readouts: Query<(&Readout, &mut Text)>,
     mut pips: Query<(&Pip, &mut BackgroundColor, &mut BorderColor, &mut Node)>,
@@ -613,12 +636,12 @@ fn status(
     let Some(run) = run else {
         return;
     };
-    let is_playtest = playtest.is_some();
     let infinite_lives = playtest.is_some_and(|playtest| playtest.infinite_lives);
     for (readout, mut text) in &mut readouts {
         let wanted = match readout {
+            Readout::Player => format!("PLAYER {}", seat.0 + 1),
             // A playtest says so, because it sets no record.
-            Readout::Mode if is_playtest => "PLAYTEST".to_string(),
+            Readout::Mode if run.playtest => "PLAYTEST".to_string(),
             Readout::Mode if run.solo => "SOLO".to_string(),
             Readout::Mode => "CO-OP".to_string(),
             Readout::Crew if run.solo => "LIVES".to_string(),
@@ -659,7 +682,7 @@ fn status(
             // A single player has lives.
             Pip::Life(life) => {
                 node.display = shown(run.solo && !infinite_lives);
-                light(life <= run.lives, theme::ACCENT, &mut color, &mut border);
+                light(life <= run.lives, accent(&seat), &mut color, &mut border);
             }
             // Several players have each other: a square for each tank, in its color while
             // it runs and empty while it is a wreck.
@@ -675,8 +698,35 @@ fn status(
     }
 }
 
+/// The interface takes the color of the player's seat. A guest's seat can change when a run
+/// starts, as the seats close ranks.
+fn tint(
+    seat: Res<LocalSeat>,
+    parts: Res<DialParts>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    fresh: Query<(), Added<Accented>>,
+    // A text has a ground too, which stays clear.
+    mut fills: Query<&mut BackgroundColor, (With<Accented>, Without<Text>)>,
+    mut texts: Query<&mut TextColor, With<Accented>>,
+) {
+    if !seat.is_changed() && fresh.is_empty() {
+        return;
+    }
+    let accent = accent(&seat);
+    for mut fill in &mut fills {
+        fill.0 = accent;
+    }
+    for mut text in &mut texts {
+        text.0 = accent;
+    }
+    if let Some(mut loading) = materials.get_mut(&parts.loading) {
+        loading.base_color = accent;
+    }
+}
+
 /// What the shield bar shows: how full it is, in which color, and a word about its state.
-fn shield_gauge(shield: &Shield, cooldown: f32) -> (f32, Color, String) {
+/// A shield that is ready shows the color of its player.
+fn shield_gauge(shield: &Shield, cooldown: f32, accent: Color) -> (f32, Color, String) {
     match shield.state {
         ShieldState::Active(_) => (1.0, theme::TEXT, "UP".to_string()),
         ShieldState::Ready if shield.cooldown > 0.0 => (
@@ -684,22 +734,22 @@ fn shield_gauge(shield: &Shield, cooldown: f32) -> (f32, Color, String) {
             theme::TEXT_DIM,
             format!("{:.0} s", shield.cooldown.ceil()),
         ),
-        ShieldState::Ready => (1.0, theme::ACCENT, "READY".to_string()),
+        ShieldState::Ready => (1.0, accent, "READY".to_string()),
     }
 }
 
 fn weapons(
-    player: Query<(Entity, &Tank, &Gun, &Shield), With<Own>>,
-    mines: Query<&Mine>,
+    player: Query<(&Tank, &Gun, &Shield), With<Own>>,
+    seat: Res<LocalSeat>,
     mut pips: Query<(&Pip, &mut BackgroundColor, &mut BorderColor, &mut Node)>,
     mut bars: Query<(&Bar, &mut BackgroundColor, &mut Node), Without<Pip>>,
     mut readouts: Query<(&Readout, &mut Text)>,
 ) {
-    let Ok((entity, tank, gun, shield)) = player.single() else {
+    let Ok((tank, gun, shield)) = player.single() else {
         return;
     };
     let genome = &tank.genome;
-    let armed = mines.iter().filter(|mine| mine.owner == entity).count() as u8;
+    let armed = gun.mines;
     for (pip, mut color, mut border, mut node) in &mut pips {
         let (fitted, on) = match *pip {
             Pip::Round(round) => (round <= genome.magazine(), round <= gun.rounds),
@@ -710,7 +760,8 @@ fn weapons(
         light(on, theme::TEXT, &mut color, &mut border);
     }
     let has_shield = genome.level(Stat::Shield) > 0;
-    let (fill, shield_color, state) = shield_gauge(shield, genome.shield_cooldown().unwrap_or(1.0));
+    let cooldown = genome.shield_cooldown().unwrap_or(1.0);
+    let (fill, shield_color, state) = shield_gauge(shield, cooldown, accent(&seat));
     for (bar, mut color, mut node) in &mut bars {
         match bar {
             Bar::Reload => node.width = percent(100.0 * gun.reload / genome.reload_time()),
@@ -940,17 +991,16 @@ fn round_steps(round: u8, loaded: u8, progress: f32) -> (u8, bool) {
 }
 
 fn light_dial(
-    player: Query<(Entity, &Tank, &Gun), With<Own>>,
-    mines: Query<&Mine>,
+    player: Query<(&Tank, &Gun), With<Own>>,
     parts: Res<DialParts>,
     mut drawn: Query<(&DialPart, &mut MeshMaterial3d<StandardMaterial>)>,
 ) {
-    let Ok((entity, tank, gun)) = player.single() else {
+    let Ok((tank, gun)) = player.single() else {
         return;
     };
     let genome = &tank.genome;
     let progress = (gun.reload / genome.reload_time()).clamp(0.0, 1.0);
-    let armed = mines.iter().filter(|mine| mine.owner == entity).count() as u8;
+    let armed = gun.mines;
     for (part, mut material) in &mut drawn {
         let wanted = match *part {
             DialPart::Round { round, step } => match round_steps(round, gun.rounds, progress) {
@@ -1009,7 +1059,7 @@ mod tests {
 
     #[test]
     fn the_shield_bar_tells_its_state() {
-        let gauge = |state, cooldown| shield_gauge(&Shield { state, cooldown }, 9.0);
+        let gauge = |state, cooldown| shield_gauge(&Shield { state, cooldown }, 9.0, theme::ACCENT);
         assert_eq!(gauge(ShieldState::Ready, 0.0).2, "READY");
         assert_eq!(gauge(ShieldState::Active(0.3), 0.0).2, "UP");
         // While it recharges, it counts the seconds down.

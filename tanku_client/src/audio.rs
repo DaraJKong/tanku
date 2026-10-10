@@ -136,6 +136,7 @@ mod tests {
                 seed_text: "TEST".into(),
                 seed: 1,
                 players: 1,
+                team: 1,
                 solo: true,
                 sector: 1,
                 cleared: 0,
@@ -145,6 +146,7 @@ mod tests {
                 ticks: 0,
                 phase: RunPhase::Playing,
                 lost_to: None,
+                playtest: false,
             })
             .add_message::<SimEvent>()
             .add_systems(Startup, setup)

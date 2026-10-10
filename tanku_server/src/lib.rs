@@ -40,6 +40,11 @@ pub struct Casualties {
     pub culprits: Vec<(Entity, (Genome, Team))>,
 }
 
+/// Everything the simulation does in a tick. A game that shows a run simulated on another
+/// machine keeps this from running.
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Simulation;
+
 /// The authoritative simulation. Needs `tanku_core::CorePlugin`.
 pub struct ServerPlugin;
 
@@ -76,7 +81,8 @@ impl Plugin for ServerPlugin {
                         .chain()
                         .run_if(in_progress),
                 )
-                    .chain(),
+                    .chain()
+                    .in_set(Simulation),
             );
     }
 }

@@ -157,6 +157,7 @@ pub fn operate(
         let genome = &tank.genome;
         gun.cooldown = (gun.cooldown - TICK).max(0.0);
         gun.mine_cooldown = (gun.mine_cooldown - TICK).max(0.0);
+        gun.mines = mines.iter().filter(|mine| mine.owner == entity).count() as u8;
         if gun.rounds < genome.magazine() {
             gun.reload += TICK;
             if gun.reload >= genome.reload_time() {
@@ -212,9 +213,9 @@ pub fn operate(
             }
         }
 
-        let armed = mines.iter().filter(|mine| mine.owner == entity).count();
-        if command.mine && gun.mine_cooldown == 0.0 && armed < genome.mines() as usize {
+        if command.mine && gun.mine_cooldown == 0.0 && gun.mines < genome.mines() {
             gun.mine_cooldown = MINE_COOLDOWN;
+            gun.mines += 1;
             commands.spawn((
                 Mine {
                     owner: entity,

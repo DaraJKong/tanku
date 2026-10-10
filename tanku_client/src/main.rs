@@ -18,6 +18,7 @@ mod report;
 mod ruler;
 mod scars;
 mod scene;
+mod session;
 mod settings;
 mod storage;
 mod tags;
@@ -32,6 +33,10 @@ use tanku_server::ServerPlugin;
 pub enum Screen {
     #[default]
     Menu,
+    /// Where a player types the address of a game to join.
+    Join,
+    /// Where the players of a game wait for its host to start a run.
+    Lobby,
     Playing,
     GameOver,
 }
@@ -74,10 +79,10 @@ fn main() {
     app.add_plugins((CorePlugin, ServerPlugin))
         .init_state::<Screen>()
         .init_state::<Overlay>()
+        .add_plugins((crew::plugin, session::plugin))
         .add_plugins((
             theme::plugin,
             settings::plugin,
-            crew::plugin,
             input::plugin,
             camera::plugin,
             scene::plugin,
@@ -92,6 +97,9 @@ fn main() {
             report::plugin,
         ))
         .add_plugins((audio::plugin, music::plugin));
+    // A browser neither hosts nor joins yet.
+    #[cfg(not(target_arch = "wasm32"))]
+    app.add_plugins(net::NetPlugin);
     if options.playtest {
         // The lives count again once the pause menu says so.
         app.insert_resource(Playtest {

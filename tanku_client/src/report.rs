@@ -166,9 +166,11 @@ pub fn parts(blow: &Blow) -> Vec<Part> {
 }
 
 /// What kind of tank it was: where most of its points went, which is what its hue tells.
-pub fn build(blow: &Blow) -> &'static str {
+/// Among several players, the run doesn't tell whose tank a player's tank was.
+pub fn build(blow: &Blow, solo: bool) -> &'static str {
     match (blow.team, blow.genome.main_group()) {
-        (Team::Players, _) => "Your own tank",
+        (Team::Players, _) if solo => "Your own tank",
+        (Team::Players, _) => "A player's tank",
         (_, SpendingGroup::Mobility) => "Mobility build",
         (_, SpendingGroup::Firepower) => "Firepower build",
         (_, SpendingGroup::Utility) => "Mines and shield build",
@@ -176,15 +178,15 @@ pub fn build(blow: &Blow) -> &'static str {
     }
 }
 
-/// How the tank did it.
-pub fn means(blow: &Blow) -> &'static str {
+/// How the tank did it. A single player's own weapons are told as theirs.
+pub fn means(blow: &Blow, solo: bool) -> &'static str {
     match (blow.team, blow.weapon) {
-        (Team::Enemies, Weapon::Bullet) => "With a bullet",
-        (Team::Enemies, Weapon::Mine) => "With a mine",
-        (Team::Enemies, Weapon::Crate) => "With a crate that it set off",
-        (Team::Players, Weapon::Bullet) => "With a bullet that bounced back",
-        (Team::Players, Weapon::Mine) => "With a mine of your own",
-        (Team::Players, Weapon::Crate) => "With a crate that you set off",
+        (Team::Players, Weapon::Bullet) if solo => "With a bullet that bounced back",
+        (Team::Players, Weapon::Mine) if solo => "With a mine of your own",
+        (Team::Players, Weapon::Crate) if solo => "With a crate that you set off",
+        (_, Weapon::Bullet) => "With a bullet",
+        (_, Weapon::Mine) => "With a mine",
+        (_, Weapon::Crate) => "With a crate that it set off",
     }
 }
 
@@ -470,7 +472,7 @@ fn row(list: &mut ChildSpawnerCommands, number: usize, part: &Part) {
 
 /// What the report says about the tank next to its drawing: what it was and how it did it,
 /// then the list of its parts. They stand along the right edge of the sheet.
-pub fn panels(sheet: &mut ChildSpawnerCommands, blow: &Blow) {
+pub fn panels(sheet: &mut ChildSpawnerCommands, blow: &Blow, solo: bool) {
     let genome = &blow.genome;
     let points = format!("{} of {} points", genome.cost(), genome.budget);
     sheet.spawn((
@@ -486,7 +488,7 @@ pub fn panels(sheet: &mut ChildSpawnerCommands, blow: &Blow) {
         }),
         children![
             theme::label("Destroyed by", 12.0, theme::TEXT_DIM),
-            theme::title(build(blow), 22.0, theme::TEXT),
+            theme::title(build(blow, solo), 22.0, theme::TEXT),
             (
                 Node {
                     column_gap: px(10),
@@ -505,7 +507,7 @@ pub fn panels(sheet: &mut ChildSpawnerCommands, blow: &Blow) {
                     theme::figure(points, 14.0, theme::TEXT_DIM),
                 ],
             ),
-            theme::text(means(blow), 17.0, theme::TEXT),
+            theme::text(means(blow, solo), 17.0, theme::TEXT),
         ],
     ));
 
@@ -638,14 +640,18 @@ mod tests {
     #[test]
     fn the_report_tells_what_the_tank_was_and_how_it_did_it() {
         let enemy = blow(Team::Enemies, burster());
-        assert_eq!(build(&enemy), "Firepower build");
-        assert_eq!(means(&enemy), "With a bullet");
+        assert_eq!(build(&enemy, true), "Firepower build");
+        assert_eq!(means(&enemy, true), "With a bullet");
+        assert_eq!(means(&enemy, false), "With a bullet");
         let own = Blow {
             weapon: Weapon::Mine,
             ..blow(Team::Players, Genome::PLAYER)
         };
-        assert_eq!(build(&own), "Your own tank");
-        assert_eq!(means(&own), "With a mine of your own");
+        assert_eq!(build(&own, true), "Your own tank");
+        assert_eq!(means(&own, true), "With a mine of your own");
+        // Among several players, the tank may be a teammate's.
+        assert_eq!(build(&own, false), "A player's tank");
+        assert_eq!(means(&own, false), "With a mine");
         assert_eq!(color(&own), theme::PLAYER);
     }
 

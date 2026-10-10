@@ -60,6 +60,8 @@ pub struct Gun {
     pub cooldown: f32,
     /// Time before the next mine.
     pub mine_cooldown: f32,
+    /// Mines of this tank that lie on the ground.
+    pub mines: u8,
 }
 
 impl Gun {
@@ -69,6 +71,7 @@ impl Gun {
             reload: 0.0,
             cooldown: 0.0,
             mine_cooldown: 0.0,
+            mines: 0,
         }
     }
 }
@@ -225,12 +228,14 @@ pub enum RunPhase {
 }
 
 /// The run in progress.
-#[derive(Resource, Clone, Debug, Serialize, Deserialize)]
+#[derive(Resource, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Run {
     pub seed_text: String,
     pub seed: u64,
     /// Players in the run. Sectors are generated for this many.
     pub players: u32,
+    /// Players at the start of the run. Its record is the one of a team of this size.
+    pub team: u32,
     /// Whether the run started with a single player, who has lives and checkpoints. Several
     /// players have wrecks and repairs instead.
     pub solo: bool,
@@ -248,6 +253,8 @@ pub struct Run {
     /// What destroyed a player's tank the last time, if the simulation knows whose doing it
     /// was. When the run is over, this is what ended it.
     pub lost_to: Option<Blow>,
+    /// Whether the run is the one of a playtest, which sets no record.
+    pub playtest: bool,
 }
 
 /// Present when the game was started as a playtest, which lets the player cheat. The runs of

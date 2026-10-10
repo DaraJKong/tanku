@@ -259,6 +259,8 @@ pub struct Settings {
     pub ui_scale: f32,
     pub fullscreen: bool,
     pub vsync: bool,
+    /// The address of the game that was joined last.
+    pub address: String,
 }
 
 impl Default for Settings {
@@ -274,6 +276,7 @@ impl Default for Settings {
             // A browser only goes full screen when the player asks for it.
             fullscreen: !cfg!(target_arch = "wasm32"),
             vsync: true,
+            address: String::new(),
         }
     }
 }
@@ -371,6 +374,10 @@ impl Settings {
         settings.camera_shake = flag("camera_shake", settings.camera_shake);
         settings.fullscreen = flag("fullscreen", settings.fullscreen);
         settings.vsync = flag("vsync", settings.vsync);
+        // A file can hold anything: only what an address is made of is kept.
+        let lettered = |letter: &char| letter.is_ascii_alphanumeric() || ".:-".contains(*letter);
+        let address = pairs.get("address").map(String::as_str).unwrap_or_default();
+        settings.address = address.chars().filter(lettered).take(64).collect();
         for (action, bindings) in &mut settings.bindings {
             if let Some(saved) = pairs.get(action.key()) {
                 let mut codes = saved.split(',').map(|code| Binding::parse(code.trim()));
@@ -388,6 +395,7 @@ impl Settings {
         pairs.insert("camera_shake".to_string(), self.camera_shake.to_string());
         pairs.insert("fullscreen".to_string(), self.fullscreen.to_string());
         pairs.insert("vsync".to_string(), self.vsync.to_string());
+        pairs.insert("address".to_string(), self.address.clone());
         for (action, bindings) in &self.bindings {
             let codes = bindings.map(|binding| binding.map_or("", Binding::code));
             pairs.insert(action.key().to_string(), codes.join(", "));
@@ -525,6 +533,7 @@ mod tests {
             volume: 0.25,
             music: 0.8,
             camera_shake: false,
+            address: "192.168.1.20:4000".to_string(),
             ..default()
         };
         settings.bind(Action::Shield, 0, Binding::Key(KeyCode::ShiftLeft));
@@ -539,7 +548,10 @@ mod tests {
         pairs.insert("music".to_string(), "7".to_string());
         pairs.insert("ui_scale".to_string(), "40".to_string());
         pairs.insert("bind.up".to_string(), "NoSuchKey".to_string());
+        pairs.insert("address".to_string(), "10.0.0.7 /etc".to_string());
         let settings = Settings::from_pairs(&pairs);
+        // Only what an address is made of is kept.
+        assert_eq!(settings.address, "10.0.0.7etc");
         assert_eq!(settings.volume, Settings::default().volume);
         assert_eq!(settings.music, 1.0);
         assert_eq!(settings.ui_scale, 2.0);

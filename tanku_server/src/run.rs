@@ -110,6 +110,7 @@ pub fn handle_requests(
     mut requests: MessageReader<RunRequest>,
     entities: Query<Entity, Or<(With<InSector>, With<Player>)>>,
     mut casualties: ResMut<Casualties>,
+    playtest: Option<Res<Playtest>>,
     mut events: MessageWriter<SimEvent>,
 ) {
     for request in requests.read() {
@@ -128,6 +129,7 @@ pub fn handle_requests(
                     seed_text: seed_text.trim().to_uppercase(),
                     seed,
                     players,
+                    team: players,
                     solo: players == 1,
                     sector: 0,
                     cleared: 0,
@@ -137,6 +139,7 @@ pub fn handle_requests(
                     ticks: 0,
                     phase: RunPhase::Playing,
                     lost_to: None,
+                    playtest: playtest.is_some(),
                 });
                 events.write(SimEvent::RunStarted);
             }

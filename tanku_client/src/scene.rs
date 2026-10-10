@@ -1507,6 +1507,7 @@ mod tests {
             seed_text: "TEST".into(),
             seed: 1,
             players: 1,
+            team: 1,
             solo: true,
             sector,
             cleared: 0,
@@ -1516,6 +1517,7 @@ mod tests {
             ticks: 0,
             phase: tanku_core::sim::RunPhase::Playing,
             lost_to: None,
+            playtest: false,
         };
         assert!(is_dormant(5, Some(&run(4))));
         assert!(!is_dormant(5, Some(&run(5))));

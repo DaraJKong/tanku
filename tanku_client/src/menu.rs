@@ -1,10 +1,17 @@
 //! The menus: main menu, pause, settings and game over.
 
-use bevy::prelude::*;
+use bevy::{
+    input::{
+        ButtonState,
+        keyboard::{Key, KeyboardInput},
+    },
+    prelude::*,
+};
 use tanku_core::{
-    rules::{PLAYTEST_LAST_SECTOR, TICK_RATE},
+    protocol::{Lobby, Member},
+    rules::{MAX_PLAYERS, PLAYTEST_LAST_SECTOR, TICK_RATE},
     seed::{self, VERSION},
-    sim::{Playtest, Run, RunRequest, SimEvent},
+    sim::{Playtest, Run, RunPhase, RunRequest, SimEvent},
     stats::Genome,
 };
 
@@ -12,9 +19,11 @@ use crate::{
     Overlay, Screen,
     camera::View,
     cli::Options,
+    crew::LocalSeat,
     exhibit::{self, Exhibit, Show},
     report,
     scene::Paints,
+    session::{Invitation, Notice, Session, SessionRequest},
     settings::{Action, Binding, Records, Settings},
     theme,
 };
@@ -27,14 +36,29 @@ const GAME_OVER_DELAY: f32 = 1.4;
 const EXHIBIT_SPAN: f32 = 7.5;
 /// Where the tank stands on the screen of the main menu, in meters from its middle.
 const EXHIBIT_PLACE: Vec2 = Vec2::new(3.2, 0.2);
+/// The longest address that the join screen takes.
+const ADDRESS_LENGTH: usize = 64;
 
 /// What a button does.
 #[derive(Component, Clone, Copy, PartialEq)]
 enum Press {
     Solo,
+    /// Opens a game on this machine for others to join.
+    Host,
+    /// Opens the screen where the address of a game is typed.
+    OpenJoin,
+    /// Joins the game at the address that was typed.
+    Join,
+    /// In a lobby: the host starts a run with everyone who is there.
+    Start,
+    /// In a lobby: the host draws another seed.
+    Reseed,
+    /// The host ends the run and brings everyone back to the lobby.
+    Regroup,
     OpenSettings,
     Quit,
     Resume,
+    /// Leaves the run or the game of several players, for the main menu.
     Abandon,
     Retry,
     NewRun,
@@ -65,6 +89,22 @@ struct PauseRoot;
 #[derive(Component)]
 struct SettingsRoot;
 
+#[derive(Component)]
+struct LobbyRoot;
+
+/// The text that shows the address being typed.
+#[derive(Component)]
+struct AddressField;
+
+/// The line that says how a game of several players goes: that joining is under way, or why
+/// it failed.
+#[derive(Component)]
+struct StatusLine;
+
+/// The address that the player types to join a game.
+#[derive(Resource, Default)]
+struct Address(String);
+
 /// The sector a playtest offers to skip to.
 #[derive(Resource)]
 struct Destination(u32);
@@ -87,11 +127,20 @@ struct Outcome {
 }
 
 pub fn plugin(app: &mut App) {
+    // The player's tank stands behind the menus that come before a run.
+    let before_a_run = in_state(Screen::Menu)
+        .or_else(in_state(Screen::Join))
+        .or_else(in_state(Screen::Lobby));
     app.init_resource::<Capture>()
         .init_resource::<Outcome>()
+        .init_resource::<Address>()
         .insert_resource(Destination(1))
         .add_systems(OnEnter(Screen::Menu), main_menu)
+        .add_systems(OnEnter(Screen::Join), join_screen)
+        .add_systems(OnEnter(Screen::Lobby), draw_a_seed)
         .add_systems(OnExit(Screen::Menu), put_the_exhibit_away)
+        .add_systems(OnExit(Screen::Join), put_the_exhibit_away)
+        .add_systems(OnExit(Screen::Lobby), put_the_exhibit_away)
         .add_systems(OnEnter(Screen::GameOver), game_over)
         .add_systems(
             OnTransition {
@@ -105,14 +154,16 @@ pub fn plugin(app: &mut App) {
         .add_systems(
             Update,
             (
-                (capture_binding, press, escape).chain(),
+                (capture_binding, type_address, press, escape).chain(),
                 refresh_pause
                     .run_if(in_state(Overlay::Pause).and_then(resource_exists::<Playtest>)),
                 refresh_settings.run_if(in_state(Overlay::Settings)),
+                lobby_screen.run_if(in_state(Screen::Lobby)),
+                (show_address, tell_how_it_goes),
                 hover,
                 pause_time,
-                watch_run,
-                exhibit.run_if(in_state(Screen::Menu)),
+                (watch_run, keep_records).chain(),
+                exhibit.run_if(before_a_run),
             ),
         );
 }
@@ -131,6 +182,25 @@ fn sheet_edge() -> impl Bundle {
         },
         BorderColor::all(theme::RULE.with_alpha(0.35)),
     )
+}
+
+/// The left margin of the sheet, where the menus that fill the screen stand. The right of the
+/// sheet is left to what is drawn on it.
+fn margin(
+    root: &mut ChildSpawnerCommands,
+    width: f32,
+    content: impl FnOnce(&mut ChildSpawnerCommands),
+) {
+    root.spawn(Node {
+        position_type: PositionType::Absolute,
+        left: px(120),
+        top: px(90),
+        width: px(width),
+        flex_direction: FlexDirection::Column,
+        row_gap: px(10),
+        ..default()
+    })
+    .with_children(content);
 }
 
 /// A box with a ruled edge.
@@ -322,14 +392,32 @@ fn level(wanted: f32) -> f32 {
     (wanted * 10.0).round().clamp(0.0, 10.0) / 10.0
 }
 
-fn record_line(records: &Records) -> String {
-    match records.best(MODE, 1) {
+/// The best run of a team of some size, or of a single player.
+fn record_line(records: &Records, players: u32) -> String {
+    match records.best(MODE, players) {
         Some(record) => format!(
             "Best run: sector {}, seed {}, v{}",
             record.sector, record.seed, record.version
         ),
         None => "No run yet".to_string(),
     }
+}
+
+/// The best runs of the teams that have one, a line for each size.
+fn team_records(records: &Records) -> Vec<String> {
+    let teams = (2..=MAX_PLAYERS).filter_map(|players| {
+        let record = records.best(MODE, players)?;
+        Some(format!(
+            "{players} players: sector {}, seed {}, v{}",
+            record.sector, record.seed, record.version
+        ))
+    });
+    teams.collect()
+}
+
+/// A line that tells the player how a game of several players goes.
+fn status_line(parent: &mut ChildSpawnerCommands) {
+    parent.spawn((StatusLine, theme::text("", 17.0, theme::DANGER)));
 }
 
 fn main_menu(
@@ -351,16 +439,7 @@ fn main_menu(
         ))
         .with_children(|root| {
             // The menu is the left margin of the sheet. The tank is drawn on its right.
-            root.spawn(Node {
-                position_type: PositionType::Absolute,
-                left: px(120),
-                top: px(90),
-                width: px(400),
-                flex_direction: FlexDirection::Column,
-                row_gap: px(10),
-                ..default()
-            })
-            .with_children(|parent| {
+            margin(root, 400.0, |parent| {
                 parent.spawn(theme::figure(
                     format!("VERSION {VERSION}"),
                     15.0,
@@ -374,27 +453,35 @@ fn main_menu(
                     },
                 ));
                 primary(parent, "Solo", Press::Solo);
-                placeholder(parent, "Host a game");
-                placeholder(parent, "Join a game");
+                // A browser can't accept connections, so it hosts no game. It joins none yet.
+                if cfg!(not(target_arch = "wasm32")) {
+                    button(parent, "Host a game", Press::Host);
+                    button(parent, "Join a game", Press::OpenJoin);
+                } else {
+                    placeholder(parent, "Join a game");
+                }
                 placeholder(parent, "Achievements");
                 button(parent, "Settings", Press::OpenSettings);
                 // A browser tab is closed by the browser.
                 if cfg!(not(target_arch = "wasm32")) {
                     button(parent, "Quit", Press::Quit);
                 }
-                parent.spawn((
-                    ruled(Node {
+                parent
+                    .spawn(ruled(Node {
                         flex_direction: FlexDirection::Column,
                         row_gap: px(4),
                         padding: UiRect::axes(px(12), px(8)),
                         margin: UiRect::top(px(14)),
                         ..default()
-                    }),
-                    children![
-                        theme::label("RECORD", 12.0, theme::TEXT_DIM),
-                        theme::text(record_line(&records), 16.0, theme::TEXT),
-                    ],
-                ));
+                    }))
+                    .with_children(|record| {
+                        record.spawn(theme::label("RECORD", 12.0, theme::TEXT_DIM));
+                        record.spawn(theme::text(record_line(&records, 1), 16.0, theme::TEXT));
+                        for team in team_records(&records) {
+                            record.spawn(theme::text(team, 16.0, theme::TEXT));
+                        }
+                    });
+                status_line(parent);
                 if playtest.is_some() {
                     line(
                         parent,
@@ -455,23 +542,34 @@ fn main_menu(
         });
 }
 
-/// Draws the player's tank large on the sheet behind the main menu, inside the circle that
-/// stands for it when something hits it and the one that its shield reaches.
+/// Draws the player's tank large on the sheet behind the menus that come before a run, inside
+/// the circle that stands for it when something hits it and the one that its shield reaches.
+/// In a game of several players, the tank has the color of the player's seat.
 ///
 /// It waits for the menu to be on screen: the first one comes before the paints are mixed.
 fn exhibit(
     mut commands: Commands,
-    exhibits: Query<(), With<Exhibit>>,
+    exhibits: Query<Entity, With<Exhibit>>,
     paints: Res<Paints>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut view: ResMut<View>,
+    screen: Res<State<Screen>>,
+    seat: Res<LocalSeat>,
+    mut shown: Local<Option<(Screen, u8)>>,
 ) {
-    if !exhibits.is_empty() {
+    let wanted = (*screen.get(), seat.0);
+    if !exhibits.is_empty() && *shown == Some(wanted) {
         return;
     }
+    // A seat that changes in the lobby changes the color.
+    for stale in &exhibits {
+        commands.entity(stale).despawn();
+    }
+    *shown = Some(wanted);
+    let color = theme::PLAYERS[seat.0 as usize % theme::PLAYERS.len()];
     let show = Show {
         genome: Genome::PLAYER,
-        color: theme::PLAYER,
+        color,
         span: EXHIBIT_SPAN,
         place: EXHIBIT_PLACE,
         turret: 0.35,
@@ -483,9 +581,321 @@ fn exhibit(
         &mut meshes,
         &paints,
         &mut view,
-        Screen::Menu,
+        wanted.0,
         &show,
     );
+}
+
+/// What a key does to the address being typed.
+fn typed(address: &mut String, key: &Key, text: Option<&str>) {
+    if *key == Key::Backspace {
+        address.pop();
+        return;
+    }
+    let fits = |letter: &char| letter.is_ascii_alphanumeric() || matches!(letter, '.' | ':' | '-');
+    for letter in text.unwrap_or_default().chars().filter(fits) {
+        if address.len() < ADDRESS_LENGTH {
+            address.push(letter);
+        }
+    }
+}
+
+/// Asks to join the game at the address that was typed, and keeps the address for next time.
+fn ask_to_join(
+    address: &Address,
+    settings: &mut Settings,
+    requests: &mut MessageWriter<SessionRequest>,
+) {
+    let typed = address.0.trim();
+    if settings.address != typed {
+        settings.address = typed.to_string();
+    }
+    requests.write(SessionRequest::Join(typed.to_string()));
+}
+
+/// Takes what the player types on the join screen. Enter joins.
+fn type_address(
+    mut keys: MessageReader<KeyboardInput>,
+    screen: Res<State<Screen>>,
+    session: Res<Session>,
+    mut address: ResMut<Address>,
+    mut settings: ResMut<Settings>,
+    mut requests: MessageWriter<SessionRequest>,
+) {
+    // An address that is being joined stays as it is.
+    let typing = *screen.get() == Screen::Join && *session == Session::Solo;
+    for key in keys.read() {
+        if !typing || key.state != ButtonState::Pressed {
+            continue;
+        }
+        if key.logical_key == Key::Enter {
+            ask_to_join(&address, &mut settings, &mut requests);
+        } else {
+            typed(&mut address.0, &key.logical_key, key.text.as_deref());
+        }
+    }
+}
+
+/// Shows the address as it is typed, with a mark that blinks where the next letter goes.
+fn show_address(
+    time: Res<Time<Real>>,
+    session: Res<Session>,
+    address: Res<Address>,
+    mut fields: Query<&mut Text, With<AddressField>>,
+) {
+    let blinks = *session == Session::Solo && time.elapsed_secs() % 1.0 < 0.5;
+    let wanted = format!("{}{}", address.0, if blinks { "_" } else { "" });
+    for mut text in &mut fields {
+        if text.0 != wanted {
+            text.0 = wanted.clone();
+        }
+    }
+}
+
+/// Says how a game of several players goes: that the game is being looked for, or why it
+/// could not be joined, or how it ended.
+fn tell_how_it_goes(
+    screen: Res<State<Screen>>,
+    session: Res<Session>,
+    notice: Res<Notice>,
+    address: Res<Address>,
+    mut lines: Query<(&mut Text, &mut TextColor), With<StatusLine>>,
+) {
+    let (wanted, color) = match (&notice.0, *session, *screen.get()) {
+        (_, Session::Guest, Screen::Join) => (
+            format!("Looking for a game at {}...", address.0.trim()),
+            theme::TEXT_DIM,
+        ),
+        (Some(notice), ..) => (notice.clone(), theme::DANGER),
+        (None, ..) => (String::new(), theme::TEXT_DIM),
+    };
+    for (mut text, mut shade) in &mut lines {
+        if text.0 != wanted {
+            text.0 = wanted.clone();
+        }
+        shade.set_if_neq(TextColor(color));
+    }
+}
+
+/// The screen where the player types the address of a game to join.
+fn join_screen(mut commands: Commands, settings: Res<Settings>, mut address: ResMut<Address>) {
+    // The game that was joined last is the likeliest one.
+    if address.0.is_empty() {
+        address.0 = settings.address.clone();
+    }
+    commands
+        .spawn((
+            DespawnOnExit(Screen::Join),
+            Node {
+                width: percent(100),
+                height: percent(100),
+                ..default()
+            },
+            GlobalZIndex(10),
+            children![sheet_edge()],
+        ))
+        .with_children(|root| {
+            margin(root, 440.0, |parent| {
+                parent.spawn(theme::label(
+                    "Game of several players",
+                    13.0,
+                    theme::TEXT_DIM,
+                ));
+                parent.spawn((
+                    theme::title("Join a game", 64.0, theme::TEXT),
+                    Node {
+                        margin: UiRect::bottom(px(8)),
+                        ..default()
+                    },
+                ));
+                section(parent, "Address of the host");
+                parent.spawn((
+                    ruled(Node {
+                        padding: UiRect::axes(px(12), px(10)),
+                        min_height: px(48),
+                        align_items: AlignItems::Center,
+                        ..default()
+                    }),
+                    children![(AddressField, theme::figure("", 22.0, theme::TEXT))],
+                ));
+                line(
+                    parent,
+                    "The lobby of the host shows it. Enter joins.",
+                    theme::TEXT_DIM,
+                );
+                primary(parent, "Join", Press::Join);
+                button(parent, "Back", Press::Abandon);
+                status_line(parent);
+            });
+        });
+}
+
+/// The host draws a seed whenever the players gather in the lobby.
+fn draw_a_seed(
+    session: Res<Session>,
+    options: Res<Options>,
+    time: Res<Time<Real>>,
+    mut lobbies: Query<&mut Lobby>,
+) {
+    if let (Session::Host, Ok(mut lobby)) = (*session, lobbies.single_mut()) {
+        lobby.seed = new_seed(&options, time.elapsed().as_nanos() as u64);
+    }
+}
+
+/// A seat of the lobby: its color, its number and who sits there.
+fn seat_row(parent: &mut ChildSpawnerCommands, seat: usize, member: Option<Member>, own: bool) {
+    let taken = member.is_some();
+    let color = theme::PLAYERS[seat % theme::PLAYERS.len()];
+    let who = match (member, own) {
+        (None, _) => "Open",
+        (Some(Member::Host), true) => "You, the host",
+        (Some(Member::Host), false) => "The host",
+        (Some(Member::Guest(_)), true) => "You",
+        (Some(Member::Guest(_)), false) => "A guest",
+    };
+    let ink = if taken { theme::TEXT } else { theme::TEXT_DIM };
+    parent.spawn((
+        Node {
+            column_gap: px(12),
+            align_items: AlignItems::Center,
+            padding: UiRect::axes(px(12), px(8)),
+            border: if seat == 0 {
+                UiRect::ZERO
+            } else {
+                UiRect::top(px(1))
+            },
+            ..default()
+        },
+        BorderColor::all(theme::RULE_DIM),
+        children![
+            (
+                Node {
+                    width: px(14),
+                    height: px(14),
+                    border: UiRect::all(px(1)),
+                    ..default()
+                },
+                BackgroundColor(if taken { color } else { Color::NONE }),
+                BorderColor::all(if taken { color } else { theme::RULE_DIM }),
+            ),
+            (
+                Node {
+                    width: px(110),
+                    ..default()
+                },
+                children![theme::label(format!("Player {}", seat + 1), 13.0, ink)],
+            ),
+            theme::text(who, 16.0, ink),
+        ],
+    ));
+}
+
+/// The lobby: who is there, what they are about to play, and how others join. It is drawn
+/// again whenever something it shows changes.
+fn lobby_screen(
+    mut commands: Commands,
+    lobbies: Query<Ref<Lobby>>,
+    session: Res<Session>,
+    seat: Res<LocalSeat>,
+    invitation: Res<Invitation>,
+    options: Res<Options>,
+    roots: Query<Entity, With<LobbyRoot>>,
+) {
+    let Ok(lobby) = lobbies.single() else {
+        return;
+    };
+    let stale = lobby.is_changed() || seat.is_changed() || invitation.is_changed();
+    if !roots.is_empty() && !stale {
+        return;
+    }
+    for root in &roots {
+        commands.entity(root).despawn();
+    }
+    let host = *session == Session::Host;
+    commands
+        .spawn((
+            LobbyRoot,
+            DespawnOnExit(Screen::Lobby),
+            Node {
+                width: percent(100),
+                height: percent(100),
+                ..default()
+            },
+            GlobalZIndex(10),
+            children![sheet_edge()],
+        ))
+        .with_children(|root| {
+            margin(root, 460.0, |parent| {
+                let role = if host { "host" } else { "guest" };
+                parent.spawn(theme::label(
+                    format!("Game of several players \u{b7} {role}"),
+                    13.0,
+                    theme::TEXT_DIM,
+                ));
+                parent.spawn(theme::title("Lobby", 84.0, theme::TEXT));
+                section(parent, "Players");
+                parent
+                    .spawn(ruled(Node {
+                        flex_direction: FlexDirection::Column,
+                        ..default()
+                    }))
+                    .with_children(|seats| {
+                        for (number, member) in lobby.seats.iter().enumerate() {
+                            seat_row(seats, number, *member, number == seat.0 as usize);
+                        }
+                    });
+                section(parent, "Run");
+                row(parent, "Mode", |row| {
+                    row.spawn(theme::text("Normal", 16.0, theme::TEXT));
+                });
+                row(parent, "Seed", |row| {
+                    row.spawn((
+                        Node {
+                            min_width: px(130),
+                            ..default()
+                        },
+                        children![theme::code(lobby.seed.clone(), 16.0, theme::TEXT)],
+                    ));
+                    // A playtest that was given a seed keeps it.
+                    if host && options.seed.is_none() {
+                        small(row, "New seed", 110.0, Press::Reseed);
+                    }
+                });
+                if host {
+                    section(parent, "Address");
+                    match &invitation.address {
+                        Some(address) => {
+                            parent.spawn(theme::figure(address.clone(), 24.0, theme::TEXT));
+                            let hint = "Players on this network join at this address.";
+                            line(parent, hint, theme::TEXT_DIM);
+                        }
+                        None => {
+                            let hint = "This machine has no address on a network.";
+                            line(parent, hint, theme::TEXT_DIM);
+                        }
+                    }
+                    line(
+                        parent,
+                        format!(
+                            "From the internet, they need your public address, and UDP port {} \
+                             must reach this machine.",
+                            invitation.port
+                        ),
+                        theme::TEXT_DIM,
+                    );
+                    let start = if lobby.players() > 1 {
+                        "Start"
+                    } else {
+                        "Start alone"
+                    };
+                    primary(parent, start, Press::Start);
+                    button(parent, "Close the game", Press::Abandon);
+                } else {
+                    line(parent, "The host starts the run.", theme::TEXT);
+                    button(parent, "Leave the game", Press::Abandon);
+                }
+            });
+        });
 }
 
 /// The game takes the view back.
@@ -505,17 +915,31 @@ fn pause_menu(
     run: Option<Res<Run>>,
     playtest: Option<Res<Playtest>>,
     destination: Res<Destination>,
+    session: Res<Session>,
 ) {
+    // Only a single player's run stands still while the menu is open.
+    let paused = run.as_ref().is_none_or(|run| run.solo);
     panel(
         &mut commands,
         (PauseRoot, DespawnOnExit(Overlay::Pause)),
         theme::SCRIM,
         |parent| {
-            heading(parent, "Paused");
+            heading(parent, if paused { "Paused" } else { "Menu" });
+            if !paused {
+                line(parent, "The run goes on meanwhile", theme::TEXT_DIM);
+            }
             primary(parent, "Resume", Press::Resume);
             button(parent, "Settings", Press::OpenSettings);
-            button(parent, "Quit to the menu", Press::Abandon);
-            if let Some(playtest) = playtest {
+            match *session {
+                Session::Solo => button(parent, "Quit to the menu", Press::Abandon),
+                Session::Host => {
+                    button(parent, "Back to the lobby", Press::Regroup);
+                    button(parent, "Close the game", Press::Abandon);
+                }
+                Session::Guest => button(parent, "Leave the game", Press::Abandon),
+            }
+            // The cheats are the host's: a guest's simulation is not here.
+            if let Some(playtest) = playtest.filter(|_| *session != Session::Guest) {
                 section(parent, "Playtest");
                 row(parent, "Infinite lives", |row| {
                     let state = on_off(playtest.infinite_lives);
@@ -546,6 +970,7 @@ fn refresh_pause(
     run: Option<Res<Run>>,
     playtest: Res<Playtest>,
     destination: Res<Destination>,
+    session: Res<Session>,
     root: Query<Entity, With<PauseRoot>>,
 ) {
     if !playtest.is_changed() && !destination.is_changed() {
@@ -554,7 +979,7 @@ fn refresh_pause(
     for entity in &root {
         commands.entity(entity).despawn();
     }
-    pause_menu(commands, run, Some(playtest), destination);
+    pause_menu(commands, run, Some(playtest), destination, session);
 }
 
 /// The seed of a new run: the one that the command line gave to a playtest, or else a random
@@ -564,9 +989,10 @@ fn new_seed(options: &Options, entropy: u64) -> String {
     chosen.unwrap_or_else(|| seed::random_seed_text(entropy))
 }
 
-/// Keeps the record of a run, unless it was a playtest. Returns whether the record is new.
-fn keep_record(records: &mut Records, playtest: bool, run: &Run) -> bool {
-    !playtest && records.submit(MODE, 1, run.cleared, &run.seed_text)
+/// Keeps the record of a run for a team of the size it started with, unless it was a playtest.
+/// Returns whether the record is new.
+fn keep_record(records: &mut Records, run: &Run) -> bool {
+    !run.playtest && records.submit(MODE, run.team, run.cleared, &run.seed_text)
 }
 
 /// Where a run ended, as the stamp of the game over screen tells it.
@@ -584,12 +1010,15 @@ fn game_over(
     run: Option<Res<Run>>,
     records: Res<Records>,
     outcome: Res<Outcome>,
-    playtest: Option<Res<Playtest>>,
+    session: Res<Session>,
 ) {
-    let mode = if playtest.is_some() {
-        "PLAYTEST"
-    } else {
-        "SOLO"
+    let (playtest, team) = run
+        .as_ref()
+        .map_or((false, 1), |run| (run.playtest, run.team));
+    let mode = match team {
+        _ if playtest => "PLAYTEST".to_string(),
+        1 => "SOLO".to_string(),
+        team => format!("CO-OP \u{b7} {team} PLAYERS"),
     };
     let blow = run.as_ref().and_then(|run| run.lost_to);
     commands
@@ -653,12 +1082,12 @@ fn game_over(
                         theme::TEXT_DIM,
                     );
                 }
-                if playtest.is_some() {
+                if playtest {
                     line(parent, "Playtest: no record kept", theme::TEXT_DIM);
                 } else if outcome.new_record {
                     line(parent, "New record", theme::GOOD);
                 } else {
-                    line(parent, record_line(&records), theme::TEXT_DIM);
+                    line(parent, record_line(&records, team), theme::TEXT_DIM);
                 }
                 parent
                     .spawn(Node {
@@ -668,14 +1097,25 @@ fn game_over(
                         margin: UiRect::top(px(14)),
                         ..default()
                     })
-                    .with_children(|buttons| {
-                        primary(buttons, "Retry this seed", Press::Retry);
-                        button(buttons, "New run", Press::NewRun);
-                        button(buttons, "Menu", Press::Abandon);
+                    .with_children(|buttons| match *session {
+                        Session::Solo => {
+                            primary(buttons, "Retry this seed", Press::Retry);
+                            button(buttons, "New run", Press::NewRun);
+                            button(buttons, "Menu", Press::Abandon);
+                        }
+                        Session::Host => {
+                            primary(buttons, "Retry this seed", Press::Retry);
+                            button(buttons, "New run", Press::NewRun);
+                            button(buttons, "Back to the lobby", Press::Regroup);
+                        }
+                        Session::Guest => {
+                            line(buttons, "The host decides what comes next", theme::TEXT);
+                            button(buttons, "Leave the game", Press::Abandon);
+                        }
                     });
             });
             if let Some(blow) = &blow {
-                report::panels(root, blow);
+                report::panels(root, blow, team == 1);
             }
         });
 }
@@ -811,19 +1251,21 @@ fn press(
     mut next_overlay: ResMut<NextState<Overlay>>,
     mut settings: ResMut<Settings>,
     mut capture: ResMut<Capture>,
-    mut records: ResMut<Records>,
     mut playtest: Option<ResMut<Playtest>>,
     mut destination: ResMut<Destination>,
-    options: Res<Options>,
-    run: Option<Res<Run>>,
-    time: Res<Time<Real>>,
+    (options, run, time): (Res<Options>, Option<Res<Run>>, Res<Time<Real>>),
+    (session, address, mut notice): (Res<Session>, Res<Address>, ResMut<Notice>),
+    mut lobbies: Query<&mut Lobby>,
     mut requests: MessageWriter<RunRequest>,
+    mut session_requests: MessageWriter<SessionRequest>,
     mut exit: MessageWriter<AppExit>,
 ) {
     if capture.swallowed {
         capture.swallowed = false;
         return;
     }
+    // The moment of the click is all the entropy a seed needs.
+    let fresh_seed = || new_seed(&options, time.elapsed().as_nanos() as u64);
     for (interaction, press) in &buttons {
         if *interaction != Interaction::Pressed {
             continue;
@@ -832,11 +1274,46 @@ fn press(
             Press::Solo | Press::NewRun | Press::Retry => {
                 let seed = match (*press, &run) {
                     (Press::Retry, Some(run)) => run.seed_text.clone(),
-                    // The moment of the click is all the entropy a seed needs.
-                    _ => new_seed(&options, time.elapsed().as_nanos() as u64),
+                    _ => fresh_seed(),
                 };
-                requests.write(RunRequest::Start { seed, players: 1 });
-                next_screen.set(Screen::Playing);
+                notice.0 = None;
+                match *session {
+                    Session::Solo => {
+                        requests.write(RunRequest::Start { seed, players: 1 });
+                        next_screen.set(Screen::Playing);
+                        next_overlay.set(Overlay::None);
+                    }
+                    // A host starts the run for everyone, on the seed of the lobby.
+                    Session::Host => {
+                        if let Ok(mut lobby) = lobbies.single_mut() {
+                            lobby.seed = seed;
+                        }
+                        session_requests.write(SessionRequest::Start);
+                    }
+                    Session::Guest => {}
+                }
+            }
+            Press::Host => {
+                notice.0 = None;
+                session_requests.write(SessionRequest::Host);
+            }
+            Press::OpenJoin => {
+                notice.0 = None;
+                next_screen.set(Screen::Join);
+            }
+            Press::Join => ask_to_join(&address, &mut settings, &mut session_requests),
+            Press::Start => {
+                session_requests.write(SessionRequest::Start);
+            }
+            Press::Reseed => {
+                if let Ok(mut lobby) = lobbies.single_mut() {
+                    lobby.seed = fresh_seed();
+                }
+            }
+            // The guests follow their host to the lobby.
+            Press::Regroup => {
+                requests.write(RunRequest::Abandon);
+                next_screen.set(Screen::Lobby);
                 next_overlay.set(Overlay::None);
             }
             Press::OpenSettings => next_overlay.set(Overlay::Settings),
@@ -850,10 +1327,15 @@ fn press(
                 });
             }
             Press::Abandon => {
-                if let Some(run) = &run {
-                    keep_record(&mut records, playtest.is_some(), run);
+                match *session {
+                    Session::Solo => {
+                        requests.write(RunRequest::Abandon);
+                    }
+                    // A host closes the game for everyone, and a guest leaves it.
+                    Session::Host | Session::Guest => {
+                        session_requests.write(SessionRequest::Leave);
+                    }
                 }
-                requests.write(RunRequest::Abandon);
                 next_screen.set(Screen::Menu);
                 next_overlay.set(Overlay::None);
             }
@@ -899,9 +1381,20 @@ fn escape(
     capture: Res<Capture>,
     screen: Res<State<Screen>>,
     overlay: Res<State<Overlay>>,
+    session: Res<Session>,
+    mut next_screen: ResMut<NextState<Screen>>,
     mut next_overlay: ResMut<NextState<Overlay>>,
+    mut session_requests: MessageWriter<SessionRequest>,
 ) {
     if !keys.just_pressed(KeyCode::Escape) || capture.waiting.is_some() {
+        return;
+    }
+    // Esc leaves the join screen as its button "Back" does.
+    if *screen.get() == Screen::Join && *overlay.get() == Overlay::None {
+        if *session == Session::Guest {
+            session_requests.write(SessionRequest::Leave);
+        }
+        next_screen.set(Screen::Menu);
         return;
     }
     let playing = *screen.get() == Screen::Playing;
@@ -939,13 +1432,15 @@ fn hover(
     }
 }
 
-/// In solo, an open menu pauses the game.
+/// In solo, an open menu pauses the game. A run of several players goes on.
 fn pause_time(
     screen: Res<State<Screen>>,
     overlay: Res<State<Overlay>>,
+    run: Option<Res<Run>>,
     mut time: ResMut<Time<Virtual>>,
 ) {
-    let paused = *screen.get() == Screen::Playing && *overlay.get() != Overlay::None;
+    let solo = run.is_none_or(|run| run.solo);
+    let paused = solo && *screen.get() == Screen::Playing && *overlay.get() != Overlay::None;
     if paused && !time.is_paused() {
         time.pause();
     } else if !paused && time.is_paused() {
@@ -953,13 +1448,12 @@ fn pause_time(
     }
 }
 
-/// Shows the game over screen a moment after the last life is lost, and keeps the record.
+/// Shows the game over screen a moment after a run is lost, and keeps the record.
 fn watch_run(
-    time: Res<Time>,
+    time: Res<Time<Real>>,
     mut events: MessageReader<SimEvent>,
     mut outcome: ResMut<Outcome>,
     mut records: ResMut<Records>,
-    playtest: Option<Res<Playtest>>,
     run: Option<Res<Run>>,
     screen: Res<State<Screen>>,
     mut next_screen: ResMut<NextState<Screen>>,
@@ -976,17 +1470,34 @@ fn watch_run(
         return;
     }
     outcome.countdown = None;
-    if let (Some(run), Screen::Playing) = (run, *screen.get()) {
-        outcome.new_record = keep_record(&mut records, playtest.is_some(), &run);
+    // A host may have started the next run already: then there is nothing to report.
+    let lost = run.filter(|run| run.phase == RunPhase::Over);
+    if let (Some(run), Screen::Playing) = (lost, *screen.get()) {
+        outcome.new_record = keep_record(&mut records, &run);
         next_screen.set(Screen::GameOver);
         next_overlay.set(Overlay::None);
     }
 }
 
+/// Keeps the record of a run that goes away before it is lost: its player left it, or its
+/// host ended it or closed the game.
+fn keep_records(run: Option<Res<Run>>, mut records: ResMut<Records>, mut last: Local<Option<Run>>) {
+    let gone = match (&run, &*last) {
+        (Some(run), Some(last)) => run.seed != last.seed || run.ticks < last.ticks,
+        (None, Some(_)) => true,
+        (_, None) => false,
+    };
+    if let (true, Some(ended)) = (gone, last.take()) {
+        keep_record(&mut records, &ended);
+    }
+    match (run, &mut *last) {
+        (Some(run), Some(last)) if *last == *run => {}
+        (run, last) => *last = run.map(|run| run.clone()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use tanku_core::sim::RunPhase;
-
     use super::*;
 
     #[test]
@@ -999,6 +1510,28 @@ mod tests {
         assert_eq!(new_seed(&chosen, 2), "85GVTHQA");
         let random = Options::default();
         assert_ne!(new_seed(&random, 1), new_seed(&random, 2));
+    }
+
+    #[test]
+    fn an_address_is_typed_a_key_at_a_time() {
+        let press = |address: &mut String, letter: &str| {
+            typed(address, &Key::Character(letter.into()), Some(letter));
+        };
+        let mut address = String::new();
+        for letter in "192.168.1.20:4000".chars() {
+            press(&mut address, &letter.to_string());
+        }
+        assert_eq!(address, "192.168.1.20:4000");
+        typed(&mut address, &Key::Backspace, Some("\u{8}"));
+        assert_eq!(address, "192.168.1.20:400");
+        // What no address holds is left out.
+        typed(&mut address, &Key::Space, Some(" "));
+        press(&mut address, "/");
+        typed(&mut address, &Key::ArrowLeft, None);
+        assert_eq!(address, "192.168.1.20:400");
+        // An address has an end.
+        press(&mut address, &"a".repeat(2 * ADDRESS_LENGTH));
+        assert_eq!(address.len(), ADDRESS_LENGTH);
     }
 
     #[test]
@@ -1021,6 +1554,7 @@ mod tests {
             seed_text: "TEST".into(),
             seed: 1,
             players: 1,
+            team: 1,
             solo: true,
             sector: 41,
             cleared: 40,
@@ -1030,9 +1564,10 @@ mod tests {
             ticks: 0,
             phase: RunPhase::Over,
             lost_to: None,
+            playtest: true,
         };
         let mut records = Records::default();
-        assert!(!keep_record(&mut records, true, &run));
+        assert!(!keep_record(&mut records, &run));
         assert_eq!(records, Records::default());
     }
 }

@@ -2,7 +2,8 @@
 //!
 //! `TANKU_DEV_SCRIPT` holds commands separated by semicolons, run one after the other:
 //! `start SEED PLAYERS`, `seat NUMBER`, `repair SECONDS`, `wait SECONDS`, `warp SECTOR`,
-//! `turn QUARTERS`, `peek ENEMY`,
+//! `host PORT`, which opens a game for others to join, `join ADDRESS`, which joins one,
+//! `type TEXT`, which presses the keys that write a text, `turn QUARTERS`, `peek ENEMY`,
 //! `flag SECTOR`, `look X Y`, `zoom METERS`, `clear`, `reach`, `bubble`, `die`, `pause`,
 //! `settings`, `resume`,
 //! `lose ENEMY`, `blast X Y`, which sets off a mine at a point of the map, `warn X Y`, which
@@ -27,6 +28,10 @@ use std::{collections::VecDeque, fmt::Write, path::PathBuf, time::Duration};
 use bevy::{
     app::ScheduleRunnerPlugin,
     camera::RenderTarget,
+    input::{
+        ButtonState,
+        keyboard::{Key, KeyboardInput, NativeKeyCode},
+    },
     prelude::*,
     render::{
         render_resource::TextureFormat,
@@ -55,6 +60,8 @@ use crate::{
     crew::{LocalSeat, Own},
     input,
     music::Baton,
+    net::HostPort,
+    session::SessionRequest,
     storage,
 };
 
@@ -363,6 +370,11 @@ fn run_script(
     ),
     canvas: Res<Canvas>,
     (baton, tape, mut seat): (Res<Baton>, Option<Res<Tape>>, ResMut<LocalSeat>),
+    (mut session_requests, mut keys, mut port): (
+        MessageWriter<SessionRequest>,
+        MessageWriter<KeyboardInput>,
+        ResMut<HostPort>,
+    ),
     mut events: MessageWriter<SimEvent>,
     mut exit: MessageWriter<AppExit>,
 ) {
@@ -385,6 +397,32 @@ fn run_script(
             screen.set(Screen::Playing);
         }
         "wait" => script.wait = number(1),
+        // Opens a game for others to join, on a port of its own if one is given.
+        "host" => {
+            if let Ok(wanted) = word(1).parse() {
+                port.0 = wanted;
+            }
+            session_requests.write(SessionRequest::Host);
+        }
+        // Joins the game at an address, from the screen where a player types it.
+        "join" => {
+            screen.set(Screen::Join);
+            session_requests.write(SessionRequest::Join(word(1).to_string()));
+        }
+        // Presses the keys that write a text, one after the other.
+        "type" => {
+            for letter in words[1..].join(" ").chars() {
+                let letter = letter.to_string();
+                keys.write(KeyboardInput {
+                    key_code: KeyCode::Unidentified(NativeKeyCode::Unidentified),
+                    logical_key: Key::Character(letter.as_str().into()),
+                    state: ButtonState::Pressed,
+                    text: Some(letter.as_str().into()),
+                    repeat: false,
+                    window: Entity::PLACEHOLDER,
+                });
+            }
+        }
         // Sits the script at the place of another player of the run: the view and the
         // commands that follow are those of that seat.
         "seat" => seat.0 = number(1) as u8,
