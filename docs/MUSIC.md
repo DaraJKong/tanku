@@ -1,6 +1,6 @@
 # Tanku: music specification
 
-Status: step 1 of the [steps](#steps) is built and has been listened to once. The crate holds the score, the director, rough instruments and the listening tool. The mode of the piece is still to be chosen between two, nothing plays in the game, and [PROJECT.md](PROJECT.md) still says that music comes later.
+Status: step 1 of the [steps](#steps) is built and has been listened to twice. The crate holds the score, the director, rough instruments and the listening tool. Nothing plays in the game, and [PROJECT.md](PROJECT.md) still says that music comes later.
 
 The music of Tanku is one piece that never stops. The game makes it while it plays, from two short motifs and six instruments that it computes itself, so no sound file ships. The piece is the same for every seed and on every platform. What changes is its arrangement, which follows the run: where the players are, whether they are fighting, and how smart the enemies in front of them are.
 
@@ -12,7 +12,7 @@ All numbers and all notes in this document are starting values to tune by ear.
 |---|---|
 | Piece | One, in A, at 120 beats per minute and at 90 in its bridge, without an end |
 | Written by hand | Three motifs, the chords of the verse and of the chorus, nine rhythm patterns |
-| Derived by rule | Everything else: every mode, every section, every arrangement, every sound |
+| Derived by rule | Everything else: both modes, every section, every arrangement, every sound |
 | Instruments | Bass, pluck, lead, kick, hi-hat and snare, all synthesized by the game |
 | Follows | The place (bay, corridor, arena), the fight (on or off) and the threat (the highest brain tier awake) |
 | Ignores | The seed, the platform and the clock of the machine |
@@ -34,7 +34,7 @@ All numbers and all notes in this document are starting values to tune by ear.
 | Bar | Four beats, or 16 steps |
 | Phrase | Four bars |
 | Degree | The place of a note in the scale, counted from the tonic, which is 1. Degree 8 is the tonic an octave higher. |
-| Mode | The scale in use: the mode of the piece, or Aeolian in the fights of an arena |
+| Mode | The scale in use: Dorian, the mode of the piece, or Aeolian in the fights of an arena |
 | Motif | A melody of two bars, written in degrees |
 | Section | Eight bars with their chords and their melody: intro, verse, chorus or bridge |
 | Layer | What one instrument plays |
@@ -68,30 +68,28 @@ A player who holds the trigger therefore fires at the pace of the music, two sho
 
 ## Pitch
 
-The piece is in A. It has a mode of its own, and the fights of an arena are in Aeolian:
+The piece is in A. Its mode is Dorian, and the fights of an arena are in Aeolian:
 
 | Degree | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
 |---|---|---|---|---|---|---|---|
 | Dorian (minor, with a major sixth) | A | B | C | D | E | F♯ | G |
-| Mixolydian (major, with a minor seventh) | A | B | C♯ | D | E | F♯ | G |
 | Aeolian (minor) | A | B | C | D | E | F | G |
 
-The mode of the piece is Dorian or Mixolydian: both are built, and the choice between them is to make by ear. The first version of the piece was in Ionian, the plain major scale, and was too bright and uplifting for a game about fighting. Dorian differs from Aeolian by one note, the sixth, so with it the whole piece is minor and an arena only darkens it. Mixolydian differs by the third as well, so with it an arena turns the piece from major to minor.
+Both modes are minor and differ by one note, the sixth degree, so an arena doesn't change the piece: it darkens it. Two major modes were tried for the piece and set aside. In Ionian, the plain major scale, it was too bright and uplifting for a game about fighting. Mixolydian, which has a minor seventh, was built next to Dorian for comparison, and Dorian was the one to keep.
 
-Every line is written in degrees and not in notes, so it exists in every mode without being written again. Two rules keep a line sound in all of them:
+Every line is written in degrees and not in notes, so it exists in both modes without being written twice. Two rules keep a line sound in both:
 
-- **Five degrees for the motifs.** The motifs use degrees 1, 2, 3, 5 and 6 only. In Aeolian these are A, B, C, E and F, a scale of five notes with two semitones that is known as [hirajōshi](https://piano.samesound.ru/en/reference/scales/piano/a/hirajoshi). In Dorian the F becomes F♯, and in Mixolydian the C becomes C♯ as well, which gives the major pentatonic scale. The same tune is tense in an arena without a second version.
-- **Four chords per mode.** Chords are major or minor triads. Each mode has those on degrees 1, 4 and 5, and one more that gives it its color: the major chord a tone below the tonic, on degree 7, in Dorian and in Mixolydian, and the major chord on degree 6 in Aeolian. It is the chord that tells the mode apart: without the one on degree 7, the motifs would sound the same in Mixolydian as in Ionian.
+- **Five degrees for the motifs.** The motifs use degrees 1, 2, 3, 5 and 6 only. In Aeolian these are A, B, C, E and F, a scale of five notes with two semitones that is known as [hirajōshi](https://piano.samesound.ru/en/reference/scales/piano/a/hirajoshi). In Dorian the F becomes F♯. The same tune is tense in an arena without a second version.
+- **Four chords per mode.** Chords are major or minor triads. Each mode has those on degrees 1, 4 and 5, and one more that gives it its color: the major chord a tone below the tonic, on degree 7, in Dorian, and the major chord on degree 6 in Aeolian.
 
 | Chord on degree | 1 | 4 | 5 | 6 | 7 |
 |---|---|---|---|---|---|
 | Dorian | Am | D | Em | Not used | G |
-| Mixolydian | A | D | Em | Not used | G |
 | Aeolian | Am | Dm | Em | F | Not used |
 
-The bridge is apart. It uses degrees 1, 2, 4, 5 and 7, which are the same notes in every mode: A, B, D, E and G. It has neither the third nor the sixth degree, the two that tell these modes apart, so it is neither major nor minor and sounds the same wherever it plays.
+The bridge is apart. It uses degrees 1, 2, 4, 5 and 7: A, B, D, E and G. It has neither the third degree, which tells major from minor, nor the sixth, which tells Dorian from Aeolian, so it has no mode of its own and sounds the same wherever it plays.
 
-The tonic is A because of the cues. Those that play notes already play A and E: sector cleared (E5, A5), flag captured (E5, A5, E6), barrier unlocked (A5, E6) and run over (A4, E4, A3). A and E are degrees 1 and 5 of every mode, so these cues are in tune with the music whatever it plays. The key never changes, for the same reason.
+The tonic is A because of the cues. Those that play notes already play A and E: sector cleared (E5, A5), flag captured (E5, A5, E6), barrier unlocked (A5, E6) and run over (A4, E4, A3). A and E are degrees 1 and 5 of both modes, so these cues are in tune with the music whatever it plays. The key never changes, for the same reason.
 
 ## Material
 
@@ -113,7 +111,7 @@ Motif C belongs to the bridge. It is two notes in a row, the second a fourth abo
 
 ### Chords
 
-One chord per bar. C stands for the chord that gives the mode its color: the one on degree 7 in the mode of the piece, and the one on degree 6 in Aeolian.
+One chord per bar. C stands for the chord that gives the mode its color: the one on degree 7 in Dorian, and the one on degree 6 in Aeolian.
 
 | Section | First phrase | Second phrase |
 |---|---|---|
@@ -150,7 +148,7 @@ Syncopation lives in the bass, the pluck and the lead. The drums stay on a plain
 | Octave | Plays the same line an octave higher as well | Lead at threat 4 |
 | Turnaround | Swaps the long degree 6 of motif A for degree 2, a note of chord 5: its second bar becomes `3..5 ..2. .... 5...` | Last bar of the intro and of the verse, which is on chord 5 |
 
-One check guards every change to the notes. In every mode, a note that lies a semitone above the root of its chord must pass quickly: it lasts one step if it starts on a beat, and three steps at most otherwise. The turnaround exists because of it: without it, the last bar of the verse would hold F over E minor in an arena.
+One check guards every change to the notes. In both modes, a note that lies a semitone above the root of its chord must pass quickly: it lasts one step if it starts on a beat, and three steps at most otherwise. The turnaround exists because of it: without it, the last bar of the verse would hold F over E minor in an arena.
 
 ## Sections
 
@@ -185,12 +183,12 @@ The drums and the mode tell where the players are and whether they fight. The le
 
 | Context | Section | Mode | Kick | Hi-hat | Snare | Bass | Pluck | Lead |
 |---|---|---|---|---|---|---|---|---|
-| Menu or bay | Intro | Of the piece | Silent | Silent | Silent | Long | Motif A | Silent |
+| Menu or bay | Intro | Dorian | Silent | Silent | Silent | Long | Motif A | Silent |
 | No fight, in a corridor or an arena | Bridge | None | Heart | Silent | Silent | Two notes | Motif C | Silent |
-| Fight in a corridor | Verse and chorus in turn | Of the piece | Fight | Corridor | Silent | By threat | By threat | By threat |
+| Fight in a corridor | Verse and chorus in turn | Dorian | Fight | Corridor | Silent | By threat | By threat | By threat |
 | Fight in an arena | Verse and chorus in turn | Aeolian | Fight | Arena | Arena | By threat | By threat | By threat |
 
-The mode is Aeolian only while the enemies of an arena are alive. The moment the last one is destroyed, the music turns back to the mode of the piece, which makes clearing an arena heard as a relief.
+The mode is Aeolian only while the enemies of an arena are alive. The moment the last one is destroyed, the music turns back to Dorian, which makes clearing an arena heard as a relief.
 
 During a fight, the threat sets the three instruments that have a pitch:
 
@@ -289,7 +287,7 @@ tanku_audio
 The crate has two ends. The game holds a `Conductor` and writes the context into it. The sound thread holds the `Music` and asks it for frames:
 
 ```rust
-let (music, conductor) = tanku_audio::music(Mode::Dorian);
+let (music, conductor) = tanku_audio::music();
 // In the client, every frame:
 conductor.set(Context { place: Place::Corridor, fight: true, threat: 2, ..Context::default() });
 // On the sound thread, whenever the device wants more:
@@ -315,18 +313,17 @@ A tool renders the music without the game:
 cargo run -p tanku_audio --example render
 ```
 
-It writes one sound file per arrangement and a tour through a made-up run, with the list of what happens in it and when. It writes them once for each of the two modes that the piece may get. From step 4 it also lays cues over the music.
+It writes one sound file per arrangement and a tour through a made-up run, with the list of what happens in it and when. From step 4 it also lays cues over the music.
 
 ## Tests and benchmarks
 
 - **Stable.** Sixteen bars of each arrangement match a stored value, as the map of a seed does.
-- **One arena, one bridge.** A fight in an arena and the bridge sound the same whatever the mode of the piece.
 - **In tune.** Every instrument plays the lowest and the highest note of its range within 3 hundredths of a semitone.
 - **Never silent.** Every bar of every arrangement makes sound.
 - **Never too loud.** No frame of any arrangement or of any change goes past full scale, and none is NaN.
 - **Seamless.** The third pass of a loop is identical to the second.
 - **On time.** A fight that is announced on each of the 16 steps of a bar gives a roll at once and the fight two beats later. A fight that ends gives the bridge on the next bar line.
-- **Sound in every mode.** The motifs use the five degrees, the chords are major or minor, and every melody, with its skeleton and its ornaments, passes the check on semitones above the root.
+- **Sound in both modes.** The motifs use the five degrees, the chords are major or minor, and every melody, with its skeleton and its ornaments, passes the check on semitones above the root.
 - **Cost.** A benchmark renders ten seconds of a fight in an arena at threat 4.
 
 ## Steps
@@ -335,7 +332,7 @@ Each step answers a question, and the first one changes nothing in the game.
 
 | Step | Content | Question it answers |
 |---|---|---|
-| 1, Sketch | The crate with the score, rough instruments and the listening tool. Sound files of the intro, of the bridge, of a fight in a corridor and in an arena at each threat, and of a tour of three minutes. | Are the two motifs worth keeping? Does the minor mode suit the arenas? It does. Which mode should the piece have elsewhere? |
+| 1, Sketch | The crate with the score, rough instruments and the listening tool. Sound files of the intro, of the bridge, of a fight in a corridor and in an arena at each threat, and of a tour of three minutes. | Are the two motifs worth keeping? Does the minor mode suit the arenas? |
 | 2, In the game | The music plays in the client and follows the place and the fight. The Music volume. A switch in the playtest menu between drums that follow the place only and drums that follow the fight too. | Does the music feel tied to what happens? Can a shot off screen still be told from the beat? |
 | 3, Threat | Lead, bass and pluck follow the brain tier | Can a player tell the smarter of two groups by ear? |
 | 4, Cues | The waveforms of the cues move to the crate, two cues are retuned, and the warning of a mine ducks the music | Is any cue lost under the music? |
@@ -343,7 +340,6 @@ Each step answers a question, and the first one changes nothing in the game.
 
 ## Open questions
 
-- Which mode does the piece get: Dorian or Mixolydian?
 - How long are the frames of the web build when a sector loads, and is the gap they leave in the music acceptable?
 - Two machines in one room play the same piece out of step, because each has its own clock. Does co-op in one room need them in step?
 - In hard mode every tier is available from sector 1, so the lead is at its fullest almost at once. Is that the right sound for hard mode, or does it waste the build-up?

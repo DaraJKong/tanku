@@ -143,21 +143,14 @@ The music is specified in [docs/MUSIC.md](docs/MUSIC.md). It doesn't play in the
 cargo run -p tanku_audio --example render
 ```
 
-The files go to `target/music`, or to the directory given after `--`. The mode of the piece is still to be chosen between two, so the piece is written once for each, with the name of the mode in front, as in `dorian_tour.wav` and `mixolydian_tour.wav`:
+The files go to `target/music`, or to the directory given after `--`:
 
 | File | Content |
 |---|---|
-| `intro.wav` | Two turns of the loop |
+| `intro.wav`, `bridge.wav` | Two turns of each loop |
 | `corridor_threat_0.wav` to `corridor_threat_4.wav` | The verse and the chorus of a fight in a corridor, at each threat |
-| `tour.wav` | Three minutes of a made-up run |
-
-The files that don't depend on that choice are written once:
-
-| File | Content |
-|---|---|
-| `bridge.wav` | Two turns of the loop |
-| `arena_threat_0.wav` to `arena_threat_4.wav` | The verse and the chorus of a fight in an arena, at each threat |
-| `tour.txt` | What happens in the tour and when |
+| `arena_threat_0.wav` to `arena_threat_4.wav` | The same in an arena |
+| `tour.wav`, `tour.txt` | Three minutes of a made-up run, and what happens in it and when |
 
 ## License
 

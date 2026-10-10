@@ -42,6 +42,9 @@ pub struct Context {
 
 const HIGHEST_THREAT: u8 = 4;
 
+/// The mode of the piece, which every section is in but the fights of an arena.
+const HOME: Mode = Mode::Dorian;
+
 /// Eight bars with their chords and their melody.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Section {
@@ -158,8 +161,6 @@ struct Roll {
 
 #[derive(Clone, Debug)]
 pub struct Director {
-    /// The mode of the piece, which every section is in but the fights of an arena.
-    home: Mode,
     part: Part,
     /// The bar of the part that plays. A fight counts the 8 bars of the verse, then the 8 of
     /// the chorus.
@@ -178,16 +179,14 @@ pub struct Director {
     in_menu: bool,
 }
 
-impl Director {
-    /// A director at the start of the piece, in the main menu. `home` is the mode of the
-    /// piece: Dorian or Mixolydian.
-    pub fn new(home: Mode) -> Self {
+/// A director at the start of the piece, in the main menu.
+impl Default for Director {
+    fn default() -> Self {
         Self {
-            home,
             part: Part::Intro,
             bar: 0,
             step: 0,
-            mode: home,
+            mode: HOME,
             arena: false,
             threat: 0,
             next_phrase: 0,
@@ -196,13 +195,15 @@ impl Director {
             in_menu: true,
         }
     }
+}
 
+impl Director {
     /// A director for a game that has been in this context for a long time: it is in the
     /// section of the context, and nothing announces it.
-    pub fn settled(home: Mode, context: Context) -> Self {
+    pub fn settled(context: Context) -> Self {
         let mut director = Self {
             in_menu: context.place == Place::Menu,
-            ..Self::new(home)
+            ..Self::default()
         };
         if is_fight(context) {
             director.enter_fight(context);
@@ -344,7 +345,7 @@ impl Director {
         self.part = part;
         self.bar = 0;
         self.step = 0;
-        self.mode = self.home;
+        self.mode = HOME;
     }
 
     /// Starts the fight on the phrase after the one where the last fight ended.
@@ -370,7 +371,7 @@ impl Director {
     fn arrange(&mut self, context: Context) {
         self.arena = context.place == Place::Arena;
         self.threat = context.threat.min(HIGHEST_THREAT);
-        self.mode = if self.arena { Mode::Aeolian } else { self.home };
+        self.mode = if self.arena { Mode::Aeolian } else { HOME };
     }
 
     /// The degree that the chord of the bar is built on. The bridge has no chords: it stays
@@ -518,8 +519,6 @@ mod tests {
     use super::*;
 
     const BAR: usize = STEPS;
-    /// The mode of the piece in these tests, unless they say otherwise.
-    const HOME: Mode = Mode::Mixolydian;
     const ROLL: usize = ROLL_HITS as usize;
 
     fn at(place: Place) -> Context {
@@ -563,7 +562,7 @@ mod tests {
     #[test]
     fn the_menu_and_the_bay_have_the_intro_without_drums() {
         for place in [Place::Menu, Place::Bay] {
-            let mut director = Director::new(HOME);
+            let mut director = Director::default();
             let steps = play(&mut director, at(place), 2 * BARS * BAR);
             assert_eq!(director.section(), Section::Intro);
             assert!(steps.iter().all(|step| !drums(step)));
@@ -573,7 +572,7 @@ mod tests {
             // The pluck has motif A and the bass holds the root of each bar.
             assert_eq!(
                 pitches(&steps[..BAR], |step| step.pluck),
-                [69, 71, 73, 76, 73, 71]
+                [69, 71, 72, 76, 72, 71]
             );
             for (index, step) in steps.iter().enumerate() {
                 assert_eq!(step.bass.is_some(), index % BAR == 0);
@@ -588,7 +587,7 @@ mod tests {
     #[test]
     fn a_roll_of_two_beats_announces_a_fight() {
         for offset in 0..BAR {
-            let mut director = Director::settled(HOME, at(Place::Corridor));
+            let mut director = Director::settled(at(Place::Corridor));
             let before = play(&mut director, at(Place::Corridor), BAR + offset);
             assert!(before.iter().all(|step| step.length == BRIDGE_STEP));
             let steps = play(&mut director, fight(Place::Corridor, 2), ROLL + BAR);
@@ -610,14 +609,14 @@ mod tests {
             assert!(verse.iter().all(|step| step.length == STEP));
             assert_eq!(
                 pitches(verse, |step| step.lead[0]),
-                [69, 71, 73, 76, 73, 71]
+                [69, 71, 72, 76, 72, 71]
             );
         }
     }
 
     #[test]
     fn the_intro_stops_under_the_roll_out_of_the_bay() {
-        let mut director = Director::new(HOME);
+        let mut director = Director::default();
         play(&mut director, at(Place::Bay), BAR + 14);
         let roll = play(&mut director, fight(Place::Corridor, 0), ROLL);
         assert!(roll.iter().all(|step| step.hat > 0 && !pitched(step)));
@@ -628,57 +627,48 @@ mod tests {
     }
 
     #[test]
-    fn an_arena_rolls_on_the_snare_and_turns_minor() {
-        let mut director = Director::settled(HOME, at(Place::Arena));
+    fn an_arena_rolls_on_the_snare_and_darkens() {
+        let mut director = Director::settled(at(Place::Arena));
         assert_eq!(director.mode(), HOME);
         play(&mut director, at(Place::Arena), 5);
         let roll = play(&mut director, fight(Place::Arena, 2), ROLL);
         assert!(roll.iter().all(|step| step.snare > 0 && step.hat == 0));
         assert_eq!(director.mode(), HOME);
 
-        let bar = play(&mut director, fight(Place::Arena, 2), BAR);
+        let bars = play(&mut director, fight(Place::Arena, 2), 2 * BAR);
         assert_eq!(director.mode(), Mode::Aeolian);
         assert_eq!(director.section(), Section::Verse);
-        // Motif A, with the C of the minor mode where the major has C sharp.
-        assert_eq!(pitches(&bar, |step| step.lead[0]), [69, 71, 72, 76, 72, 71]);
+        // The second bar of motif A, with the F of Aeolian where Dorian has F sharp.
+        assert_eq!(pitches(&bars[BAR..], |step| step.lead[0]), [72, 76, 77, 76]);
         // The snare is on beats 2 and 4 and the hi-hat on every step.
-        assert_eq!(on(&bar, |step| step.snare > 0), [4, 12]);
-        assert!(bar.iter().all(|step| step.hat > 0));
-        assert!(bar[2].hat > bar[1].hat);
+        assert_eq!(on(&bars[..BAR], |step| step.snare > 0), [4, 12]);
+        assert!(bars.iter().all(|step| step.hat > 0));
+        assert!(bars[2].hat > bars[1].hat);
     }
 
     #[test]
     fn each_mode_has_its_notes_and_its_chords() {
-        // The first notes of the lead and the roots of the bass over the eight bars of the
+        // The second bar of the lead and the roots of the bass over the eight bars of the
         // verse.
-        let verse = |home: Mode, place: Place| {
-            let mut director = Director::settled(home, fight(place, 2));
+        let verse = |place: Place| {
+            let mut director = Director::settled(fight(place, 2));
             let steps = play(&mut director, fight(place, 2), BARS * BAR);
-            let lead = pitches(&steps[..7], |step| step.lead[0]);
+            let lead = pitches(&steps[BAR..2 * BAR], |step| step.lead[0]);
             let downbeats: Vec<Step> = steps.iter().step_by(BAR).copied().collect();
             (lead, pitches(&downbeats, |step| step.bass))
         };
-        // A, G, D and E under the piece, with C in Dorian and C sharp in Mixolydian.
-        let roots = vec![45, 45, 43, 50, 45, 45, 43, 40];
-        assert_eq!(
-            verse(Mode::Dorian, Place::Corridor),
-            (vec![69, 71, 72], roots.clone())
-        );
-        assert_eq!(
-            verse(Mode::Mixolydian, Place::Corridor),
-            (vec![69, 71, 73], roots)
-        );
-        // An arena has F where the piece has G, whatever the mode of the piece.
-        let roots = vec![45, 45, 41, 50, 45, 45, 41, 40];
-        for home in [Mode::Dorian, Mode::Mixolydian] {
-            assert_eq!(verse(home, Place::Arena), (vec![69, 71, 72], roots.clone()));
-        }
+        // A, G, D and E under the piece, and F sharp in its tune.
+        let piece = (vec![72, 76, 78, 76], vec![45, 45, 43, 50, 45, 45, 43, 40]);
+        assert_eq!(verse(Place::Corridor), piece);
+        // An arena has F for both: in the tune, and in place of G under it.
+        let arena = (vec![72, 76, 77, 76], vec![45, 45, 41, 50, 45, 45, 41, 40]);
+        assert_eq!(verse(Place::Arena), arena);
     }
 
     #[test]
     fn the_end_of_a_fight_stops_the_drums_at_once() {
         for offset in 1..BAR {
-            let mut director = Director::settled(HOME, fight(Place::Arena, 3));
+            let mut director = Director::settled(fight(Place::Arena, 3));
             play(&mut director, fight(Place::Arena, 3), BAR + offset);
             let steps = play(&mut director, at(Place::Arena), 2 * BAR);
             let line = BAR - offset;
@@ -702,7 +692,7 @@ mod tests {
 
     #[test]
     fn a_fight_that_ends_on_the_bar_line_needs_no_marker() {
-        let mut director = Director::settled(HOME, fight(Place::Corridor, 1));
+        let mut director = Director::settled(fight(Place::Corridor, 1));
         play(&mut director, fight(Place::Corridor, 1), 2 * BAR);
         let step = director.step(at(Place::Corridor));
         assert!(step.fresh);
@@ -715,7 +705,7 @@ mod tests {
 
     #[test]
     fn a_bar_of_the_bridge_is_three_pairs_and_a_silence() {
-        let mut director = Director::settled(HOME, at(Place::Corridor));
+        let mut director = Director::settled(at(Place::Corridor));
         let steps = play(&mut director, at(Place::Corridor), 2 * BARS * BAR);
         assert_eq!(director.section(), Section::Bridge);
         // It is slower than the rest, the lead is silent, and nothing has an echo.
@@ -748,18 +738,9 @@ mod tests {
     }
 
     #[test]
-    fn the_bridge_is_the_same_in_every_mode() {
-        let bridge = |home: Mode| {
-            let mut director = Director::settled(home, at(Place::Corridor));
-            play(&mut director, at(Place::Corridor), BARS * BAR)
-        };
-        assert_eq!(bridge(Mode::Dorian), bridge(Mode::Mixolydian));
-    }
-
-    #[test]
     fn the_lead_follows_the_threat() {
         let lead = |threat: u8| {
-            let mut director = Director::settled(HOME, fight(Place::Corridor, threat));
+            let mut director = Director::settled(fight(Place::Corridor, threat));
             let bar = play(&mut director, fight(Place::Corridor, threat), BAR);
             let notes = bar.iter().filter(|step| step.lead[0].is_some()).count();
             let octaves = bar.iter().any(|step| step.lead[1].is_some());
@@ -780,7 +761,7 @@ mod tests {
 
     #[test]
     fn the_threat_changes_on_the_bar_line() {
-        let mut director = Director::settled(HOME, fight(Place::Corridor, 0));
+        let mut director = Director::settled(fight(Place::Corridor, 0));
         play(&mut director, fight(Place::Corridor, 0), 3);
         let rest = play(&mut director, fight(Place::Corridor, 2), BAR - 3);
         assert!(rest.iter().all(|step| step.lead == [None; 2]));
@@ -791,7 +772,7 @@ mod tests {
 
     #[test]
     fn fights_walk_through_the_piece() {
-        let mut director = Director::new(HOME);
+        let mut director = Director::default();
         play(&mut director, at(Place::Bay), BAR);
         let mut opened = Vec::new();
         // Six short fights of two bars, each after its roll, with a calm between them.
@@ -817,7 +798,7 @@ mod tests {
         );
 
         // A long fight plays the verse and the chorus in turn.
-        let mut director = Director::settled(HOME, fight(Place::Corridor, 2));
+        let mut director = Director::settled(fight(Place::Corridor, 2));
         let mut sections = Vec::new();
         for _ in 0..4 {
             sections.push(director.section());
@@ -828,7 +809,7 @@ mod tests {
 
     #[test]
     fn a_run_starts_over_with_the_verse() {
-        let mut director = Director::new(HOME);
+        let mut director = Director::default();
         play(&mut director, at(Place::Bay), BAR);
         play(&mut director, fight(Place::Corridor, 1), ROLL + 2 * BAR);
         // The run ends and another starts: the intro goes on, and nothing marks it.
@@ -847,7 +828,7 @@ mod tests {
 
     #[test]
     fn a_destroyed_tank_leaves_the_bass_alone() {
-        let mut director = Director::settled(HOME, fight(Place::Corridor, 2));
+        let mut director = Director::settled(fight(Place::Corridor, 2));
         play(&mut director, fight(Place::Corridor, 2), 5);
         let down = Context {
             down: true,
@@ -873,7 +854,7 @@ mod tests {
 
     #[test]
     fn the_end_of_a_run_leads_to_the_intro() {
-        let mut director = Director::settled(HOME, fight(Place::Arena, 4));
+        let mut director = Director::settled(fight(Place::Arena, 4));
         play(&mut director, fight(Place::Arena, 4), 6);
         let steps = play(&mut director, at(Place::Menu), BAR);
         assert_eq!(steps[0].hush, Hush::BassOnly);
@@ -884,7 +865,7 @@ mod tests {
 
     #[test]
     fn a_fight_that_is_called_off_stops_its_roll() {
-        let mut director = Director::settled(HOME, at(Place::Corridor));
+        let mut director = Director::settled(at(Place::Corridor));
         play(&mut director, at(Place::Corridor), 2);
         let steps = play(&mut director, fight(Place::Corridor, 1), 4);
         assert!(steps.iter().all(|step| step.hat > 0));
@@ -897,7 +878,7 @@ mod tests {
 
     #[test]
     fn a_menu_muffles_at_once() {
-        let mut director = Director::settled(HOME, fight(Place::Corridor, 1));
+        let mut director = Director::settled(fight(Place::Corridor, 1));
         let paused = Context {
             muffled: true,
             ..fight(Place::Corridor, 1)

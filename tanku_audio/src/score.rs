@@ -24,17 +24,12 @@ pub const A3: u8 = A4 - 12;
 pub const A2: u8 = A3 - 12;
 pub const A1: u8 = A2 - 12;
 
-/// The scale in use. All have A as their tonic.
-///
-/// The piece has a mode of its own, which is Dorian or Mixolydian: the choice between the two
-/// is still open. The fights of an arena are in Aeolian whichever it is.
+/// The scale in use. Both have A as their tonic.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
-    /// Minor, with a major sixth.
+    /// Minor, with a major sixth. It is the mode of the piece.
     Dorian,
-    /// Major, with a minor seventh.
-    Mixolydian,
-    /// Minor.
+    /// Minor. It is the mode of the fights in an arena.
     Aeolian,
 }
 
@@ -44,7 +39,6 @@ impl Mode {
     pub const fn semitones(self, degree: u8) -> u8 {
         let scale = match self {
             Mode::Dorian => [0, 2, 3, 5, 7, 9, 10],
-            Mode::Mixolydian => [0, 2, 4, 5, 7, 9, 10],
             Mode::Aeolian => [0, 2, 3, 5, 7, 8, 10],
         };
         let index = degree as usize - 1;
@@ -52,11 +46,11 @@ impl Mode {
     }
 
     /// The degree of the chord that gives the mode its color, next to the chords on 1, 4 and
-    /// 5: the major chord a tone below the tonic in Dorian and in Mixolydian, and the major
-    /// chord on the sixth degree in Aeolian.
+    /// 5: the major chord a tone below the tonic in Dorian, and the major chord on the sixth
+    /// degree in Aeolian.
     pub const fn color(self) -> u8 {
         match self {
-            Mode::Dorian | Mode::Mixolydian => 7,
+            Mode::Dorian => 7,
             Mode::Aeolian => 6,
         }
     }
@@ -197,8 +191,8 @@ pub const BASS_LEAPING: Pattern = pattern("R..O ..R. R..O ..5.");
 pub const PLUCK_ARPEGGIO: Pattern = pattern("x.x. x.x. x.x. x.x.");
 
 /// The degrees that the motifs use, within one octave. They make a scale of five notes in each
-/// mode: the major pentatonic scale in Mixolydian, and in Aeolian the scale known as hirajoshi,
-/// from which the scale of Dorian differs by its sixth degree alone.
+/// mode: in Aeolian the scale known as hirajoshi, and in Dorian the same with its sixth degree
+/// a semitone higher.
 pub const FIVE: [u8; 5] = [1, 2, 3, 5, 6];
 
 /// The next of the five degrees above one of them.
@@ -298,7 +292,7 @@ pub const fn bass_root(mode: Mode, chord: u8) -> u8 {
 mod tests {
     use super::*;
 
-    const MODES: [Mode; 3] = [Mode::Dorian, Mode::Mixolydian, Mode::Aeolian];
+    const MODES: [Mode; 2] = [Mode::Dorian, Mode::Aeolian];
 
     /// A bar of melody as its grid.
     fn grid(line: &Line) -> String {
@@ -359,7 +353,6 @@ mod tests {
     fn the_modes_are_those_of_the_specification() {
         let scale = |mode: Mode| (1..=7).map(move |degree| name(A4 + mode.semitones(degree)));
         assert!(scale(Mode::Dorian).eq(["A", "B", "C", "D", "E", "F#", "G"]));
-        assert!(scale(Mode::Mixolydian).eq(["A", "B", "C#", "D", "E", "F#", "G"]));
         assert!(scale(Mode::Aeolian).eq(["A", "B", "C", "D", "E", "F", "G"]));
         for mode in MODES {
             assert_eq!(mode.semitones(8), 12);
@@ -391,10 +384,9 @@ mod tests {
                 assert!(FIVE.contains(&((cell.degree - 1) % 7 + 1)), "{cell:?}");
             }
         }
-        // The major pentatonic scale in one mode and hirajoshi in the other.
+        // Hirajoshi in Aeolian, and the same with a higher sixth degree in Dorian.
         let five = |mode: Mode| FIVE.map(|degree| name(A4 + mode.semitones(degree)));
         assert_eq!(five(Mode::Dorian), ["A", "B", "C", "E", "F#"]);
-        assert_eq!(five(Mode::Mixolydian), ["A", "B", "C#", "E", "F#"]);
         assert_eq!(five(Mode::Aeolian), ["A", "B", "C", "E", "F"]);
     }
 
@@ -425,7 +417,6 @@ mod tests {
             })
         };
         assert_eq!(chords(Mode::Dorian), ["Am", "D", "Em", "G"]);
-        assert_eq!(chords(Mode::Mixolydian), ["A", "D", "Em", "G"]);
         assert_eq!(chords(Mode::Aeolian), ["Am", "Dm", "Em", "F"]);
         for mode in MODES {
             let chords = mode.verse_chords().into_iter().chain(mode.chorus_chords());
@@ -474,8 +465,8 @@ mod tests {
         for degree in notes() {
             assert!(NEUTRAL.contains(&((degree - 1) % 7 + 1)), "degree {degree}");
             // The same note whatever the mode, and never a semitone above the pedal.
-            let [dorian, mixolydian, aeolian] = MODES.map(|mode| mode.semitones(degree));
-            assert!(dorian == mixolydian && dorian == aeolian, "degree {degree}");
+            let [dorian, aeolian] = MODES.map(|mode| mode.semitones(degree));
+            assert_eq!(dorian, aeolian, "degree {degree}");
             assert_ne!((dorian + 12 - Mode::Dorian.semitones(PEDAL)) % 12, 1);
         }
         // Every call starts on the pedal, and only the last one falls.
@@ -524,8 +515,8 @@ mod tests {
             let cells = lines.iter().flatten();
             cells.map(|cell| cell.degree).max().unwrap()
         };
-        assert!(A4 + Mode::Mixolydian.semitones(highest(&VERSE)) <= a5);
-        assert!(A3 + Mode::Mixolydian.semitones(highest(&BRIDGE)) <= a5);
-        assert_eq!(A1 + Mode::Mixolydian.semitones(PEDAL), e2);
+        assert!(A4 + Mode::Dorian.semitones(highest(&VERSE)) <= a5);
+        assert!(A3 + Mode::Dorian.semitones(highest(&BRIDGE)) <= a5);
+        assert_eq!(A1 + Mode::Dorian.semitones(PEDAL), e2);
     }
 }
