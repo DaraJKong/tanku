@@ -139,12 +139,17 @@ pub struct Paints {
     flag_fill_captured: Handle<StandardMaterial>,
 }
 
-/// What a part of the corridor is drawn with, which is dull until a player enters its sector.
+/// What a part of the corridor is drawn with, which is dull until a player enters its sector:
+/// its floor, its walls and its obstacles.
 #[derive(Component, Clone, Copy)]
 struct Ground {
     sector: u32,
     floor: bool,
 }
+
+/// The drawing of the walls of a sector, which is done again when its neighbors change.
+#[derive(Component)]
+struct Walls;
 
 /// The two parts of a barrier, which change color when it unlocks.
 #[derive(Component, Clone, Copy)]
@@ -767,10 +772,10 @@ fn walls_of(sector: &Sector) -> Vec<(Vec2, Vec2)> {
 /// the sectors next to it, so all of them are drawn again when a sector comes or goes.
 fn dress_sectors(
     mut commands: Commands,
-    sectors: Query<(Entity, &Sector)>,
+    sectors: Query<(Entity, &Sector, Option<&Children>)>,
     arrivals: Query<(), Added<Sector>>,
     mut departures: RemovedComponents<Sector>,
-    mut drawn: Query<(&Ground, &mut Mesh3d)>,
+    mut drawn: Query<&mut Mesh3d, With<Walls>>,
     paints: Res<Paints>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
@@ -780,9 +785,9 @@ fn dress_sectors(
     }
     let loaded: Vec<(u32, Vec<(Vec2, Vec2)>)> = sectors
         .iter()
-        .map(|(_, sector)| (sector.layout.plan.index, walls_of(sector)))
+        .map(|(_, sector, _)| (sector.layout.plan.index, walls_of(sector)))
         .collect();
-    for (entity, sector) in &sectors {
+    for (entity, sector, children) in &sectors {
         let plan = &sector.layout.plan;
         let index = plan.index;
         let around: Vec<(Vec2, Vec2)> = loaded
@@ -792,11 +797,12 @@ fn dress_sectors(
             .collect();
         let walls = meshes.add(wall_drawing(&walls_of(sector), &around).build());
         if !arrivals.contains(entity) {
-            let mut drawn = drawn.iter_mut();
-            if let Some((_, mut mesh)) =
-                drawn.find(|(ground, _)| !ground.floor && ground.sector == index)
-            {
-                mesh.0 = walls;
+            // Only the walls of this sector take the new drawing. Its obstacles are part of
+            // its ground too, and they keep theirs.
+            for child in children.into_iter().flatten() {
+                if let Ok(mut mesh) = drawn.get_mut(*child) {
+                    mesh.0 = walls.clone();
+                }
             }
             continue;
         }
@@ -815,6 +821,7 @@ fn dress_sectors(
                     MeshMaterial3d(paints.floor_dormant.clone()),
                 ));
                 parent.spawn((
+                    Walls,
                     Ground {
                         sector: index,
                         floor: false,
@@ -1220,7 +1227,7 @@ pub fn place(
 #[cfg(test)]
 mod tests {
     use bevy::mesh::VertexAttributeValues;
-    use tanku_core::map::Corridor;
+    use tanku_core::{map::Corridor, seed::seed_value};
 
     use super::*;
 
@@ -1358,6 +1365,114 @@ mod tests {
         // Every barrier has two ends, and some sectors end on a corner.
         assert_eq!(joints, seeds as u32 * (sectors - 1) * 2);
         assert!(corners > 0, "no sector ends on a corner");
+    }
+
+    /// A world that dresses sectors and obstacles as the game does.
+    fn dressing_world() -> App {
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<StandardMaterial>>()
+            .init_resource::<Assets<Image>>()
+            .add_systems(PreStartup, setup)
+            .add_systems(Update, (dress_sectors, dress_obstacles));
+        app
+    }
+
+    /// Loads a sector with its blocks, as the server does.
+    fn load(app: &mut App, corridor: &mut Corridor, index: u32) -> Entity {
+        let layout = corridor.layout(index);
+        for corner in &layout.blocks {
+            let center = corner.as_vec2() + Vec2::splat(BLOCK_SIZE / 2.0);
+            let block = (Block { sector: index }, Position(center));
+            app.world_mut().spawn(block);
+        }
+        app.world_mut().spawn(Sector { layout }).id()
+    }
+
+    fn corners_of(mesh: &Mesh) -> Vec<[f32; 3]> {
+        match mesh.attribute(Mesh::ATTRIBUTE_POSITION) {
+            Some(VertexAttributeValues::Float32x3(corners)) => corners.clone(),
+            _ => panic!("a mesh without positions"),
+        }
+    }
+
+    /// Checks what is drawn: each sector shows its walls as they fit its loaded neighbors, and
+    /// every block shows a block.
+    fn check_the_drawing(app: &mut App, corridor: &mut Corridor, loaded: &[(u32, Entity)]) {
+        let planned = |corridor: &mut Corridor, index: u32| -> Vec<(Vec2, Vec2)> {
+            let walls = corridor.plan(index).walls.iter();
+            walls.map(|&(a, b)| (a.as_vec2(), b.as_vec2())).collect()
+        };
+        for &(index, entity) in loaded {
+            let around: Vec<(Vec2, Vec2)> = loaded
+                .iter()
+                .filter(|(other, _)| other.abs_diff(index) == 1)
+                .flat_map(|&(other, _)| planned(corridor, other))
+                .collect();
+            let wanted = wall_drawing(&planned(corridor, index), &around).build();
+            let world = app.world();
+            let children = world
+                .entity(entity)
+                .get::<Children>()
+                .expect("a dressed sector");
+            let walls: Vec<&Mesh3d> = children
+                .iter()
+                .filter(|&child| {
+                    world
+                        .get::<Ground>(child)
+                        .is_some_and(|ground| !ground.floor)
+                })
+                .filter_map(|child| world.get::<Mesh3d>(child))
+                .collect();
+            assert_eq!(
+                walls.len(),
+                1,
+                "sector {index} has one drawing of its walls"
+            );
+            let drawn = world.resource::<Assets<Mesh>>().get(&walls[0].0).unwrap();
+            assert!(
+                corners_of(drawn) == corners_of(&wanted),
+                "the walls of sector {index} don't fit its neighbors"
+            );
+        }
+        let block = app.world().resource::<Shapes>().block.clone();
+        let world = app.world_mut();
+        let mut blocks = world.query_filtered::<&Mesh3d, With<Block>>();
+        assert!(blocks.iter(world).count() > 0);
+        assert!(
+            blocks.iter(world).all(|mesh| mesh.0 == block),
+            "a block shows something else than a block"
+        );
+    }
+
+    #[test]
+    fn walls_are_drawn_again_on_the_walls_and_nowhere_else() {
+        // The first sectors of this seed hold blocks.
+        let mut corridor = Corridor::new(seed_value("3ZXHW3M8"));
+        let mut app = dressing_world();
+        // A block may be dressed before any wall is: the order must not matter.
+        let lone = (Block { sector: 1 }, Position(Vec2::new(0.0, 30.0)));
+        app.world_mut().spawn(lone);
+        app.update();
+
+        // A run starts in the bay, with the first sector behind its barrier.
+        let mut loaded: Vec<(u32, Entity)> = (0..2)
+            .map(|index| (index, load(&mut app, &mut corridor, index)))
+            .collect();
+        app.update();
+        check_the_drawing(&mut app, &mut corridor, &loaded);
+
+        // The player enters the first sector, and the second one is loaded.
+        loaded.push((2, load(&mut app, &mut corridor, 2)));
+        app.update();
+        check_the_drawing(&mut app, &mut corridor, &loaded);
+
+        // The player enters the second sector: the third one comes and the bay goes.
+        loaded.push((3, load(&mut app, &mut corridor, 3)));
+        let (_, bay) = loaded.remove(0);
+        app.world_mut().entity_mut(bay).despawn();
+        app.update();
+        check_the_drawing(&mut app, &mut corridor, &loaded);
     }
 
     #[test]
