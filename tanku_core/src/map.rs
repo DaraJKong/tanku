@@ -191,15 +191,17 @@ enum Change {
     None,
     /// A wall across the corridor, then straight.
     Step(i32),
-    /// A slanted wall. The flag is set for the shallowest slope, 2 m sideways per meter forward.
-    Slant(i32, bool),
+    /// A shallow wall, 2 m sideways per meter forward, then straight.
+    Ramp(i32),
+    /// A wall that slants over the whole step, at 45 degrees or steeper.
+    Slant(i32),
 }
 
 impl Change {
     fn shift(self) -> i32 {
         match self {
             Change::None => 0,
-            Change::Step(du) | Change::Slant(du, _) => du,
+            Change::Step(du) | Change::Ramp(du) | Change::Slant(du) => du,
         }
     }
 }
@@ -231,39 +233,37 @@ impl<'a> Walk<'a> {
             return Change::None;
         }
         let sign = if self.rng.chance(50) { 1 } else { -1 };
-        if self.rng.chance(self.angled) {
-            let (du, shallow) = self
-                .rng
-                .pick(&[(dv / 2, false), (dv, false), (2 * dv, true)]);
-            Change::Slant(sign * du, shallow)
-        } else {
-            Change::Step(sign * self.rng.range(2, 4))
+        if !self.rng.chance(self.angled) {
+            return Change::Step(sign * self.rng.range(2, 4));
+        }
+        // The three slopes of the lattice. At the shallowest one, a wall that slanted over a
+        // whole step would shift by 8 m or more, which is more than the width of a corridor
+        // may vary. A ramp therefore stops after 1 to 3 m.
+        match self.rng.below(3) {
+            0 => Change::Slant(sign * dv / 2),
+            1 => Change::Slant(sign * dv),
+            _ => Change::Ramp(sign * 2 * self.rng.range(1, 3)),
         }
     }
 
     fn fits(&self, left: Change, right: Change) -> bool {
         let (l, r) = (self.l + left.shift(), self.r + right.shift());
-        // A step moves its wall at once and a slant little by little, so the width is checked
-        // where the changes start as well as where they end.
+        // A step moves its wall at once, a ramp within 3 m and a slant little by little, so the
+        // width is checked where the changes start as well as where they end.
         let stepped = |u: i32, change: Change| match change {
-            Change::Step(du) => u + du,
+            Change::Step(du) | Change::Ramp(du) => u + du,
             _ => u,
         };
         let (l_start, r_start) = (stepped(self.l, left), stepped(self.r, right));
         let fitting = |l: i32, r: i32| (self.width.0..=self.width.1).contains(&(r - l));
-        // The corner of a step also faces the other wall as it was just before the step.
+        // The corner of a step or a ramp also faces the other wall as it was just before.
         let open = |l: i32, r: i32| r - l >= self.width.0;
-        // Two walls on the shallowest slope would leave a passage narrower than it measures.
-        let shallow = |change| matches!(change, Change::Slant(_, true));
-        let pinched =
-            (shallow(left) && right != Change::None) || (shallow(right) && left != Change::None);
         open(l_start, self.r)
             && open(self.l, r_start)
             && fitting(l_start, r_start)
             && fitting(l, r)
             && l >= self.reach.0
             && r <= self.reach.1
-            && !pinched
     }
 
     /// Moves forward by `dv`, with a random change on each wall that may move.
@@ -284,8 +284,14 @@ impl<'a> Walk<'a> {
 
     fn apply(wall: &mut Vec<(i32, i32)>, u: &mut i32, v: i32, dv: i32, change: Change) {
         *u += change.shift();
-        if let Change::Step(_) = change {
-            wall.push((*u, v));
+        match change {
+            Change::Step(_) => wall.push((*u, v)),
+            Change::Ramp(du) => {
+                let run = du.abs() / 2;
+                debug_assert!(run < dv, "a ramp ends before its step does");
+                wall.push((*u, v + run));
+            }
+            Change::None | Change::Slant(_) => {}
         }
         wall.push((*u, v + dv));
     }
@@ -931,7 +937,7 @@ mod tests {
         let combined = (0..30).fold(0u64, |hash, i| {
             hash.rotate_left(7) ^ corridor.layout(i).fingerprint()
         });
-        assert_eq!(combined, 3_536_754_374_413_674_072);
+        assert_eq!(combined, 12_171_179_429_706_845_317);
     }
 
     #[test]
@@ -990,6 +996,33 @@ mod tests {
             arenas >= total / 10 && arenas <= total / 5,
             "{arenas} arenas"
         );
+    }
+
+    #[test]
+    fn corridors_use_every_slope() {
+        // Slanted walls by their slope in the frame of their sector: sideways, then forward.
+        let (mut steep, mut diagonal, mut shallow) = (0, 0, 0);
+        for corridor in corridors() {
+            for plan in &corridor.plans {
+                if plan.kind != SectorKind::Corridor {
+                    continue;
+                }
+                for &(a, b) in &plan.walls {
+                    let across = (b - a).dot(plan.heading.right()).abs();
+                    let along = (b - a).dot(plan.heading.forward()).abs();
+                    steep += (across > 0 && 2 * across == along) as u32;
+                    diagonal += (across > 0 && across == along) as u32;
+                    shallow += (along > 0 && across == 2 * along) as u32;
+                }
+            }
+        }
+        let slanted = steep + diagonal + shallow;
+        for (count, slope) in [(steep, "1:2"), (diagonal, "1:1"), (shallow, "2:1")] {
+            assert!(
+                count * 10 >= slanted,
+                "{count} walls of {slanted} at {slope}"
+            );
+        }
     }
 
     #[test]
@@ -1116,10 +1149,15 @@ mod tests {
         // starts to slant away leaves 6 m where the step is, whatever the width further on.
         let mut rng = Stream::new(0, Purpose::Shape, 0, 0);
         let walk = Walk::new(&mut rng, 10, 57, &Spec::corridor(Exit::Ahead, DRIFT));
-        assert!(walk.fits(Change::None, Change::Slant(4, false)));
-        assert!(walk.fits(Change::Step(2), Change::Slant(4, false)));
-        assert!(!walk.fits(Change::Step(4), Change::Slant(4, false)));
-        assert!(!walk.fits(Change::Slant(-4, false), Change::Step(-4)));
+        assert!(walk.fits(Change::None, Change::Slant(4)));
+        assert!(walk.fits(Change::Step(2), Change::Slant(4)));
+        assert!(!walk.fits(Change::Step(4), Change::Slant(4)));
+        assert!(!walk.fits(Change::Slant(-4), Change::Step(-4)));
+        // A ramp is as sudden as a step.
+        assert!(walk.fits(Change::Ramp(2), Change::Slant(4)));
+        assert!(!walk.fits(Change::Ramp(4), Change::Slant(4)));
+        assert!(!walk.fits(Change::Ramp(4), Change::None));
+        assert!(walk.fits(Change::Ramp(-4), Change::None));
     }
 
     #[test]
