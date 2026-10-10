@@ -73,7 +73,7 @@ These rules let the players study the next group, pick the moment to engage and 
 
 ### Solo
 
-The solo player has three lives, and lives are never refilled. When the tank is destroyed, the player loses a life and respawns at the last checkpoint. Every sector beyond it is regenerated from the seed, so its enemies and obstacles are back. Before the first checkpoint, the player respawns in the start bay. Losing the third life ends the run.
+The solo player has three lives, and lives are never refilled. When the tank is destroyed, the player loses a life and respawns 1.5 s later at the last checkpoint, just before its barrier. Every sector beyond it is regenerated from the seed, so its enemies and obstacles are back. Before the first checkpoint, the player respawns in the start bay. Losing the third life ends the run.
 
 Checkpoints become sparser with distance:
 
@@ -83,6 +83,8 @@ Checkpoints become sparser with distance:
 | 9–16 | Every 2nd barrier |
 | 17–24 | Every 3rd barrier |
 | 25 and beyond | Every 4th barrier |
+
+The count starts over in each row. After sector 8, the checkpoints are therefore the barriers of sectors 10, 12, 14, 16, 19, 22, 28, 32 and every fourth one from there. A barrier becomes the last checkpoint as soon as its sector is cleared.
 
 ### Multiplayer
 
@@ -96,7 +98,7 @@ Enemy groups grow with the number of players (see [Progression](#progression)). 
 |---|---|---|
 | Normal | The rules of this document | Available from the start |
 | Chosen seed | The players type a seed instead of getting a random one. | Reaching sector 10 |
-| Free mode | Each player redistributes the 60 points of the player tank before the run. | Reaching sector 20 |
+| Free mode | Each player redistributes the 58 points of the player tank before the run. | Reaching sector 20 |
 | Hard mode | Sector budgets start at 40 and are capped at 130, all software tiers are available from sector 1, and experience is that of 20 sectors further. | Reaching sector 30 |
 | Impossible mode | Later. Enemies adapt to the players during the run (see [Impossible mode](#impossible-mode)). | Reaching sector 20 in hard mode |
 
@@ -127,7 +129,7 @@ Any hit destroys any tank. There are no hit points and no armor: an active shiel
 
 ### Bullets
 
-A bullet flies in a straight line at the speed set by its tank's Muzzle stat. It reflects off walls and blocks as many times as the Ricochet stat allows, and the next impact destroys it. A bullet has no range limit.
+A bullet flies in a straight line at the speed set by its tank's Muzzle stat. It reflects off walls and blocks as many times as the Ricochet stat allows, and the next impact destroys it. A bullet has no range limit. It starts at the turret and travels down the barrel, so a tank pressed against a wall can't shoot through it: the bullet hits the wall at once.
 
 Firing takes one round from the magazine. Rounds reload one at a time, automatically, each taking the Loader time, and firing doesn't interrupt reloading. Every gun also needs 0.25 s between two shots. This cooldown is the same for all tanks and isn't a stat.
 
@@ -137,7 +139,7 @@ Firing takes one round from the magazine. Rounds reload one at a time, automatic
 |---|---|---|---|---|---|---|---|
 | **Player bullet** | Destroys it | Destroys it | Both destroyed | Both destroyed | Detonates it | Bounces | Absorbed |
 | **Enemy bullet** | Destroys it | Passes through | Both destroyed | Both destroyed | Detonates it | Bounces | Absorbed |
-| **Blast** | Destroys it | Destroys it | Destroys it | Destroys it | Detonates it | Destroys blocks | Stopped |
+| **Blast** | Destroys it | Destroys it | Destroys it | Destroys it | Detonates it | Destroys blocks, stopped by walls | Stopped |
 
 Three rules sum up the bullets:
 
@@ -145,17 +147,17 @@ Three rules sum up the bullets:
 2. An enemy's bullet destroys only player tanks and passes through enemy tanks.
 3. Any two bullets that touch destroy each other, whoever fired them.
 
-Piercing is the exception to the third rule. A tank with the Piercing stat fires piercing bullets: a piercing bullet destroys a normal bullet and flies on, and two piercing bullets destroy each other.
+Piercing is the exception to the third rule. A tank with the Piercing stat fires piercing bullets. A piercing bullet destroys the first normal bullet it touches and flies on, but it is a normal bullet from then on, so it takes two bullets to stop it. Two piercing bullets destroy each other.
 
-Blasts are neutral. They destroy every unshielded tank in range, whoever caused them.
+Blasts are neutral. They destroy every unshielded tank in range, whoever caused them. A tank is in range when its center is within the radius of the blast and no wall or barrier stands between them.
 
 ### Mines
 
-A tank drops a mine at its own position and can have as many armed mines as its Mines stat allows. A mine arms after 1 s. It then detonates when an opposing tank comes within 2 m (after a 0.6 s warning), when a bullet or a blast hits it, or when its 10 s fuse runs out. The blast has a radius of 3 m. Blasts are the only way to remove destructible blocks.
+A tank drops a mine at its own position, at most one every 0.5 s, and can have as many armed mines as its Mines stat allows. A mine arms after 1 s. It then detonates when an opposing tank comes within 2 m (after a 0.6 s warning) or when its 10 s fuse runs out. A bullet or a blast detonates it at any time, even before it is armed. The blast has a radius of 3 m. Blasts are the only way to remove destructible blocks.
 
 ### Shield
 
-The shield is a bubble around the tank that lasts 0.5 s. It destroys every bullet that touches it, piercing or not, and protects against blasts. When it ends, the tank overloads: it can't move, shoot, place mines or shield for the stun time. It also can't shield again before the cooldown ends. Higher Shield levels shorten both.
+The shield is a bubble around the tank that lasts 0.5 s. It destroys every bullet that touches it, piercing or not, and protects against blasts. The tank keeps moving and shooting while the bubble is up: its own shots leave the bubble, but a ricochet doesn't come back through it. When it ends, the tank overloads: it can't move, shoot, place mines or shield for the stun time. It also can't shield again before the cooldown ends. Higher Shield levels shorten both.
 
 The overload is the drawback. A shield saves a tank from one threat and leaves it helpless against the next. It beats single fast shots, and it loses to bursts and to patient opponents who bait the shield and fire again.
 
@@ -168,9 +170,10 @@ A player repairs a wrecked teammate by holding the repair key within 3 m of the 
 | Constant | Value |
 |---|---|
 | Tank | 2.0 m long, 1.6 m wide, circular collider of radius 0.9 m, the same for all tanks |
-| Bullet radius | 0.15 m |
+| Bullet radius | 0.225 m |
 | Fire cooldown | 0.25 s |
 | Mine arming time and fuse | 1 s and 10 s |
+| Time between two mines of a tank | 0.5 s |
 | Mine trigger | Opposing tank within 2 m, then 0.6 s |
 | Blast radius of mines and crates | 3 m |
 | Shield duration | 0.5 s |
@@ -189,15 +192,15 @@ Level 0 of each stat is free. Costs are cumulative: each number is the total pri
 | Engine | Top speed in m/s | 0, 2, 3, 4, 5, 6, 7, 8 | 0, 2, 4, 6, 8, 11, 14, 17 |
 | Tracks | Hull turn rate in °/s | 90, 135, 180, 225, 270, 315, 360 | 0, 1, 2, 3, 4, 5, 6 |
 | Turret | Turret turn rate in °/s (enemies only) | 45, 60, 90, 120, 180, 270, 360 | 0, 1, 2, 3, 5, 7, 10 |
-| Muzzle | Bullet speed in m/s | 6, 8, 10, 12, 14, 16, 18, 20 | 0, 1, 2, 4, 6, 8, 11, 14 |
+| Muzzle | Bullet speed in m/s | 6, 7.5, 9, 12, 14, 16, 18, 20 | 0, 1, 2, 4, 6, 8, 11, 14 |
 | Magazine | Rounds held | 1, 2, 3, 4, 5, 6 | 0, 3, 6, 9, 12, 15 |
 | Loader | Seconds to reload one round | 4.0, 3.2, 2.5, 2.0, 1.6, 1.25, 1.0, 0.8 | 0, 1, 2, 4, 6, 9, 12, 16 |
 | Ricochet | Bounces per bullet | 0, 1, 2, 3 | 0, 4, 10, 18 |
 | Mines | Mines armed at once | 0, 1, 2, 3, 4 | 0, 4, 6, 8, 10 |
 | Shield | Stun / cooldown in s | none, 1.5 / 10, 1.2 / 9, 0.9 / 8, 0.6 / 7, 0.3 / 6 | 0, 6, 9, 12, 15, 18 |
-| Piercing | Whether its bullets pierce | no, yes | 0, 8 |
+| Piercing | Bullets that each of its bullets pierces | 0, 1 | 0, 4 |
 
-Every stat stops at its highest level. These limits keep the game sound: a bullet, for instance, never gets fast enough to pass through a wall. Buying every hardware stat at its highest level costs 132 points.
+Every stat stops at its highest level. These limits keep the game sound: a bullet, for instance, never gets fast enough to pass through a wall. Buying every hardware stat at its highest level costs 128 points.
 
 ### Software stats
 
@@ -233,19 +236,19 @@ Prices are right when two enemy tanks of equal budget are about equally dangerou
 
 ### Player tank
 
-The player tank spends 60 points. Free mode lets each player redistribute them over every hardware stat except Turret.
+The player tank spends 58 points. Free mode lets each player redistribute them over every hardware stat except Turret.
 
 | Stat | Level | Value | Cost |
 |---|---|---|---|
 | Engine | 4 | 5 m/s | 8 |
 | Tracks | 5 | 315°/s | 5 |
-| Muzzle | 3 | 12 m/s | 4 |
+| Muzzle | 2 | 9 m/s | 2 |
 | Magazine | 4 | 5 rounds | 12 |
 | Loader | 6 | 1.0 s per round | 12 |
 | Ricochet | 1 | 1 bounce | 4 |
 | Mines | 2 | 2 mines | 6 |
 | Shield | 2 | 1.2 s stun, 9 s cooldown | 9 |
-| **Total** | | | **60** |
+| **Total** | | | **58** |
 
 ### Enemy generation
 
@@ -264,7 +267,7 @@ The price list can express the enemy roster of Tanks!, in roughly the order in w
 
 | Build | Key stats | Budget | Possible from sector |
 |---|---|---|---|
-| Sentry (brown) | Stationary, 10 m/s bullets with 1 bounce, no brain | 10 | 1 |
+| Sentry (brown) | Stationary, 9 m/s bullets with 1 bounce, no brain | 10 | 1 |
 | Rover (gray) | 2 m/s, same gun, brain 1 | 15 | 2 |
 | Sniper (teal) | 2 m/s, 18 m/s bullets without bounce, brain 2, ballistics 1 | 25 | 6 |
 | Burster (pink) | 4 m/s, 3 rounds, brain 2 | 33 | 6 |
@@ -288,7 +291,7 @@ An enemy's model is assembled from its genome, so players can read a tank before
 | Ricochet | Rings around the muzzle, one per bounce |
 | Mines | Mine rack at the rear, one mine per slot |
 | Shield | Emitter dome on the hull, larger with level |
-| Piercing | Pointed tip on the barrel. Piercing bullets are dart-shaped. |
+| Piercing | Pointed tip on the barrel. Its bullets have a pointed tip too, until they have pierced. |
 | Brain | Antennas, one per tier |
 | Ballistics | Sight on the turret, one lens per tier |
 | Total budget | Color intensity. Weak tanks are pale, strong ones saturated. |
@@ -312,7 +315,7 @@ The sector budget is the most points an enemy of sector $n$ can have:
 
 $$B(n) = B_{\max} - (B_{\max} - B_0)\, e^{-(n-1)/15}$$
 
-with $B_0 = 10$ and $B_{\max} = 100$ in normal mode. It rises fast at first and flattens toward the cap. The cap stays below the 132 points of a fully equipped tank, so even late enemies must specialize. Every stat also stops at its own highest level.
+with $B_0 = 10$ and $B_{\max} = 100$ in normal mode. It rises fast at first and flattens toward the cap. The cap stays below the 128 points of a fully equipped tank, so even late enemies must specialize. Every stat also stops at its own highest level.
 
 The number of enemies in a sector is $N(n) = \min(6,\ 1 + \lfloor n/3 \rfloor)$ in solo and $\lceil N(n)\,(1 + 0.5\,(P - 1)) \rceil$ with $P$ players. Arenas hold 1.5 times as many.
 
@@ -356,11 +359,11 @@ The map is an endless corridor that winds its way north. It usually heads north,
 |---|---|---|---|
 | Corridor | Most sectors | 40–80 m long, 8–20 m wide | Straight or bending |
 | Switchback | Rare | Same as a corridor | Runs south, for one sector at most |
-| Arena | Every 5 to 8 sectors | Up to 36 × 36 m | Holds 1.5 times the enemies |
+| Arena | Every 5 to 8 sectors | 32–36 m long, up to 36 m wide | Holds 1.5 times the enemies |
 
 | Element | Tanks | Bullets | Blasts |
 |---|---|---|---|
-| Wall | Blocked | Bounce | No effect |
+| Wall | Blocked | Bounce | Stopped |
 | Destructible block, 2 × 2 m | Blocked | Bounce | Destroyed |
 | Explosive crate, 2 × 2 m | Blocked | Detonate it | Detonate it |
 
@@ -369,7 +372,7 @@ The generator guarantees five things:
 1. **A way through.** Every sector has a path from its entry to its barrier that is at least 3 m wide, without destroying anything.
 2. **No overlap.** Parts of the corridor that aren't neighbors stay at least 6 m apart.
 3. **Net progress.** The corridor never runs more than 60 m south of the northernmost point it has reached.
-4. **A fair start.** Enemies are placed at least 15 m from the sector's entry.
+4. **A fair start.** Enemies start at least 15 m from the barrier the players come through, and at least 3 m from the barrier that ends their sector.
 5. **Exact geometry.** Every wall vertex lies on a 1 m lattice. This gives walls at 0°, 45° and 90° plus the slopes 1:2 and 2:1, and it keeps generation identical on every platform.
 
 ## Multiplayer
@@ -413,7 +416,7 @@ North is at the top of the screen by default. A player can rotate their own view
 
 ### Visual style
 
-The map and the tanks are simple 3D shapes with flat colors. Tanks are assembled from parts by the game, not modeled by hand. Bullets glow and are the most visible objects on screen, in one color for the players' bullets and another for the enemies'. The void outside the corridor is empty and dark.
+The map and the tanks are simple 3D shapes with flat colors. Tanks are assembled from parts by the game, not modeled by hand. Bullets glow and are the most visible objects on screen, in one color for the players' bullets and another for the enemies'. A bullet is an elongated shell with one dark stripe for each bounce it has left: it loses a stripe at every bounce, and a plain bullet won't bounce again. The void outside the corridor is empty and dark.
 
 ### Interface
 
