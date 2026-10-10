@@ -52,11 +52,19 @@ impl View {
     }
 
     /// Shows a place, from closer or from further than the game does if a span is given: the
-    /// meters of ground from the bottom to the top of the screen. The view stays there until
-    /// a player's tank takes it back.
+    /// meters of ground from the bottom to the top of the screen. The view stays there, whatever
+    /// the tanks do, until it is given back to the game.
     pub fn show(&mut self, point: Vec2, span: Option<f32>) {
         self.focus = point;
         self.span = span;
+        self.hold = f32::INFINITY;
+    }
+
+    /// Gives the view back to the game: it follows the player's tank, from the distance of
+    /// the game.
+    pub fn release(&mut self) {
+        self.span = None;
+        self.hold = 0.0;
     }
 
     /// How far the view is turned right now, in radians: it turns smoothly from one quarter
@@ -160,4 +168,45 @@ fn follow(
         Quat::from_rotation_y(view.yaw) * Vec3::new(0.0, pitch.sin(), pitch.cos()) * distance;
     let focus = scene::to_world(view.focus + jitter, 0.0);
     **camera = Transform::from_translation(focus + offset).looking_at(focus, Vec3::Y);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Where the tank of the test stands.
+    const TANK: Vec2 = Vec2::new(0.0, 80.0);
+
+    /// A world with a camera and a player's tank.
+    fn world_with_a_tank() -> App {
+        let mut app = App::new();
+        app.init_resource::<Time>()
+            .init_resource::<View>()
+            .insert_resource(Settings::default())
+            .add_systems(Update, follow);
+        app.world_mut().spawn((MainCamera, Transform::default()));
+        app.world_mut().spawn((
+            Player,
+            Transform::from_translation(scene::to_world(TANK, 0.0)),
+        ));
+        app
+    }
+
+    #[test]
+    fn a_place_that_is_shown_holds_the_view_until_it_is_released() {
+        let mut app = world_with_a_tank();
+        let place = Vec2::new(0.0, -500.0);
+        let mut view = app.world_mut().resource_mut::<View>();
+        view.show(place, Some(7.5));
+        // The tank of a run that was just left is still there for a moment: it must not take
+        // the view back.
+        app.update();
+        assert_eq!(app.world().resource::<View>().focus(), place);
+
+        app.world_mut().resource_mut::<View>().release();
+        app.update();
+        let view = app.world().resource::<View>();
+        assert!(view.focus().distance(TANK) < 1.0);
+        assert_eq!(view.span, None);
+    }
 }

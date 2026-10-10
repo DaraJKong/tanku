@@ -525,9 +525,9 @@ fn look_around(time: Res<Time>, mut turrets: Query<(&ExhibitTurret, &mut Transfo
     }
 }
 
-/// The game shows the ground from its own distance.
+/// The game takes the view back.
 fn put_the_exhibit_away(mut view: ResMut<View>) {
-    view.span = None;
+    view.release();
 }
 
 /// A playtest offers to skip the sector the player is in.
