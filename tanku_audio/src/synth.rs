@@ -14,7 +14,6 @@ use std::f32::consts::TAU;
 use crate::{
     SAMPLE_RATE,
     director::{Hush, Step, Tone},
-    frame_of,
 };
 
 const RATE: f32 = SAMPLE_RATE as f32;
@@ -51,18 +50,14 @@ const SMOOTHING: u32 = 3;
 const ECHO_FRAMES: usize = 16_537;
 const ECHO_LEVEL: f32 = 1.0 / 3.0;
 
-/// Notes the lead can play at once.
-const LEADS: usize = 3;
+/// Notes the lead can play at once: its line, and the same an octave higher.
+const LEADS: usize = 2;
 /// The part of its period that the pulse of the lead spends up.
 const LEAD_WIDTH: f32 = 0.3;
-/// Frames the lead takes to rise, in a fight and in the bridge: 4 ms and 80 ms.
-const LEAD_RISE: (u32, u32) = (176, 3528);
-/// Frames it takes to fall in the bridge: 60 ms.
-const LEAD_SOFT_FALL: u32 = 2646;
-/// What the lead lets through, in a fight and in the bridge, in Hz.
-const LEAD_POLE: (f32, f32) = (pole(3000.0), pole(1500.0));
-/// The lead is quieter in the bridge, where it plays three notes at once.
-const LEAD_SOFT_LEVEL: f32 = 0.3;
+/// Frames the lead takes to rise: 4 ms.
+const LEAD_RISE: u32 = 176;
+/// The lead lets through what is below this frequency, in Hz.
+const LEAD_POLE: f32 = pole(3000.0);
 /// The vibrato comes in after this many frames, and is whole after as many again.
 const VIBRATO_AFTER: f32 = 6000.0;
 /// How far the vibrato bends the pitch, and how many times per second.
@@ -269,17 +264,14 @@ struct Note {
     /// Frames it lasts, its fall included.
     frames: u32,
     loud: f32,
-    /// Whether it comes in softly, as the lead does in the bridge.
-    soft: bool,
 }
 
 impl Note {
-    fn new(tone: Tone, frames: u32, soft: bool) -> Self {
+    fn new(tone: Tone, frames: u32) -> Self {
         Self {
             step: frequency(tone.pitch) / RATE,
             frames,
             loud: loudness(tone.level),
-            soft,
         }
     }
 }
@@ -465,12 +457,7 @@ impl Lead {
         self.phase = 0.0;
         self.age = 0.0;
         self.wobble = 0.0;
-        if note.soft {
-            self.envelope
-                .start(note.frames, LEAD_RISE.1, LEAD_SOFT_FALL);
-        } else {
-            self.envelope.start(note.frames, LEAD_RISE.0, GAP);
-        }
+        self.envelope.start(note.frames, LEAD_RISE, GAP);
     }
 
     /// Lets go of the note, and of the one that waits behind it.
@@ -498,13 +485,8 @@ impl Lead {
         wave -= 2.0 * LEAD_WIDTH - 1.0;
         self.phase = wrap(self.phase + step);
 
-        let (weight, soften) = if self.note.soft {
-            (LEAD_POLE.1, LEAD_SOFT_LEVEL)
-        } else {
-            (LEAD_POLE.0, 1.0)
-        };
-        self.low += weight * (wave - self.low);
-        self.low * level * soften
+        self.low += LEAD_POLE * (wave - self.low);
+        self.low * level
     }
 }
 
@@ -669,10 +651,13 @@ impl Default for Synth {
 }
 
 impl Synth {
-    /// Starts what a step asks for. `at` is the number of the step since the piece began,
-    /// which tells how many frames its notes last.
+    /// Starts what a step asks for. `at` is where the step starts, in half frames since the
+    /// piece began, which tells how many whole frames its notes last.
     pub fn play(&mut self, step: &Step, at: u64) {
-        let frames = |steps: u8| (frame_of(at + steps as u64) - frame_of(at)) as u32;
+        let frames = |steps: u8| {
+            let end = at + steps as u64 * step.length as u64;
+            (end / 2 - at / 2) as u32
+        };
         self.muffled = step.muffled;
 
         if step.fresh {
@@ -692,7 +677,7 @@ impl Synth {
         self.hush = step.hush;
 
         if let Some(tone) = step.bass {
-            self.bass.start(Note::new(tone, frames(tone.steps), false));
+            self.bass.start(Note::new(tone, frames(tone.steps)));
         }
         if let Some(tone) = step.pluck {
             self.plucks[self.next_pluck].strike(tone, step.echo);
@@ -702,7 +687,7 @@ impl Synth {
         if step.lead[0].is_some() {
             for (lead, tone) in self.leads.iter_mut().zip(step.lead) {
                 match tone {
-                    Some(tone) => lead.start(Note::new(tone, frames(tone.steps), step.soft)),
+                    Some(tone) => lead.start(Note::new(tone, frames(tone.steps))),
                     None => lead.release(),
                 }
             }
@@ -768,6 +753,7 @@ impl Synth {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::score::STEP;
 
     /// A step that starts one note on one instrument.
     fn note(instrument: &str, pitch: u8, steps: u8) -> Step {
@@ -776,18 +762,19 @@ mod tests {
             steps,
             level: 255,
         });
+        let step = Step {
+            length: STEP,
+            ..Step::default()
+        };
         match instrument {
-            "bass" => Step {
-                bass: tone,
-                ..Step::default()
-            },
+            "bass" => Step { bass: tone, ..step },
             "pluck" => Step {
                 pluck: tone,
-                ..Step::default()
+                ..step
             },
             _ => Step {
-                lead: [tone, None, None],
-                ..Step::default()
+                lead: [tone, None],
+                ..step
             },
         }
     }
@@ -899,7 +886,7 @@ mod tests {
         let mut synth = Synth::default();
         synth.play(&note("bass", 45, 16), 0);
         listen(&mut synth, 20_000);
-        synth.play(&note("bass", 52, 16), 4);
+        synth.play(&note("bass", 52, 16), 4 * STEP as u64);
         let sound = listen(&mut synth, 400);
         // Nothing jumps while one note gives way to the other.
         let jump = sound.windows(2).map(|pair| (pair[1] - pair[0]).abs());

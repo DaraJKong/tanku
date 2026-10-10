@@ -1,20 +1,28 @@
-//! The piece as it is written by hand: two motifs, the chords of each section and the rhythm
+//! The piece as it is written by hand: three motifs, the chords of each section and the rhythm
 //! patterns, with the rules that derive every other line from them.
 //!
 //! Melodies are written in degrees of the scale and not in notes, so each of them exists in
 //! every mode. A grid is one bar of 16 steps in four beats. In a melody, a digit starts a note
-//! on that degree and a dot holds it. In a pattern, `x` is a hit, `R` is the root of the chord
-//! of the bar, `O` is that root an octave higher, `5` is its fifth, and a dot starts nothing.
+//! on that degree, a dot holds it and a dash is silence. In a pattern, `x` is a hit, `o` is a
+//! softer one, `R` is the root of the chord of the bar, `O` is that root an octave higher, `5`
+//! is its fifth, and a dot starts nothing.
 
 /// Steps in a bar. A step is a quarter of a beat.
 pub const STEPS: usize = 16;
 /// Bars in a section.
 pub const BARS: usize = 8;
 
+/// How long a step lasts, in half frames of the music. At 120 beats per minute a step is 5512
+/// frames and a half.
+pub const STEP: u32 = 11_025;
+/// The bridge is slower, at 90 beats per minute: its steps are 7350 frames long.
+pub const BRIDGE_STEP: u32 = 14_700;
+
 /// The A of 440 Hz. Pitches count semitones, and this one is the tonic of the lead.
 pub const A4: u8 = 69;
 pub const A3: u8 = A4 - 12;
 pub const A2: u8 = A3 - 12;
+pub const A1: u8 = A2 - 12;
 
 /// The scale in use. All have A as their tonic.
 ///
@@ -97,6 +105,8 @@ pub const fn line(grid: &str) -> Line {
             if last < STEPS {
                 line[last].steps += 1;
             }
+        } else if symbol == b'-' {
+            last = STEPS;
         } else {
             assert!(symbol.is_ascii_digit() && symbol != b'0');
             line[step] = Cell {
@@ -148,17 +158,33 @@ pub const CHORUS: [Line; BARS] = {
     let [first, second] = MOTIF_B;
     [first, second, first, second, first, second, first, second]
 };
-/// The melody of the bridge: motif B twice, at half speed.
-pub const BRIDGE: [Line; BARS] = {
-    let [a, b, c, d] = half_speed(MOTIF_B);
-    [a, b, c, d, a, b, c, d]
-};
 
-/// The chords of the bridge, one per bar, each named by the degree it is built on. Those of
-/// the verse and of the chorus depend on the mode.
-pub const BRIDGE_CHORDS: [u8; BARS] = [4, 4, 1, 1, 4, 4, 5, 5];
+/// Motif C, the call of the bridge: two notes in a row, the second a fourth above the first
+/// and left to ring.
+pub const MOTIF_C: Line = line("---- 5.8. ---- ----");
+/// The melody of the bridge: the call in every bar. Its second note changes from one bar to
+/// the next, and the last call of the eight falls where the others rise.
+pub const BRIDGE: [Line; BARS] = [
+    MOTIF_C,
+    line("---- 5.7. ---- ----"),
+    MOTIF_C,
+    line("---- 5.9. ---- ----"),
+    MOTIF_C,
+    line("---- 5.7. ---- ----"),
+    MOTIF_C,
+    line("---- 5.4. ---- ----"),
+];
+/// What the bass plays in every bar of the bridge: two short notes in a row on the degree that
+/// the bridge never leaves.
+pub const BRIDGE_BASS: Line = line("---- ---- 5-5- ----");
+pub const PEDAL: u8 = 5;
+/// The kick of the bridge: the two beats of a heart. A bar of the bridge is these two hits,
+/// the call of the pluck, the two notes of the bass, and a beat of silence.
+pub const KICK_HEART: Pattern = pattern("x.o. .... .... ....");
+/// The degrees of the bridge. They are the same notes in every mode, so the bridge has no
+/// mode: it is neither major nor minor.
+pub const NEUTRAL: [u8; 5] = [1, 2, 4, 5, 7];
 
-pub const KICK_CALM: Pattern = pattern("x... .... x... ....");
 pub const KICK_FIGHT: Pattern = pattern("x... x... x... x...");
 pub const HAT_CORRIDOR: Pattern = pattern("..x. ..x. ..x. ..x.");
 /// Louder on the steps of the corridor pattern.
@@ -232,28 +258,6 @@ pub const fn ornaments(line: Line) -> Line {
     out
 }
 
-/// Makes every note of a motif twice as long, so that its two bars become four.
-pub const fn half_speed(motif: [Line; 2]) -> [Line; 4] {
-    let mut out = [[REST; STEPS]; 4];
-    let mut bar = 0;
-    while bar < motif.len() {
-        let mut step = 0;
-        while step < STEPS {
-            let Cell { degree, steps } = motif[bar][step];
-            if degree != 0 {
-                let at = 2 * (bar * STEPS + step);
-                out[at / STEPS][at % STEPS] = Cell {
-                    degree,
-                    steps: 2 * steps,
-                };
-            }
-            step += 1;
-        }
-        bar += 1;
-    }
-    out
-}
-
 /// The skeleton of every bar of a melody.
 pub const fn skeletons(mut lines: [Line; BARS]) -> [Line; BARS] {
     let mut bar = 0;
@@ -282,13 +286,6 @@ pub const fn triad(mode: Mode, chord: u8, lowest: u8) -> [u8; 3] {
         lowest + mode.semitones(chord + 2),
         lowest + mode.semitones(chord + 4),
     ]
-}
-
-/// The three notes of the chord on a degree, each in the 12 semitones that start at `lowest`.
-/// Every chord then lies close to the one before it.
-pub const fn close_triad(mode: Mode, chord: u8, lowest: u8) -> [u8; 3] {
-    let [root, third, fifth] = triad(mode, chord, 0);
-    [lowest + root % 12, lowest + third % 12, lowest + fifth % 12]
 }
 
 /// The root of a chord for the bass, between E2 and D3.
@@ -348,6 +345,17 @@ mod tests {
     }
 
     #[test]
+    fn steps_have_the_length_of_their_tempo() {
+        // Four steps to a beat, and a minute of music in half frames.
+        let minute = 60 * 2 * crate::SAMPLE_RATE;
+        assert_eq!(4 * 120 * STEP, minute);
+        assert_eq!(4 * 90 * BRIDGE_STEP, minute);
+        // A bar lasts two seconds, and 2.67 s in the bridge.
+        assert_eq!(STEPS as u32 * STEP / 2, 88_200);
+        assert_eq!(STEPS as u32 * BRIDGE_STEP / 2, 117_600);
+    }
+
+    #[test]
     fn the_modes_are_those_of_the_specification() {
         let scale = |mode: Mode| (1..=7).map(move |degree| name(A4 + mode.semitones(degree)));
         assert!(scale(Mode::Dorian).eq(["A", "B", "C", "D", "E", "F#", "G"]));
@@ -370,11 +378,15 @@ mod tests {
         assert_eq!(second[6], cell(6, 6));
         assert_eq!(first[1], cell(0, 0));
         assert_eq!(&BASS_LEAPING, b"R..O..R.R..O..5.");
+        // A dash ends the note before it.
+        assert_eq!(starts(&MOTIF_C), [4, 6]);
+        assert_eq!(MOTIF_C[6], cell(8, 2));
+        assert_eq!(BRIDGE_BASS[10], cell(5, 1));
     }
 
     #[test]
     fn the_motifs_use_five_degrees() {
-        for line in VERSE.iter().chain(&CHORUS).chain(&BRIDGE) {
+        for line in VERSE.iter().chain(&CHORUS) {
             for cell in line.iter().filter(|cell| cell.degree != 0) {
                 assert!(FIVE.contains(&((cell.degree - 1) % 7 + 1)), "{cell:?}");
             }
@@ -417,7 +429,7 @@ mod tests {
         assert_eq!(chords(Mode::Aeolian), ["Am", "Dm", "Em", "F"]);
         for mode in MODES {
             let chords = mode.verse_chords().into_iter().chain(mode.chorus_chords());
-            for chord in chords.chain(BRIDGE_CHORDS) {
+            for chord in chords {
                 assert!([1, 4, 5, mode.color()].contains(&chord));
             }
         }
@@ -437,17 +449,6 @@ mod tests {
         assert_eq!(ornaments(b)[6].steps, 4);
         assert_eq!(grid(&ornaments(b)), "3535 656. ..86 5.65");
 
-        let slow = half_speed(MOTIF_B).map(|line| grid(&line));
-        assert_eq!(
-            slow,
-            [
-                "8... .... .... 9...",
-                "8... .... 6... ....",
-                "5... ..6. .... 5...",
-                "3... ..2. .... 1...",
-            ]
-        );
-        assert_eq!(BRIDGE[0][0].steps, 12);
         assert_eq!(grid(&VERSE[7]), "3..5 ..2. .... 5...");
     }
 
@@ -461,9 +462,26 @@ mod tests {
                 assert_eq!(rubs(mode, &ornamented(lines), &chords), 0, "{mode:?}");
             }
         }
-        // The bridge is never played in Aeolian.
-        assert_eq!(rubs(Mode::Dorian, &BRIDGE, &BRIDGE_CHORDS), 0);
-        assert_eq!(rubs(Mode::Mixolydian, &BRIDGE, &BRIDGE_CHORDS), 0);
+    }
+
+    #[test]
+    fn the_bridge_has_no_mode() {
+        let notes = || {
+            let cells = BRIDGE.iter().chain([&BRIDGE_BASS]).flatten();
+            cells.map(|cell| cell.degree).filter(|&degree| degree != 0)
+        };
+        assert_eq!(notes().count(), 2 * BARS + 2);
+        for degree in notes() {
+            assert!(NEUTRAL.contains(&((degree - 1) % 7 + 1)), "degree {degree}");
+            // The same note whatever the mode, and never a semitone above the pedal.
+            let [dorian, mixolydian, aeolian] = MODES.map(|mode| mode.semitones(degree));
+            assert!(dorian == mixolydian && dorian == aeolian, "degree {degree}");
+            assert_ne!((dorian + 12 - Mode::Dorian.semitones(PEDAL)) % 12, 1);
+        }
+        // Every call starts on the pedal, and only the last one falls.
+        let calls: Vec<u8> = BRIDGE.iter().map(|line| line[6].degree).collect();
+        assert!(BRIDGE.iter().all(|line| line[4].degree == PEDAL));
+        assert_eq!(calls, [8, 7, 8, 9, 8, 7, 8, 4]);
     }
 
     #[test]
@@ -492,8 +510,6 @@ mod tests {
                         .iter()
                         .all(|pitch| (A3..=a5).contains(pitch))
                 );
-                let held = close_triad(mode, chord, A4);
-                assert!(held.iter().all(|pitch| (A4..A4 + 12).contains(pitch)));
             }
             // The lead, with its ornaments and an octave higher.
             for line in ornamented(VERSE).iter().chain(&ornamented(CHORUS)) {
@@ -502,12 +518,14 @@ mod tests {
                 }
             }
         }
-        // The pluck has the melody of the intro from A4 and that of the bridge from A3.
+        // The pluck has the melody of the intro from A4 and that of the bridge from A3, and
+        // the bass has its notes of the bridge from A1.
         let highest = |lines: &[Line; BARS]| {
             let cells = lines.iter().flatten();
             cells.map(|cell| cell.degree).max().unwrap()
         };
         assert!(A4 + Mode::Mixolydian.semitones(highest(&VERSE)) <= a5);
         assert!(A3 + Mode::Mixolydian.semitones(highest(&BRIDGE)) <= a5);
+        assert_eq!(A1 + Mode::Mixolydian.semitones(PEDAL), e2);
     }
 }

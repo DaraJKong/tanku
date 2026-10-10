@@ -147,7 +147,7 @@ The files go to `target/music`, or to the directory given after `--`. The mode o
 
 | File | Content |
 |---|---|
-| `intro.wav`, `bridge.wav` | Two turns of each loop |
+| `intro.wav` | Two turns of the loop |
 | `corridor_threat_0.wav` to `corridor_threat_4.wav` | The verse and the chorus of a fight in a corridor, at each threat |
 | `tour.wav` | Three minutes of a made-up run |
 
@@ -155,6 +155,7 @@ Next to the two directories are the files that don't depend on that choice:
 
 | File | Content |
 |---|---|
+| `bridge.wav` | Two turns of the loop |
 | `arena_threat_0.wav` to `arena_threat_4.wav` | The verse and the chorus of a fight in an arena, at each threat |
 | `tour.txt` | What happens in the tour and when |
 

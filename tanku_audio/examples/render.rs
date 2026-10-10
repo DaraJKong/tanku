@@ -7,21 +7,22 @@
 //! The files go to `target/music`, or to the directory given after `--`. The piece is written
 //! once in each of the two modes it may get, in the directories `dorian` and `mixolydian`:
 //!
-//! - `intro.wav` and `bridge.wav`: two turns of each loop;
+//! - `intro.wav`: two turns of the loop;
 //! - `corridor_threat_0.wav` to `corridor_threat_4.wav`: the verse and the chorus of a fight
 //!   in a corridor at each threat;
 //! - `tour.wav`: three minutes of a made-up run.
 //!
-//! Next to them, `arena_threat_0.wav` to `arena_threat_4.wav` are the fights of an arena,
-//! which sound the same whatever the mode of the piece, and `tour.txt` tells what happens in
-//! the tour and when.
+//! Next to them is what sounds the same whatever the mode of the piece: `bridge.wav`, two
+//! turns of its loop, and `arena_threat_0.wav` to `arena_threat_4.wav`, the fights of an
+//! arena. `tour.txt` tells what happens in the tour and when.
 
 use std::{error::Error, fmt::Write, fs, path::PathBuf};
 
 use tanku_audio::{CHANNELS, Context, Mode, Music, Place, SAMPLE_RATE, music, music_from, wav};
 
-/// Seconds in a bar.
+/// Seconds in a bar, and in a bar of the bridge, which is slower.
 const BAR: f32 = 2.0;
+const BRIDGE_BAR: f32 = 8.0 / 3.0;
 
 /// The made-up run of the tour: when each thing happens, in seconds, and the context from
 /// then on. The times are off the beat on purpose, as they are in a game.
@@ -130,12 +131,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     for (name, home) in [("dorian", Mode::Dorian), ("mixolydian", Mode::Mixolydian)] {
         let directory = directory.join(name);
         fs::create_dir_all(&directory)?;
-        // Two turns of each loop, and the 16 bars of a fight.
-        arrangement(home, at(Place::Bay), directory.join("intro.wav"))?;
-        arrangement(home, at(Place::Corridor), directory.join("bridge.wav"))?;
+        // Two turns of the intro, and the 16 bars of a fight.
+        let seconds = 16.0 * BAR;
+        arrangement(home, at(Place::Bay), seconds, directory.join("intro.wav"))?;
         for threat in 0..=4 {
             let file = directory.join(format!("corridor_threat_{threat}.wav"));
-            arrangement(home, fight(Place::Corridor, threat), file)?;
+            arrangement(home, fight(Place::Corridor, threat), seconds, file)?;
         }
 
         let (mut music, conductor) = music(home);
@@ -147,10 +148,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         wav::write(directory.join("tour.wav"), &frames)?;
     }
 
-    // An arena sounds the same whatever the mode of the piece.
+    // The bridge and the fights of an arena sound the same whatever the mode of the piece.
+    let (home, bridge) = (Mode::Dorian, directory.join("bridge.wav"));
+    arrangement(home, at(Place::Corridor), 16.0 * BRIDGE_BAR, bridge)?;
     for threat in 0..=4 {
         let file = directory.join(format!("arena_threat_{threat}.wav"));
-        arrangement(Mode::Dorian, fight(Place::Arena, threat), file)?;
+        arrangement(home, fight(Place::Arena, threat), 16.0 * BAR, file)?;
     }
     let mut notes = String::new();
     for (start, label, _) in &TOUR[..TOUR.len() - 1] {
@@ -163,11 +166,16 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/// Writes 16 bars of the music of a game that stays in one context.
-fn arrangement(home: Mode, context: Context, file: PathBuf) -> Result<(), Box<dyn Error>> {
+/// Writes some seconds of the music of a game that stays in one context.
+fn arrangement(
+    home: Mode,
+    context: Context,
+    seconds: f32,
+    file: PathBuf,
+) -> Result<(), Box<dyn Error>> {
     let (mut music, _conductor) = music_from(home, context);
     let mut frames = Vec::new();
-    play(&mut music, 16.0 * BAR, &mut frames);
+    play(&mut music, seconds, &mut frames);
     Ok(wav::write(file, &frames)?)
 }
 

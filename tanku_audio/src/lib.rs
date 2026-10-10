@@ -24,12 +24,6 @@ pub const SAMPLE_RATE: u32 = 44_100;
 /// The music is in stereo: a frame is a sample for the left, then one for the right.
 pub const CHANNELS: u16 = 2;
 
-/// The frame on which a step of the piece starts. At 120 beats per minute a step lasts 5512
-/// frames and a half, and a bar of 16 steps lasts 88,200.
-pub const fn frame_of(step: u64) -> u64 {
-    step * 11_025 / 2
-}
-
 /// The music from its start, in the main menu, and the conductor that goes with it. `home` is
 /// the mode of the piece, Dorian or Mixolydian, for as long as the choice between them is
 /// open.
@@ -50,7 +44,7 @@ fn with(director: Director, context: Context) -> (Music, Conductor) {
         director,
         synth: Synth::default(),
         frame: 0,
-        step: 0,
+        next_step: 0,
     };
     (music, Conductor(context))
 }
@@ -74,8 +68,10 @@ pub struct Music {
     synth: Synth,
     /// Frames rendered so far.
     frame: u64,
-    /// Steps started so far.
-    step: u64,
+    /// Where the next step starts, in half frames. Steps are counted in half frames because
+    /// one lasts 5512 frames and a half at 120 beats per minute: nothing is rounded, so
+    /// nothing drifts.
+    next_step: u64,
 }
 
 impl Music {
@@ -83,11 +79,11 @@ impl Music {
     /// a sound thread can call it.
     pub fn render(&mut self, frames: &mut [f32]) {
         for frame in frames.as_chunks_mut::<{ CHANNELS as usize }>().0 {
-            if self.frame == frame_of(self.step) {
+            if self.frame == self.next_step / 2 {
                 let context = unpack(self.context.load(Ordering::Relaxed));
                 let step = self.director.step(context);
-                self.synth.play(&step, self.step);
-                self.step += 1;
+                self.synth.play(&step, self.next_step);
+                self.next_step += step.length as u64;
             }
             *frame = self.synth.frame();
             self.frame += 1;
@@ -132,16 +128,5 @@ mod tests {
                 assert_eq!(unpack(pack(context)), context);
             }
         }
-    }
-
-    #[test]
-    fn steps_fall_on_whole_frames() {
-        // A step lasts 5512 frames and a half, so two steps in a row differ by one frame.
-        assert_eq!(frame_of(1), 5512);
-        assert_eq!(frame_of(2), 11_025);
-        assert_eq!(frame_of(3), 16_537);
-        // A bar lasts two seconds, and nothing drifts over an hour.
-        assert_eq!(frame_of(16), 2 * SAMPLE_RATE as u64);
-        assert_eq!(frame_of(16 * 1800), 3600 * SAMPLE_RATE as u64);
     }
 }

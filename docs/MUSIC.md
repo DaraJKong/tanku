@@ -10,8 +10,8 @@ All numbers and all notes in this document are starting values to tune by ear.
 
 | Topic | Summary |
 |---|---|
-| Piece | One, in A, at 120 beats per minute, without an end |
-| Written by hand | Two motifs of two bars, three chord progressions, nine rhythm patterns |
+| Piece | One, in A, at 120 beats per minute and at 90 in its bridge, without an end |
+| Written by hand | Three motifs, the chords of the verse and of the chorus, nine rhythm patterns |
 | Derived by rule | Everything else: every mode, every section, every arrangement, every sound |
 | Instruments | Bass, pluck, lead, kick, hi-hat and snare, all synthesized by the game |
 | Follows | The place (bay, corridor, arena), the fight (on or off) and the threat (the highest brain tier awake) |
@@ -23,7 +23,7 @@ All numbers and all notes in this document are starting values to tune by ear.
 1. **Cues first.** Sound cues carry information, and the music never covers one.
 2. **The music follows the game.** The simulation never waits for a beat and never reads the music. A run plays the same with the music off.
 3. **It repeats what the screen shows.** The music tells the place, the fight and the threat, which the screen tells too. It is never the only carrier of anything.
-4. **One piece.** Two motifs come back in every section, so the piece is recognized in every arrangement.
+4. **One piece.** The same few motifs come back all the time, so the piece is recognized in every arrangement.
 5. **Same everywhere.** The same events at the same times give the same samples on every platform.
 
 ## Glossary
@@ -47,13 +47,13 @@ All numbers and all notes in this document are starting values to tune by ear.
 
 | Quantity | Value |
 |---|---|
-| Tempo | 120 beats per minute, which never changes |
-| Bar | 2 s, or 120 simulation ticks |
-| Step | 0.125 s |
+| Tempo | 120 beats per minute. The bridge alone is slower, at 90. |
+| Bar | 2 s, or 120 simulation ticks. 2.67 s in the bridge. |
+| Step | 0.125 s. 0.167 s in the bridge. |
 | Phrase | 8 s |
 | Swing | None. It is the first knob to try if the rhythm feels stiff. |
 
-The tempo is the game's own. At 120 beats per minute, the timings of the rules are whole numbers of beats:
+The tempo of a fight is the game's own. At 120 beats per minute, the timings of the rules are whole numbers of beats:
 
 | Timing in the rules | Length | In the music |
 |---|---|---|
@@ -64,7 +64,7 @@ The tempo is the game's own. At 120 beats per minute, the timings of the rules a
 | Repair | 4 s | Two bars |
 | Fuse of a mine | 10 s | Five bars |
 
-A player who holds the trigger therefore fires at the pace of the music, two shots per beat. The shots don't land on its steps, because the game never moves a shot to fit the music. This only holds while the tempo stays at 120, which is one reason why it never changes.
+A player who holds the trigger therefore fires at the pace of the music, two shots per beat. The shots don't land on its steps, because the game never moves a shot to fit the music. This only holds at 120, which is why a fight never has another tempo. The bridge can be slower because nobody shoots back while it plays.
 
 ## Pitch
 
@@ -89,22 +89,27 @@ Every line is written in degrees and not in notes, so it exists in every mode wi
 | Mixolydian | A | D | Em | Not used | G |
 | Aeolian | Am | Dm | Em | F | Not used |
 
+The bridge is apart. It uses degrees 1, 2, 4, 5 and 7, which are the same notes in every mode: A, B, D, E and G. It has neither the third nor the sixth degree, the two that tell these modes apart, so it is neither major nor minor and sounds the same wherever it plays.
+
 The tonic is A because of the cues. Those that play notes already play A and E: sector cleared (E5, A5), flag captured (E5, A5, E6), barrier unlocked (A5, E6) and run over (A4, E4, A3). A and E are degrees 1 and 5 of every mode, so these cues are in tune with the music whatever it plays. The key never changes, for the same reason.
 
 ## Material
 
 Three things are written by hand: the motifs, the chords and the patterns.
 
-A grid shows bars of 16 steps, in four beats. In a melody, a digit starts a note on that degree and a dot holds it. In a pattern, `x` is a hit, `R` is the root of the chord of the bar, `O` is that root an octave higher, `5` is its fifth, and a dot starts nothing.
+A grid shows bars of 16 steps, in four beats. In a melody, a digit starts a note on that degree, a dot holds it and a dash is silence. In a pattern, `x` is a hit, `o` is a softer one, `R` is the root of the chord of the bar, `O` is that root an octave higher, `5` is its fifth, and a dot starts nothing.
 
 ### Motifs
 
 ```
 Motif A, the question    1..2 ..3. 5..3 ..2. | 3..5 ..6. .... 5...
 Motif B, the answer      8... ..9. 8... 6... | 5..6 ..5. 3..2 ..1.
+Motif C, the call        ---- 5.8. ---- ----
 ```
 
-Motif A climbs and stops on degree 5, so it asks for more. Motif B starts on the high tonic and comes down to the tonic, so it closes. The first bar of A and the second bar of B share one rhythm, twice 3 + 3 + 2 steps. It is the rhythm of the piece, and the bass plays it too.
+Motif A climbs and stops on degree 5, so it asks for more. Motif B starts on the high tonic and comes down to the tonic, so it closes. The first bar of A and the second bar of B share one rhythm, twice 3 + 3 + 2 steps. It is the rhythm of the fights, and the bass plays it too.
+
+Motif C belongs to the bridge. It is two notes in a row, the second a fourth above the first and left to ring. Over the eight bars of the bridge its second note is degree 8, 7, 8, 9, 8, 7, 8 and 4 in turn, so the last call falls where the others rise.
 
 ### Chords
 
@@ -114,12 +119,13 @@ One chord per bar. C stands for the chord that gives the mode its color: the one
 |---|---|---|
 | Intro and verse | 1, 1, C, 4 | 1, 1, C, 5 |
 | Chorus | 4, 5, 1, C | 4, 5, 1, 1 |
-| Bridge | 4, 4, 1, 1 | 4, 4, 5, 5 |
+
+The bridge has no chords. Its bass stays on degree 5, the one from which the tonic of a fight is best heard coming.
 
 ### Patterns
 
 ```
-Kick, calm           x... .... x... ....
+Kick, bridge         x.o. .... .... ....    the two beats of a heart
 Kick, fight          x... x... x... x...
 Hi-hat, corridor     ..x. ..x. ..x. ..x.
 Hi-hat, arena        xxxx xxxx xxxx xxxx    louder on the steps of the corridor pattern
@@ -129,6 +135,8 @@ Bass, plain          R..R ..R. R..R ..R.
 Bass, leaping        R..O ..R. R..O ..5.
 Pluck, arpeggio      x.x. x.x. x.x. x.x.    root, third and fifth of the chord in turn, rising
 ```
+
+The bass of the bridge is written in degrees, like a melody: `---- ---- 5-5- ----`.
 
 Syncopation lives in the bass, the pluck and the lead. The drums stay on a plain grid on purpose: a regular pulse is easy to stop hearing, and a shot, which is irregular, stands out against it.
 
@@ -140,9 +148,7 @@ Syncopation lives in the bass, the pluck and the lead. The drums stay on a plain
 | Skeleton | Keeps the notes of a motif that start on a beat and holds each until the next | Lead at threat 1 |
 | Ornaments | A note of three steps or more gives its last two steps to the degree above it, among the five, and to itself again | Lead at threats 3 and 4 |
 | Octave | Plays the same line an octave higher as well | Lead at threat 4 |
-| Half speed | Makes every note twice as long | Pluck in the bridge |
 | Turnaround | Swaps the long degree 6 of motif A for degree 2, a note of chord 5: its second bar becomes `3..5 ..2. .... 5...` | Last bar of the intro and of the verse, which is on chord 5 |
-| Triads | Holds the chord of the bar in the inversion nearest to the last one | Lead in the bridge |
 
 One check guards every change to the notes. In every mode, a note that lies a semitone above the root of its chord must pass quickly: it lasts one step if it starts on a beat, and three steps at most otherwise. The turnaround exists because of it: without it, the last bar of the verse would hold F over E minor in an arena.
 
@@ -153,9 +159,11 @@ One check guards every change to the notes. In every mode, a note that lies a se
 | Intro | 8 | Motif A four times on the pluck, the last time with the turnaround | Still, without drums |
 | Verse | 8 | Motif A four times on the lead, the last time with the turnaround | Driving |
 | Chorus | 8 | Motif B four times on the lead | Driving, and higher |
-| Bridge | 8 | Motif B twice at half speed on the pluck, over triads on the lead | Half as fast: a break |
+| Bridge | 8 | Motif C in every bar, on the pluck | Slower, with a silence in every bar: a break |
 
 The piece has no fixed order of sections. The game chooses them through the context, and each section loops for as long as its context lasts. The bridge is therefore not on a timer: it is the music of the calm between two fights.
+
+A bar of the bridge is one idea, played three times and followed by a silence: two hits in a row. The kick has them first, as the two beats of a heart. The pluck has them next, as its call. The bass has them last, on its one degree. Then nothing starts for a beat. It replaces a first bridge, which had the second motif at half speed over long chords on the lead and sounded like any other.
 
 ## Context
 
@@ -178,7 +186,7 @@ The drums and the mode tell where the players are and whether they fight. The le
 | Context | Section | Mode | Kick | Hi-hat | Snare | Bass | Pluck | Lead |
 |---|---|---|---|---|---|---|---|---|
 | Menu or bay | Intro | Of the piece | Silent | Silent | Silent | Long | Motif A | Silent |
-| No fight, in a corridor or an arena | Bridge | Of the piece | Calm | Silent | Silent | Long | Motif B at half speed | Triads |
+| No fight, in a corridor or an arena | Bridge | None | Heart | Silent | Silent | Two notes | Motif C | Silent |
 | Fight in a corridor | Verse and chorus in turn | Of the piece | Fight | Corridor | Silent | By threat | By threat | By threat |
 | Fight in an arena | Verse and chorus in turn | Aeolian | Fight | Arena | Arena | By threat | By threat | By threat |
 
@@ -198,24 +206,25 @@ The threat falls during a fight when the smartest enemies are destroyed first, a
 
 ## Changes
 
-Two rules make the music answer fast and stay in time:
+Three rules make the music answer fast and stay in time:
 
-1. Every change of section, of mode or of pattern happens on a bar line.
+1. A change within a fight, and the section that follows a fight, wait for the bar line.
 2. What can't wait for the bar line is said at once by a marker.
+3. A fight starts when its roll is over, wherever the bar was. The bridge has a tempo of its own, so a fight counts its bars from its own first beat.
 
-| Event | At once | On the next bar line |
+| Event | At once | Then |
 |---|---|---|
-| A fight starts | A roll that grows louder up to the bar line, on the hi-hat in a corridor and on the snare in an arena. It lasts one beat at least: when the bar line is closer than that, it runs to the one after. | The fight sections start, in Aeolian in an arena |
-| The fight ends | The drums stop, the bass lands on the root of the chord, and the notes that are sounding are held | The bridge starts from its first bar, in the mode of the piece |
-| The threat changes | Nothing | Lead, bass and pluck change |
-| The player's tank is destroyed | Everything stops but the bass, which holds the root of the chord | Once the tank is back, the context decides again |
-| The run ends | The same | The intro starts |
+| A fight starts | A roll of two beats that grows louder, on the hi-hat in a corridor and on the snare in an arena. Nothing else starts while it lasts. | When the roll is over, one second later: the fight sections start, in Aeolian in an arena |
+| The fight ends | The drums stop, the bass lands on the root of the chord, and the notes that are sounding are held | On the next bar line: the bridge starts from its first bar, at its own tempo |
+| The threat changes | Nothing | On the next bar line: lead, bass and pluck change |
+| The player's tank is destroyed | Everything stops but the bass, which holds the root of the chord | On the bar line after the tank is back: the context decides again |
+| The run ends | The same | On the next bar line: the intro starts |
 | A run starts | Nothing: the intro goes on | The count of phrases starts over |
 | A menu opens over the game | Within 0.2 s the music loses what is above 600 Hz and half its loudness. It gets them back when the menu closes. | Nothing |
 
 The fight sections are counted in phrases: the two of the verse, then the two of the chorus, then the verse again. A fight opens on the phrase after the one where the last fight ended. The first fight of a run opens the verse, so every run begins the same way, and the short fights of the first sectors walk through the whole piece instead of repeating its first bars.
 
-A marker is heard within one step of its event. A change is complete within one bar, or within a bar and a beat when a fight starts.
+A marker is heard within one step of its event. A fight is in full swing one second after it starts, and every other change is complete within one bar.
 
 ## Instruments
 
@@ -225,7 +234,7 @@ Each instrument is a small synthesizer made of plain shapes, like the drawing: s
 |---|---|---|---|---|
 | Bass | A square wave through a filter that opens at each attack and closes in 0.15 s | 1 | E2 to D4 | Middle |
 | Pluck | A plucked string: a burst of noise that goes round a tuned delay and wears off | 4 | A3 to A5 | Left |
-| Lead | A pulse wave with a slow vibrato. In the bridge, a softer attack and three notes at once. | 3 | A4 to B6 | Right |
+| Lead | A pulse wave with a slow vibrato | 2 | A4 to B6 | Right |
 | Kick | A sine that falls from 110 Hz to 55 Hz in 0.12 s, without any noise | 1 | None | Middle |
 | Hi-hat | Noise above 7 kHz for 0.03 s | 1 | None | Left |
 | Snare | Noise around 2 kHz with a tone at 220 Hz, for 0.12 s | 1 | None | Middle |
@@ -236,7 +245,7 @@ The kick has no noise in it because every weapon cue has some. The bass stays ab
 
 - **Two volumes.** The settings get a second level, Music, next to Volume. Volume sets everything and Music sets the music against the cues. It starts at 50%. At 0 the music keeps counting its bars and stays silent.
 - **Under the cues.** At the default settings, the loudest arrangement peaks 12 dB below a shot fired next to the player.
-- **Melody on top.** The melody is the loudest thing with a pitch. The arpeggio of the pluck, the chords of the lead and the octave that the lead adds at threat 4 are quieter than the line they go with.
+- **Melody on top.** The melody is the loudest thing with a pitch. The arpeggio of the pluck and the octave that the lead adds at threat 4 are quieter than the line they go with.
 - **Ducking.** While the warning of a mine sounds within hearing range, the music is half as loud.
 - **Stereo.** The music is in stereo and the cues stay in the middle. The pluck and the lead, which share the pitches of the cues, sit to the sides.
 - **Dry.** There is no reverb. The arpeggio of the pluck has one echo, three steps later, a third as loud and on the other side. Its melodies have none: with an echo, the intro sounded too relaxed.
@@ -263,7 +272,7 @@ Two cues have a pitch that will sound out of tune over music in A:
 | What reaches the ears | The above and the sound device | Not guaranteed: devices differ in rate and delay |
 
 - **Nothing is random.** The noise of the hi-hat, the snare and the pluck comes from a generator of its own that always starts from the same state, as the noise of the cues does today.
-- **The score is integers.** What each instrument plays on a step is a function of the step number and of the context. At 44,100 frames per second, step $k$ of the piece starts at frame $\lfloor 11025\,k / 2 \rfloor$.
+- **The score is integers.** What each instrument plays on a step is a function of the step number and of the context. Steps are counted in half frames, at 44,100 frames per second: one lasts 11,025 half frames at 120 beats per minute and 14,700 in the bridge. Nothing is rounded along the way, so nothing drifts.
 - **The synthesizer does its own math.** It adds, subtracts, multiplies and divides 32-bit floats, and it reads sines and decays from its own tables. It never calls a library function such as `sin` or `exp`, whose last bit differs between platforms. Its output is therefore the same bit for bit on every platform, which lets a test compare it with a stored value.
 
 ## Engine
@@ -311,12 +320,12 @@ It writes one sound file per arrangement and a tour through a made-up run, with 
 ## Tests and benchmarks
 
 - **Stable.** Sixteen bars of each arrangement match a stored value, as the map of a seed does.
-- **One arena.** A fight in an arena sounds the same whatever the mode of the piece.
+- **One arena, one bridge.** A fight in an arena and the bridge sound the same whatever the mode of the piece.
 - **In tune.** Every instrument plays the lowest and the highest note of its range within 3 hundredths of a semitone.
 - **Never silent.** Every bar of every arrangement makes sound.
 - **Never too loud.** No frame of any arrangement or of any change goes past full scale, and none is NaN.
 - **Seamless.** The third pass of a loop is identical to the second.
-- **On the bar.** A context that changes on each of the 16 steps of a bar gives a marker within one step and a section that starts on a bar line.
+- **On time.** A fight that is announced on each of the 16 steps of a bar gives a roll at once and the fight two beats later. A fight that ends gives the bridge on the next bar line.
 - **Sound in every mode.** The motifs use the five degrees, the chords are major or minor, and every melody, with its skeleton and its ornaments, passes the check on semitones above the root.
 - **Cost.** A benchmark renders ten seconds of a fight in an arena at threat 4.
 
