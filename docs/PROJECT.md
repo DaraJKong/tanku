@@ -173,9 +173,9 @@ A tank drops a mine at its own position, at most one every 0.5 s, and can have a
 
 ### Shield
 
-The shield is a bubble around the tank that lasts 0.5 s. It destroys every bullet that touches it, piercing or not, and protects against blasts. The tank keeps moving and shooting while the bubble is up: its own shots leave the bubble, but a ricochet doesn't come back through it. When it ends, the tank overloads: it can't move, shoot, place mines or shield for the stun time. It also can't shield again before the cooldown ends. Higher Shield levels shorten both.
+The shield is a bubble around the tank that lasts 0.5 s. It destroys every bullet that touches it, piercing or not, and protects against blasts. The tank keeps moving and shooting while the bubble is up: its own shots leave the bubble, but a ricochet doesn't come back through it. Once the bubble is gone, the tank can't shield again before the cooldown ends. Higher Shield levels shorten the cooldown.
 
-The overload is the drawback. A shield saves a tank from one threat and leaves it helpless against the next. It beats single fast shots, and it loses to bursts and to patient opponents who bait the shield and fire again.
+The cooldown is the only drawback. A shield saves a tank from one threat, and for several seconds it can't save it from the next. It beats single shots, and it loses to bursts that outlast the bubble and to patient opponents who bait the shield and fire again.
 
 ### Repair
 
@@ -216,7 +216,7 @@ Level 0 of each stat is free. Costs are cumulative: each number is the total pri
 | Loader | Seconds to reload one round | 4.0, 3.2, 2.5, 2.0, 1.6, 1.25, 1.0, 0.8 | 0, 1, 2, 4, 6, 9, 12, 16 |
 | Ricochet | Bounces per bullet | 0, 1, 2, 3 | 0, 4, 10, 18 |
 | Mines | Mines armed at once | 0, 1, 2, 3, 4 | 0, 4, 6, 8, 10 |
-| Shield | Stun / cooldown in s | none, 1.5 / 10, 1.2 / 9, 0.9 / 8, 0.6 / 7, 0.3 / 6 | 0, 6, 9, 12, 15, 18 |
+| Shield | Cooldown in s | none, 10, 9, 8, 7, 6 | 0, 6, 9, 12, 15, 18 |
 | Piercing | Bullets that each of its bullets pierces | 0, 1 | 0, 4 |
 
 Every stat stops at its highest level. These limits keep the game sound: a bullet, for instance, never gets fast enough to pass through a wall. Buying every hardware stat at its highest level costs 135 points.
@@ -266,7 +266,7 @@ The player tank spends 59 points. Free mode lets each player redistribute them o
 | Loader | 6 | 1.0 s per round | 12 |
 | Ricochet | 1 | 1 bounce | 4 |
 | Mines | 2 | 2 mines | 6 |
-| Shield | 2 | 1.2 s stun, 9 s cooldown | 9 |
+| Shield | 2 | 9 s cooldown | 9 |
 | **Total** | | | **59** |
 
 ### Enemy generation
@@ -463,7 +463,7 @@ The game opens in full screen the first time. After that, it opens the way the p
 
 ### Audio
 
-Sound carries information the eyes can miss: a shot fired off screen, a ricochet, a mine about to blow, a shield overloading. A basic set of such cues arrives with the solo loop (M4), in time for the first real playtest. The full sound pass comes later.
+Sound carries information the eyes can miss: a shot fired off screen, a ricochet, a mine about to blow, a shield coming down. A basic set of such cues arrives with the solo loop (M4), in time for the first real playtest. The full sound pass comes later.
 
 The music is one piece that never stops, made by the game as it plays, the same for every seed and on every platform. Its drums and its mode follow the place and the fight, and its melody follows the highest brain tier awake. It never covers a cue. Its specification is in [MUSIC.md](MUSIC.md).
 
