@@ -72,12 +72,11 @@ impl Gun {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum ShieldState {
+    /// The bubble is down. It can be raised once the cooldown is over.
     #[default]
     Ready,
     /// The bubble is up for this much longer.
     Active(f32),
-    /// The tank is stunned for this much longer.
-    Overloaded(f32),
 }
 
 #[derive(Component, Clone, Copy, Debug, Default)]
@@ -90,10 +89,6 @@ pub struct Shield {
 impl Shield {
     pub fn is_active(&self) -> bool {
         matches!(self.state, ShieldState::Active(_))
-    }
-
-    pub fn is_overloaded(&self) -> bool {
-        matches!(self.state, ShieldState::Overloaded(_))
     }
 }
 
@@ -255,20 +250,56 @@ pub enum RunRequest {
 pub enum SimEvent {
     RunStarted,
     RunOver,
-    Shot { at: Vec2, team: Team },
-    Ricochet { at: Vec2 },
-    BulletDestroyed { at: Vec2, team: Team },
-    MinePlaced { at: Vec2 },
-    MineTriggered { at: Vec2 },
-    Blast { at: Vec2 },
-    BlockDestroyed { at: Vec2 },
-    ShieldRaised { at: Vec2 },
-    ShieldBlocked { at: Vec2 },
-    ShieldOverloaded { at: Vec2 },
-    TankDestroyed { at: Vec2, team: Team },
-    PlayerRespawned { at: Vec2 },
-    SectorCleared { sector: u32 },
-    FlagCaptured { at: Vec2 },
-    BarrierUnlocked { sector: u32 },
-    SectorEntered { sector: u32 },
+    Shot {
+        at: Vec2,
+        team: Team,
+    },
+    Ricochet {
+        at: Vec2,
+    },
+    BulletDestroyed {
+        at: Vec2,
+        team: Team,
+    },
+    MinePlaced {
+        at: Vec2,
+    },
+    MineTriggered {
+        at: Vec2,
+    },
+    Blast {
+        at: Vec2,
+    },
+    BlockDestroyed {
+        at: Vec2,
+    },
+    ShieldRaised {
+        at: Vec2,
+    },
+    ShieldBlocked {
+        at: Vec2,
+    },
+    /// The bubble of a shield is gone.
+    ShieldDropped {
+        at: Vec2,
+    },
+    TankDestroyed {
+        at: Vec2,
+        team: Team,
+    },
+    PlayerRespawned {
+        at: Vec2,
+    },
+    SectorCleared {
+        sector: u32,
+    },
+    FlagCaptured {
+        at: Vec2,
+    },
+    BarrierUnlocked {
+        sector: u32,
+    },
+    SectorEntered {
+        sector: u32,
+    },
 }

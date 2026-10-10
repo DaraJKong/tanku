@@ -73,7 +73,7 @@ fn play(
             SimEvent::Blast { at } | SimEvent::TankDestroyed { at, .. } => (Cue::Blast, Some(at)),
             SimEvent::ShieldRaised { at } => (Cue::ShieldRaised, Some(at)),
             SimEvent::ShieldBlocked { at } => (Cue::ShieldBlocked, Some(at)),
-            SimEvent::ShieldOverloaded { at } => (Cue::ShieldOverloaded, Some(at)),
+            SimEvent::ShieldDropped { at } => (Cue::ShieldDropped, Some(at)),
             SimEvent::SectorCleared { sector } if sector > 0 => (Cue::Cleared, None),
             SimEvent::FlagCaptured { .. } => (Cue::Captured, None),
             SimEvent::BarrierUnlocked { sector } if sector > 0 => (Cue::Unlocked, None),
@@ -193,7 +193,7 @@ mod tests {
                 (SimEvent::TankDestroyed { at, team: enemies }, Cue::Blast),
                 (SimEvent::ShieldRaised { at }, Cue::ShieldRaised),
                 (SimEvent::ShieldBlocked { at }, Cue::ShieldBlocked),
-                (SimEvent::ShieldOverloaded { at }, Cue::ShieldOverloaded),
+                (SimEvent::ShieldDropped { at }, Cue::ShieldDropped),
             ]
         };
         // What happens somewhere is at its loudest next to the middle of the screen, and a

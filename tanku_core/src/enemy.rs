@@ -148,7 +148,7 @@ mod tests {
             }
             if genome.brain() == 0 {
                 assert_eq!(genome.mines(), 0);
-                assert!(genome.shield().is_none());
+                assert!(genome.shield_cooldown().is_none());
             }
             assert!(genome.bounces() + 1 >= genome.ballistics());
         }

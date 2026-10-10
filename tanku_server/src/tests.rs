@@ -455,7 +455,7 @@ fn a_player_bullet_destroys_an_enemy() {
 }
 
 #[test]
-fn a_shield_stops_bullets_then_overloads() {
+fn a_shield_stops_bullets_and_costs_only_its_cooldown() {
     let mut app = start("TEST");
     let entity = player(&mut app).unwrap();
     spawn_bullet(
@@ -472,10 +472,17 @@ fn a_shield_stops_bullets_then_overloads() {
             ..default()
         },
     );
-    tick(&mut app, seconds(SHIELD_DURATION) + 1);
+    tick(&mut app, seconds(SHIELD_DURATION) + 2);
     assert_eq!(run(&app).lives, 3);
     assert_eq!(bullets(&mut app), 0);
-    let mut told = events(&mut app);
+    assert!(!app.world().get::<Shield>(entity).unwrap().is_active());
+    // The game told of the bullet, and of the bubble going up and coming down, once each,
+    // where the tank is.
+    let told = events(&mut app);
+    let raised = SimEvent::ShieldRaised { at: START };
+    let dropped = SimEvent::ShieldDropped { at: START };
+    assert_eq!(count(&told, |event| *event == raised), 1);
+    assert_eq!(count(&told, |event| *event == dropped), 1);
     assert_eq!(
         count(&told, |event| matches!(
             event,
@@ -484,25 +491,22 @@ fn a_shield_stops_bullets_then_overloads() {
         1
     );
 
-    // Overloaded for 1.2 s: the tank can't move.
+    // The tank is as free as before: it drives off and fires at once.
     command(
         &mut app,
         TankCommand {
             drive: Vec2::Y,
+            aim: START + Vec2::Y * 9.0,
+            fire: true,
             ..default()
         },
     );
-    tick(&mut app, seconds(1.0));
-    assert!(app.world().get::<Shield>(entity).unwrap().is_overloaded());
-    // The game told of the shield going up, and of its overload, once each, where the tank is.
-    told.extend(events(&mut app));
-    let raised = SimEvent::ShieldRaised { at: START };
-    let overloaded = SimEvent::ShieldOverloaded { at: START };
-    assert_eq!(count(&told, |event| *event == raised), 1);
-    assert_eq!(count(&told, |event| *event == overloaded), 1);
-    assert_eq!(position(&mut app, entity), START);
     tick(&mut app, seconds(0.4));
-    assert!(position(&mut app, entity).y > START.y);
+    assert!(position(&mut app, entity).y > START.y + 1.0);
+    let shots = count(&events(&mut app), |event| {
+        matches!(event, SimEvent::Shot { .. })
+    });
+    assert!(shots >= 1);
 
     // The shield stays down for 9 s after it dropped.
     command(
@@ -512,7 +516,7 @@ fn a_shield_stops_bullets_then_overloads() {
             ..default()
         },
     );
-    tick(&mut app, seconds(7.0));
+    tick(&mut app, seconds(8.0));
     assert!(!app.world().get::<Shield>(entity).unwrap().is_active());
     tick(&mut app, seconds(0.7));
     assert!(app.world().get::<Shield>(entity).unwrap().is_active());

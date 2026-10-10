@@ -223,11 +223,11 @@ impl Genome {
         self.level(Stat::Mines)
     }
 
-    /// Stun and cooldown of the shield in seconds, if the tank has one.
-    pub fn shield(&self) -> Option<(f32, f32)> {
+    /// Seconds before the shield can be raised again, if the tank has one.
+    pub fn shield_cooldown(&self) -> Option<f32> {
         match self.level(Stat::Shield) {
             0 => None,
-            level => Some((1.8 - 0.3 * level as f32, 11.0 - level as f32)),
+            level => Some(11.0 - level as f32),
         }
     }
 
@@ -268,8 +268,7 @@ mod tests {
         assert_eq!(player.reload_time(), 1.0);
         assert_eq!(player.bounces(), 1);
         assert_eq!(player.mines(), 2);
-        let (stun, cooldown) = player.shield().unwrap();
-        assert!((stun - 1.2).abs() < 1e-5 && (cooldown - 9.0).abs() < 1e-5);
+        assert_eq!(player.shield_cooldown(), Some(9.0));
         assert_eq!(player.piercing(), 0);
     }
 
@@ -300,10 +299,10 @@ mod tests {
 
     #[test]
     fn shield_levels_match_the_specification() {
-        let expected = [(1.5, 10.0), (1.2, 9.0), (0.9, 8.0), (0.6, 7.0), (0.3, 6.0)];
-        for (level, (stun, cooldown)) in (1..).zip(expected) {
-            let shield = build(0, &[(Stat::Shield, level)]).shield().unwrap();
-            assert!((shield.0 - stun).abs() < 1e-5 && (shield.1 - cooldown).abs() < 1e-5);
+        let cooldowns = [None, Some(10.0), Some(9.0), Some(8.0), Some(7.0), Some(6.0)];
+        for (level, cooldown) in (0..).zip(cooldowns) {
+            let genome = build(0, &[(Stat::Shield, level)]);
+            assert_eq!(genome.shield_cooldown(), cooldown);
         }
     }
 

@@ -651,10 +651,9 @@ fn status(
 }
 
 /// What the shield bar shows: how full it is, in which color, and a word about its state.
-fn shield_gauge(shield: &Shield, (stun, cooldown): (f32, f32)) -> (f32, Color, String) {
+fn shield_gauge(shield: &Shield, cooldown: f32) -> (f32, Color, String) {
     match shield.state {
         ShieldState::Active(_) => (1.0, theme::TEXT, "UP".to_string()),
-        ShieldState::Overloaded(left) => (left / stun, theme::DANGER, "OVERLOAD".to_string()),
         ShieldState::Ready if shield.cooldown > 0.0 => (
             1.0 - shield.cooldown / cooldown,
             theme::TEXT_DIM,
@@ -686,7 +685,7 @@ fn weapons(
         light(on, theme::TEXT, &mut color, &mut border);
     }
     let has_shield = genome.level(Stat::Shield) > 0;
-    let (fill, shield_color, state) = shield_gauge(shield, genome.shield().unwrap_or((1.0, 1.0)));
+    let (fill, shield_color, state) = shield_gauge(shield, genome.shield_cooldown().unwrap_or(1.0));
     for (bar, mut color, mut node) in &mut bars {
         match bar {
             Bar::Reload => node.width = percent(100.0 * gun.reload / genome.reload_time()),
@@ -971,15 +970,9 @@ mod tests {
 
     #[test]
     fn the_shield_bar_tells_its_state() {
-        let levels = (1.2, 9.0);
-        let gauge = |state, cooldown| shield_gauge(&Shield { state, cooldown }, levels);
+        let gauge = |state, cooldown| shield_gauge(&Shield { state, cooldown }, 9.0);
         assert_eq!(gauge(ShieldState::Ready, 0.0).2, "READY");
-        assert_eq!(gauge(ShieldState::Active(0.3), 9.0).2, "UP");
-        let (fill, color, word) = gauge(ShieldState::Overloaded(0.6), 8.0);
-        assert_eq!(
-            (fill, color, word.as_str()),
-            (0.5, theme::DANGER, "OVERLOAD")
-        );
+        assert_eq!(gauge(ShieldState::Active(0.3), 0.0).2, "UP");
         // While it recharges, it counts the seconds down.
         let (fill, _, word) = gauge(ShieldState::Ready, 4.5);
         assert_eq!((fill, word.as_str()), (0.5, "5 s"));

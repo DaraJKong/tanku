@@ -42,7 +42,8 @@ pub enum Cue {
     ShieldRaised,
     /// A shield destroys a bullet.
     ShieldBlocked,
-    ShieldOverloaded,
+    /// The bubble of a shield is gone.
+    ShieldDropped,
     /// The last enemy of a sector is destroyed.
     Cleared,
     /// A flag is captured.
@@ -68,7 +69,7 @@ impl Cue {
         Cue::Blast,
         Cue::ShieldRaised,
         Cue::ShieldBlocked,
-        Cue::ShieldOverloaded,
+        Cue::ShieldDropped,
         Cue::Cleared,
         Cue::Captured,
         Cue::Unlocked,
@@ -89,7 +90,7 @@ impl Cue {
             Cue::Blast => 0.8,
             Cue::ShieldRaised => 0.25,
             Cue::ShieldBlocked => 0.16,
-            Cue::ShieldOverloaded => 0.45,
+            Cue::ShieldDropped => 0.45,
             Cue::Cleared => 0.5,
             Cue::Captured => 0.6,
             Cue::Unlocked => 0.45,
@@ -138,7 +139,7 @@ impl Cue {
             Cue::ShieldBlocked => {
                 0.3 * (tone(t, frequency(A5)) + tone(t, frequency(E6))) * decay(t * 20.0)
             }
-            Cue::ShieldOverloaded => (0.35 * glide(700.0, 120.0) + 0.15 * noise.next()) * left,
+            Cue::ShieldDropped => (0.35 * glide(700.0, 120.0) + 0.15 * noise.next()) * left,
             Cue::Cleared => 0.3 * (note(t, 0.0, E5) + note(t, 0.14, A5)),
             Cue::Captured => 0.3 * (note(t, 0.0, E5) + note(t, 0.1, A5) + note(t, 0.2, E6)),
             Cue::Unlocked => 0.3 * (note(t, 0.0, A5) + note(t, 0.12, E6)),

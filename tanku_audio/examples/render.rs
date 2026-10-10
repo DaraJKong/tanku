@@ -177,7 +177,7 @@ const PLACED: [Cue; 10] = [
     Cue::Blast,
     Cue::ShieldRaised,
     Cue::ShieldBlocked,
-    Cue::ShieldOverloaded,
+    Cue::ShieldDropped,
 ];
 
 /// What a cue tells.
@@ -192,7 +192,7 @@ fn told(cue: Cue) -> &'static str {
         Cue::Blast => "A blast",
         Cue::ShieldRaised => "A shield is raised",
         Cue::ShieldBlocked => "A shield destroys a bullet",
-        Cue::ShieldOverloaded => "A shield overloads",
+        Cue::ShieldDropped => "The bubble of a shield is gone",
         Cue::Cleared => "A sector is cleared",
         Cue::Captured => "A flag is captured",
         Cue::Unlocked => "A barrier unlocks",

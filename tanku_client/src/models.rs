@@ -12,7 +12,7 @@
 use bevy::prelude::*;
 use tanku_core::{
     rules::SHIELD_RADIUS,
-    sim::{Enemy, Motion, Player, Run, Shield, ShieldState, Tank},
+    sim::{Enemy, Motion, Player, Run, Shield, Tank},
     stats::{Genome, SpendingGroup, Stat},
 };
 
@@ -701,29 +701,20 @@ fn pose(
     }
 }
 
-/// Shows the bubble of a raised shield, and makes an overloaded tank flicker.
+/// Shows the bubble of a raised shield.
 fn shield(
-    time: Res<Time>,
     tanks: Query<(&Shield, &Children), With<Tank>>,
-    mut bubbles: Query<(&mut Visibility, &mut Transform), With<Bubble>>,
+    mut bubbles: Query<&mut Visibility, With<Bubble>>,
 ) {
     for (shield, children) in &tanks {
         for child in children.iter() {
-            let Ok((mut visibility, mut transform)) = bubbles.get_mut(child) else {
-                continue;
-            };
-            let (shown, size) = match shield.state {
-                ShieldState::Active(_) => (true, 2.0 * SHIELD_RADIUS),
-                // Sparks of a shield that has just dropped.
-                ShieldState::Overloaded(_) => (time.elapsed_secs() % 0.16 < 0.05, 1.5),
-                ShieldState::Ready => (false, 1.0),
-            };
-            *visibility = if shown {
-                Visibility::Inherited
-            } else {
-                Visibility::Hidden
-            };
-            transform.scale = Vec3::splat(size);
+            if let Ok(mut visibility) = bubbles.get_mut(child) {
+                *visibility = if shield.is_active() {
+                    Visibility::Inherited
+                } else {
+                    Visibility::Hidden
+                };
+            }
         }
     }
 }

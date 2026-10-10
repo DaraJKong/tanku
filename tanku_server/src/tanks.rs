@@ -21,13 +21,13 @@ use crate::{
     field::{Field, InSector},
 };
 
-/// Runs the shields: the bubble, then the overload, then the cooldown.
+/// Runs the shields: the bubble, then the cooldown.
 pub fn shields(
     mut tanks: Query<(&Tank, &Position, &TankCommand, &mut Shield)>,
     mut events: MessageWriter<SimEvent>,
 ) {
     for (tank, position, command, mut shield) in &mut tanks {
-        let Some((stun, cooldown)) = tank.genome.shield() else {
+        let Some(cooldown) = tank.genome.shield_cooldown() else {
             continue;
         };
         match shield.state {
@@ -41,18 +41,11 @@ pub fn shields(
             ShieldState::Active(left) if left > TICK => {
                 shield.state = ShieldState::Active(left - TICK);
             }
+            // The cooldown is all that a shield costs its tank.
             ShieldState::Active(_) => {
-                shield.state = ShieldState::Overloaded(stun);
+                shield.state = ShieldState::Ready;
                 shield.cooldown = cooldown;
-                events.write(SimEvent::ShieldOverloaded { at: position.0 });
-            }
-            ShieldState::Overloaded(left) => {
-                shield.cooldown = (shield.cooldown - TICK).max(0.0);
-                shield.state = if left > TICK {
-                    ShieldState::Overloaded(left - TICK)
-                } else {
-                    ShieldState::Ready
-                };
+                events.write(SimEvent::ShieldDropped { at: position.0 });
             }
         }
     }
@@ -67,18 +60,13 @@ pub fn drive(
         &mut PreviousPosition,
         &mut Motion,
         &TankCommand,
-        &Shield,
         Has<Player>,
     )>,
 ) {
-    for (tank, mut position, mut previous, mut motion, command, shield, is_player) in &mut tanks {
+    for (tank, mut position, mut previous, mut motion, command, is_player) in &mut tanks {
         previous.0 = position.0;
         let top_speed = tank.genome.top_speed();
-        let drive = if shield.is_overloaded() {
-            Vec2::ZERO
-        } else {
-            command.drive.clamp_length_max(1.0)
-        };
+        let drive = command.drive.clamp_length_max(1.0);
 
         // A tank drives along its hull only, forward or in reverse, whichever turns less.
         let mut wanted = Vec2::ZERO;
@@ -101,7 +89,7 @@ pub fn drive(
         field.push_out(tank, &mut position.0, &mut velocity);
         motion.velocity = velocity;
 
-        if !shield.is_overloaded() && command.aim.distance_squared(position.0) > 0.01 {
+        if command.aim.distance_squared(position.0) > 0.01 {
             let rate = if is_player {
                 PLAYER_TURRET_RATE
             } else {
@@ -148,19 +136,11 @@ pub fn operate(
     mut commands: Commands,
     field: Res<Field>,
     mut casualties: ResMut<Casualties>,
-    mut tanks: Query<(
-        Entity,
-        &Tank,
-        &Position,
-        &Motion,
-        &TankCommand,
-        &Shield,
-        &mut Gun,
-    )>,
+    mut tanks: Query<(Entity, &Tank, &Position, &Motion, &TankCommand, &mut Gun)>,
     mines: Query<&Mine>,
     mut events: MessageWriter<SimEvent>,
 ) {
-    for (entity, tank, position, motion, command, shield, mut gun) in &mut tanks {
+    for (entity, tank, position, motion, command, mut gun) in &mut tanks {
         let genome = &tank.genome;
         gun.cooldown = (gun.cooldown - TICK).max(0.0);
         gun.mine_cooldown = (gun.mine_cooldown - TICK).max(0.0);
@@ -170,9 +150,6 @@ pub fn operate(
                 gun.reload = 0.0;
                 gun.rounds += 1;
             }
-        }
-        if shield.is_overloaded() {
-            continue;
         }
 
         if command.fire && gun.rounds > 0 && gun.cooldown == 0.0 {

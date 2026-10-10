@@ -112,8 +112,8 @@ fn gives(genome: &Genome, stat: Stat) -> String {
         Stat::Loader => format!("{} s", plain(genome.reload_time())),
         Stat::Ricochet => count(genome.bounces(), "bounce"),
         Stat::Mines => count(genome.mines(), "mine"),
-        Stat::Shield => match genome.shield() {
-            Some((stun, _)) => format!("{} s stun", plain(stun)),
+        Stat::Shield => match genome.shield_cooldown() {
+            Some(cooldown) => format!("{} s cooldown", plain(cooldown)),
             None => "None".to_string(),
         },
         Stat::Piercing => count(genome.piercing(), "bullet"),
@@ -617,6 +617,9 @@ mod tests {
         assert!(listed.iter().all(|part| !part.name.starts_with("Turret")));
         let spent: u32 = listed.iter().map(|part| part.cost).sum();
         assert_eq!(spent, Genome::PLAYER.cost());
+        // Its shield is told by what it costs to raise: the wait before the next time.
+        let shield = listed.iter().find(|part| part.name == "Shield 2").unwrap();
+        assert_eq!((shield.gives.as_str(), shield.cost), ("9 s cooldown", 9));
         // One number on the drawing for each row of the list.
         let own = blow(Team::Players, Genome::PLAYER);
         assert_eq!(anchors(&own).len(), listed.len());

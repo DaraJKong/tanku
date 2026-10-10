@@ -429,7 +429,7 @@ fn run_script(
         // Raises the shield of every tank that has one, for ten seconds.
         "bubble" => {
             for (tank, mut shield) in &mut shields {
-                if tank.genome.shield().is_some() {
+                if tank.genome.shield_cooldown().is_some() {
                     shield.state = ShieldState::Active(10.0);
                 }
             }
