@@ -13,6 +13,7 @@ use crate::{
     camera::View,
     cli::Options,
     exhibit::{self, Exhibit, Show},
+    music::PlaceOnly,
     report,
     scene::Paints,
     settings::{Action, Binding, Records, Settings},
@@ -49,6 +50,8 @@ enum Press {
     ResetBindings,
     /// In a playtest: turns the infinite lives on or off.
     InfiniteLives,
+    /// In a playtest: makes the music follow the place alone, or the fight too.
+    PlaceOnly,
     /// In a playtest: moves the sector to skip to by this many.
     Destination(i32),
     /// In a playtest: skips to that sector.
@@ -505,6 +508,7 @@ fn pause_menu(
     run: Option<Res<Run>>,
     playtest: Option<Res<Playtest>>,
     destination: Res<Destination>,
+    place_only: Res<PlaceOnly>,
 ) {
     panel(
         &mut commands,
@@ -520,6 +524,15 @@ fn pause_menu(
                 row(parent, "Infinite lives", |row| {
                     let state = on_off(playtest.infinite_lives);
                     small(row, state, 70.0, Press::InfiniteLives);
+                });
+                // An experiment, which a playtest compares with the music as it is specified.
+                row(parent, "Music follows", |row| {
+                    let what = if place_only.0 {
+                        "The place only"
+                    } else {
+                        "The fight too"
+                    };
+                    small(row, what, 150.0, Press::PlaceOnly);
                 });
                 row(parent, "Sector to skip to", |row| {
                     for change in [-10, -1, 1, 10] {
@@ -546,15 +559,16 @@ fn refresh_pause(
     run: Option<Res<Run>>,
     playtest: Res<Playtest>,
     destination: Res<Destination>,
+    place_only: Res<PlaceOnly>,
     root: Query<Entity, With<PauseRoot>>,
 ) {
-    if !playtest.is_changed() && !destination.is_changed() {
+    if !playtest.is_changed() && !destination.is_changed() && !place_only.is_changed() {
         return;
     }
     for entity in &root {
         commands.entity(entity).despawn();
     }
-    pause_menu(commands, run, Some(playtest), destination);
+    pause_menu(commands, run, Some(playtest), destination, place_only);
 }
 
 /// The seed of a new run: the one that the command line gave to a playtest, or else a random
@@ -814,6 +828,7 @@ fn press(
     mut records: ResMut<Records>,
     mut playtest: Option<ResMut<Playtest>>,
     mut destination: ResMut<Destination>,
+    mut place_only: ResMut<PlaceOnly>,
     options: Res<Options>,
     run: Option<Res<Run>>,
     time: Res<Time<Real>>,
@@ -878,6 +893,7 @@ fn press(
                     playtest.infinite_lives = !playtest.infinite_lives;
                 }
             }
+            Press::PlaceOnly => place_only.0 = !place_only.0,
             Press::Destination(change) => {
                 let sector = destination.0.saturating_add_signed(change);
                 destination.0 = sector.clamp(1, PLAYTEST_LAST_SECTOR);

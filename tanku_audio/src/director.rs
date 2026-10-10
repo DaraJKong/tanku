@@ -39,6 +39,10 @@ pub struct Context {
     pub down: bool,
     /// A menu is open over the game.
     pub muffled: bool,
+    /// An experiment, to compare with the music that follows the fight too: the place alone
+    /// sets the arrangement. A fight is taken to be on wherever the players are outside the
+    /// bay, and the hi-hat is kept for the arenas.
+    pub place_only: bool,
 }
 
 const HIGHEST_THREAT: u8 = 4;
@@ -176,6 +180,8 @@ pub struct Director {
     /// What the bar that plays was arranged for.
     arena: bool,
     threat: u8,
+    /// The hi-hat is kept for the arenas.
+    bare: bool,
     /// The phrase that the next fight opens on.
     next_phrase: u8,
     roll: Option<Roll>,
@@ -198,6 +204,7 @@ impl Default for Director {
             mode: HOME,
             arena: false,
             threat: 0,
+            bare: false,
             next_phrase: 0,
             roll: None,
             connection: None,
@@ -432,6 +439,7 @@ impl Director {
     /// Sets what a bar of a fight is arranged for.
     fn arrange(&mut self, context: Context) {
         self.arena = context.place == Place::Arena;
+        self.bare = context.place_only;
         self.threat = context.threat.min(HIGHEST_THREAT);
         if self.threat == 0 {
             // The lead is silent.
@@ -493,7 +501,7 @@ impl Director {
             let (soft, loud) = ARENA_HATS;
             out.hat = hit(&HAT_ARENA, self.step, soft).max(hit(&HAT_CORRIDOR, self.step, loud));
             out.snare = hit(&SNARE_ARENA, self.step, SNARE);
-        } else {
+        } else if !self.bare {
             out.hat = hit(&HAT_CORRIDOR, self.step, HAT);
         }
         out.bass = self.bass(if self.threat >= 2 {
@@ -572,7 +580,13 @@ impl Director {
 
 /// Whether the context asks for the sections of a fight.
 fn is_fight(context: Context) -> bool {
-    context.fight && !context.down && context.place != Place::Menu
+    let outside = matches!(context.place, Place::Corridor | Place::Arena);
+    let fight = if context.place_only {
+        outside
+    } else {
+        context.fight && context.place != Place::Menu
+    };
+    fight && !context.down
 }
 
 /// The part that plays when nobody fights.
@@ -1039,6 +1053,55 @@ mod tests {
         assert!(steps.iter().all(|step| step.hat == 0 && !step.fresh));
         assert_eq!(steps[0].kick, HEART.1);
         assert_eq!(director.section(), Section::Bridge);
+    }
+
+    #[test]
+    fn the_place_alone_can_set_the_arrangement() {
+        // An experiment. Nobody fights in any of this.
+        let alone = |place: Place| Context {
+            place,
+            place_only: true,
+            ..Context::default()
+        };
+        let mut director = Director::default();
+        let steps = play(&mut director, alone(Place::Bay), BAR);
+        assert!(steps.iter().all(|step| !drums(step)));
+        assert_eq!(director.section(), Section::Intro);
+
+        // Out of the bay, the verse starts after its roll, and a corridor has the kick alone.
+        let steps = play(&mut director, alone(Place::Corridor), ROLL + 2 * BAR);
+        assert_eq!(director.section(), Section::Verse);
+        let verse = &steps[ROLL..ROLL + BAR];
+        assert_eq!(on(verse, |step| step.kick == HIT), [0, 4, 8, 12]);
+        assert!(verse.iter().all(|step| step.hat == 0 && step.snare == 0));
+        // An arena has the three drums and its mode from the next bar line on, for as long as
+        // the players are in it.
+        let steps = play(&mut director, alone(Place::Arena), 3 * BAR);
+        assert_eq!(director.mode(), Mode::Aeolian);
+        assert!(steps.iter().all(|step| step.hat > 0 && !step.fresh));
+        assert_eq!(on(&steps[..BAR], |step| step.snare > 0), [4, 12]);
+        let steps = play(&mut director, alone(Place::Corridor), BAR);
+        assert_eq!(director.mode(), HOME);
+        assert!(steps.iter().all(|step| step.hat == 0 && step.snare == 0));
+        // The bridge never plays: the verse and the chorus go on in turn.
+        let steps = play(&mut director, alone(Place::Corridor), 4 * BARS * BAR);
+        assert!(steps.iter().all(|step| step.length == STEP && !step.fresh));
+
+        // A tank that comes back gets a roll again, since nothing else can announce the music.
+        let down = Context {
+            down: true,
+            ..alone(Place::Corridor)
+        };
+        assert!(play(&mut director, down, BAR).iter().all(|step| step.hush));
+        let steps = play(&mut director, alone(Place::Corridor), ROLL + 1);
+        assert!(steps[..ROLL].iter().all(|step| step.hat > 0));
+        assert_eq!(steps[ROLL].kick, HIT);
+
+        // With the switch back, the calm of a corridor is heard at once: a connection leads to
+        // the bridge.
+        let steps = play(&mut director, at(Place::Corridor), 4 + LINK + BAR);
+        assert_eq!(director.section(), Section::Bridge);
+        assert!(steps.iter().any(|step| step.fresh));
     }
 
     #[test]

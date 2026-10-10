@@ -53,6 +53,8 @@ cargo run -p tanku_client -- --playtest --seed 85GVTHQA
 
 A playtest sets no record. The web build has none, because a page has no command line.
 
+While the music is being tried out, the pause menu of a playtest also switches between music that follows the fight too, which is the one of the specification, and music that follows the place only. [docs/MUSIC.md](docs/MUSIC.md) tells what each one does.
+
 ## Building
 
 The toolchain is pinned to a nightly in `rust-toolchain.toml`, because development builds use the Cranelift backend and `-Zshare-generics` to compile faster. `rustup` installs it on first use. On Linux, linking needs `clang` and `mold`, and sound needs the ALSA development files.
