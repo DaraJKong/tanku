@@ -11,10 +11,10 @@ use bevy::{
 };
 use tanku_core::{
     geom,
-    sim::{Barrier, Bullet, Enemy, Player, Run, Tank, Team},
+    sim::{Barrier, Bullet, Enemy, Player, Run, Tank, Team, Wreck},
 };
 
-use crate::{scene, settings::Settings, theme};
+use crate::{crew::Own, scene, settings::Settings, theme};
 
 /// Angle between the ground and the line of sight.
 const PITCH: f32 = 65.0;
@@ -212,7 +212,7 @@ pub fn follow(
     settings: Res<Settings>,
     run: Option<Res<Run>>,
     mut view: ResMut<View>,
-    player: Query<&Transform, (With<Player>, Without<MainCamera>)>,
+    players: Query<(&Transform, &Player, Has<Own>, Has<Wreck>), Without<MainCamera>>,
     barriers: Query<&Barrier>,
     enemies: Query<&Tank, With<Enemy>>,
     bullets: Query<&Bullet>,
@@ -220,7 +220,18 @@ pub fn follow(
 ) {
     let seconds = time.delta_secs();
     view.hold = (view.hold - seconds).max(0.0);
-    if let Ok(player) = player.single()
+    // The view follows the tank of the player at this screen. While that tank is a wreck, it
+    // follows a teammate whose tank still runs.
+    let own = players.iter().find(|(_, _, own, _)| *own);
+    let running = players.iter().filter(|(.., wreck)| !wreck);
+    let watched = match own {
+        Some((transform, _, _, false)) => Some(transform),
+        _ => {
+            let teammate = running.min_by_key(|(_, player, ..)| player.seat);
+            teammate.or(own).map(|(transform, ..)| transform)
+        }
+    };
+    if let Some(player) = watched
         && view.hold == 0.0
     {
         let at = scene::to_ground(player.translation);

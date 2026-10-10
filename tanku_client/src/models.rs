@@ -12,7 +12,7 @@
 use bevy::prelude::*;
 use tanku_core::{
     rules::SHIELD_RADIUS,
-    sim::{Enemy, Motion, Player, Run, Shield, Tank},
+    sim::{Enemy, Motion, Player, Run, Shield, Tank, Wreck},
     stats::{Genome, SpendingGroup, Stat},
 };
 
@@ -554,9 +554,11 @@ fn sheet_under(tank: &Tank, run: Option<&Run>) -> Color {
 }
 
 /// How an enemy is drawn: a dormant one isn't there yet.
-fn look_of(enemy: Option<&Enemy>) -> Look {
+fn look_of(enemy: Option<&Enemy>, wreck: bool) -> Look {
     match enemy {
         Some(Enemy { awake: false }) => Look::Outline,
+        // The wreck of a player's tank is the outline of the tank that stood there.
+        None if wreck => Look::Outline,
         _ => Look::Solid,
     }
 }
@@ -564,16 +566,15 @@ fn look_of(enemy: Option<&Enemy>) -> Look {
 /// The two drawings of a tank, its hull and its turret, for a way of drawing it.
 fn drawings(
     tank: &Tank,
-    is_player: bool,
+    player: Option<&Player>,
     look: Look,
     run: Option<&Run>,
     meshes: &mut Assets<Mesh>,
 ) -> [(Handle<Mesh>, f32); 2] {
     let genome = &tank.genome;
-    let color = if is_player {
-        theme::PLAYER
-    } else {
-        enemy_color(genome)
+    let color = match player {
+        Some(player) => theme::PLAYERS[player.seat as usize % theme::PLAYERS.len()],
+        None => enemy_color(genome),
     };
     let (hull, turret, height) = match look {
         Look::Solid => (
@@ -630,15 +631,25 @@ fn draw(
 
 fn build(
     mut commands: Commands,
-    tanks: Query<(Entity, &Tank, &Motion, Has<Player>, Option<&Enemy>), Added<Tank>>,
+    tanks: Query<
+        (
+            Entity,
+            &Tank,
+            &Motion,
+            Option<&Player>,
+            Option<&Enemy>,
+            Has<Wreck>,
+        ),
+        Added<Tank>,
+    >,
     run: Option<Res<Run>>,
     shapes: Res<Shapes>,
     paints: Res<Paints>,
     glass: Res<Glass>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
-    for (entity, tank, motion, is_player, enemy) in &tanks {
-        let look = look_of(enemy);
+    for (entity, tank, motion, player, enemy, wreck) in &tanks {
+        let look = look_of(enemy, wreck);
         commands
             .entity(entity)
             .insert((Transform::default(), Visibility::default(), look))
@@ -655,22 +666,33 @@ fn build(
                     )],
                 ));
             });
-        let drawings = drawings(tank, is_player, look, run.as_deref(), &mut meshes);
+        let drawings = drawings(tank, player, look, run.as_deref(), &mut meshes);
         draw(&mut commands, entity, motion, drawings, &paints.ink);
     }
 }
 
-/// An enemy that wakes up is inked in: its outline gives way to the tank itself.
+/// Draws a tank again when its look changes. An enemy that wakes up is inked in: its outline
+/// gives way to the tank itself. A player's tank that is destroyed among several players
+/// leaves its outline, and is inked in again once it is repaired.
 fn ink_in(
     mut commands: Commands,
-    mut enemies: Query<(Entity, &Tank, &Motion, &Enemy, &mut Look, &Children), Changed<Enemy>>,
+    mut tanks: Query<(
+        Entity,
+        &Tank,
+        &Motion,
+        Option<&Player>,
+        Option<&Enemy>,
+        Has<Wreck>,
+        &mut Look,
+        &Children,
+    )>,
     parts: Query<(), Or<(With<Hull>, With<Turret>)>>,
     run: Option<Res<Run>>,
     paints: Res<Paints>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
-    for (entity, tank, motion, enemy, mut look, children) in &mut enemies {
-        let wanted = look_of(Some(enemy));
+    for (entity, tank, motion, player, enemy, wreck, mut look, children) in &mut tanks {
+        let wanted = look_of(enemy, wreck);
         if *look == wanted {
             continue;
         }
@@ -678,7 +700,7 @@ fn ink_in(
         for child in children.iter().filter(|child| parts.contains(*child)) {
             commands.entity(child).despawn();
         }
-        let drawings = drawings(tank, false, wanted, run.as_deref(), &mut meshes);
+        let drawings = drawings(tank, player, wanted, run.as_deref(), &mut meshes);
         draw(&mut commands, entity, motion, drawings, &paints.ink);
     }
 }

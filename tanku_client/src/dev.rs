@@ -1,8 +1,10 @@
 //! Development tools, left out of release builds.
 //!
 //! `TANKU_DEV_SCRIPT` holds commands separated by semicolons, run one after the other:
-//! `start SEED PLAYERS`, `wait SECONDS`, `warp SECTOR`, `turn QUARTERS`, `peek ENEMY`, `flag SECTOR`,
-//! `look X Y`, `zoom METERS`, `clear`, `reach`, `bubble`, `die`, `pause`, `settings`, `resume`,
+//! `start SEED PLAYERS`, `seat NUMBER`, `repair SECONDS`, `wait SECONDS`, `warp SECTOR`,
+//! `turn QUARTERS`, `peek ENEMY`,
+//! `flag SECTOR`, `look X Y`, `zoom METERS`, `clear`, `reach`, `bubble`, `die`, `pause`,
+//! `settings`, `resume`,
 //! `lose ENEMY`, `blast X Y`, which sets off a mine at a point of the map, `warn X Y`, which
 //! sounds the warning of a mine there without any mine, `shot PATH` and
 //! `quit`, plus `play DX DY AX AY SECONDS`, which drives the tank in a direction while it fires
@@ -36,8 +38,8 @@ use bevy::{
 };
 use tanku_core::{
     sim::{
-        Blow, Bullet, Enemy, Flag, Mine, MineState, Motion, Player, Position, PreviousPosition,
-        Run, RunPhase, RunRequest, Shield, ShieldState, SimEvent, Tank, TankCommand, Team, Weapon,
+        Blow, Bullet, Enemy, Flag, Mine, MineState, Motion, Position, PreviousPosition, Run,
+        RunPhase, RunRequest, Shield, ShieldState, SimEvent, Tank, TankCommand, Team, Weapon,
     },
     stats::{Genome, Stat},
 };
@@ -50,6 +52,7 @@ use crate::{
     Overlay, Screen,
     audio::Muted,
     camera::{MainCamera, View},
+    crew::{LocalSeat, Own},
     input,
     music::Baton,
     storage,
@@ -64,6 +67,8 @@ struct Script {
     wait: f32,
     /// What the script makes the player's tank do, and for how long.
     play: Option<(Vec2, Vec2, f32)>,
+    /// Seconds during which the script still holds the repair key.
+    repair: f32,
     /// The label of the button that the script presses.
     press: Option<String>,
 }
@@ -201,6 +206,7 @@ pub fn plugin(app: &mut App) {
             .collect(),
         wait: 0.0,
         play: None,
+        repair: 0.0,
         press: None,
     })
     .add_systems(PostStartup, draw_into_an_image)
@@ -257,22 +263,26 @@ fn roll_the_tape(time: Res<Time<Real>>, baton: Res<Baton>, tape: Option<ResMut<T
 fn play(
     time: Res<Time<Real>>,
     mut script: ResMut<Script>,
-    mut player: Query<(&Position, &mut TankCommand), With<Player>>,
+    mut player: Query<(&Position, &mut TankCommand), With<Own>>,
 ) {
+    let repair = script.repair > 0.0;
+    script.repair = (script.repair - time.delta_secs()).max(0.0);
+    let Ok((position, mut command)) = player.single_mut() else {
+        return;
+    };
+    command.repair |= repair;
     let Some((drive, aim, left)) = script.play else {
         return;
     };
     script.play = (left > 0.0).then_some((drive, aim, left - time.delta_secs()));
-    if let Ok((position, mut command)) = player.single_mut() {
-        *command = TankCommand {
-            drive,
-            aim: position.0 + aim,
-            fire: aim != Vec2::ZERO,
-            mine: left % 2.0 < 0.1,
-            shield: false,
-            repair: false,
-        };
-    }
+    *command = TankCommand {
+        drive,
+        aim: position.0 + aim,
+        fire: aim != Vec2::ZERO,
+        mine: left % 2.0 < 0.1,
+        shield: false,
+        repair,
+    };
 }
 
 /// Puts tanks on display in rows of six from the north of the start bay, in place of those
@@ -346,13 +356,13 @@ fn run_script(
     mut casualties: ResMut<Casualties>,
     (enemies, mut player, flags, exhibits, mut shields): (
         Query<(Entity, &Tank, &Position), With<Enemy>>,
-        Query<(Entity, &mut Position), (With<Player>, Without<Enemy>)>,
-        Query<(&Flag, &Position), Without<Player>>,
+        Query<(Entity, &mut Position), (With<Own>, Without<Enemy>)>,
+        Query<(&Flag, &Position), Without<Own>>,
         Query<Entity, With<Exhibit>>,
         Query<(&Tank, &mut Shield)>,
     ),
     canvas: Res<Canvas>,
-    (baton, tape): (Res<Baton>, Option<Res<Tape>>),
+    (baton, tape, mut seat): (Res<Baton>, Option<Res<Tape>>, ResMut<LocalSeat>),
     mut events: MessageWriter<SimEvent>,
     mut exit: MessageWriter<AppExit>,
 ) {
@@ -375,6 +385,9 @@ fn run_script(
             screen.set(Screen::Playing);
         }
         "wait" => script.wait = number(1),
+        // Sits the script at the place of another player of the run: the view and the
+        // commands that follow are those of that seat.
+        "seat" => seat.0 = number(1) as u8,
         // Comes back at the barrier of a sector, as after a death at that checkpoint.
         "warp" => {
             let sector = number(1) as u32;
@@ -437,6 +450,8 @@ fn run_script(
             }
         }
         "press" => script.press = Some(words[1..].join(" ")),
+        // Holds the repair key for this long.
+        "repair" => script.repair = number(1),
         // Destroys the player's tank.
         "die" => casualties
             .tanks

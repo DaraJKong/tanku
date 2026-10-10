@@ -24,12 +24,13 @@ pub enum Action {
     Shoot,
     Mine,
     Shield,
+    Repair,
     RotateLeft,
     RotateRight,
 }
 
 impl Action {
-    pub const ALL: [Action; 9] = [
+    pub const ALL: [Action; 10] = [
         Action::Up,
         Action::Down,
         Action::Left,
@@ -37,6 +38,7 @@ impl Action {
         Action::Shoot,
         Action::Mine,
         Action::Shield,
+        Action::Repair,
         Action::RotateLeft,
         Action::RotateRight,
     ];
@@ -50,6 +52,7 @@ impl Action {
             Action::Shoot => "Shoot",
             Action::Mine => "Place a mine",
             Action::Shield => "Shield",
+            Action::Repair => "Repair a teammate",
             Action::RotateLeft => "Turn the view left",
             Action::RotateRight => "Turn the view right",
         }
@@ -64,6 +67,7 @@ impl Action {
             Action::Shoot => "bind.shoot",
             Action::Mine => "bind.mine",
             Action::Shield => "bind.shield",
+            Action::Repair => "bind.repair",
             Action::RotateLeft => "bind.rotate_left",
             Action::RotateRight => "bind.rotate_right",
         }
@@ -79,6 +83,7 @@ impl Action {
             Action::Shoot => [Some(Mouse(MouseButton::Left)), None],
             Action::Mine => [Some(Mouse(MouseButton::Right)), None],
             Action::Shield => [Some(Key(KeyCode::Space)), None],
+            Action::Repair => [Some(Key(KeyCode::ShiftLeft)), None],
             Action::RotateLeft => [Some(Key(KeyCode::KeyQ)), None],
             Action::RotateRight => [Some(Key(KeyCode::KeyE)), None],
         }

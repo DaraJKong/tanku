@@ -1,6 +1,7 @@
 mod audio;
 mod camera;
 mod cli;
+mod crew;
 #[cfg(feature = "development")]
 mod dev;
 mod draft;
@@ -74,6 +75,7 @@ fn main() {
         .add_plugins((
             theme::plugin,
             settings::plugin,
+            crew::plugin,
             input::plugin,
             camera::plugin,
             scene::plugin,

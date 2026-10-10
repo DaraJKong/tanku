@@ -1,18 +1,22 @@
 //! Turns keys and buttons into commands for the player's tank.
 
 use bevy::{input::InputSystems, prelude::*};
-use tanku_core::sim::{Player, TankCommand};
+use tanku_core::sim::TankCommand;
 
 use crate::{
     Overlay, Screen,
     camera::{self, View},
+    crew::{self, Own},
     settings::{Action, Settings},
 };
 
 pub fn plugin(app: &mut App) {
     app.add_systems(
         PreUpdate,
-        (camera::aim, command_player).chain().after(InputSystems),
+        (camera::aim, command_player)
+            .chain()
+            .after(InputSystems)
+            .after(crew::claim),
     );
 }
 
@@ -30,7 +34,7 @@ pub fn command_player(
     screen: Res<State<Screen>>,
     overlay: Res<State<Overlay>>,
     mut view: ResMut<View>,
-    mut player: Query<&mut TankCommand, With<Player>>,
+    mut player: Query<&mut TankCommand, With<Own>>,
     // For shooting, placing a mine and shielding: whether it was let go since the last menu.
     mut let_go: Local<[bool; 3]>,
 ) {
@@ -69,7 +73,7 @@ pub fn command_player(
         fire: passes(held(Action::Shoot), &mut let_go[0]),
         mine: passes(held(Action::Mine), &mut let_go[1]),
         shield: passes(held(Action::Shield), &mut let_go[2]),
-        repair: false,
+        repair: held(Action::Repair),
     };
 }
 

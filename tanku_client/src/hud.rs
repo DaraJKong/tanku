@@ -10,7 +10,7 @@ use tanku_core::{
     seed::VERSION,
     sim::{
         Enemy, Gun, Mine, Player, Playtest, Position, Run, Shield, ShieldState, SimEvent, Tank,
-        Team,
+        Team, Wreck,
     },
     stats::Stat,
 };
@@ -18,6 +18,7 @@ use tanku_core::{
 use crate::{
     Screen,
     camera::{MainCamera, View},
+    crew::Own,
     draft::{Draft, LIFT},
     scene,
     settings::{Action, Settings},
@@ -43,12 +44,13 @@ const DIAL_ROUND: f32 = 11.0;
 const DIAL_GAP: f32 = 3.0;
 const DIAL_STEPS: u8 = 4;
 
-/// A square that is lit or not: a round, a mine or a life.
+/// A square that is lit or not: a round, a mine, a life, or the tank of the player of a seat.
 #[derive(Component, Clone, Copy)]
 enum Pip {
     Round(u8),
     Mine(u8),
     Life(u32),
+    Mate(u8),
 }
 
 /// A bar that fills up.
@@ -61,6 +63,10 @@ enum Bar {
 /// A text that follows the game.
 #[derive(Component, Clone, Copy)]
 enum Readout {
+    /// How the game is played: alone, with others, or as a playtest.
+    Mode,
+    /// What the squares next to it count: the lives of a single player, or the team.
+    Crew,
     Sector,
     /// What stands for the lives when a playtest doesn't count them.
     Lives,
@@ -332,7 +338,7 @@ fn weapons_panel() -> impl Bundle {
 
 /// The title block of the sheet: the game and its mode, the sector, the lives, and the seed
 /// with its version.
-fn title_block(mode: &str) -> impl Bundle {
+fn title_block() -> impl Bundle {
     (
         panel(Node {
             width: px(430),
@@ -351,7 +357,7 @@ fn title_block(mode: &str) -> impl Bundle {
                         children![
                             caption("GAME"),
                             theme::title("TANKU", 26.0, theme::TEXT),
-                            theme::label(mode, 13.0, theme::ACCENT),
+                            (Readout::Mode, theme::label("", 13.0, theme::ACCENT)),
                         ],
                     ),
                     (
@@ -364,7 +370,7 @@ fn title_block(mode: &str) -> impl Bundle {
                     (
                         cell(1.0, true),
                         children![
-                            caption("LIVES"),
+                            (Readout::Crew, caption("")),
                             (
                                 Node {
                                     column_gap: px(6),
@@ -375,6 +381,10 @@ fn title_block(mode: &str) -> impl Bundle {
                                     pip(Pip::Life(1)),
                                     pip(Pip::Life(2)),
                                     pip(Pip::Life(3)),
+                                    pip(Pip::Mate(0)),
+                                    pip(Pip::Mate(1)),
+                                    pip(Pip::Mate(2)),
+                                    pip(Pip::Mate(3)),
                                     (Readout::Lives, theme::label("", 13.0, theme::ACCENT)),
                                 ],
                             ),
@@ -495,13 +505,7 @@ fn instruments_row() -> impl Bundle {
     )
 }
 
-fn build(mut commands: Commands, playtest: Option<Res<Playtest>>) {
-    // A playtest says so, because it sets no record.
-    let mode = if playtest.is_some() {
-        "PLAYTEST"
-    } else {
-        "SOLO"
-    };
+fn build(mut commands: Commands) {
     commands.spawn((
         DespawnOnExit(Screen::Playing),
         Node {
@@ -546,7 +550,7 @@ fn build(mut commands: Commands, playtest: Option<Res<Playtest>>) {
                     row_gap: px(16),
                     ..default()
                 },
-                children![instruments_row(), title_block(mode)],
+                children![instruments_row(), title_block()],
             ),
             (
                 Node {
@@ -602,18 +606,26 @@ fn status(
     run: Option<Res<Run>>,
     playtest: Option<Res<Playtest>>,
     settings: Res<Settings>,
+    crew: Query<(&Player, Has<Wreck>)>,
     mut readouts: Query<(&Readout, &mut Text)>,
     mut pips: Query<(&Pip, &mut BackgroundColor, &mut BorderColor, &mut Node)>,
 ) {
     let Some(run) = run else {
         return;
     };
+    let is_playtest = playtest.is_some();
     let infinite_lives = playtest.is_some_and(|playtest| playtest.infinite_lives);
     for (readout, mut text) in &mut readouts {
         let wanted = match readout {
+            // A playtest says so, because it sets no record.
+            Readout::Mode if is_playtest => "PLAYTEST".to_string(),
+            Readout::Mode if run.solo => "SOLO".to_string(),
+            Readout::Mode => "CO-OP".to_string(),
+            Readout::Crew if run.solo => "LIVES".to_string(),
+            Readout::Crew => "TEAM".to_string(),
             Readout::Sector if run.sector == 0 => "BAY".to_string(),
             Readout::Sector => run.sector.to_string(),
-            Readout::Lives if infinite_lives => "INFINITE".to_string(),
+            Readout::Lives if infinite_lives && run.solo => "INFINITE".to_string(),
             Readout::Lives => String::new(),
             Readout::Seed => run.seed_text.clone(),
             // The controls are shown where a run starts.
@@ -643,9 +655,22 @@ fn status(
         }
     }
     for (pip, mut color, mut border, mut node) in &mut pips {
-        if let Pip::Life(life) = *pip {
-            node.display = shown(!infinite_lives);
-            light(life <= run.lives, theme::ACCENT, &mut color, &mut border);
+        match *pip {
+            // A single player has lives.
+            Pip::Life(life) => {
+                node.display = shown(run.solo && !infinite_lives);
+                light(life <= run.lives, theme::ACCENT, &mut color, &mut border);
+            }
+            // Several players have each other: a square for each tank, in its color while
+            // it runs and empty while it is a wreck.
+            Pip::Mate(seat) => {
+                let mate = crew.iter().find(|(player, _)| player.seat == seat);
+                node.display = shown(!run.solo && mate.is_some());
+                let lit = theme::PLAYERS[seat as usize % theme::PLAYERS.len()];
+                let runs = mate.is_some_and(|(_, wreck)| !wreck);
+                light(runs, lit, &mut color, &mut border);
+            }
+            _ => {}
         }
     }
 }
@@ -664,7 +689,7 @@ fn shield_gauge(shield: &Shield, cooldown: f32) -> (f32, Color, String) {
 }
 
 fn weapons(
-    player: Query<(Entity, &Tank, &Gun, &Shield), With<Player>>,
+    player: Query<(Entity, &Tank, &Gun, &Shield), With<Own>>,
     mines: Query<&Mine>,
     mut pips: Query<(&Pip, &mut BackgroundColor, &mut BorderColor, &mut Node)>,
     mut bars: Query<(&Bar, &mut BackgroundColor, &mut Node), Without<Pip>>,
@@ -679,7 +704,7 @@ fn weapons(
         let (fitted, on) = match *pip {
             Pip::Round(round) => (round <= genome.magazine(), round <= gun.rounds),
             Pip::Mine(mine) => (mine <= genome.mines(), mine + armed <= genome.mines()),
-            Pip::Life(_) => continue,
+            Pip::Life(_) | Pip::Mate(_) => continue,
         };
         node.display = shown(fitted);
         light(on, theme::TEXT, &mut color, &mut border);
@@ -735,19 +760,23 @@ fn toasts(
                 team: Team::Players,
                 ..
             } => {
-                // A playtest that doesn't count its lives has none to announce.
-                let lives = if infinite_lives {
+                // A playtest that doesn't count its lives has none to announce, and several
+                // players have wrecks to repair instead.
+                let solo = run.as_ref().is_none_or(|run| run.solo);
+                let lives = if infinite_lives || !solo {
                     0
                 } else {
                     run.as_ref().map_or(0, |run| run.lives)
                 };
                 let message = match lives {
+                    _ if !solo => "Tank destroyed - a teammate can repair it".to_string(),
                     0 => "Tank destroyed".to_string(),
                     1 => "Tank destroyed - last life".to_string(),
                     lives => format!("Tank destroyed - {lives} lives left"),
                 };
                 (3, message)
             }
+            SimEvent::TankRepaired { .. } => (2, "Tank repaired".to_string()),
             _ => continue,
         };
         if news.as_ref().is_none_or(|(shown, _)| weight >= *shown) {
@@ -845,12 +874,22 @@ fn dial_angle(part: DialPart, rounds: u8) -> f32 {
     }
 }
 
-/// Gives its dial to the player's tank when it appears.
+/// Gives its dial to the tank of the player at this screen, and takes it back from a tank
+/// that isn't theirs anymore.
 fn attach_dial(
     mut commands: Commands,
-    players: Query<(Entity, &Tank), Added<Player>>,
+    players: Query<(Entity, &Tank), Added<Own>>,
+    mut left: RemovedComponents<Own>,
+    dials: Query<(Entity, &ChildOf), With<Dial>>,
     parts: Res<DialParts>,
 ) {
+    for tank in left.read() {
+        for (dial, parent) in &dials {
+            if parent.parent() == tank {
+                commands.entity(dial).despawn();
+            }
+        }
+    }
     for (entity, tank) in &players {
         let rounds = tank.genome.magazine();
         let steps = (0..rounds)
@@ -901,7 +940,7 @@ fn round_steps(round: u8, loaded: u8, progress: f32) -> (u8, bool) {
 }
 
 fn light_dial(
-    player: Query<(Entity, &Tank, &Gun), With<Player>>,
+    player: Query<(Entity, &Tank, &Gun), With<Own>>,
     mines: Query<&Mine>,
     parts: Res<DialParts>,
     mut drawn: Query<(&DialPart, &mut MeshMaterial3d<StandardMaterial>)>,

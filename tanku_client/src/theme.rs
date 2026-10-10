@@ -36,6 +36,8 @@ pub const SCAR: Color = hex(0x8FA6C4);
 
 /// The hue reserved for the first player. No enemy uses it.
 pub const PLAYER: Color = hex(0x2980F2);
+/// The colors of the players, by seat. No enemy uses their hues either.
+pub const PLAYERS: [Color; 4] = [PLAYER, hex(0xF2409B), hex(0x9BE03A), hex(0x33D6E0)];
 pub const PLAYER_BULLET: Color = hex(0x73F2FF);
 pub const ENEMY_BULLET: Color = hex(0xFF8C26);
 
