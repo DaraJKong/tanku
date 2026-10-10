@@ -25,6 +25,8 @@ pub struct View {
     pub turns: i32,
     /// The point on the ground under the cursor.
     pub aim: Vec2,
+    /// Meters of ground from the bottom to the top of the screen, when a script zooms.
+    pub span: Option<f32>,
     yaw: f32,
     focus: Vec2,
     /// Time during which the view stays where it was told to look.
@@ -148,7 +150,8 @@ fn follow(
     let jitter = Vec2::new(view.jitter(), view.jitter()) * strength;
 
     let pitch = PITCH.to_radians();
-    let distance = VISIBLE_GROUND * pitch.sin() / (2.0 * (FIELD_OF_VIEW.to_radians() / 2.0).tan());
+    let span = view.span.unwrap_or(VISIBLE_GROUND);
+    let distance = span * pitch.sin() / (2.0 * (FIELD_OF_VIEW.to_radians() / 2.0).tan());
     let offset =
         Quat::from_rotation_y(view.yaw) * Vec3::new(0.0, pitch.sin(), pitch.cos()) * distance;
     let focus = scene::to_world(view.focus + jitter, 0.0);

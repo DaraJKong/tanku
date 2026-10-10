@@ -2,10 +2,11 @@
 //!
 //! `TANKU_DEV_SCRIPT` holds commands separated by semicolons, run one after the other:
 //! `start SEED`, `wait SECONDS`, `warp SECTOR`, `turn QUARTERS`, `peek ENEMY`, `flag SECTOR`,
-//! `clear`, `reach`, `pause`, `settings`, `resume`, `lose`, `shot PATH` and `quit`, plus
-//! `play DX DY AX AY SECONDS`, which drives the tank in a direction while it fires at a point
-//! relative to itself, and `lineup`, which lays out one bullet of each kind next to the tank.
-//! It is how the game is looked at without anyone at the keyboard.
+//! `look X Y`, `zoom METERS`, `clear`, `reach`, `bubble`, `pause`, `settings`, `resume`, `lose`,
+//! `shot PATH` and `quit`, plus `play DX DY AX AY SECONDS`, which drives the tank in a direction
+//! while it fires at a point relative to itself, `lineup`, which lays out one bullet of each
+//! kind next to the tank, and `showcase STAT`, which lines up in the start bay one tank for
+//! each level of a stat. It is how the game is looked at without anyone at the keyboard.
 //!
 //! A scripted run opens no window: it draws into an image, which `shot` saves. It makes no
 //! sound, starts from the default settings and leaves the player's files alone.
@@ -25,10 +26,10 @@ use bevy::{
 };
 use tanku_core::{
     sim::{
-        Bullet, Enemy, Flag, Player, Position, PreviousPosition, Run, RunPhase, RunRequest,
-        SimEvent, Tank, TankCommand, Team,
+        Bullet, Enemy, Flag, Motion, Player, Position, PreviousPosition, Run, RunPhase, RunRequest,
+        Shield, ShieldState, SimEvent, Tank, TankCommand, Team,
     },
-    stats::Stat,
+    stats::{Genome, Stat},
 };
 use tanku_server::{
     Casualties,
@@ -56,6 +57,39 @@ struct Script {
 /// The image that stands in for the window.
 #[derive(Resource)]
 struct Canvas(Handle<Image>);
+
+/// A tank that `showcase` put on display.
+#[derive(Component)]
+struct Exhibit;
+
+/// The stats by the names that `showcase` takes.
+const STATS: [(&str, Stat); 12] = [
+    ("engine", Stat::Engine),
+    ("tracks", Stat::Tracks),
+    ("turret", Stat::Turret),
+    ("muzzle", Stat::Muzzle),
+    ("magazine", Stat::Magazine),
+    ("loader", Stat::Loader),
+    ("ricochet", Stat::Ricochet),
+    ("mines", Stat::Mines),
+    ("shield", Stat::Shield),
+    ("piercing", Stat::Piercing),
+    ("brain", Stat::Brain),
+    ("ballistics", Stat::Ballistics),
+];
+
+/// A middling tank, on which the levels of one stat are shown.
+const SHOWN_ON: [(Stat, u8); 9] = [
+    (Stat::Engine, 3),
+    (Stat::Tracks, 2),
+    (Stat::Turret, 2),
+    (Stat::Muzzle, 3),
+    (Stat::Magazine, 2),
+    (Stat::Loader, 3),
+    (Stat::Ricochet, 1),
+    (Stat::Mines, 2),
+    (Stat::Brain, 2),
+];
 
 /// Whether a script runs the game.
 pub fn scripted() -> bool {
@@ -145,9 +179,13 @@ fn run_script(
     mut run: Option<ResMut<Run>>,
     mut field: Option<ResMut<Field>>,
     mut casualties: ResMut<Casualties>,
-    enemies: Query<(Entity, &Tank, &Position), With<Enemy>>,
-    mut player: Query<(Entity, &mut Position), (With<Player>, Without<Enemy>)>,
-    flags: Query<(&Flag, &Position), Without<Player>>,
+    (enemies, mut player, flags, exhibits, mut shields): (
+        Query<(Entity, &Tank, &Position), With<Enemy>>,
+        Query<(Entity, &mut Position), (With<Player>, Without<Enemy>)>,
+        Query<(&Flag, &Position), Without<Player>>,
+        Query<Entity, With<Exhibit>>,
+        Query<(&Tank, &mut Shield)>,
+    ),
     canvas: Res<Canvas>,
     mut events: MessageWriter<SimEvent>,
     mut exit: MessageWriter<AppExit>,
@@ -192,6 +230,61 @@ fn run_script(
             let sector = number(1) as u32;
             if let Some((_, position)) = flags.iter().find(|(flag, _)| flag.sector == sector) {
                 view.look_at(position.0, 3.0);
+            }
+        }
+        // Looks at a point of the map until the script ends.
+        "look" => view.look_at(Vec2::new(number(1), number(2)), f32::MAX),
+        // Shows this many meters of ground from the bottom to the top of the screen. The
+        // game shows 30.
+        "zoom" => view.span = Some(number(1)).filter(|span| *span > 0.0),
+        // Lines up one tank for each level of a stat, in rows of six from the north of the
+        // start bay. The tanks do nothing.
+        "showcase" => {
+            for exhibit in &exhibits {
+                commands.entity(exhibit).despawn();
+            }
+            let Some(&(_, stat)) = STATS.iter().find(|(name, _)| *name == word(1)) else {
+                warn!("unknown stat: {}", word(1));
+                return;
+            };
+            for level in 0..=stat.max_level() {
+                let mut genome = Genome::empty(70);
+                for (other, shown) in SHOWN_ON {
+                    genome.set(other, shown);
+                }
+                genome.set(stat, level);
+                let (row, column) = (level / 6, level % 6);
+                let at = Vec2::new(column as f32 * 2.2 - 5.5, 12.5 - row as f32 * 2.8);
+                let facing = std::f32::consts::FRAC_PI_2;
+                commands.spawn((
+                    Exhibit,
+                    Tank {
+                        genome,
+                        team: Team::Enemies,
+                        sector: 0,
+                    },
+                    Position(at),
+                    PreviousPosition(at),
+                    Motion {
+                        hull: facing,
+                        turret: facing + 0.5,
+                        ..default()
+                    },
+                    // Aiming where the turret already points keeps it still.
+                    TankCommand {
+                        aim: at + Vec2::from_angle(facing + 0.5) * 10.0,
+                        ..default()
+                    },
+                    InSector(0),
+                ));
+            }
+        }
+        // Raises the shield of every tank that has one, for ten seconds.
+        "bubble" => {
+            for (tank, mut shield) in &mut shields {
+                if tank.genome.shield().is_some() {
+                    shield.state = ShieldState::Active(10.0);
+                }
             }
         }
         // Destroys the enemies of the sector the player is in.
