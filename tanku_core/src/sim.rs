@@ -250,56 +250,20 @@ pub enum RunRequest {
 pub enum SimEvent {
     RunStarted,
     RunOver,
-    Shot {
-        at: Vec2,
-        team: Team,
-    },
-    Ricochet {
-        at: Vec2,
-    },
-    BulletDestroyed {
-        at: Vec2,
-        team: Team,
-    },
-    MinePlaced {
-        at: Vec2,
-    },
-    MineTriggered {
-        at: Vec2,
-    },
-    Blast {
-        at: Vec2,
-    },
-    BlockDestroyed {
-        at: Vec2,
-    },
-    ShieldRaised {
-        at: Vec2,
-    },
-    ShieldBlocked {
-        at: Vec2,
-    },
-    /// The bubble of a shield is gone.
-    ShieldDropped {
-        at: Vec2,
-    },
-    TankDestroyed {
-        at: Vec2,
-        team: Team,
-    },
-    PlayerRespawned {
-        at: Vec2,
-    },
-    SectorCleared {
-        sector: u32,
-    },
-    FlagCaptured {
-        at: Vec2,
-    },
-    BarrierUnlocked {
-        sector: u32,
-    },
-    SectorEntered {
-        sector: u32,
-    },
+    Shot { at: Vec2, team: Team },
+    Ricochet { at: Vec2 },
+    BulletDestroyed { at: Vec2, team: Team },
+    MinePlaced { at: Vec2 },
+    MineTriggered { at: Vec2 },
+    Blast { at: Vec2 },
+    BlockDestroyed { at: Vec2 },
+    ShieldRaised { at: Vec2 },
+    ShieldBlocked { at: Vec2 },
+    ShieldDropped { at: Vec2 },
+    TankDestroyed { at: Vec2, team: Team },
+    PlayerRespawned { at: Vec2 },
+    SectorCleared { sector: u32 },
+    FlagCaptured { at: Vec2 },
+    BarrierUnlocked { sector: u32 },
+    SectorEntered { sector: u32 },
 }
