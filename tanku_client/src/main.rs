@@ -3,6 +3,7 @@ mod camera;
 mod cli;
 #[cfg(feature = "development")]
 mod dev;
+mod draft;
 mod effects;
 mod hud;
 mod input;

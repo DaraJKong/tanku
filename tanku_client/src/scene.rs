@@ -2,25 +2,48 @@
 //!
 //! Gameplay is 2D. The ground plane of the simulation, with `x` east and `y` north, becomes the
 //! `x`-`z` plane of the 3D world, with north along `-z`.
+//!
+//! The corridor is drawn as a plan: a dark sheet with a grid, walls as bands between two lines,
+//! hatched blocks and crossed crates. Nothing is lit.
 
 use bevy::{
     asset::RenderAssetUsages,
+    image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor},
     mesh::{Indices, PrimitiveTopology},
     prelude::*,
+    render::render_resource::{Extent3d, TextureDimension, TextureFormat},
 };
 use tanku_core::{
-    rules::{BLOCK_SIZE, BULLET_RADIUS, FLAG_CAPTURE_RADIUS, MINE_RADIUS},
+    rules::{
+        BLAST_RADIUS, BLOCK_SIZE, BULLET_RADIUS, FLAG_CAPTURE_RADIUS, MINE_RADIUS,
+        MINE_TRIGGER_RADIUS,
+    },
     sim::{
         Barrier, Block, Bullet, ExplosiveCrate, Flag, Mine, MineState, Position, PreviousPosition,
-        Sector, Team,
+        Run, Sector, Team,
     },
     stats::Stat,
 };
 
-use crate::theme;
+use crate::{
+    draft::{self, Draft, LIFT},
+    theme,
+};
 
 const WALL_HEIGHT: f32 = 1.2;
 const WALL_THICKNESS: f32 = 0.4;
+const BLOCK_HEIGHT: f32 = 1.1;
+/// An explosive crate is lower than a block, and a little smaller than the square it stands on.
+const CRATE_HEIGHT: f32 = 0.9;
+const CRATE_SIZE: f32 = BLOCK_SIZE - 0.2;
+/// Width of the strips that hatch a block and of those that cross a crate.
+const HATCH_WIDTH: f32 = 0.03;
+const CROSS_WIDTH: f32 = 0.05;
+const MINE_HEIGHT: f32 = 0.12;
+const BARRIER_HEIGHT: f32 = 1.5;
+/// The chain line at the foot of a barrier: a long dash, a short one, and the gap after each.
+const CHAIN: [(f32, f32); 2] = [(0.9, 0.2), (0.15, 0.2)];
+const CHAIN_WIDTH: f32 = 0.12;
 /// Height at which bullets fly: the height of a barrel.
 const BULLET_HEIGHT: f32 = 0.8;
 /// Half the length of the straight part of a bullet. Its rounded ends come on top.
@@ -32,9 +55,19 @@ const STRIPE_WIDTH: f32 = 0.12;
 const STRIPE_GAP: f32 = 0.09;
 /// Stripes are dark on a bright bullet. A vertex color multiplies the color of the material.
 const STRIPE_COLOR: [f32; 4] = [0.03, 0.03, 0.04, 1.0];
+/// The line that a bullet leaves behind: how long it gets and how wide it is.
+const TRAIL_LENGTH: f32 = 1.8;
+const TRAIL_WIDTH: f32 = 0.08;
+/// The patch of light under a bullet, which shows where it is above the ground.
+const POOL_SIZE: f32 = 0.9;
 const FLAG_HEIGHT: f32 = 2.4;
 /// Width and height of the cloth of a flag.
 const FLAG_CLOTH: Vec2 = Vec2::new(1.3, 0.8);
+/// One copy of the floor texture covers the square between two heavy lines of the grid.
+const GRID_TILE: u32 = 5;
+const GRID_TEXELS: u32 = 512;
+/// Widths of the light and of the heavy lines of the grid, in meters.
+const GRID_LINES: (f32, f32) = (0.03, 0.045);
 
 pub fn to_world(point: Vec2, height: f32) -> Vec3 {
     Vec3::new(point.x, height, -point.y)
@@ -49,49 +82,103 @@ pub fn facing(angle: f32) -> Quat {
     Quat::from_rotation_y(angle)
 }
 
-/// Meshes of unit size, scaled where they are used.
+/// Meshes shared by everything that looks the same.
 #[derive(Resource)]
 pub struct Shapes {
+    /// 1 on each side.
     pub cube: Handle<Mesh>,
-    /// Diameter 1 and height 1, standing on its axis.
-    pub cylinder: Handle<Mesh>,
     /// Diameter 1.
     pub sphere: Handle<Mesh>,
-    /// Diameter 1 and height 1, pointing up.
-    pub cone: Handle<Mesh>,
-    /// Lying flat, 1 across.
-    pub ring: Handle<Mesh>,
-    /// The same, but thin: a line on the ground.
-    pub circle: Handle<Mesh>,
-    /// The same again, as a fine line: the edge of a shield bubble.
+    /// A fine ring lying flat, 1 across: the edge of a shield bubble.
     pub hairline: Handle<Mesh>,
+    /// A disc lying flat, 1 across.
+    disc: Handle<Mesh>,
+    /// A strip lying flat, which reaches 1 behind its origin and is 1 wide.
+    trail: Handle<Mesh>,
+    block: Handle<Mesh>,
+    explosive: Handle<Mesh>,
+    mine: Handle<Mesh>,
+    /// The circles around a mine and around a flag, at their real sizes.
+    trigger: Handle<Mesh>,
+    blast: Handle<Mesh>,
+    capture: Handle<Mesh>,
     /// Bullets at their real size, flying along `+x`. The index is the number of bounces left,
     /// which is the number of stripes.
-    pub bullets: Vec<Handle<Mesh>>,
+    bullets: Vec<Handle<Mesh>>,
     /// The same for bullets that still pierce: they have a pointed tip.
-    pub darts: Vec<Handle<Mesh>>,
+    darts: Vec<Handle<Mesh>>,
 }
 
 #[derive(Resource)]
 pub struct Paints {
+    /// Shows a drawing in the colors that it carries.
+    pub ink: Handle<StandardMaterial>,
+    /// The sheet with its grid.
     pub floor: Handle<StandardMaterial>,
-    pub wall: Handle<StandardMaterial>,
-    pub block: Handle<StandardMaterial>,
-    pub explosive: Handle<StandardMaterial>,
-    pub dark: Handle<StandardMaterial>,
-    pub barrier_locked: Handle<StandardMaterial>,
-    pub barrier_unlocked: Handle<StandardMaterial>,
-    pub player_bullet: Handle<StandardMaterial>,
-    pub enemy_bullet: Handle<StandardMaterial>,
-    pub mine_off: Handle<StandardMaterial>,
-    pub mine_on: Handle<StandardMaterial>,
-    pub flag: Handle<StandardMaterial>,
-    pub flag_captured: Handle<StandardMaterial>,
+    /// The same two for a sector that no player has entered yet.
+    ink_dormant: Handle<StandardMaterial>,
+    floor_dormant: Handle<StandardMaterial>,
+    pole: Handle<StandardMaterial>,
+    curtain_locked: Handle<StandardMaterial>,
+    curtain_unlocked: Handle<StandardMaterial>,
+    barrier_locked: Handle<StandardMaterial>,
+    barrier_unlocked: Handle<StandardMaterial>,
+    player_bullet: Handle<StandardMaterial>,
+    enemy_bullet: Handle<StandardMaterial>,
+    player_trail: Handle<StandardMaterial>,
+    enemy_trail: Handle<StandardMaterial>,
+    player_pool: Handle<StandardMaterial>,
+    enemy_pool: Handle<StandardMaterial>,
+    mine_light: Handle<StandardMaterial>,
+    trigger: Handle<StandardMaterial>,
+    blast: Handle<StandardMaterial>,
+    blast_fill: Handle<StandardMaterial>,
+    flag: Handle<StandardMaterial>,
+    flag_captured: Handle<StandardMaterial>,
+    flag_fill: Handle<StandardMaterial>,
+    flag_fill_captured: Handle<StandardMaterial>,
 }
 
-/// The parts of a flag that change color when it is captured: its cloth and its circle.
-#[derive(Component)]
-struct FlagPart;
+/// What a part of the corridor is drawn with, which is dull until a player enters its sector.
+#[derive(Component, Clone, Copy)]
+struct Ground {
+    sector: u32,
+    floor: bool,
+}
+
+/// The two parts of a barrier, which change color when it unlocks.
+#[derive(Component, Clone, Copy)]
+enum BarrierPart {
+    Curtain,
+    Lines,
+}
+
+/// The parts of a mine that come and go with its state.
+#[derive(Component, Clone, Copy, PartialEq)]
+enum MinePart {
+    /// The light in its middle, which blinks.
+    Light,
+    /// The circle inside which an opposing tank sets it off.
+    Trigger,
+    /// The circle that its blast reaches.
+    Blast,
+}
+
+/// The parts of a flag that change color when it is captured: its cloth and its circle, and
+/// the faint fill of the circle.
+#[derive(Component, Clone, Copy)]
+enum FlagPart {
+    Solid,
+    Fill,
+}
+
+/// The line behind a bullet.
+#[derive(Component, Default)]
+struct Trail {
+    length: f32,
+    /// The way the bullet flew when the line started.
+    heading: Vec2,
+}
 
 pub fn plugin(app: &mut App) {
     app.add_systems(PreStartup, setup).add_systems(
@@ -105,26 +192,78 @@ pub fn plugin(app: &mut App) {
                 dress_bullets,
                 dress_flags,
             ),
-            (paint_barriers, blink_mines, stripe_bullets, paint_flags),
+            (
+                wake_sectors,
+                paint_barriers,
+                blink_mines,
+                stripe_bullets,
+                trail_bullets,
+                paint_flags,
+            ),
             place,
         )
             .chain(),
     );
 }
 
+/// The material that shows a drawing in the colors that it carries, from both sides.
+pub fn ink() -> StandardMaterial {
+    StandardMaterial {
+        base_color: Color::WHITE,
+        unlit: true,
+        cull_mode: None,
+        ..default()
+    }
+}
+
+/// A flat color, see-through if it has an alpha.
+fn paint(materials: &mut Assets<StandardMaterial>, color: Color) -> Handle<StandardMaterial> {
+    materials.add(StandardMaterial {
+        base_color: color,
+        alpha_mode: if color.alpha() < 1.0 {
+            AlphaMode::Blend
+        } else {
+            AlphaMode::Opaque
+        },
+        unlit: true,
+        cull_mode: None,
+        ..default()
+    })
+}
+
 fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
 ) {
+    // A drawing in white takes the color of its material.
+    let mut circle = |radius: f32, width: f32, dashes: (usize, f32)| {
+        let mut draft = Draft::default();
+        draft.ring(Vec3::ZERO, (radius - width, radius), dashes, Color::WHITE);
+        meshes.add(draft.build())
+    };
+    let (trigger, blast, capture) = (
+        circle(MINE_TRIGGER_RADIUS, draft::LINE, (28, 0.5)),
+        circle(BLAST_RADIUS, 0.06, (1, 1.0)),
+        circle(FLAG_CAPTURE_RADIUS, 0.06, (1, 1.0)),
+    );
+    let mut disc = Draft::default();
+    disc.disc(Vec3::ZERO, 0.5, Color::WHITE);
+    let mut trail = Draft::default();
+    trail.line(Vec3::NEG_X, Vec3::ZERO, 1.0, Color::WHITE);
     commands.insert_resource(Shapes {
         cube: meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
-        cylinder: meshes.add(Cylinder::new(0.5, 1.0)),
         sphere: meshes.add(Sphere::new(0.5)),
-        cone: meshes.add(Cone::new(0.5, 1.0)),
-        ring: meshes.add(Torus::new(0.3, 0.5)),
-        circle: meshes.add(Torus::new(0.46, 0.5)),
         hairline: meshes.add(Torus::new(0.487, 0.5)),
+        disc: meshes.add(disc.build()),
+        trail: meshes.add(trail.build()),
+        block: meshes.add(block_drawing().build()),
+        explosive: meshes.add(crate_drawing().build()),
+        mine: meshes.add(mine_drawing().build()),
+        trigger,
+        blast,
+        capture,
         bullets: (0..=Stat::Ricochet.max_level())
             .map(|stripes| meshes.add(bullet_mesh(false, stripes)))
             .collect(),
@@ -132,48 +271,304 @@ fn setup(
             .map(|stripes| meshes.add(bullet_mesh(true, stripes)))
             .collect(),
     });
-    let mut matte = |color: Color| {
-        materials.add(StandardMaterial {
-            base_color: color,
-            perceptual_roughness: 0.9,
-            ..default()
-        })
+
+    let grid = images.add(grid_texture());
+    let sheet = |light: Color| StandardMaterial {
+        base_color: light,
+        base_color_texture: Some(grid.clone()),
+        ..ink()
     };
-    let (floor, wall, block, explosive, dark, mine_off) = (
-        matte(theme::FLOOR),
-        matte(theme::WALL),
-        matte(theme::BLOCK),
-        matte(theme::CRATE),
-        matte(theme::DARK_METAL),
-        matte(theme::DARK_METAL),
-    );
-    let mut glowing = |color: Color, alpha: f32| {
-        materials.add(StandardMaterial {
-            base_color: color.with_alpha(alpha),
-            alpha_mode: if alpha < 1.0 {
-                AlphaMode::Blend
-            } else {
-                AlphaMode::Opaque
-            },
-            unlit: true,
-            ..default()
-        })
-    };
+    let materials = &mut *materials;
     commands.insert_resource(Paints {
-        floor,
-        wall,
-        block,
-        explosive,
-        dark,
-        mine_off,
-        barrier_locked: glowing(theme::DANGER, 0.45),
-        barrier_unlocked: glowing(theme::GOOD, 0.3),
-        player_bullet: glowing(theme::PLAYER_BULLET, 1.0),
-        enemy_bullet: glowing(theme::ENEMY_BULLET, 1.0),
-        mine_on: glowing(theme::DANGER, 1.0),
-        flag: glowing(theme::FLAG, 1.0),
-        flag_captured: glowing(theme::GOOD, 1.0),
+        ink: materials.add(ink()),
+        floor: materials.add(sheet(Color::WHITE)),
+        ink_dormant: materials.add(StandardMaterial {
+            base_color: theme::dormant(),
+            ..ink()
+        }),
+        floor_dormant: materials.add(sheet(theme::dormant())),
+        pole: paint(materials, theme::WALL),
+        curtain_locked: paint(materials, theme::DANGER.with_alpha(0.2)),
+        curtain_unlocked: paint(materials, theme::GOOD.with_alpha(0.12)),
+        barrier_locked: paint(materials, theme::DANGER),
+        barrier_unlocked: paint(materials, theme::GOOD),
+        player_bullet: paint(materials, theme::PLAYER_BULLET),
+        enemy_bullet: paint(materials, theme::ENEMY_BULLET),
+        player_trail: paint(materials, theme::PLAYER_BULLET.with_alpha(0.45)),
+        enemy_trail: paint(materials, theme::ENEMY_BULLET.with_alpha(0.45)),
+        player_pool: paint(materials, theme::PLAYER_BULLET.with_alpha(0.13)),
+        enemy_pool: paint(materials, theme::ENEMY_BULLET.with_alpha(0.13)),
+        mine_light: paint(materials, theme::DANGER),
+        trigger: paint(materials, theme::DANGER.with_alpha(0.6)),
+        blast: paint(materials, theme::DANGER),
+        blast_fill: paint(materials, theme::DANGER.with_alpha(0.1)),
+        flag: paint(materials, theme::FLAG),
+        flag_captured: paint(materials, theme::GOOD),
+        flag_fill: paint(materials, theme::FLAG.with_alpha(0.06)),
+        flag_fill_captured: paint(materials, theme::GOOD.with_alpha(0.08)),
     });
+}
+
+/// How much of a stretch of floor, from `from` to `to` meters along one axis of the tile, the
+/// lines of the grid cover: 0 for none, and the strength of a line where it covers it all.
+fn grid_cover(from: f32, to: f32) -> f32 {
+    (0..=GRID_TILE)
+        .map(|line| {
+            // The two ends of the tile are the two halves of the same heavy line.
+            let heavy = line == 0 || line == GRID_TILE;
+            let (width, strength) = if heavy {
+                (GRID_LINES.1, theme::GRID_STRENGTH.1)
+            } else {
+                (GRID_LINES.0, theme::GRID_STRENGTH.0)
+            };
+            let (low, high) = (line as f32 - width / 2.0, line as f32 + width / 2.0);
+            strength * (to.min(high) - from.max(low)).max(0.0) / (to - from)
+        })
+        .sum()
+}
+
+/// The floor: the sheet with its grid, a line every meter and a heavier one every five.
+///
+/// Every level of detail is computed from the lines themselves, so that they fade as they
+/// get thinner than a pixel instead of flickering.
+fn grid_texture() -> Image {
+    let (mut data, mut levels, mut size) = (Vec::new(), 0, GRID_TEXELS);
+    loop {
+        let texel = GRID_TILE as f32 / size as f32;
+        let cover: Vec<f32> = (0..size)
+            .map(|index| grid_cover(index as f32 * texel, (index + 1) as f32 * texel))
+            .collect();
+        for &down in &cover {
+            for &across in &cover {
+                // Where two lines cross, they don't add up.
+                let strength = across + down - across * down;
+                let color = theme::over(theme::FLOOR, theme::GRID, strength).to_srgba();
+                data.extend(color.to_u8_array());
+            }
+        }
+        levels += 1;
+        if size == 1 {
+            break;
+        }
+        size /= 2;
+    }
+    let mut image = Image::new_uninit(
+        Extent3d {
+            width: GRID_TEXELS,
+            height: GRID_TEXELS,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    image.data = Some(data);
+    image.texture_descriptor.mip_level_count = levels;
+    image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+        address_mode_u: ImageAddressMode::Repeat,
+        address_mode_v: ImageAddressMode::Repeat,
+        mag_filter: ImageFilterMode::Linear,
+        min_filter: ImageFilterMode::Linear,
+        mipmap_filter: ImageFilterMode::Linear,
+        ..default()
+    });
+    image
+}
+
+/// The drawing of the walls of a sector: each wall is a band between two lines, along the
+/// outside of the line that bullets bounce off. A third line marks its foot on the floor.
+///
+/// The outline of a sector runs clockwise, so the outside of a wall is on its left.
+fn wall_drawing(walls: &[(Vec2, Vec2)]) -> Draft {
+    let outward = |(from, to): (Vec2, Vec2)| (to - from).perp().normalize();
+    let mut draft = Draft::default();
+    for &wall in walls {
+        let (a, b) = wall;
+        let normal = outward(wall);
+        // Where another wall goes on from an end, the two bands meet on the bisector of the
+        // corner. Where the wall stops, at a gate, its band is cut square.
+        let reach = |neighbor: Option<&(Vec2, Vec2)>| {
+            let Some(&neighbor) = neighbor else {
+                return normal;
+            };
+            let fold = 1.0 + normal.dot(outward(neighbor));
+            if fold < 0.05 {
+                return normal;
+            }
+            ((normal + outward(neighbor)) / fold).clamp_length_max(3.0)
+        };
+        let before = walls.iter().find(|other| other.1 == a);
+        let after = walls.iter().find(|other| other.0 == b);
+        let (reach_a, reach_b) = (reach(before), reach(after));
+        let (a_out, b_out) = (a + reach_a * WALL_THICKNESS, b + reach_b * WALL_THICKNESS);
+        let band = |draft: &mut Draft, ends: [Vec2; 4], height: f32, color: Color| {
+            draft.face(&ends.map(|point| to_world(point, height)), color);
+        };
+        let rise = |draft: &mut Draft, from: Vec2, to: Vec2| {
+            let corners = [
+                (from, 0.0),
+                (to, 0.0),
+                (to, WALL_HEIGHT),
+                (from, WALL_HEIGHT),
+            ];
+            draft.face(
+                &corners.map(|(point, height)| to_world(point, height)),
+                theme::WALL_SIDE,
+            );
+        };
+        band(&mut draft, [a, b, b_out, a_out], WALL_HEIGHT, theme::WALL);
+        rise(&mut draft, a, b);
+        rise(&mut draft, a_out, b_out);
+        if before.is_none() {
+            rise(&mut draft, a, a_out);
+        }
+        if after.is_none() {
+            rise(&mut draft, b, b_out);
+        }
+        let (inside_a, inside_b) = (reach_a * draft::LINE, reach_b * draft::LINE);
+        let top = WALL_HEIGHT + LIFT;
+        band(
+            &mut draft,
+            [a, b, b + inside_b, a + inside_a],
+            top,
+            theme::LINE,
+        );
+        band(
+            &mut draft,
+            [a_out, b_out, b_out - inside_b, a_out - inside_a],
+            top,
+            theme::LINE,
+        );
+        band(
+            &mut draft,
+            [a, b, b - inside_b, a - inside_a],
+            LIFT,
+            theme::LINE,
+        );
+    }
+    draft
+}
+
+/// The drawing of a destructible block: hatched, as a wall that can be taken away.
+fn block_drawing() -> Draft {
+    let mut draft = Draft::default();
+    let (center, size) = (
+        Vec3::Y * BLOCK_HEIGHT / 2.0,
+        Vec3::new(BLOCK_SIZE, BLOCK_HEIGHT, BLOCK_SIZE),
+    );
+    draft.outlined(
+        center,
+        size,
+        (theme::BLOCK, theme::BLOCK_SIDE, theme::BLOCK_LINE),
+    );
+    draft.corners(center, size, theme::BLOCK_LINE);
+    // The hatching: strips at 45 degrees, half a meter apart along the edges, each cut where
+    // it meets the edges of the top. Under the outline, which hides their ends.
+    let (half, top) = (BLOCK_SIZE / 2.0, BLOCK_HEIGHT + LIFT / 2.0);
+    let cut = HATCH_WIDTH / std::f32::consts::SQRT_2;
+    for step in 0..8 {
+        // The strip runs along the line `x + z = shift`, from one edge to the next.
+        let shift = -1.75 * half + 0.5 * step as f32;
+        let (first, second) = if shift < 0.0 {
+            // From the west edge to the north edge.
+            let (z, x) = (shift + half, shift + half);
+            ((-half, z), (x, -half))
+        } else {
+            // From the south edge to the east edge.
+            let (x, z) = (shift - half, shift - half);
+            ((x, half), (half, z))
+        };
+        let along_edges = if shift < 0.0 {
+            [(0.0, -cut), (0.0, cut), (cut, 0.0), (-cut, 0.0)]
+        } else {
+            [(-cut, 0.0), (cut, 0.0), (0.0, cut), (0.0, -cut)]
+        };
+        let ends = [first, first, second, second];
+        let corners: Vec<Vec3> = ends
+            .iter()
+            .zip(along_edges)
+            .map(|(&(x, z), (dx, dz))| Vec3::new(x + dx, top, z + dz))
+            .collect();
+        draft.face(&corners, theme::HATCH);
+    }
+    draft
+}
+
+/// The drawing of an explosive crate: a box with a cross, in the color of danger.
+fn crate_drawing() -> Draft {
+    let mut draft = Draft::default();
+    let (center, size) = (
+        Vec3::Y * CRATE_HEIGHT / 2.0,
+        Vec3::new(CRATE_SIZE, CRATE_HEIGHT, CRATE_SIZE),
+    );
+    draft.outlined(
+        center,
+        size,
+        (theme::CRATE, theme::CRATE_SIDE, theme::DANGER),
+    );
+    draft.corners(center, size, theme::DANGER);
+    let (reach, top) = (CRATE_SIZE / 2.0 - draft::LINE, CRATE_HEIGHT + LIFT / 2.0);
+    for turn in [-1.0, 1.0] {
+        draft.line(
+            Vec3::new(-reach, top, -reach * turn),
+            Vec3::new(reach, top, reach * turn),
+            CROSS_WIDTH,
+            theme::DANGER,
+        );
+    }
+    draft
+}
+
+/// The drawing of a mine, without its light: a dark disc with two rings.
+fn mine_drawing() -> Draft {
+    let mut draft = Draft::default();
+    draft.post(
+        Vec3::Y * MINE_HEIGHT / 2.0,
+        MINE_RADIUS,
+        MINE_HEIGHT,
+        theme::DARK_METAL,
+        theme::DARK_METAL,
+    );
+    let top = Vec3::Y * (MINE_HEIGHT + LIFT);
+    draft.ring(
+        top,
+        (MINE_RADIUS - draft::LINE, MINE_RADIUS),
+        (1, 1.0),
+        theme::LINE,
+    );
+    let faint = theme::over(theme::DARK_METAL, theme::LINE, 0.5);
+    draft.ring(top, (0.17, 0.2), (1, 1.0), faint);
+    draft
+}
+
+/// The lines of a barrier of this length, drawn along `x` in white: a chain line at its foot
+/// and a fine line along the top of its curtain.
+fn barrier_drawing(length: f32) -> Draft {
+    let mut draft = Draft::default();
+    let half = length / 2.0;
+    let mut from = -half;
+    'chain: loop {
+        for (dash, gap) in CHAIN {
+            if from >= half {
+                break 'chain;
+            }
+            let to = (from + dash).min(half);
+            draft.line(
+                Vec3::new(from, 2.0 * LIFT, 0.0),
+                Vec3::new(to, 2.0 * LIFT, 0.0),
+                CHAIN_WIDTH,
+                Color::WHITE,
+            );
+            from = to + gap;
+        }
+    }
+    draft.line(
+        Vec3::new(-half, BARRIER_HEIGHT, 0.0),
+        Vec3::new(half, BARRIER_HEIGHT, 0.0),
+        draft::LINE,
+        Color::WHITE,
+    );
+    draft
 }
 
 /// The mesh of a bullet: a shape turned around its line of flight, with its stripes.
@@ -307,63 +702,75 @@ pub fn triangulate(points: &[Vec2]) -> Vec<[u32; 3]> {
     triangles
 }
 
+/// The floor inside an outline, for the paint that lays the grid on it.
+pub fn floor_mesh(outline: &[Vec2]) -> Mesh {
+    Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    )
+    .with_inserted_attribute(
+        Mesh::ATTRIBUTE_POSITION,
+        outline
+            .iter()
+            .map(|&point| to_world(point, 0.0))
+            .collect::<Vec<_>>(),
+    )
+    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, vec![Vec3::Y; outline.len()])
+    // The grid is laid on the lattice of the map: a line on every meter.
+    .with_inserted_attribute(
+        Mesh::ATTRIBUTE_UV_0,
+        outline
+            .iter()
+            .map(|&point| point / GRID_TILE as f32)
+            .collect::<Vec<_>>(),
+    )
+    .with_inserted_indices(Indices::U32(
+        // The outline runs clockwise seen from above, and a face shows its
+        // counterclockwise side: every triangle is turned over.
+        triangulate(outline)
+            .into_iter()
+            .flat_map(|[a, b, c]| [a, c, b])
+            .collect(),
+    ))
+}
+
 fn dress_sectors(
     mut commands: Commands,
     sectors: Query<(Entity, &Sector), Added<Sector>>,
-    shapes: Res<Shapes>,
     paints: Res<Paints>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
     for (entity, sector) in &sectors {
         let plan = &sector.layout.plan;
         let outline: Vec<Vec2> = plan.outline.iter().map(|point| point.as_vec2()).collect();
-        let floor = Mesh::new(
-            PrimitiveTopology::TriangleList,
-            RenderAssetUsages::default(),
-        )
-        .with_inserted_attribute(
-            Mesh::ATTRIBUTE_POSITION,
-            outline
-                .iter()
-                .map(|&point| to_world(point, 0.0))
-                .collect::<Vec<_>>(),
-        )
-        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, vec![Vec3::Y; outline.len()])
-        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, vec![Vec2::ZERO; outline.len()])
-        .with_inserted_indices(Indices::U32(
-            // The outline runs clockwise seen from above, and a face shows its
-            // counterclockwise side: every triangle is turned over.
-            triangulate(&outline)
-                .into_iter()
-                .flat_map(|[a, b, c]| [a, c, b])
-                .collect(),
-        ));
+        let floor = floor_mesh(&outline);
+        let walls: Vec<(Vec2, Vec2)> = plan
+            .walls
+            .iter()
+            .map(|&(a, b)| (a.as_vec2(), b.as_vec2()))
+            .collect();
         commands
             .entity(entity)
             .insert((Transform::default(), Visibility::default()))
             .with_children(|parent| {
+                let sector = plan.index;
                 parent.spawn((
+                    Ground {
+                        sector,
+                        floor: true,
+                    },
                     Mesh3d(meshes.add(floor)),
-                    MeshMaterial3d(paints.floor.clone()),
+                    MeshMaterial3d(paints.floor_dormant.clone()),
                 ));
-                for &(a, b) in &plan.walls {
-                    let (a, b) = (a.as_vec2(), b.as_vec2());
-                    let along = b - a;
-                    // The inner face of a wall is the line bullets bounce off. The outline runs
-                    // clockwise, so the outside is on the left.
-                    let outside = along.perp().normalize() * (WALL_THICKNESS / 2.0);
+                let walls = wall_drawing(&walls);
+                if !walls.is_empty() {
                     parent.spawn((
-                        Mesh3d(shapes.cube.clone()),
-                        MeshMaterial3d(paints.wall.clone()),
-                        Transform {
-                            translation: to_world((a + b) / 2.0 + outside, WALL_HEIGHT / 2.0),
-                            rotation: facing(along.to_angle()),
-                            scale: Vec3::new(
-                                along.length() + WALL_THICKNESS,
-                                WALL_HEIGHT,
-                                WALL_THICKNESS,
-                            ),
+                        Ground {
+                            sector,
+                            floor: false,
                         },
+                        Mesh3d(meshes.add(walls.build())),
+                        MeshMaterial3d(paints.ink_dormant.clone()),
                     ));
                 }
             });
@@ -375,59 +782,109 @@ fn dress_barriers(
     barriers: Query<(Entity, &Barrier), Added<Barrier>>,
     shapes: Res<Shapes>,
     paints: Res<Paints>,
+    mut meshes: ResMut<Assets<Mesh>>,
 ) {
     for (entity, barrier) in &barriers {
         let along = barrier.to - barrier.from;
+        let length = along.length();
         commands.entity(entity).insert((
-            Mesh3d(shapes.cube.clone()),
-            MeshMaterial3d(paints.barrier_locked.clone()),
             Transform {
-                translation: to_world((barrier.from + barrier.to) / 2.0, 0.75),
+                translation: to_world((barrier.from + barrier.to) / 2.0, 0.0),
                 rotation: facing(along.to_angle()),
-                scale: Vec3::new(along.length(), 1.5, 0.12),
+                ..default()
             },
+            Visibility::default(),
+            children![
+                (
+                    BarrierPart::Curtain,
+                    Mesh3d(shapes.cube.clone()),
+                    MeshMaterial3d(paints.curtain_locked.clone()),
+                    Transform::from_xyz(0.0, BARRIER_HEIGHT / 2.0, 0.0).with_scale(Vec3::new(
+                        length,
+                        BARRIER_HEIGHT,
+                        CHAIN_WIDTH
+                    )),
+                ),
+                (
+                    BarrierPart::Lines,
+                    Mesh3d(meshes.add(barrier_drawing(length).build())),
+                    MeshMaterial3d(paints.barrier_locked.clone()),
+                ),
+            ],
         ));
     }
 }
 
+/// A barrier changes color when it unlocks.
 fn paint_barriers(
-    mut barriers: Query<(&Barrier, &mut MeshMaterial3d<StandardMaterial>), Changed<Barrier>>,
+    barriers: Query<(&Barrier, &Children), Changed<Barrier>>,
+    mut parts: Query<(&BarrierPart, &mut MeshMaterial3d<StandardMaterial>)>,
     paints: Res<Paints>,
 ) {
-    for (barrier, mut material) in &mut barriers {
-        material.0 = if barrier.unlocked {
-            paints.barrier_unlocked.clone()
-        } else {
-            paints.barrier_locked.clone()
-        };
+    for (barrier, children) in &barriers {
+        for child in children.iter() {
+            let Ok((part, mut material)) = parts.get_mut(child) else {
+                continue;
+            };
+            material.0 = match (part, barrier.unlocked) {
+                (BarrierPart::Curtain, false) => &paints.curtain_locked,
+                (BarrierPart::Curtain, true) => &paints.curtain_unlocked,
+                (BarrierPart::Lines, false) => &paints.barrier_locked,
+                (BarrierPart::Lines, true) => &paints.barrier_unlocked,
+            }
+            .clone();
+        }
     }
 }
 
 fn dress_obstacles(
     mut commands: Commands,
-    blocks: Query<(Entity, &Position), Added<Block>>,
-    crates: Query<(Entity, &Position), Added<ExplosiveCrate>>,
+    blocks: Query<(Entity, &Block, &Position), Added<Block>>,
+    crates: Query<(Entity, &ExplosiveCrate, &Position), Added<ExplosiveCrate>>,
     shapes: Res<Shapes>,
     paints: Res<Paints>,
 ) {
-    let obstacles = blocks
+    let blocks = blocks
         .iter()
-        .map(|block| (block, &paints.block, 1.1, BLOCK_SIZE))
-        .chain(
-            crates
-                .iter()
-                .map(|explosive| (explosive, &paints.explosive, 0.9, BLOCK_SIZE - 0.2)),
-        );
-    for ((entity, position), paint, height, side) in obstacles {
+        .map(|(entity, block, position)| (entity, block.sector, position, &shapes.block));
+    let crates = crates.iter().map(|(entity, explosive, position)| {
+        (entity, explosive.sector, position, &shapes.explosive)
+    });
+    for (entity, sector, position, shape) in blocks.chain(crates) {
         commands.entity(entity).insert((
-            Mesh3d(shapes.cube.clone()),
-            MeshMaterial3d(paint.clone()),
-            Transform {
-                translation: to_world(position.0, height / 2.0),
-                scale: Vec3::new(side, height, side),
-                ..default()
+            Ground {
+                sector,
+                floor: false,
             },
+            Mesh3d(shape.clone()),
+            MeshMaterial3d(paints.ink_dormant.clone()),
+            Transform::from_translation(to_world(position.0, 0.0)),
         ));
+    }
+}
+
+/// Whether a sector is still waiting for its first player: the players are in an earlier one.
+fn is_dormant(sector: u32, run: Option<&Run>) -> bool {
+    run.is_some_and(|run| sector > run.sector)
+}
+
+/// A sector is drawn dull until a player enters it, as its enemies are. Then the drawing
+/// comes to life.
+fn wake_sectors(
+    run: Option<Res<Run>>,
+    paints: Res<Paints>,
+    mut grounds: Query<(&Ground, &mut MeshMaterial3d<StandardMaterial>)>,
+) {
+    for (ground, mut material) in &mut grounds {
+        let wanted = match (ground.floor, is_dormant(ground.sector, run.as_deref())) {
+            (true, false) => &paints.floor,
+            (true, true) => &paints.floor_dormant,
+            (false, false) => &paints.ink,
+            (false, true) => &paints.ink_dormant,
+        };
+        if material.0 != *wanted {
+            material.0 = wanted.clone();
+        }
     }
 }
 
@@ -438,25 +895,55 @@ fn dress_mines(
     paints: Res<Paints>,
 ) {
     for (entity, position) in &mines {
+        // A circle lies just above the floor, and the blast one has a faint fill.
+        let reach = Transform::from_xyz(0.0, 3.0 * LIFT, 0.0);
         commands.entity(entity).insert((
-            Mesh3d(shapes.cylinder.clone()),
-            MeshMaterial3d(paints.mine_off.clone()),
-            Transform {
-                translation: to_world(position.0, 0.06),
-                scale: Vec3::new(2.0 * MINE_RADIUS, 0.12, 2.0 * MINE_RADIUS),
-                ..default()
-            },
+            Mesh3d(shapes.mine.clone()),
+            MeshMaterial3d(paints.ink.clone()),
+            Transform::from_translation(to_world(position.0, 0.0)),
+            children![
+                (
+                    MinePart::Light,
+                    Mesh3d(shapes.disc.clone()),
+                    MeshMaterial3d(paints.mine_light.clone()),
+                    Transform::from_xyz(0.0, MINE_HEIGHT + 2.0 * LIFT, 0.0)
+                        .with_scale(Vec3::new(0.24, 1.0, 0.24)),
+                    Visibility::Hidden,
+                ),
+                (
+                    MinePart::Trigger,
+                    Mesh3d(shapes.trigger.clone()),
+                    MeshMaterial3d(paints.trigger.clone()),
+                    reach,
+                    Visibility::Hidden,
+                ),
+                (
+                    MinePart::Blast,
+                    Mesh3d(shapes.blast.clone()),
+                    MeshMaterial3d(paints.blast.clone()),
+                    reach,
+                    Visibility::Hidden,
+                ),
+                (
+                    MinePart::Blast,
+                    Mesh3d(shapes.disc.clone()),
+                    MeshMaterial3d(paints.blast_fill.clone()),
+                    reach.with_scale(Vec3::new(2.0 * BLAST_RADIUS, 1.0, 2.0 * BLAST_RADIUS)),
+                    Visibility::Hidden,
+                ),
+            ],
         ));
     }
 }
 
-/// An armed mine blinks, and a triggered one blinks fast.
+/// An armed mine blinks inside the circle that sets it off. A triggered one blinks fast, and
+/// shows how far its blast will reach.
 fn blink_mines(
     time: Res<Time>,
-    mut mines: Query<(&Mine, &mut MeshMaterial3d<StandardMaterial>)>,
-    paints: Res<Paints>,
+    mines: Query<(&Mine, &Children)>,
+    mut parts: Query<(&MinePart, &mut Visibility)>,
 ) {
-    for (mine, mut material) in &mut mines {
+    for (mine, children) in &mines {
         let period = match mine.state {
             MineState::Arming(_) => None,
             // The blinking speeds up over the last two seconds of the fuse.
@@ -464,22 +951,33 @@ fn blink_mines(
             MineState::Triggered(_) => Some(0.1),
         };
         let lit = period.is_some_and(|period| time.elapsed_secs() % period < period / 2.0);
-        let wanted = if lit {
-            &paints.mine_on
-        } else {
-            &paints.mine_off
-        };
-        if material.0 != *wanted {
-            material.0 = wanted.clone();
+        for child in children.iter() {
+            let Ok((part, mut visibility)) = parts.get_mut(child) else {
+                continue;
+            };
+            let shown = match part {
+                MinePart::Light => lit,
+                MinePart::Trigger => matches!(mine.state, MineState::Armed(_)),
+                MinePart::Blast => matches!(mine.state, MineState::Triggered(_)),
+            };
+            let wanted = if shown {
+                Visibility::Inherited
+            } else {
+                Visibility::Hidden
+            };
+            if *visibility != wanted {
+                *visibility = wanted;
+            }
         }
     }
 }
 
-fn flag_paint<'a>(paints: &'a Paints, flag: &Flag) -> &'a Handle<StandardMaterial> {
-    if flag.captured {
-        &paints.flag_captured
-    } else {
-        &paints.flag
+fn flag_paint<'a>(paints: &'a Paints, part: FlagPart, flag: &Flag) -> &'a Handle<StandardMaterial> {
+    match (part, flag.captured) {
+        (FlagPart::Solid, false) => &paints.flag,
+        (FlagPart::Solid, true) => &paints.flag_captured,
+        (FlagPart::Fill, false) => &paints.flag_fill,
+        (FlagPart::Fill, true) => &paints.flag_fill_captured,
     }
 }
 
@@ -490,27 +988,27 @@ fn dress_flags(
     paints: Res<Paints>,
 ) {
     for (entity, flag, position) in &flags {
-        let paint = flag_paint(&paints, flag);
+        let solid = flag_paint(&paints, FlagPart::Solid, flag);
         commands.entity(entity).insert((
             Transform::from_translation(to_world(position.0, 0.0)),
             Visibility::default(),
             children![
                 // The pole.
                 (
-                    Mesh3d(shapes.cylinder.clone()),
-                    MeshMaterial3d(paints.wall.clone()),
+                    Mesh3d(shapes.cube.clone()),
+                    MeshMaterial3d(paints.pole.clone()),
                     Transform {
                         translation: Vec3::Y * FLAG_HEIGHT / 2.0,
-                        scale: Vec3::new(0.14, FLAG_HEIGHT, 0.14),
+                        scale: Vec3::new(0.1, FLAG_HEIGHT, 0.1),
                         ..default()
                     },
                 ),
                 // The cloth leans back, so that it shows from above whichever way the view
                 // is turned.
                 (
-                    FlagPart,
+                    FlagPart::Solid,
                     Mesh3d(shapes.cube.clone()),
-                    MeshMaterial3d(paint.clone()),
+                    MeshMaterial3d(solid.clone()),
                     Transform {
                         translation: Vec3::new(FLAG_CLOTH.x / 2.0 + 0.07, FLAG_HEIGHT - 0.25, 0.0),
                         rotation: Quat::from_rotation_x(-0.95),
@@ -519,18 +1017,20 @@ fn dress_flags(
                 ),
                 // The circle on the ground: a tank inside it captures the flag.
                 (
-                    FlagPart,
-                    Mesh3d(shapes.circle.clone()),
-                    MeshMaterial3d(paint.clone()),
-                    Transform {
-                        translation: Vec3::Y * 0.02,
-                        scale: Vec3::new(
-                            2.0 * FLAG_CAPTURE_RADIUS,
-                            0.12,
-                            2.0 * FLAG_CAPTURE_RADIUS
-                        ),
-                        ..default()
-                    },
+                    FlagPart::Solid,
+                    Mesh3d(shapes.capture.clone()),
+                    MeshMaterial3d(solid.clone()),
+                    Transform::from_xyz(0.0, 3.0 * LIFT, 0.0),
+                ),
+                (
+                    FlagPart::Fill,
+                    Mesh3d(shapes.disc.clone()),
+                    MeshMaterial3d(flag_paint(&paints, FlagPart::Fill, flag).clone()),
+                    Transform::from_xyz(0.0, 2.0 * LIFT, 0.0).with_scale(Vec3::new(
+                        2.0 * FLAG_CAPTURE_RADIUS,
+                        1.0,
+                        2.0 * FLAG_CAPTURE_RADIUS
+                    )),
                 ),
             ],
         ));
@@ -540,13 +1040,13 @@ fn dress_flags(
 /// A captured flag changes color.
 fn paint_flags(
     flags: Query<(&Flag, &Children), Changed<Flag>>,
-    mut parts: Query<&mut MeshMaterial3d<StandardMaterial>, With<FlagPart>>,
+    mut parts: Query<(&FlagPart, &mut MeshMaterial3d<StandardMaterial>)>,
     paints: Res<Paints>,
 ) {
     for (flag, children) in &flags {
         for child in children.iter() {
-            if let Ok(mut material) = parts.get_mut(child) {
-                material.0 = flag_paint(&paints, flag).clone();
+            if let Ok((part, mut material)) = parts.get_mut(child) {
+                material.0 = flag_paint(&paints, *part, flag).clone();
             }
         }
     }
@@ -570,9 +1070,17 @@ fn dress_bullets(
     paints: Res<Paints>,
 ) {
     for (entity, bullet, position) in &bullets {
-        let paint = match bullet.team {
-            Team::Players => &paints.player_bullet,
-            Team::Enemies => &paints.enemy_bullet,
+        let (paint, trail, pool) = match bullet.team {
+            Team::Players => (
+                &paints.player_bullet,
+                &paints.player_trail,
+                &paints.player_pool,
+            ),
+            Team::Enemies => (
+                &paints.enemy_bullet,
+                &paints.enemy_trail,
+                &paints.enemy_pool,
+            ),
         };
         commands.entity(entity).insert((
             Mesh3d(bullet_shape(&shapes, bullet).clone()),
@@ -582,6 +1090,21 @@ fn dress_bullets(
                 rotation: facing(bullet.velocity.to_angle()),
                 ..default()
             },
+            children![
+                (
+                    Trail::default(),
+                    Mesh3d(shapes.trail.clone()),
+                    MeshMaterial3d(trail.clone()),
+                    Transform::from_scale(Vec3::new(0.0, 1.0, TRAIL_WIDTH)),
+                ),
+                // On the floor, under the bullet.
+                (
+                    Mesh3d(shapes.disc.clone()),
+                    MeshMaterial3d(pool.clone()),
+                    Transform::from_xyz(0.0, 4.0 * LIFT - BULLET_HEIGHT, 0.0)
+                        .with_scale(Vec3::new(POOL_SIZE, 1.0, POOL_SIZE)),
+                ),
+            ],
         ));
     }
 }
@@ -595,6 +1118,32 @@ fn stripe_bullets(
         let wanted = bullet_shape(&shapes, bullet);
         if mesh.0 != *wanted {
             mesh.0 = wanted.clone();
+        }
+    }
+}
+
+/// How long the line behind a bullet is after this much more flight. The line starts over when
+/// the bullet turns, which it only does by bouncing: a line never crosses a wall.
+fn trail_after(trail: &mut Trail, velocity: Vec2, seconds: f32) -> f32 {
+    let heading = velocity.normalize_or_zero();
+    if heading.dot(trail.heading) < 0.999 {
+        trail.length = 0.0;
+        trail.heading = heading;
+    }
+    trail.length = (trail.length + velocity.length() * seconds).min(TRAIL_LENGTH);
+    trail.length
+}
+
+fn trail_bullets(
+    time: Res<Time>,
+    bullets: Query<(&Bullet, &Children)>,
+    mut trails: Query<(&mut Trail, &mut Transform)>,
+) {
+    for (bullet, children) in &bullets {
+        for child in children.iter() {
+            if let Ok((mut trail, mut transform)) = trails.get_mut(child) {
+                transform.scale.x = trail_after(&mut trail, bullet.velocity, time.delta_secs());
+            }
         }
     }
 }
@@ -634,6 +1183,10 @@ mod tests {
         doubled.abs() / 2.0
     }
 
+    fn close(found: f32, wanted: f32) -> bool {
+        (found - wanted).abs() < 1e-3
+    }
+
     #[test]
     fn triangles_cover_every_sector_exactly() {
         for (seed, index) in (0..8).flat_map(|seed| (0..150).map(move |index| (seed, index))) {
@@ -651,6 +1204,119 @@ mod tests {
                 "seed {seed}, sector {index}"
             );
         }
+    }
+
+    #[test]
+    fn the_grid_has_a_line_every_meter_and_a_heavier_one_every_five() {
+        let (light, heavy) = theme::GRID_STRENGTH;
+        // A stretch inside a line is covered at the strength of that line.
+        assert!(close(grid_cover(0.99, 1.01), light));
+        assert!(close(grid_cover(0.0, 0.01), heavy));
+        assert!(close(grid_cover(4.99, 5.0), heavy));
+        // Between two lines there is nothing.
+        assert_eq!(grid_cover(1.4, 1.6), 0.0);
+        // Seen from far away, the lines blend into the floor.
+        let tile = grid_cover(0.0, GRID_TILE as f32);
+        assert!(tile > 0.0 && tile < 0.01, "{tile}");
+    }
+
+    #[test]
+    fn the_grid_texture_holds_every_level_of_detail() {
+        let image = grid_texture();
+        let texels: u32 = (0..image.texture_descriptor.mip_level_count)
+            .map(|level| (GRID_TEXELS >> level).pow(2))
+            .sum();
+        assert_eq!(
+            GRID_TEXELS >> (image.texture_descriptor.mip_level_count - 1),
+            1
+        );
+        assert_eq!(image.data.as_ref().unwrap().len() as u32, 4 * texels);
+    }
+
+    #[test]
+    fn the_walls_of_a_room_meet_at_its_corners() {
+        // A square room of 10 m, clockwise from its south-west corner.
+        let corners = [(0.0, 0.0), (0.0, 10.0), (10.0, 10.0), (10.0, 0.0)].map(Vec2::from);
+        let walls: Vec<(Vec2, Vec2)> = (0..4).map(|i| (corners[i], corners[(i + 1) % 4])).collect();
+        let draft = wall_drawing(&walls);
+        // The bands form a square ring around the room, with nothing missing at the corners
+        // and nothing twice.
+        let outside = 10.0 + 2.0 * WALL_THICKNESS;
+        assert!(close(draft.area(theme::WALL), outside * outside - 100.0));
+        let (lowest, highest) = draft.bounds();
+        assert!(close(lowest.x, -WALL_THICKNESS) && close(highest.x, 10.0 + WALL_THICKNESS));
+        // North is along `-z`.
+        assert!(close(lowest.z, -10.0 - WALL_THICKNESS) && close(highest.z, WALL_THICKNESS));
+    }
+
+    #[test]
+    fn a_wall_that_stops_is_cut_square() {
+        let draft = wall_drawing(&[(Vec2::ZERO, Vec2::new(0.0, 6.0))]);
+        assert!(close(draft.area(theme::WALL), 6.0 * WALL_THICKNESS));
+        // Its two faces, and one at each end.
+        let faces = 2.0 * 6.0 * WALL_HEIGHT + 2.0 * WALL_THICKNESS * WALL_HEIGHT;
+        assert!(close(draft.area(theme::WALL_SIDE), faces));
+    }
+
+    #[test]
+    fn obstacles_stay_on_their_squares() {
+        for (draft, size, height) in [
+            (block_drawing(), BLOCK_SIZE, BLOCK_HEIGHT),
+            (crate_drawing(), CRATE_SIZE, CRATE_HEIGHT),
+        ] {
+            let (lowest, highest) = draft.bounds();
+            // The line around the foot is the only thing outside the footprint.
+            let reach = size / 2.0 + draft::LINE;
+            assert!(close(lowest.x, -reach) && close(highest.x, reach));
+            assert!(close(lowest.z, -reach) && close(highest.z, reach));
+            assert!(reach <= BLOCK_SIZE / 2.0 + draft::LINE);
+            assert!(close(lowest.y, 0.0) && close(highest.y, height + LIFT));
+        }
+        // Eight strips cross the top of a block.
+        assert!(block_drawing().area(theme::HATCH) > 8.0 * HATCH_WIDTH);
+    }
+
+    #[test]
+    fn the_chain_of_a_barrier_spans_it() {
+        for length in [8.0, 14.0, 17.3] {
+            let (lowest, highest) = barrier_drawing(length).bounds();
+            assert!(close(lowest.x, -length / 2.0) && close(highest.x, length / 2.0));
+            assert!(close(highest.y, BARRIER_HEIGHT));
+        }
+    }
+
+    #[test]
+    fn a_sector_is_dormant_until_the_players_reach_it() {
+        let run = |sector| Run {
+            seed_text: "TEST".into(),
+            seed: 1,
+            sector,
+            cleared: 0,
+            checkpoint: 0,
+            lives: 3,
+            kills: 0,
+            ticks: 0,
+            phase: tanku_core::sim::RunPhase::Playing,
+        };
+        assert!(is_dormant(5, Some(&run(4))));
+        assert!(!is_dormant(5, Some(&run(5))));
+        // The sectors behind the players stay lit until they are unloaded.
+        assert!(!is_dormant(4, Some(&run(5))));
+        // Without a run, nothing waits for anybody.
+        assert!(!is_dormant(5, None));
+    }
+
+    #[test]
+    fn a_trail_grows_as_the_bullet_flies_and_starts_over_at_a_bounce() {
+        let mut trail = Trail::default();
+        let east = Vec2::X * 9.0;
+        assert!(close(trail_after(&mut trail, east, 0.1), 0.9));
+        assert!(close(trail_after(&mut trail, east, 0.05), 1.35));
+        // It stops growing at its full length.
+        assert!(close(trail_after(&mut trail, east, 1.0), TRAIL_LENGTH));
+        // A bounce turns the bullet: the line behind it is on the other side of the wall.
+        let north_east = Vec2::new(9.0, 9.0).normalize() * 9.0;
+        assert!(close(trail_after(&mut trail, north_east, 0.1), 0.9));
     }
 
     /// The triangles of a bullet, and whether each is part of a stripe.

@@ -2,7 +2,7 @@
 
 use std::f32::consts::FRAC_PI_2;
 
-use bevy::{light::GlobalAmbientLight, prelude::*, window::PrimaryWindow};
+use bevy::{core_pipeline::tonemapping::Tonemapping, prelude::*, window::PrimaryWindow};
 use tanku_core::sim::Player;
 
 use crate::{scene, settings::Settings, theme};
@@ -51,6 +51,20 @@ impl View {
         self.focus
     }
 
+    /// Shows a place, from closer or from further than the game does if a span is given: the
+    /// meters of ground from the bottom to the top of the screen. The view stays there until
+    /// a player's tank takes it back.
+    pub fn show(&mut self, point: Vec2, span: Option<f32>) {
+        self.focus = point;
+        self.span = span;
+    }
+
+    /// How far the view is turned right now, in radians: it turns smoothly from one quarter
+    /// to the next.
+    pub fn yaw(&self) -> f32 {
+        self.yaw
+    }
+
     /// Looks at a point for a while instead of following the player.
     #[cfg(feature = "development")]
     pub fn look_at(&mut self, point: Vec2, seconds: f32) {
@@ -70,31 +84,21 @@ impl View {
 pub fn plugin(app: &mut App) {
     app.init_resource::<View>()
         .insert_resource(ClearColor(theme::VOID))
-        .insert_resource(GlobalAmbientLight {
-            brightness: 600.0,
-            ..default()
-        })
         .add_systems(Startup, setup)
         .add_systems(Update, follow.after(scene::place));
 }
 
 fn setup(mut commands: Commands) {
+    // Nothing is lit, and no tone mapping comes between the colors of the theme and the screen.
     commands.spawn((
         MainCamera,
         Camera3d::default(),
+        Tonemapping::None,
         Projection::Perspective(PerspectiveProjection {
             fov: FIELD_OF_VIEW.to_radians(),
             ..default()
         }),
         Transform::from_xyz(0.0, 70.0, 30.0).looking_at(Vec3::ZERO, Vec3::Y),
-    ));
-    commands.spawn((
-        DirectionalLight {
-            illuminance: 9_000.0,
-            shadow_maps_enabled: true,
-            ..default()
-        },
-        Transform::from_xyz(-6.0, 20.0, 9.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
 }
 

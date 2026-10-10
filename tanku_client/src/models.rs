@@ -2,10 +2,11 @@
 //!
 //! Every stat has its own visual channel, so that players can read a tank before fighting it.
 //! A model points along `+x` and stands on the ground.
+//!
+//! A tank is two drawings, its hull and its turret. The parts in the color of the tank are
+//! filled with it, and the others are dark shapes edged with the pale lines of the sheet.
 
-use std::f32::consts::FRAC_PI_2;
-
-use bevy::{light::NotShadowCaster, prelude::*};
+use bevy::prelude::*;
 use tanku_core::{
     rules::SHIELD_RADIUS,
     sim::{Enemy, Motion, Player, Shield, ShieldState, Tank},
@@ -13,14 +14,22 @@ use tanku_core::{
 };
 
 use crate::{
-    scene::{self, Paints, Shapes},
+    draft::{Draft, LIFT, LINE},
+    scene::{self, Shapes},
     theme,
 };
 
 /// Height of the turret ring above the ground.
-const TURRET_HEIGHT: f32 = 0.65;
+pub const TURRET_HEIGHT: f32 = 0.65;
+/// Height and width of the hull, whose length depends on the tracks.
+const HULL: Vec2 = Vec2::new(0.4, 1.15);
+/// Radius of the base of a tank that can't move, and how far tracks reach past the hull.
+const BASE_RADIUS: f32 = 0.88;
+const TRACK_OVERHANG: f32 = 0.25;
 /// Width of the white edge that shows a shield, at its first and at its last level.
 const SHIELD_EDGE: (f32, f32) = (0.06, 0.12);
+/// Width of the lines along the barrel, which is too narrow for the lines of the rest.
+const BARREL_LINE: f32 = 0.035;
 
 #[derive(Component)]
 struct Hull;
@@ -31,18 +40,39 @@ struct Turret;
 #[derive(Component)]
 struct Bubble;
 
-/// The paint of a tank, which dims while the tank is dormant.
+/// The ink of a tank, which dims while the tank is dormant.
 #[derive(Component)]
-struct Livery {
-    paint: Handle<StandardMaterial>,
-    color: Color,
+struct Livery(Handle<StandardMaterial>);
+
+/// What every shield bubble is made of.
+#[derive(Resource)]
+struct Glass {
+    bubble: Handle<StandardMaterial>,
+    edge: Handle<StandardMaterial>,
 }
 
 pub fn plugin(app: &mut App) {
-    app.add_systems(
+    app.add_systems(Startup, setup).add_systems(
         Update,
         (build, (pose, dim, shield)).chain().before(scene::place),
     );
+}
+
+fn setup(mut commands: Commands, mut materials: ResMut<Assets<StandardMaterial>>) {
+    // The bubble is faint, so that the tank shows through it. A bright line marks how far
+    // it reaches.
+    let bubble = materials.add(StandardMaterial {
+        base_color: theme::SHIELD.with_alpha(0.1),
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        ..default()
+    });
+    let edge = materials.add(StandardMaterial {
+        base_color: theme::SHIELD,
+        unlit: true,
+        ..default()
+    });
+    commands.insert_resource(Glass { bubble, edge });
 }
 
 /// The color of an enemy: its hue tells where most of its points went, and its intensity tells
@@ -59,9 +89,13 @@ pub fn enemy_color(genome: &Genome) -> Color {
 }
 
 /// The color of the sight and of the tip of the barrel: a light tint of the hue of the body.
-/// These parts glow, which makes them paler still.
 fn accent_color(body: Color) -> Color {
     Color::hsl(Hsla::from(body).hue, 1.0, 0.75)
+}
+
+/// Length of the hull: agile tanks are short.
+fn hull_length(genome: &Genome) -> f32 {
+    2.0 - 0.1 * genome.level(Stat::Tracks) as f32
 }
 
 /// Radius of the turret: small turrets turn fast.
@@ -76,69 +110,156 @@ fn shield_edge(level: u8) -> f32 {
     SHIELD_EDGE.0 + (SHIELD_EDGE.1 - SHIELD_EDGE.0) * (level.max(1) - 1) as f32 / steps
 }
 
-/// Adds the parts of a tank model as children of `parent`.
-struct Assembly<'a, 'w> {
-    parent: &'a mut ChildSpawnerCommands<'w>,
-    shapes: &'a Shapes,
+/// The drawing of the hull of a tank, with what it carries: tracks or a base, the mine rack,
+/// the shield disk and the antennas.
+pub fn hull_drawing(genome: &Genome, color: Color) -> Draft {
+    let mut draft = Draft::default();
+    let level = |stat: Stat| genome.level(stat) as f32;
+    let dark = theme::DARK_METAL;
+    let length = hull_length(genome);
+    if genome.level(Stat::Engine) == 0 {
+        // Engine: a tank that can't move sits on a fixed base.
+        let (radius, height) = (BASE_RADIUS, 0.26);
+        draft.post(Vec3::Y * height / 2.0, radius, height, dark, dark);
+        let top = Vec3::Y * (height + LIFT);
+        draft.ring(top, (radius - LINE, radius), (1, 1.0), theme::LINE);
+        draft.ring(
+            Vec3::Y * LIFT,
+            (radius, radius + LINE),
+            (1, 1.0),
+            theme::LINE,
+        );
+    } else {
+        // Engine: the faster the tank, the bigger its tracks.
+        let (high, wide) = (
+            0.34 + 0.035 * level(Stat::Engine),
+            0.24 + 0.03 * level(Stat::Engine),
+        );
+        for side in [-1.0, 1.0] {
+            let center = Vec3::new(0.0, high / 2.0, side * (0.52 + wide / 2.0));
+            let size = Vec3::new(length + TRACK_OVERHANG, high, wide);
+            draft.outlined(center, size, (dark, dark, theme::LINE));
+        }
+    }
+    let deck = TURRET_HEIGHT;
+    draft.solid(
+        Vec3::new(0.0, deck - HULL.x / 2.0, 0.0),
+        Vec3::new(length, HULL.x, HULL.y),
+        color,
+        theme::side(color),
+    );
+    draft.frame(
+        Vec3::Y * (deck + LIFT),
+        Vec2::new(length, HULL.y),
+        LINE,
+        theme::LINE,
+    );
+    // Mines: a rack at the rear, one mine per slot.
+    let mines = genome.mines();
+    for slot in 0..mines {
+        let across = (slot as f32 - (mines as f32 - 1.0) / 2.0) * 0.27;
+        let center = Vec3::new(-length / 2.0 + 0.16, deck + 0.04, across);
+        draft.post(center, 0.11, 0.08, theme::LINE, theme::LINE);
+        draft.disc(center + Vec3::Y * (0.04 + LIFT), 0.075, dark);
+    }
+    // Shield: a white disk under the turret, of which only the edge shows. The edge is wider
+    // with level.
+    let shield_level = genome.level(Stat::Shield);
+    if shield_level > 0 {
+        let radius = turret_radius(genome) + shield_edge(shield_level);
+        let center = Vec3::new(0.0, deck + 0.02, 0.0);
+        draft.post(center, radius, 0.04, theme::SHIELD, theme::SHIELD);
+    }
+    // Brain: one antenna per tier.
+    for tier in 0..genome.brain() {
+        let side = if tier % 2 == 0 { 1.0 } else { -1.0 };
+        let back = -length / 2.0 + 0.1 + 0.22 * (tier / 2) as f32;
+        let foot = Vec3::new(back, deck, side * 0.47);
+        let mast = Vec3::new(LINE, 0.7, LINE);
+        draft.solid(foot + Vec3::Y * 0.35, mast, theme::LINE, theme::LINE);
+        draft.post(foot + Vec3::Y * 0.71, 0.06, 0.1, Color::WHITE, Color::WHITE);
+    }
+    draft
 }
 
-impl Assembly<'_, '_> {
-    fn part(
-        &mut self,
-        shape: &Handle<Mesh>,
-        paint: &Handle<StandardMaterial>,
-        transform: Transform,
-    ) {
-        self.parent.spawn((
-            Mesh3d(shape.clone()),
-            MeshMaterial3d(paint.clone()),
-            transform,
-        ));
+/// The drawing of the turret of a tank, with what it carries: the barrel with its rings and
+/// its tip, the drum, the vents and the sight. Heights are above the turret ring.
+pub fn turret_drawing(genome: &Genome, color: Color) -> Draft {
+    let mut draft = Draft::default();
+    let level = |stat: Stat| genome.level(stat) as f32;
+    let (side, accent, dark) = (theme::side(color), accent_color(color), theme::DARK_METAL);
+    let radius = turret_radius(genome);
+    // Magazine: a drum behind the turret, one segment per round. The segments stand on a
+    // plate, whose pale top shows around them and between them.
+    let rounds = genome.magazine();
+    let (first, pitch) = (-radius - 0.09, 0.12);
+    let last = first - pitch * (rounds as f32 - 1.0);
+    let segment = Vec3::new(0.09, 0.24, 0.36);
+    draft.solid(
+        Vec3::new((first + last) / 2.0, 0.155, 0.0),
+        Vec3::new(
+            first - last + segment.x + 2.0 * LINE,
+            0.23,
+            segment.z + 2.0 * LINE,
+        ),
+        theme::LINE,
+        dark,
+    );
+    for round in 0..rounds {
+        let back = first - pitch * round as f32;
+        draft.solid(Vec3::new(back, 0.16, 0.0), segment, dark, dark);
     }
-
-    fn cuboid(&mut self, paint: &Handle<StandardMaterial>, center: Vec3, size: Vec3) {
-        let shape = self.shapes.cube.clone();
-        self.part(
-            &shape,
-            paint,
-            Transform::from_translation(center).with_scale(size),
-        );
+    // Muzzle: the faster the bullet, the longer the barrel.
+    let barrel = 0.6 + 0.1 * level(Stat::Muzzle);
+    let tip = radius - 0.1 + barrel;
+    let middle = Vec3::new(tip - barrel / 2.0, 0.18, 0.0);
+    draft.solid(middle, Vec3::new(barrel, 0.16, 0.16), dark, dark);
+    draft.frame(
+        middle + Vec3::Y * (0.08 + LIFT),
+        Vec2::new(barrel, 0.16),
+        BARREL_LINE,
+        theme::LINE,
+    );
+    // Ricochet: one ring around the muzzle per bounce.
+    for ring in 0..genome.bounces() {
+        let center = Vec3::new(tip - 0.08 - 0.13 * ring as f32, 0.18, 0.0);
+        draft.solid(center, Vec3::new(0.06, 0.3, 0.3), color, side);
     }
-
-    /// A cylinder standing on its axis.
-    fn post(&mut self, paint: &Handle<StandardMaterial>, center: Vec3, radius: f32, height: f32) {
-        let shape = self.shapes.cylinder.clone();
-        let scale = Vec3::new(2.0 * radius, height, 2.0 * radius);
-        self.part(
-            &shape,
-            paint,
-            Transform::from_translation(center).with_scale(scale),
-        );
+    // Piercing: a pointed tip on the barrel.
+    if genome.piercing() > 0 {
+        draft.point(Vec3::new(tip - 0.02, 0.18, 0.0), 0.1, 0.32, accent);
     }
-
-    /// A cylinder lying along `x`.
-    fn tube(&mut self, paint: &Handle<StandardMaterial>, center: Vec3, radius: f32, length: f32) {
-        let shape = self.shapes.cylinder.clone();
-        let transform = Transform {
-            translation: center,
-            rotation: Quat::from_rotation_z(-FRAC_PI_2),
-            scale: Vec3::new(2.0 * radius, length, 2.0 * radius),
-        };
-        self.part(&shape, paint, transform);
+    let roof = 0.32;
+    draft.post(Vec3::new(0.0, roof / 2.0, 0.0), radius, roof, color, side);
+    draft.ring(
+        Vec3::Y * (roof + LIFT),
+        (radius - LINE, radius),
+        (1, 1.0),
+        theme::LINE,
+    );
+    // Loader: vents on the turret sides, more with level.
+    for vent in 0..genome.level(Stat::Loader) {
+        let flank = if vent % 2 == 0 { 1.0 } else { -1.0 };
+        let along = -0.25 + 0.15 * (vent / 2) as f32;
+        let center = Vec3::new(along, roof + 0.04, flank * radius * 0.7);
+        draft.solid(center, Vec3::new(0.1, 0.08, 0.12), dark, dark);
     }
-
-    fn ball(&mut self, paint: &Handle<StandardMaterial>, center: Vec3, radius: f32) {
-        let shape = self.shapes.sphere.clone();
-        let transform = Transform::from_translation(center).with_scale(Vec3::splat(2.0 * radius));
-        self.part(&shape, paint, transform);
+    // Ballistics: a sight on the turret, one lens per tier.
+    let lenses = genome.ballistics();
+    for lens in 0..lenses {
+        let across = (lens as f32 - (lenses as f32 - 1.0) / 2.0) * 0.17;
+        let center = Vec3::new(radius * 0.45, roof + 0.06, across);
+        draft.solid(center, Vec3::new(0.14, 0.11, 0.11), accent, accent);
     }
+    draft
 }
 
 fn build(
     mut commands: Commands,
     tanks: Query<(Entity, &Tank, &Motion, Has<Player>), Added<Tank>>,
     shapes: Res<Shapes>,
-    paints: Res<Paints>,
+    glass: Res<Glass>,
+    mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     for (entity, tank, motion, is_player) in &tanks {
@@ -148,170 +269,40 @@ fn build(
         } else {
             enemy_color(genome)
         };
-        let body = materials.add(StandardMaterial {
-            base_color: color,
-            perceptual_roughness: 0.6,
-            ..default()
-        });
-        let mut light = |color: Color| {
-            materials.add(StandardMaterial {
-                base_color: color,
-                emissive: color.to_linear() * 3.0,
-                ..default()
-            })
-        };
-        let (white, accent, shield) = (
-            light(Color::WHITE),
-            light(accent_color(color)),
-            light(theme::SHIELD),
-        );
-        let bubble = materials.add(StandardMaterial {
-            base_color: theme::SHIELD.with_alpha(0.16),
-            alpha_mode: AlphaMode::Blend,
-            unlit: true,
-            ..default()
-        });
-        let dark = &paints.dark;
-        let level = |stat: Stat| genome.level(stat) as f32;
-
+        let ink = materials.add(scene::ink());
         commands
             .entity(entity)
             .insert((
                 Transform::default(),
                 Visibility::default(),
-                Livery {
-                    paint: body.clone(),
-                    color,
-                },
+                Livery(ink.clone()),
             ))
             .with_children(|root| {
-                // Tracks: agile tanks are short.
-                let length = 2.0 - 0.1 * level(Stat::Tracks);
                 root.spawn((
                     Hull,
+                    Mesh3d(meshes.add(hull_drawing(genome, color).build())),
+                    MeshMaterial3d(ink.clone()),
                     Transform::from_rotation(scene::facing(motion.hull)),
-                    Visibility::default(),
-                ))
-                .with_children(|hull| {
-                    let mut hull = Assembly {
-                        parent: hull,
-                        shapes: &shapes,
-                    };
-                    hull.cuboid(
-                        &body,
-                        Vec3::new(0.0, 0.45, 0.0),
-                        Vec3::new(length, 0.4, 1.15),
-                    );
-                    if genome.level(Stat::Engine) == 0 {
-                        // Engine: a tank that can't move sits on a fixed base.
-                        hull.post(dark, Vec3::new(0.0, 0.13, 0.0), 0.88, 0.26);
-                    } else {
-                        // Engine: the faster the tank, the bigger its tracks.
-                        let (high, wide) = (
-                            0.34 + 0.035 * level(Stat::Engine),
-                            0.24 + 0.03 * level(Stat::Engine),
-                        );
-                        for side in [-1.0, 1.0] {
-                            let center = Vec3::new(0.0, high / 2.0, side * (0.52 + wide / 2.0));
-                            hull.cuboid(dark, center, Vec3::new(length + 0.25, high, wide));
-                        }
-                    }
-                    // Mines: a rack at the rear, one mine per slot.
-                    let mines = genome.mines();
-                    for slot in 0..mines {
-                        let across = (slot as f32 - (mines as f32 - 1.0) / 2.0) * 0.27;
-                        let center = Vec3::new(-length / 2.0 + 0.16, 0.69, across);
-                        hull.post(dark, center, 0.11, 0.08);
-                    }
-                    // Shield: a white disk under the turret, of which only the edge shows.
-                    // The edge is wider with level.
-                    let shield_level = genome.level(Stat::Shield);
-                    if shield_level > 0 {
-                        let radius = turret_radius(genome) + shield_edge(shield_level);
-                        hull.post(&shield, Vec3::new(0.0, 0.67, 0.0), radius, 0.04);
-                    }
-                    // Brain: one antenna per tier.
-                    for tier in 0..genome.brain() {
-                        let side = if tier % 2 == 0 { 1.0 } else { -1.0 };
-                        let back = -length / 2.0 + 0.1 + 0.22 * (tier / 2) as f32;
-                        hull.post(dark, Vec3::new(back, 1.0, side * 0.47), 0.02, 0.7);
-                        hull.ball(&white, Vec3::new(back, 1.36, side * 0.47), 0.05);
-                    }
-                });
-
-                let pivot = Transform {
-                    translation: Vec3::Y * TURRET_HEIGHT,
-                    rotation: scene::facing(motion.turret),
-                    ..default()
-                };
-                root.spawn((Turret, pivot, Visibility::default()))
-                    .with_children(|turret| {
-                        let mut turret = Assembly {
-                            parent: turret,
-                            shapes: &shapes,
-                        };
-                        let radius = turret_radius(genome);
-                        turret.post(&body, Vec3::new(0.0, 0.16, 0.0), radius, 0.32);
-                        // Muzzle: the faster the bullet, the longer the barrel.
-                        let barrel = 0.6 + 0.1 * level(Stat::Muzzle);
-                        let tip = radius - 0.1 + barrel;
-                        turret.tube(dark, Vec3::new(tip - barrel / 2.0, 0.18, 0.0), 0.08, barrel);
-                        // Ricochet: one ring around the muzzle per bounce.
-                        for ring in 0..genome.bounces() {
-                            let transform = Transform {
-                                translation: Vec3::new(tip - 0.08 - 0.13 * ring as f32, 0.18, 0.0),
-                                rotation: Quat::from_rotation_z(FRAC_PI_2),
-                                scale: Vec3::splat(0.3),
-                            };
-                            turret.part(&shapes.ring, &body, transform);
-                        }
-                        // Piercing: a pointed tip on the barrel.
-                        if genome.piercing() > 0 {
-                            let transform = Transform {
-                                translation: Vec3::new(tip + 0.14, 0.18, 0.0),
-                                rotation: Quat::from_rotation_z(-FRAC_PI_2),
-                                scale: Vec3::new(0.2, 0.32, 0.2),
-                            };
-                            turret.part(&shapes.cone, &accent, transform);
-                        }
-                        // Magazine: a drum behind the turret, one segment per round.
-                        for round in 0..genome.magazine() {
-                            let back = -radius - 0.09 - 0.12 * round as f32;
-                            turret.cuboid(
-                                dark,
-                                Vec3::new(back, 0.16, 0.0),
-                                Vec3::new(0.09, 0.24, 0.36),
-                            );
-                        }
-                        // Loader: vents on the turret sides, more with level.
-                        for vent in 0..genome.level(Stat::Loader) {
-                            let side = if vent % 2 == 0 { 1.0 } else { -1.0 };
-                            let along = -0.25 + 0.15 * (vent / 2) as f32;
-                            let center = Vec3::new(along, 0.36, side * radius * 0.7);
-                            turret.cuboid(dark, center, Vec3::new(0.1, 0.08, 0.12));
-                        }
-                        // Ballistics: a sight on the turret, one lens per tier.
-                        let lenses = genome.ballistics();
-                        for lens in 0..lenses {
-                            let across = (lens as f32 - (lenses as f32 - 1.0) / 2.0) * 0.17;
-                            let center = Vec3::new(radius * 0.45, 0.38, across);
-                            turret.tube(&accent, center, 0.055, 0.14);
-                        }
-                    });
-
-                // The bubble is faint and casts no shadow, so that the tank shows through it.
-                // A bright line marks how far it reaches.
+                ));
+                root.spawn((
+                    Turret,
+                    Mesh3d(meshes.add(turret_drawing(genome, color).build())),
+                    MeshMaterial3d(ink.clone()),
+                    Transform {
+                        translation: Vec3::Y * TURRET_HEIGHT,
+                        rotation: scene::facing(motion.turret),
+                        ..default()
+                    },
+                ));
                 root.spawn((
                     Bubble,
                     Mesh3d(shapes.sphere.clone()),
-                    MeshMaterial3d(bubble),
+                    MeshMaterial3d(glass.bubble.clone()),
                     Transform::from_xyz(0.0, 0.5, 0.0).with_scale(Vec3::splat(2.0 * SHIELD_RADIUS)),
                     Visibility::Hidden,
-                    NotShadowCaster,
                     children![(
                         Mesh3d(shapes.hairline.clone()),
-                        MeshMaterial3d(shield.clone()),
-                        NotShadowCaster,
+                        MeshMaterial3d(glass.edge.clone()),
                     )],
                 ));
             });
@@ -336,19 +327,17 @@ fn pose(
     }
 }
 
-/// Dormant enemies are powered down: their paint is dull until they wake up.
+/// Dormant enemies are powered down: their drawing is dull until they wake up.
 fn dim(
     enemies: Query<(&Enemy, &Livery), Changed<Enemy>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     for (enemy, livery) in &enemies {
-        if let Some(mut material) = materials.get_mut(&livery.paint) {
-            // Darker, but of the same hue: the hue is how players read a tank.
-            let dull = livery.color.to_linear() * 0.45;
+        if let Some(mut material) = materials.get_mut(&livery.0) {
             material.base_color = if enemy.awake {
-                livery.color
+                Color::WHITE
             } else {
-                dull.with_alpha(1.0).into()
+                theme::dormant()
             };
         }
     }
@@ -385,6 +374,10 @@ fn shield(
 mod tests {
     use super::*;
 
+    fn close(found: f32, wanted: f32) -> bool {
+        (found - wanted).abs() < 1e-3
+    }
+
     #[test]
     fn the_sight_and_the_tip_are_paler_than_the_body_and_of_its_hue() {
         // Hard mode has the largest budgets.
@@ -404,5 +397,60 @@ mod tests {
             assert!(shield_edge(level) < shield_edge(level + 1));
         }
         assert!(SHIELD_EDGE.1 <= 0.12, "the edge stays thin");
+    }
+
+    #[test]
+    fn the_deck_of_the_hull_is_in_the_color_of_the_tank() {
+        let color = theme::PLAYER;
+        let draft = hull_drawing(&Genome::PLAYER, color);
+        assert!(close(
+            draft.area(color),
+            hull_length(&Genome::PLAYER) * HULL.y
+        ));
+        // The top of the deck is where the turret turns.
+        assert!(draft.area(theme::side(color)) > 0.0);
+    }
+
+    #[test]
+    fn a_tank_without_an_engine_stands_on_a_round_base() {
+        let still = hull_drawing(&Genome::empty(10), theme::PLAYER);
+        let mut moving = Genome::empty(10);
+        moving.set(Stat::Engine, 7);
+        let moving = hull_drawing(&moving, theme::PLAYER);
+        // The base is round, with a line around its foot.
+        let (lowest, highest) = still.bounds();
+        assert!(close(highest.z - lowest.z, 2.0 * (BASE_RADIUS + LINE)));
+        // Tracks reach past both ends of the hull, with a line around their foot too.
+        let (lowest, highest) = moving.bounds();
+        let tracks = hull_length(&Genome::empty(10)) + TRACK_OVERHANG;
+        assert!(close(highest.x - lowest.x, tracks + 2.0 * LINE));
+    }
+
+    #[test]
+    fn the_barrel_gets_longer_with_the_muzzle() {
+        let reach = |level: u8| {
+            let mut genome = Genome::empty(50);
+            genome.set(Stat::Muzzle, level);
+            turret_drawing(&genome, theme::PLAYER).bounds().1.x
+        };
+        for level in 0..Stat::Muzzle.max_level() {
+            assert!(close(reach(level + 1) - reach(level), 0.1));
+        }
+    }
+
+    #[test]
+    fn the_drum_has_one_segment_for_each_round() {
+        let back_of_the_drum = |level: u8| {
+            let mut genome = Genome::empty(50);
+            genome.set(Stat::Magazine, level);
+            turret_drawing(&genome, theme::PLAYER).bounds().0.x
+        };
+        // Each round pushes the back of the drum one segment further.
+        for level in 0..Stat::Magazine.max_level() {
+            assert!(close(
+                back_of_the_drum(level) - back_of_the_drum(level + 1),
+                0.12
+            ));
+        }
     }
 }

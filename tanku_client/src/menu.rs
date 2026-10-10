@@ -2,14 +2,19 @@
 
 use bevy::prelude::*;
 use tanku_core::{
-    rules::{PLAYTEST_LAST_SECTOR, TICK_RATE},
+    rules::{PLAYTEST_LAST_SECTOR, SHIELD_RADIUS, TANK_RADIUS, TICK_RATE},
     seed::{self, VERSION},
     sim::{Playtest, Run, RunRequest, SimEvent},
+    stats::Genome,
 };
 
 use crate::{
     Overlay, Screen,
+    camera::View,
     cli::Options,
+    draft::{Draft, LIFT, LINE},
+    models,
+    scene::{self, Paints},
     settings::{Action, Binding, Records, Settings},
     theme,
 };
@@ -18,6 +23,13 @@ use crate::{
 const MODE: &str = "normal";
 /// Seconds between the end of a run and the game over screen.
 const GAME_OVER_DELAY: f32 = 1.4;
+/// Where the tank of the main menu stands: far from any run, so that the view jumps back to
+/// the game when one starts.
+const EXHIBIT_AT: Vec2 = Vec2::new(0.0, -500.0);
+/// Meters of ground that the main menu shows from the bottom to the top of the screen.
+const EXHIBIT_SPAN: f32 = 7.5;
+/// Where the tank stands on the screen of the main menu, in meters from its middle.
+const EXHIBIT_PLACE: Vec2 = Vec2::new(3.2, 0.2);
 
 /// What a button does.
 #[derive(Component, Clone, Copy, PartialEq)]
@@ -44,6 +56,18 @@ enum Press {
     /// In a playtest: skips to that sector.
     Skip,
 }
+
+/// The button that the player most likely wants. It is filled with the accent.
+#[derive(Component)]
+struct Primary;
+
+/// What the main menu shows behind its buttons: the sheet, and the player's tank on it.
+#[derive(Component)]
+struct Exhibit;
+
+/// The turret of that tank, with the angle that it looks around.
+#[derive(Component)]
+struct ExhibitTurret(f32);
 
 #[derive(Component)]
 struct PauseRoot;
@@ -77,6 +101,7 @@ pub fn plugin(app: &mut App) {
         .init_resource::<Outcome>()
         .insert_resource(Destination(1))
         .add_systems(OnEnter(Screen::Menu), main_menu)
+        .add_systems(OnExit(Screen::Menu), put_the_exhibit_away)
         .add_systems(OnEnter(Screen::GameOver), game_over)
         .add_systems(
             OnTransition {
@@ -97,11 +122,42 @@ pub fn plugin(app: &mut App) {
                 hover,
                 pause_time,
                 watch_run,
+                (exhibit, look_around)
+                    .chain()
+                    .run_if(in_state(Screen::Menu)),
             ),
         );
 }
 
-/// A screen-wide container with a column of content in its middle.
+/// The fine line around the screen, as around a drawing.
+fn sheet_edge() -> impl Bundle {
+    (
+        Node {
+            position_type: PositionType::Absolute,
+            left: px(16),
+            right: px(16),
+            top: px(16),
+            bottom: px(16),
+            border: UiRect::all(px(1)),
+            ..default()
+        },
+        BorderColor::all(theme::RULE.with_alpha(0.35)),
+    )
+}
+
+/// A box with a ruled edge.
+fn ruled(node: Node) -> impl Bundle {
+    (
+        Node {
+            border: UiRect::all(px(1)),
+            ..node
+        },
+        BackgroundColor(theme::SURFACE),
+        BorderColor::all(theme::RULE),
+    )
+}
+
+/// A screen-wide container with a sheet in its middle, which holds a column of content.
 fn panel(
     commands: &mut Commands,
     scope: impl Bundle,
@@ -122,25 +178,21 @@ fn panel(
             GlobalZIndex(10),
         ))
         .with_children(|root| {
-            root.spawn((
-                Node {
-                    flex_direction: FlexDirection::Column,
-                    align_items: AlignItems::Stretch,
-                    row_gap: px(10),
-                    padding: UiRect::all(px(28)),
-                    min_width: px(340),
-                    border_radius: BorderRadius::all(px(12)),
-                    ..default()
-                },
-                BackgroundColor(theme::SURFACE),
-            ))
+            root.spawn(ruled(Node {
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Stretch,
+                row_gap: px(10),
+                padding: UiRect::all(px(28)),
+                min_width: px(380),
+                ..default()
+            }))
             .with_children(content);
         });
 }
 
 fn heading(parent: &mut ChildSpawnerCommands, content: &str) {
     parent.spawn((
-        theme::text(content, 40.0, theme::TEXT),
+        theme::text(content.to_uppercase(), 40.0, theme::TEXT),
         Node {
             margin: UiRect::bottom(px(8)),
             ..default()
@@ -155,9 +207,9 @@ fn line(parent: &mut ChildSpawnerCommands, content: impl Into<String>, color: Co
 fn button_node(width: Val) -> Node {
     Node {
         width,
-        padding: UiRect::axes(px(16), px(9)),
+        padding: UiRect::axes(px(16), px(10)),
         justify_content: JustifyContent::Center,
-        border_radius: BorderRadius::all(px(7)),
+        border: UiRect::all(px(1)),
         ..default()
     }
 }
@@ -168,7 +220,21 @@ fn button(parent: &mut ChildSpawnerCommands, content: impl Into<String>, press: 
         press,
         button_node(Val::Auto),
         BackgroundColor(theme::SURFACE_RAISED),
+        BorderColor::all(theme::RULE),
         children![theme::text(content, 20.0, theme::TEXT)],
+    ));
+}
+
+/// The button that the player most likely wants.
+fn primary(parent: &mut ChildSpawnerCommands, content: impl Into<String>, press: Press) {
+    parent.spawn((
+        Button,
+        Primary,
+        press,
+        button_node(Val::Auto),
+        BackgroundColor(theme::ACCENT),
+        BorderColor::all(theme::ACCENT),
+        children![theme::text(content, 20.0, theme::TEXT_ON_ACCENT)],
     ));
 }
 
@@ -176,7 +242,7 @@ fn button(parent: &mut ChildSpawnerCommands, content: impl Into<String>, press: 
 fn placeholder(parent: &mut ChildSpawnerCommands, content: &str) {
     parent.spawn((
         button_node(Val::Auto),
-        BackgroundColor(theme::SURFACE_RAISED.with_alpha(0.4)),
+        BorderColor::all(theme::RULE_DIM),
         children![theme::text(
             format!("{content} (later)"),
             20.0,
@@ -220,7 +286,31 @@ fn small(parent: &mut ChildSpawnerCommands, content: impl Into<String>, width: f
             ..button_node(px(width))
         },
         BackgroundColor(theme::SURFACE_RAISED),
+        BorderColor::all(theme::RULE),
         children![theme::text(content, 15.0, theme::TEXT)],
+    ));
+}
+
+/// A figure of a run with its name above it, in a row of figures.
+fn figure(parent: &mut ChildSpawnerCommands, name: &str, value: String, last: bool) {
+    parent.spawn((
+        Node {
+            flex_grow: 1.0,
+            flex_direction: FlexDirection::Column,
+            row_gap: px(4),
+            padding: UiRect::axes(px(12), px(8)),
+            border: if last {
+                UiRect::ZERO
+            } else {
+                UiRect::right(px(1))
+            },
+            ..default()
+        },
+        BorderColor::all(theme::RULE),
+        children![
+            theme::text(name, 12.0, theme::TEXT_DIM),
+            theme::text(value, 36.0, theme::TEXT),
+        ],
     ));
 }
 
@@ -244,40 +334,200 @@ fn main_menu(
     playtest: Option<Res<Playtest>>,
     options: Res<Options>,
 ) {
-    panel(
-        &mut commands,
-        DespawnOnExit(Screen::Menu),
-        Color::NONE,
-        |parent| {
-            heading(parent, "TANKU");
-            button(parent, "Solo", Press::Solo);
-            placeholder(parent, "Host a game");
-            placeholder(parent, "Join a game");
-            placeholder(parent, "Achievements");
-            button(parent, "Settings", Press::OpenSettings);
-            // A browser tab is closed by the browser.
-            if cfg!(not(target_arch = "wasm32")) {
-                button(parent, "Quit", Press::Quit);
-            }
-            line(parent, record_line(&records), theme::TEXT_DIM);
-            line(parent, format!("Version {VERSION}"), theme::TEXT_DIM);
-            if playtest.is_some() {
-                line(
-                    parent,
-                    "Playtest: cheats are in the pause menu",
-                    theme::ACCENT,
-                );
-                line(parent, "A playtest sets no record", theme::TEXT_DIM);
-                if let Some(seed) = &options.seed {
+    commands
+        .spawn((
+            DespawnOnExit(Screen::Menu),
+            Node {
+                width: percent(100),
+                height: percent(100),
+                ..default()
+            },
+            GlobalZIndex(10),
+            children![sheet_edge()],
+        ))
+        .with_children(|root| {
+            // The menu is the left margin of the sheet. The tank is drawn on its right.
+            root.spawn(Node {
+                position_type: PositionType::Absolute,
+                left: px(120),
+                top: px(90),
+                width: px(400),
+                flex_direction: FlexDirection::Column,
+                row_gap: px(10),
+                ..default()
+            })
+            .with_children(|parent| {
+                line(parent, format!("VERSION {VERSION}"), theme::TEXT_DIM);
+                parent.spawn((
+                    theme::text("TANKU", 112.0, theme::TEXT),
+                    Node {
+                        margin: UiRect::bottom(px(14)),
+                        ..default()
+                    },
+                ));
+                primary(parent, "Solo", Press::Solo);
+                placeholder(parent, "Host a game");
+                placeholder(parent, "Join a game");
+                placeholder(parent, "Achievements");
+                button(parent, "Settings", Press::OpenSettings);
+                // A browser tab is closed by the browser.
+                if cfg!(not(target_arch = "wasm32")) {
+                    button(parent, "Quit", Press::Quit);
+                }
+                parent.spawn((
+                    ruled(Node {
+                        flex_direction: FlexDirection::Column,
+                        row_gap: px(4),
+                        padding: UiRect::axes(px(12), px(8)),
+                        margin: UiRect::top(px(14)),
+                        ..default()
+                    }),
+                    children![
+                        theme::text("RECORD", 12.0, theme::TEXT_DIM),
+                        theme::text(record_line(&records), 16.0, theme::TEXT),
+                    ],
+                ));
+                if playtest.is_some() {
                     line(
                         parent,
-                        format!("Every run is on seed {seed}"),
-                        theme::TEXT_DIM,
+                        "Playtest: cheats are in the pause menu",
+                        theme::ACCENT,
                     );
+                    line(parent, "A playtest sets no record", theme::TEXT_DIM);
+                    if let Some(seed) = &options.seed {
+                        line(
+                            parent,
+                            format!("Every run is on seed {seed}"),
+                            theme::TEXT_DIM,
+                        );
+                    }
                 }
-            }
-        },
+            });
+            // What the drawing shows, as in the corner of a sheet.
+            root.spawn((
+                ruled(Node {
+                    position_type: PositionType::Absolute,
+                    right: px(48),
+                    bottom: px(48),
+                    ..default()
+                }),
+                children![
+                    (
+                        Node {
+                            flex_direction: FlexDirection::Column,
+                            row_gap: px(4),
+                            padding: UiRect::axes(px(12), px(8)),
+                            border: UiRect::right(px(1)),
+                            ..default()
+                        },
+                        BorderColor::all(theme::RULE),
+                        children![
+                            theme::text("DRAWING", 12.0, theme::TEXT_DIM),
+                            theme::text("PLAYER TANK", 18.0, theme::TEXT),
+                        ],
+                    ),
+                    (
+                        Node {
+                            flex_direction: FlexDirection::Column,
+                            row_gap: px(4),
+                            padding: UiRect::axes(px(12), px(8)),
+                            ..default()
+                        },
+                        children![
+                            theme::text("BUDGET", 12.0, theme::TEXT_DIM),
+                            theme::text(
+                                format!("{} POINTS", Genome::PLAYER.budget),
+                                18.0,
+                                theme::TEXT
+                            ),
+                        ],
+                    ),
+                ],
+            ));
+        });
+}
+
+/// Draws the player's tank large on the sheet behind the main menu, inside the circle that
+/// stands for it when something hits it and the one that its shield reaches.
+///
+/// It waits for the menu to be on screen: the first one comes before the paints are mixed.
+fn exhibit(
+    mut commands: Commands,
+    exhibits: Query<(), With<Exhibit>>,
+    paints: Res<Paints>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut view: ResMut<View>,
+) {
+    if !exhibits.is_empty() {
+        return;
+    }
+    view.show(EXHIBIT_AT, Some(EXHIBIT_SPAN));
+    // The sheet covers the screen, whichever way the view was left turned.
+    let corners = [(-1.0, -1.0), (-1.0, 1.0), (1.0, 1.0), (1.0, -1.0)]
+        .map(|(x, y)| EXHIBIT_AT + Vec2::new(x, y) * 40.0);
+    commands.spawn((
+        Exhibit,
+        DespawnOnExit(Screen::Menu),
+        Mesh3d(meshes.add(scene::floor_mesh(&corners))),
+        MeshMaterial3d(paints.floor.clone()),
+    ));
+    let mut circles = Draft::default();
+    let faint = theme::over(theme::FLOOR, theme::LINE, 0.6);
+    circles.ring(
+        Vec3::ZERO,
+        (TANK_RADIUS - LINE, TANK_RADIUS),
+        (24, 0.55),
+        faint,
     );
+    circles.ring(
+        Vec3::ZERO,
+        (SHIELD_RADIUS - LINE, SHIELD_RADIUS),
+        (12, 0.85),
+        theme::SHIELD,
+    );
+    // The tank faces the right of the screen.
+    let heading = view.to_ground(Vec2::X).to_angle();
+    let (genome, color) = (Genome::PLAYER, theme::PLAYER);
+    commands.spawn((
+        Exhibit,
+        DespawnOnExit(Screen::Menu),
+        Transform::from_translation(scene::to_world(
+            EXHIBIT_AT + view.to_ground(EXHIBIT_PLACE),
+            0.0,
+        )),
+        Visibility::default(),
+        children![
+            (
+                Mesh3d(meshes.add(circles.build())),
+                MeshMaterial3d(paints.ink.clone()),
+                Transform::from_xyz(0.0, 2.0 * LIFT, 0.0),
+            ),
+            (
+                Mesh3d(meshes.add(models::hull_drawing(&genome, color).build())),
+                MeshMaterial3d(paints.ink.clone()),
+                Transform::from_rotation(scene::facing(heading)),
+            ),
+            (
+                ExhibitTurret(heading),
+                Mesh3d(meshes.add(models::turret_drawing(&genome, color).build())),
+                MeshMaterial3d(paints.ink.clone()),
+                Transform::from_xyz(0.0, models::TURRET_HEIGHT, 0.0),
+            ),
+        ],
+    ));
+}
+
+/// The turret of the tank of the main menu looks around.
+fn look_around(time: Res<Time>, mut turrets: Query<(&ExhibitTurret, &mut Transform)>) {
+    for (turret, mut transform) in &mut turrets {
+        let look = 0.35 + 0.5 * (0.5 * time.elapsed_secs()).sin();
+        transform.rotation = scene::facing(turret.0 + look);
+    }
+}
+
+/// The game shows the ground from its own distance.
+fn put_the_exhibit_away(mut view: ResMut<View>) {
+    view.span = None;
 }
 
 /// A playtest offers to skip the sector the player is in.
@@ -299,7 +549,7 @@ fn pause_menu(
         theme::SCRIM,
         |parent| {
             heading(parent, "Paused");
-            button(parent, "Resume", Press::Resume);
+            primary(parent, "Resume", Press::Resume);
             button(parent, "Settings", Press::OpenSettings);
             button(parent, "Quit to the menu", Press::Abandon);
             if let Some(playtest) = playtest {
@@ -356,6 +606,14 @@ fn keep_record(records: &mut Records, playtest: bool, run: &Run) -> bool {
     !playtest && records.submit(MODE, 1, run.cleared, &run.seed_text)
 }
 
+/// Where a run ended, as the stamp of the game over screen tells it.
+fn ending(sector: u32) -> String {
+    match sector {
+        0 => "DESTROYED IN THE START BAY".to_string(),
+        sector => format!("DESTROYED IN SECTOR {sector}"),
+    }
+}
+
 fn game_over(
     mut commands: Commands,
     run: Option<Res<Run>>,
@@ -370,23 +628,28 @@ fn game_over(
         |parent| {
             heading(parent, "Game over");
             if let Some(run) = run {
+                // A stamp across the sheet, as on a drawing that was turned down.
+                parent.spawn((
+                    Node {
+                        align_self: AlignSelf::Start,
+                        padding: UiRect::axes(px(12), px(5)),
+                        margin: UiRect::bottom(px(10)),
+                        border: UiRect::all(px(2)),
+                        ..default()
+                    },
+                    BorderColor::all(theme::DANGER),
+                    UiTransform::from_rotation(Rot2::degrees(-3.0)),
+                    children![theme::text(ending(run.sector), 20.0, theme::DANGER)],
+                ));
                 let seconds = run.ticks / TICK_RATE as u64;
-                let sectors = if run.cleared == 1 {
-                    "sector"
-                } else {
-                    "sectors"
-                };
-                line(
-                    parent,
-                    format!("{} {sectors} cleared", run.cleared),
-                    theme::TEXT,
-                );
-                line(
-                    parent,
-                    format!("Time {}:{:02}", seconds / 60, seconds % 60),
-                    theme::TEXT,
-                );
-                line(parent, format!("Kills {}", run.kills), theme::TEXT);
+                parent
+                    .spawn(ruled(Node::default()))
+                    .with_children(|figures| {
+                        figure(figures, "SECTORS CLEARED", run.cleared.to_string(), false);
+                        let time = format!("{}:{:02}", seconds / 60, seconds % 60);
+                        figure(figures, "TIME", time, false);
+                        figure(figures, "KILLS", run.kills.to_string(), true);
+                    });
                 line(
                     parent,
                     format!("Seed {}, v{VERSION}", run.seed_text),
@@ -400,7 +663,7 @@ fn game_over(
             } else {
                 line(parent, record_line(&records), theme::TEXT_DIM);
             }
-            button(parent, "Retry this seed", Press::Retry);
+            primary(parent, "Retry this seed", Press::Retry);
             button(parent, "New run", Press::NewRun);
             button(parent, "Menu", Press::Abandon);
         },
@@ -635,14 +898,27 @@ fn escape(
 }
 
 fn hover(
-    mut buttons: Query<(&Interaction, &mut BackgroundColor), (Changed<Interaction>, With<Press>)>,
+    mut buttons: Query<
+        (
+            &Interaction,
+            Has<Primary>,
+            &mut BackgroundColor,
+            &mut BorderColor,
+        ),
+        (Changed<Interaction>, With<Press>),
+    >,
 ) {
-    for (interaction, mut color) in &mut buttons {
-        color.0 = match interaction {
-            Interaction::Pressed => theme::ACCENT,
-            Interaction::Hovered => theme::SURFACE_HOVERED,
-            Interaction::None => theme::SURFACE_RAISED,
+    for (interaction, primary, mut color, mut border) in &mut buttons {
+        let (fill, edge) = match (interaction, primary) {
+            (Interaction::Pressed, true) => (theme::TEXT, theme::TEXT),
+            (Interaction::Pressed, false) => (theme::ACCENT, theme::ACCENT),
+            (Interaction::Hovered, true) => (theme::ACCENT_HOVERED, theme::ACCENT_HOVERED),
+            (Interaction::Hovered, false) => (theme::SURFACE_HOVERED, theme::TEXT),
+            (Interaction::None, true) => (theme::ACCENT, theme::ACCENT),
+            (Interaction::None, false) => (theme::SURFACE_RAISED, theme::RULE),
         };
+        color.0 = fill;
+        *border = BorderColor::all(edge);
     }
 }
 
