@@ -21,3 +21,6 @@ Ideas that aren't in the specification. They are ranked by likely usefulness and
 | Armor | Low | Tanks that survive several hits. Contradicts the one-hit pillar. | None planned |
 | Stealth | Low | A stat that makes a tank fade out, as the white tank of Tanks! does. Contradicts readable danger. | None planned |
 | Replays | Low | Recording inputs and replaying a run. Needs a simulation that is deterministic on every platform, not only generation. | None planned |
+| Realistic military theme | Low | Camouflage, mud, weathered steel. Camouflage hides the hue and saturation that tell the players what an enemy is, and it needs textures the generated models don't have. | None planned |
+| Synthwave theme | Low | Neon on black with a horizon grid. Everything glows, so bullets stop being the most visible objects, and it depends on bloom, which costs frame time on the web. | Compare screenshots with the chosen theme |
+| Voxel or pixel-art theme | Low | Chunky retro look. The 1:2 slopes of the walls and the thin stat parts (antennas, muzzle rings) turn into staircases and noise. | None planned |
