@@ -235,7 +235,7 @@ The kick has no noise in it because every weapon cue has some. The bass stays ab
 - **Melody on top.** The melody is the loudest thing with a pitch. The arpeggio of the pluck, the chords of the lead and the octave that the lead adds at threat 4 are quieter than the line they go with.
 - **Ducking.** While the warning of a mine sounds within hearing range, the music is half as loud.
 - **Stereo.** The music is in stereo and the cues stay in the middle. The pluck and the lead, which share the pitches of the cues, sit to the sides.
-- **Dry.** There is no reverb. The pluck has one echo, three steps later, a third as loud and on the other side.
+- **Dry.** There is no reverb. The arpeggio of the pluck has one echo, three steps later, a third as loud and on the other side. Its melodies have none: with an echo, the intro sounded too relaxed.
 - **No clipping.** The sum of the instruments goes through a soft limit.
 
 ## Cues

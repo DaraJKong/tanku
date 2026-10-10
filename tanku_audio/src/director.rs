@@ -79,6 +79,9 @@ pub struct Step {
     pub snare: u8,
     pub bass: Option<Tone>,
     pub pluck: Option<Tone>,
+    /// The note of the pluck gets an echo, as the notes of its arpeggio do. Its melodies stay
+    /// dry.
+    pub echo: bool,
     /// Up to three notes at once.
     pub lead: [Option<Tone>; 3],
     /// The lead comes in softly, as it does in the bridge.
@@ -434,6 +437,7 @@ impl Director {
                 level: ARPEGGIO,
             });
         }
+        out.echo = out.pluck.is_some();
 
         if self.threat > 0 {
             let chorus = self.section() == Section::Chorus;
@@ -546,6 +550,8 @@ mod tests {
             assert_eq!(director.section(), Section::Intro);
             assert!(steps.iter().all(|step| !drums(step)));
             assert!(steps.iter().all(|step| step.lead == [None; 3]));
+            // Its melody has no echo.
+            assert!(steps.iter().all(|step| !step.echo));
             // The pluck has motif A and the bass holds the root of each bar.
             let melody: Vec<u8> = steps[..BAR]
                 .iter()
@@ -705,6 +711,7 @@ mod tests {
             .map(|tone| (tone.pitch, tone.steps))
             .collect();
         assert_eq!(melody, [(69, 12), (71, 4), (69, 8), (66, 8)]);
+        assert!(steps.iter().all(|step| !step.echo));
         assert_eq!(steps[..BARS * BAR], steps[BARS * BAR..]);
     }
 
@@ -721,6 +728,8 @@ mod tests {
                 .map(|t| t.pitch)
                 .collect();
             let pluck = bar.iter().filter(|step| step.pluck.is_some()).count();
+            // Every note of the arpeggio has its echo.
+            assert!(bar.iter().all(|step| step.echo == step.pluck.is_some()));
             (notes, octaves, bass, pluck)
         };
         let plain = vec![45; 6];

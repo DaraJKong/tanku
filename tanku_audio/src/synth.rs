@@ -47,7 +47,7 @@ const STOPPED: f32 = 0.9;
 const PLUCK_SEED: u32 = 0x5EED_0001;
 /// Times the burst of noise that plucks a string is smoothed.
 const SMOOTHING: u32 = 3;
-/// The echo of the pluck comes three steps later and a third as loud.
+/// The echo of the pluck's arpeggio comes three steps later and a third as loud.
 const ECHO_FRAMES: usize = 16_537;
 const ECHO_LEVEL: f32 = 1.0 / 3.0;
 
@@ -352,6 +352,8 @@ struct Pluck {
     keep: f32,
     /// Frames before the string is silent.
     left: u32,
+    /// Whether the note has an echo.
+    echo: bool,
 }
 
 impl Pluck {
@@ -365,10 +367,12 @@ impl Pluck {
             tuned: [0.0; 2],
             keep: 0.0,
             left: 0,
+            echo: false,
         }
     }
 
-    fn strike(&mut self, tone: Tone) {
+    fn strike(&mut self, tone: Tone, echo: bool) {
+        self.echo = echo;
         let hz = frequency(tone.pitch);
         // One turn takes the length of the string, half a frame for the average and the
         // delay of the tuning filter, which is kept between 0.2 and 1.2 frames.
@@ -691,7 +695,7 @@ impl Synth {
             self.bass.start(Note::new(tone, frames(tone.steps), false));
         }
         if let Some(tone) = step.pluck {
-            self.plucks[self.next_pluck].strike(tone);
+            self.plucks[self.next_pluck].strike(tone, step.echo);
             self.next_pluck = (self.next_pluck + 1) % PLUCKS;
         }
         // The lead plays one line: its new notes take the place of the old ones.
@@ -719,9 +723,13 @@ impl Synth {
         // While the music is hushed the bass holds its note, and so does the lead if the
         // hush is the end of a fight.
         let bass = self.bass.frame(self.hush != Hush::None);
-        let mut pluck = 0.0;
+        let (mut pluck, mut echoed) = (0.0, 0.0);
         for string in &mut self.plucks {
-            pluck += string.frame();
+            let frame = string.frame();
+            pluck += frame;
+            if string.echo {
+                echoed += frame;
+            }
         }
         let mut lead = 0.0;
         for voice in &mut self.leads {
@@ -729,9 +737,9 @@ impl Synth {
         }
         let (kick, hat, snare) = (self.kick.frame(), self.hat.frame(), self.snare.frame());
 
-        // The echo of the pluck comes back on the other side.
+        // The echo of the arpeggio comes back on the other side.
         let echo = self.echo[self.echo_at] * ECHO_LEVEL;
-        self.echo[self.echo_at] = pluck;
+        self.echo[self.echo_at] = echoed;
         self.echo_at = (self.echo_at + 1) % ECHO_FRAMES;
 
         let target = if self.muffled { 1.0 } else { 0.0 };

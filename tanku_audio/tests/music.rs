@@ -87,8 +87,8 @@ fn restless(music: &mut Music, conductor: &tanku_audio::Conductor, seconds: usiz
 fn the_music_is_stable() {
     // Golden values: a change here changes what the music sounds like.
     let golden: [u64; 12] = [
-        0x65D4_AE79_A02F_724A,
-        0x6164_130D_9756_CB34,
+        0x13B1_7353_D38D_66D1,
+        0x160D_5305_8BDF_02F2,
         0xD348_9EB7_C5C1_E65A,
         0x24C1_9911_D581_493D,
         0xD35F_4476_D092_DA6B,
