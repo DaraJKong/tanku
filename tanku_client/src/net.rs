@@ -28,16 +28,14 @@ use tanku_core::{
     protocol::{Lobby, Member, ProtocolPlugin, RunState},
     rules::TICK_RATE,
     seed::VERSION,
-    sim::{
-        Player, Position, PreviousPosition, Run, RunPhase, RunRequest, Sector, SectorIndex,
-        SimEvent, TankCommand,
-    },
+    sim::{Player, Run, RunPhase, RunRequest, Sector, SectorIndex, SimEvent, TankCommand},
 };
 use tanku_server::net::{self as server, Hosting, PORT, Seat, protocol_id};
 
 use crate::{
     Overlay, Screen,
     crew::{LocalSeat, Own},
+    mirror,
     session::{Invitation, Notice, Session, SessionRequest},
 };
 
@@ -190,7 +188,10 @@ impl Plugin for NetPlugin {
             ClientPlugins { tick_duration },
             ProtocolPlugin,
             server::NetPlugin,
+            mirror::plugin,
         ))
+        // A guest makes its picture of the run from what its host told, once that is in.
+        .configure_sets(PreUpdate, mirror::Picture.after(lay_out_sectors))
         .insert_resource(HostPort(PORT))
         .insert_resource(Patience(5))
         .add_systems(Update, (direct, find_the_host).chain())
@@ -211,7 +212,6 @@ impl Plugin for NetPlugin {
                     hear,
                     follow_run,
                     lay_out_sectors,
-                    steady,
                     follow_host,
                 )
                     .chain()
@@ -521,14 +521,6 @@ fn lay_out_sectors(
     }
 }
 
-/// The host tells where things are, not where they were a tick ago: they are drawn where they
-/// are.
-fn steady(mut moved: Query<(&Position, &mut PreviousPosition), (Changed<Position>, With<Remote>)>) {
-    for (position, mut previous) in &mut moved {
-        previous.0 = position.0;
-    }
-}
-
 /// Shows what the host is at: its lobby, or the run it started.
 fn follow_host(
     joined: Res<Joined>,
@@ -551,12 +543,12 @@ fn follow_host(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use bevy::state::app::StatesPlugin;
     use lightyear::link::LinkSystems;
     use tanku_core::{
         CorePlugin,
-        sim::{Tank, Wreck},
+        sim::{Position, Tank, Wreck},
     };
     use tanku_server::ServerPlugin;
 
@@ -564,7 +556,7 @@ mod tests {
     use crate::{crew, session};
 
     /// The game without its drawings: what plays a run, alone or with others.
-    fn game() -> App {
+    pub(crate) fn game() -> App {
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, StatesPlugin, CorePlugin, ServerPlugin))
             .init_state::<Screen>()
@@ -579,13 +571,17 @@ mod tests {
     }
 
     /// A port that is free on this machine.
-    fn free_port() -> u16 {
+    pub(crate) fn free_port() -> u16 {
         let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
         socket.local_addr().unwrap().port()
     }
 
     /// Runs the games for a while, in real time, until something is true of them.
-    fn run_until(what: &str, games: &mut [&mut App], done: impl Fn(&mut [&mut App]) -> bool) {
+    pub(crate) fn run_until(
+        what: &str,
+        games: &mut [&mut App],
+        done: impl Fn(&mut [&mut App]) -> bool,
+    ) {
         for _ in 0..2500 {
             for game in games.iter_mut() {
                 game.update();
@@ -617,16 +613,16 @@ mod tests {
         )
     }
 
-    fn screen(game: &App) -> Screen {
+    pub(crate) fn screen(game: &App) -> Screen {
         **game.world().resource::<State<Screen>>()
     }
 
-    fn ask(game: &mut App, request: SessionRequest) {
+    pub(crate) fn ask(game: &mut App, request: SessionRequest) {
         game.world_mut().write_message(request);
     }
 
     /// Opens a game and gives its seed, as the host's menus do.
-    fn host(port: u16) -> App {
+    pub(crate) fn host(port: u16) -> App {
         let mut game = game();
         game.insert_resource(HostPort(port));
         ask(&mut game, SessionRequest::Host);
@@ -640,14 +636,14 @@ mod tests {
     }
 
     /// Joins a game on this machine, as the menus of a guest do.
-    fn guest(port: u16) -> App {
+    pub(crate) fn guest(port: u16) -> App {
         let mut game = game();
         ask(&mut game, SessionRequest::Join(format!("127.0.0.1:{port}")));
         game
     }
 
     /// The seats of the players' tanks that a game holds, in order.
-    fn seats(game: &mut App) -> Vec<u8> {
+    pub(crate) fn seats(game: &mut App) -> Vec<u8> {
         let world = game.world_mut();
         let mut seats: Vec<u8> = world
             .query::<&Player>()
@@ -659,7 +655,7 @@ mod tests {
     }
 
     /// Where the tank of a seat is.
-    fn place(game: &mut App, seat: u8) -> Vec2 {
+    pub(crate) fn place(game: &mut App, seat: u8) -> Vec2 {
         let world = game.world_mut();
         let mut tanks = world.query::<(&Player, &Position)>();
         let tank = tanks.iter(world).find(|(player, _)| player.seat == seat);
@@ -667,7 +663,7 @@ mod tests {
     }
 
     /// Asks something of the tank of this game's own player.
-    fn order(game: &mut App, command: TankCommand) {
+    pub(crate) fn order(game: &mut App, command: TankCommand) {
         let world = game.world_mut();
         let mut tanks = world.query_filtered::<&mut TankCommand, With<Own>>();
         if let Ok(mut asked) = tanks.single_mut(world) {
@@ -771,7 +767,7 @@ mod tests {
     }
 
     /// Destroys the tanks of all the players of a run, which ends it.
-    fn wreck_everyone(host: &mut App) {
+    pub(crate) fn wreck_everyone(host: &mut App) {
         let world = host.world_mut();
         let tanks: Vec<Entity> = world
             .query_filtered::<Entity, With<Player>>()
@@ -781,12 +777,12 @@ mod tests {
         casualties.tanks.extend(tanks);
     }
 
-    fn over(game: &App) -> bool {
+    pub(crate) fn over(game: &App) -> bool {
         let run = game.world().get_resource::<Run>();
         run.is_some_and(|run| run.phase == RunPhase::Over)
     }
 
-    fn own_seat(game: &App) -> u8 {
+    pub(crate) fn own_seat(game: &App) -> u8 {
         game.world().resource::<LocalSeat>().0
     }
 
@@ -886,13 +882,13 @@ mod tests {
         assert_eq!(own_seat(&guest), 1);
     }
 
-    /// Makes what a game receives come late, unevenly, and sometimes not at all, as on a line
-    /// that takes 120 ms there and back.
-    fn worsen(game: &mut App) {
+    /// Makes what a game receives come late, unevenly, and sometimes not at all: each way
+    /// takes so many milliseconds, give or take some, and loses a share of what is sent.
+    pub(crate) fn line(game: &mut App, late: u64, uneven: u64, lost: f32) {
         let line = LinkConditionerConfig::default()
-            .with_incoming_latency(Duration::from_millis(60))
-            .with_incoming_jitter(Duration::from_millis(10))
-            .with_fixed_loss(0.02);
+            .with_incoming_latency(Duration::from_millis(late))
+            .with_incoming_jitter(Duration::from_millis(uneven))
+            .with_fixed_loss(lost);
         game.add_systems(First, move |mut links: Query<&mut Link>| {
             for mut link in &mut links {
                 if link.recv.conditioner.is_none() {
@@ -905,10 +901,11 @@ mod tests {
     #[test]
     fn a_run_holds_on_a_slow_line_that_loses_packets() {
         let port = free_port();
+        // A line that takes 120 ms there and back.
         let mut host = host(port);
-        worsen(&mut host);
+        line(&mut host, 60, 10, 0.02);
         let mut guest = game();
-        worsen(&mut guest);
+        line(&mut guest, 60, 10, 0.02);
         ask(
             &mut guest,
             SessionRequest::Join(format!("127.0.0.1:{port}")),

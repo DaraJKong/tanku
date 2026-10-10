@@ -28,10 +28,12 @@ use lightyear::{
     },
 };
 use tanku_core::{
-    protocol::{Lobby, Member, Reliable, RunState},
+    protocol::{Lobby, Member, Reliable, RunState, Told},
     rules::{MAX_PLAYERS, TICK_RATE},
     seed::VERSION,
-    sim::{Player, Run, RunPhase, RunRequest, SimEvent, TankCommand},
+    sim::{
+        Bullet, Motion, Player, Position, Run, RunPhase, RunRequest, SimEvent, Tank, TankCommand,
+    },
 };
 
 use crate::field::InSector;
@@ -179,7 +181,13 @@ impl Plugin for NetPlugin {
             )
             .add_systems(
                 PostUpdate,
-                ((close_ranks, announce).chain(), share, herald, tell)
+                (
+                    (close_ranks, announce).chain(),
+                    share,
+                    (report::<Position>, report::<Motion>, report::<Bullet>),
+                    herald,
+                    tell,
+                )
                     .run_if(resource_exists::<Hosting>)
                     .before(ReplicationSystems::Send),
             )
@@ -250,25 +258,46 @@ fn announce(
     }
 }
 
-/// Sends the guests everything the simulation owns. The tank of a guest is theirs to command.
-/// It stays when they go: the run takes it away.
+/// Sends the guests everything the simulation owns. Of a tank and of a bullet, they are told
+/// the place and the motion apart from the rest: they show those in their own time. The tank
+/// of a guest is theirs to command. It stays when they go: the run takes it away.
 fn share(
     mut commands: Commands,
     fresh: Query<
-        (Entity, Option<&Player>),
+        (
+            Entity,
+            Option<&Player>,
+            Option<(&Position, &Motion, &Tank)>,
+            Option<(&Position, &Bullet)>,
+        ),
         (Or<(With<InSector>, With<Player>)>, Without<Replicate>),
     >,
     seats: Query<(Entity, &Seat)>,
 ) {
-    for (entity, player) in &fresh {
+    for (entity, player, tank, bullet) in &fresh {
         let mut entity = commands.entity(entity);
         entity.insert(Replicate::to_clients(NetworkTarget::All));
+        if let Some((position, motion, _)) = tank {
+            entity.insert((Told(*position), Told(*motion)));
+        }
+        if let Some((position, bullet)) = bullet {
+            entity.insert((Told(*position), Told(*bullet)));
+        }
         let owner = player.and_then(|player| seats.iter().find(|(_, seat)| seat.0 == player.seat));
         if let Some((owner, _)) = owner {
             entity.insert(ControlledBy {
                 owner,
                 lifetime: Lifetime::Persistent,
             });
+        }
+    }
+}
+
+/// Keeps what the guests are told of a tank or of a bullet as the simulation has it.
+fn report<T: Component + Copy + PartialEq>(mut things: Query<(&T, &mut Told<T>), Changed<T>>) {
+    for (now, mut told) in &mut things {
+        if told.0 != *now {
+            told.0 = *now;
         }
     }
 }

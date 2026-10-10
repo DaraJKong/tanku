@@ -3,6 +3,11 @@
 //! The server sends the lobby, the run and the state of the simulation: every component listed
 //! here goes to the clients as it changes. A client sends what its player asks of their tank,
 //! tick by tick.
+//!
+//! What moves is told apart from what is shown. A client doesn't show a tank or a bullet where
+//! the server last said it was: it shows the other tanks a moment late, between two tellings,
+//! and its own tank and the bullets where they are by now. So the place and the motion of
+//! those travel as [`Told`], and each side keeps its own `Position`, `Motion` and `Bullet`.
 
 use bevy::{ecs::entity::MapEntities, prelude::*};
 use lightyear::prelude::*;
@@ -47,6 +52,10 @@ impl Lobby {
     }
 }
 
+/// What the server tells of a part of a tank or of a bullet: where it is, and how it moves.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Told<T: Send + Sync + 'static>(pub T);
+
 /// The run, as the server tells it to the clients.
 #[derive(Component, Clone, Debug, Serialize, Deserialize)]
 pub struct RunState(pub Run);
@@ -78,8 +87,12 @@ impl Plugin for ProtocolPlugin {
         app.component::<Lobby>().replicate();
         app.component::<RunState>().replicate();
         app.component::<SectorIndex>().replicate();
-        app.component::<Position>().replicate();
-        app.component::<Motion>().replicate();
+        // What stays where it is has its place told as it is.
+        app.component::<Position>()
+            .replicate_filtered::<(Without<Tank>, Without<Bullet>)>();
+        app.component::<Told<Position>>().replicate();
+        app.component::<Told<Motion>>().replicate();
+        app.component::<Told<Bullet>>().replicate();
         app.component::<Tank>().replicate();
         app.component::<Player>().replicate();
         app.component::<Enemy>().replicate();
@@ -87,7 +100,6 @@ impl Plugin for ProtocolPlugin {
         app.component::<Shield>().replicate();
         app.component::<Wreck>().replicate();
         app.component::<Protected>().replicate();
-        app.component::<Bullet>().replicate();
         app.component::<Mine>().replicate();
         app.component::<Block>().replicate();
         app.component::<ExplosiveCrate>().replicate();

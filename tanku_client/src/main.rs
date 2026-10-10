@@ -10,6 +10,8 @@ mod exhibit;
 mod hud;
 mod input;
 mod menu;
+#[cfg(not(target_arch = "wasm32"))]
+mod mirror;
 mod models;
 mod music;
 #[cfg(not(target_arch = "wasm32"))]

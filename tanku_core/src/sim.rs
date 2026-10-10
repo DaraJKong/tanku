@@ -28,7 +28,7 @@ pub struct Tank {
     pub sector: u32,
 }
 
-#[derive(Component, Clone, Copy, Debug, Default, Serialize, Deserialize)]
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Motion {
     pub velocity: Vec2,
     /// Angle of the hull, counterclockwise from east.
@@ -122,7 +122,7 @@ pub struct Enemy {
     pub awake: bool,
 }
 
-#[derive(Component, Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[require(Position, PreviousPosition)]
 pub struct Bullet {
     pub owner: Entity,
