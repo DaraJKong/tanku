@@ -169,7 +169,7 @@ Blasts are neutral. They destroy every unshielded tank in range, whoever caused 
 
 ### Mines
 
-A tank drops a mine at its own position, at most one every 0.5 s, and can have as many armed mines as its Mines stat allows. A mine arms after 1 s. It then detonates when an opposing tank comes within 2 m (after a 0.6 s warning) or when its 10 s fuse runs out. A bullet or a blast detonates it at any time, even before it is armed. A shot passes over a mine that lies under the barrel of the tank that fires it. The blast has a radius of 3 m. An armed mine shows the circle within which an opposing tank sets it off. A triggered mine shows the circle that its blast will reach. Blasts are the only way to remove destructible blocks.
+A tank drops a mine at its own position, at most one every 0.5 s, and can have as many armed mines as its Mines stat allows. A mine arms after 1 s. It then detonates when an opposing tank comes within 2 m or when its 10 s fuse runs out, and it warns for 0.6 s first either way: the last 0.6 s of the fuse are that warning. A bullet or a blast detonates it at any time, without a warning, even before it is armed. A shot passes over a mine that lies under the barrel of the tank that fires it. The blast has a radius of 3 m. An armed mine shows the circle within which an opposing tank sets it off. A mine that warns shows the circle that its blast will reach instead. Blasts are the only way to remove destructible blocks.
 
 ### Shield
 
@@ -191,7 +191,8 @@ A player repairs a wrecked teammate by holding the repair key within 3 m of the 
 | Time without shooting after a player's tank appears | 0.5 s |
 | Mine arming time and fuse | 1 s and 10 s |
 | Time between two mines of a tank | 0.5 s |
-| Mine trigger | Opposing tank within 2 m, then 0.6 s |
+| Mine trigger | Opposing tank within 2 m |
+| Mine warning | 0.6 s before the blast, after a tank sets the mine off and at the end of its fuse |
 | Blast radius of mines and crates | 3 m |
 | Shield duration | 0.5 s |
 | Flag | 4 m in front of the barrier, captured within 2 m |

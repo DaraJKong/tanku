@@ -664,17 +664,11 @@ fn a_mine_blows_when_an_opposing_tank_comes_close_or_a_bullet_hits_it() {
 }
 
 #[test]
-fn a_mine_warns_only_when_an_opposing_tank_sets_it_off() {
-    let warnings = |events: &[SimEvent]| {
-        let near = |at: &Vec2| at.distance(START) < 0.1;
-        count(
-            events,
-            |event| matches!(event, SimEvent::MineTriggered { at } if near(at)),
-        )
-    };
-    let blasts =
-        |events: &[SimEvent]| count(events, |event| matches!(event, SimEvent::Blast { .. }));
-    // The player lays a mine where the run starts, and waits at a safe distance.
+fn a_mine_warns_before_it_blows_unless_a_bullet_sets_it_off() {
+    let warned = |event: &SimEvent| matches!(event, SimEvent::MineTriggered { at } if at.distance(START) < 0.1);
+    let blew = |event: &SimEvent| matches!(event, SimEvent::Blast { .. });
+    // The player lays a mine where the run starts, and waits at a safe distance while it
+    // arms, which takes 1 s.
     let lay = || {
         let mut app = start("TEST");
         let entity = player(&mut app).unwrap();
@@ -692,31 +686,50 @@ fn a_mine_warns_only_when_an_opposing_tank_sets_it_off() {
         events(&mut app);
         app
     };
+    // Ticks until the game tells of something, and what else it told on the way.
+    let wait_for = |app: &mut App, wanted: fn(&SimEvent) -> bool| {
+        let mut told = Vec::new();
+        for ticks in 1..=seconds(12.0) {
+            tick(app, 1);
+            told.extend(events(app));
+            if told.iter().any(wanted) {
+                return (ticks, told);
+            }
+        }
+        panic!("the game never told of it: {told:?}");
+    };
+    let warning = seconds(0.6);
 
-    // An enemy comes close: the warning sounds once, at the mine, and the blast follows 0.6 s
-    // later.
+    // An enemy comes close: the warning sounds at once, at the mine, and the blast follows
+    // 0.6 s later.
     let mut app = lay();
     let enemy = spawn_enemy(&mut app, START + Vec2::X * 1.5, &[]);
     app.world_mut().get_mut::<Enemy>(enemy).unwrap().awake = true;
-    tick(&mut app, seconds(0.5));
-    let heard = events(&mut app);
-    assert_eq!((warnings(&heard), blasts(&heard)), (1, 0));
-    tick(&mut app, seconds(0.2));
-    let heard = events(&mut app);
-    assert_eq!((warnings(&heard), blasts(&heard)), (0, 1));
+    let (ticks, told) = wait_for(&mut app, warned);
+    assert_eq!((ticks, count(&told, warned), count(&told, blew)), (1, 1, 0));
+    let (ticks, told) = wait_for(&mut app, blew);
+    assert!(ticks.abs_diff(warning) <= 1, "{ticks} ticks");
+    assert_eq!(count(&told, warned), 0);
 
-    // The fuse runs out: the mine blows without a warning.
+    // Nobody comes close: the last 0.6 s of the fuse are the same warning, and the mine still
+    // blows 10 s after it was armed.
     let mut app = lay();
-    tick(&mut app, seconds(10.0));
-    let heard = events(&mut app);
-    assert_eq!((warnings(&heard), blasts(&heard)), (0, 1));
+    let armed_for = seconds(0.1) + 1;
+    let (ticks, told) = wait_for(&mut app, warned);
+    assert!(
+        (armed_for + ticks).abs_diff(seconds(9.4)) <= 2,
+        "{ticks} ticks"
+    );
+    assert_eq!((count(&told, warned), count(&told, blew)), (1, 0));
+    let (ticks, told) = wait_for(&mut app, blew);
+    assert!(ticks.abs_diff(warning) <= 1, "{ticks} ticks");
+    assert_eq!(count(&told, warned), 0);
 
-    // A bullet hits it: no warning either.
+    // A bullet hits it: no warning.
     let mut app = lay();
     shoot_at(&mut app, START);
-    tick(&mut app, seconds(0.8));
-    let heard = events(&mut app);
-    assert_eq!((warnings(&heard), blasts(&heard)), (0, 1));
+    let (_, told) = wait_for(&mut app, blew);
+    assert_eq!(count(&told, warned), 0);
 }
 
 #[test]

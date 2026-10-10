@@ -15,6 +15,10 @@ use tanku_core::{
 use crate::{Casualties, Maker, field::Field};
 
 /// Arms the mines, burns their fuses and triggers them when an opposing tank comes close.
+///
+/// A mine warns before it blows, whether a tank set it off or its fuse is about to run out:
+/// the last moments of a fuse are the same warning. Only a bullet or a blast sets a mine off
+/// without one.
 pub fn tick(
     mut casualties: ResMut<Casualties>,
     mut mines: Query<(Entity, &mut Mine, &Position)>,
@@ -31,13 +35,12 @@ pub fn tick(
                         && enemy.is_none_or(|enemy| enemy.awake)
                         && tank_position.0.distance(position.0) <= MINE_TRIGGER_RADIUS
                 });
-                if approached {
+                if approached || fuse <= MINE_WARNING {
                     events.write(SimEvent::MineTriggered { at: position.0 });
-                    MineState::Triggered(MINE_WARNING)
-                } else if fuse > TICK {
-                    MineState::Armed(fuse - TICK)
+                    // A fuse keeps the time it has left, so that it lasts as long as it says.
+                    MineState::Triggered(fuse.min(MINE_WARNING))
                 } else {
-                    MineState::Triggered(0.0)
+                    MineState::Armed(fuse - TICK)
                 }
             }
             MineState::Triggered(left) if left > TICK => MineState::Triggered(left - TICK),

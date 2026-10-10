@@ -126,7 +126,8 @@ pub enum MineState {
     Arming(f32),
     /// Waiting, with this much fuse left.
     Armed(f32),
-    /// An opposing tank came close: the mine blows after this much longer.
+    /// An opposing tank came close, or the fuse is about to run out: the mine warns, and blows
+    /// after this much longer.
     Triggered(f32),
 }
 

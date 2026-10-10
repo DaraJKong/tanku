@@ -26,6 +26,8 @@ pub const MINE_ARMING_TIME: f32 = 1.0;
 pub const MINE_COOLDOWN: f32 = 0.5;
 pub const MINE_FUSE: f32 = 10.0;
 pub const MINE_TRIGGER_RADIUS: f32 = 2.0;
+/// How long a mine warns before it blows, once a tank has set it off or when its fuse is
+/// about to run out.
 pub const MINE_WARNING: f32 = 0.6;
 pub const BLAST_RADIUS: f32 = 3.0;
 
