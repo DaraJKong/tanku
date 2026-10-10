@@ -15,9 +15,10 @@ use tanku_core::{
 
 use crate::{Overlay, Screen, audio::Muted, settings::Settings};
 
-/// How loud the music is against the cues: the loudest arrangement peaks 12 dB below a shot
-/// fired next to the player.
-const LEVEL: f32 = 0.27;
+/// How loud the music is against the cues with its volume all the way up. Halfway up, where
+/// the setting starts, the loudest arrangement peaks 12 dB below a shot fired next to the
+/// player.
+const LOUDEST: f32 = 0.54;
 /// The threat of every fight for now: the lead plays the motif as it is written. The brains
 /// of the enemies that are awake will set it.
 const THREAT: u8 = 2;
@@ -99,11 +100,17 @@ pub fn plugin(app: &mut App) {
         .add_systems(Update, (tell, set_volume));
 }
 
+/// How loud the music is, under the volume of the game.
+fn loudness(settings: &Settings) -> f32 {
+    settings.music * LOUDEST
+}
+
 /// Starts the music, which never stops from then on. A game that must stay silent has none.
 fn start(
     mut commands: Commands,
     mut pieces: ResMut<Assets<Piece>>,
     baton: Res<Baton>,
+    settings: Res<Settings>,
     muted: Option<Res<Muted>>,
 ) {
     // Not on the web yet. A browser mixes the sound between two frames of the game, so a long
@@ -115,14 +122,14 @@ fn start(
         AudioPlayer(pieces.add(Piece(baton.0.clone()))),
         // The music has no end, so it is played once and not in a loop, which would keep
         // every sample of it.
-        PlaybackSettings::ONCE.with_volume(Volume::Linear(LEVEL)),
+        PlaybackSettings::ONCE.with_volume(Volume::Linear(loudness(&settings))),
     ));
 }
 
-/// Keeps the music as loud as the volume of the game says, which reaches a sound only when it
-/// starts: the music starts once.
+/// Keeps the music as loud as the settings say. The volume of the game reaches a sound only
+/// when it starts, and the music starts once.
 fn set_volume(settings: Res<Settings>, mut sinks: Query<&mut AudioSink, With<AudioPlayer<Piece>>>) {
-    let wanted = Volume::Linear(settings.volume * LEVEL);
+    let wanted = Volume::Linear(settings.volume * loudness(&settings));
     for mut sink in &mut sinks {
         if sink.volume() != wanted {
             sink.set_volume(wanted);
@@ -294,8 +301,9 @@ mod tests {
                 .fold(peak, |peak, sample| peak.max(sample.abs()));
         }
         let shot = crate::audio::loudest_shot();
+        let settings = Settings::default();
         // The volume of the game sets both, so it doesn't count.
-        let under = 20.0 * (shot / (peak * LEVEL)).log10();
+        let under = 20.0 * (shot / (peak * loudness(&settings))).log10();
         assert!((11.5..12.5).contains(&under), "{under} dB");
     }
 

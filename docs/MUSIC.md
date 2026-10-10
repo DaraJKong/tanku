@@ -263,8 +263,8 @@ The kick has no noise in it because every weapon cue has some. The bass stays ab
 
 ## Mix
 
-- **Two volumes.** The settings get a second level, Music, next to Volume. Volume sets everything and Music sets the music against the cues. It starts at 50%. At 0 the music keeps counting its bars and stays silent.
-- **Under the cues.** At the default settings, the loudest arrangement peaks 12 dB below a shot fired next to the player.
+- **Two volumes.** The settings have a second level, Music, next to Volume. Volume sets everything and Music sets the music against the cues. It starts at 50%. At 0 the music keeps counting its bars and stays silent.
+- **Under the cues.** At the default settings, the loudest arrangement peaks 12 dB below a shot fired next to the player. With Music all the way up it peaks 6 dB below that shot.
 - **Melody on top.** The melody is the loudest thing with a pitch. The arpeggio of the pluck and the octave that the lead adds at threat 4 are quieter than the line they go with.
 - **Ducking.** While the warning of a mine sounds within hearing range, the music is half as loud.
 - **Stereo.** The music is in stereo and the cues stay in the middle. The pluck and the lead, which share the pitches of the cues, sit to the sides.
@@ -327,7 +327,7 @@ music.render(&mut frames);
 | Development builds | The crate is compiled with full optimization, like the dependencies, because it runs in real time |
 | Start | Nothing is computed ahead, so the music adds nothing to the time the game takes to start or to restart |
 
-In the client, the music is an asset that implements Bevy's `Decodable`, which Bevy mixes with the cues. It is played once and has no end. A system writes the context every frame from `Screen`, `Overlay`, `Run`, the `Sector` the run has reached and the enemies that are awake, and from step 3 on from their genomes. Another keeps the music in step with the volume of the game, because Bevy counts that volume into a sound only when the sound starts. Nothing changes in the server or in the simulation. A scripted run and the headless server have no music.
+In the client, the music is an asset that implements Bevy's `Decodable`, which Bevy mixes with the cues. It is played once and has no end. A system writes the context every frame from `Screen`, `Overlay`, `Run`, the `Sector` the run has reached and the enemies that are awake, and from step 3 on from their genomes. Another keeps the music as loud as the settings say, because Bevy counts the volume of the game into a sound only when the sound starts. Nothing changes in the server or in the simulation. A scripted run and the headless server have no music.
 
 The web build has no music until step 5. There, the browser lets no sound play before the first click or key, so the music will start with it. The web build also mixes its sound on the main thread, 46 ms at a time: a frame that takes longer than about 50 ms leaves a gap in the music. The cues have the same limit today, but a gap in a held note is heard far more than one in a short cue.
 
@@ -355,7 +355,7 @@ The client has its own:
 
 - **Told right.** The context follows the screen, the run, the kind of its sector and the enemies that are awake. A run that is over counts as the menu, and only the pause menu muffles.
 - **Unchanged on the way.** The sound library reads the very samples that the crate renders.
-- **Under the cues.** The loudest arrangement peaks 12 dB below the shot of a player, within half a decibel.
+- **Under the cues.** At the default settings, the loudest arrangement peaks 12 dB below the shot of a player, within half a decibel.
 - **Heard.** On request, a test plays the piece on the sound device of the machine at no volume, and checks that the device asks for more: `cargo test -p tanku_client reaches_the_sound_device -- --ignored`.
 
 ## Steps

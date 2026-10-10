@@ -137,7 +137,7 @@ TANKU_DEV_SCRIPT="start TANKU; wait 1; warp 12; wait 1; peek 0; wait 1; shot sec
 
 ## Listening to the music
 
-The music is specified in [docs/MUSIC.md](docs/MUSIC.md). The game plays it on the desktop. A tool also writes it to sound files, to hear an arrangement without playing up to it:
+The music is specified in [docs/MUSIC.md](docs/MUSIC.md). The game plays it on the desktop, and the settings have a volume for it. A tool also writes it to sound files, to hear an arrangement without playing up to it:
 
 ```bash
 cargo run -p tanku_audio --example render

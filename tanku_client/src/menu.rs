@@ -43,6 +43,7 @@ enum Press {
     Vsync,
     Shake,
     Volume(f32),
+    Music(f32),
     Scale(f32),
     Rebind(Action, usize),
     ResetBindings,
@@ -314,6 +315,11 @@ fn figure(parent: &mut ChildSpawnerCommands, name: &str, value: String, last: bo
 
 fn on_off(on: bool) -> &'static str {
     if on { "On" } else { "Off" }
+}
+
+/// A level of sound that the settings can show: a whole number of tenths, from 0 to 1.
+fn level(wanted: f32) -> f32 {
+    (wanted * 10.0).round().clamp(0.0, 10.0) / 10.0
 }
 
 fn record_line(records: &Records) -> String {
@@ -732,6 +738,15 @@ fn settings_menu(mut commands: Commands, settings: Res<Settings>, capture: Res<C
                             ));
                             small(row, "+", 34.0, Press::Volume(0.1));
                         });
+                        row(options, "Music", |row| {
+                            small(row, "-", 34.0, Press::Music(-0.1));
+                            row.spawn(theme::figure(
+                                format!("{:.0}%", settings.music * 100.0),
+                                15.0,
+                                theme::TEXT,
+                            ));
+                            small(row, "+", 34.0, Press::Music(0.1));
+                        });
                         section(options, "Accessibility");
                         row(options, "Camera shake", |row| {
                             small(row, on_off(settings.camera_shake), 70.0, Press::Shake);
@@ -848,10 +863,8 @@ fn press(
             Press::Fullscreen => settings.fullscreen = !settings.fullscreen,
             Press::Vsync => settings.vsync = !settings.vsync,
             Press::Shake => settings.camera_shake = !settings.camera_shake,
-            Press::Volume(change) => {
-                settings.volume =
-                    ((settings.volume + change) * 10.0).round().clamp(0.0, 10.0) / 10.0;
-            }
+            Press::Volume(change) => settings.volume = level(settings.volume + change),
+            Press::Music(change) => settings.music = level(settings.music + change),
             Press::Scale(change) => {
                 settings.ui_scale = (settings.ui_scale + change).clamp(0.75, 2.0)
             }
@@ -986,6 +999,20 @@ mod tests {
         assert_eq!(new_seed(&chosen, 2), "85GVTHQA");
         let random = Options::default();
         assert_ne!(new_seed(&random, 1), new_seed(&random, 2));
+    }
+
+    #[test]
+    fn a_level_of_sound_moves_by_tenths_and_stays_in_range() {
+        assert_eq!(level(0.7 + 0.1), 0.8);
+        assert_eq!(level(0.5 - 0.1), 0.4);
+        assert_eq!(level(1.0 + 0.1), 1.0);
+        assert_eq!(level(0.0 - 0.1), 0.0);
+        // Ten steps down from the top reach silence exactly.
+        let mut music = 1.0;
+        for _ in 0..10 {
+            music = level(music - 0.1);
+        }
+        assert_eq!(music, 0.0);
     }
 
     #[test]

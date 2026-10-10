@@ -246,8 +246,10 @@ impl Binding {
 pub struct Settings {
     /// Two bindings per action: WASD and the arrow keys both move the tank.
     bindings: Vec<(Action, [Option<Binding>; 2])>,
-    /// From 0 to 1.
+    /// How loud the game is, from 0 to 1.
     pub volume: f32,
+    /// How loud the music is against the sound cues, from 0 to 1.
+    pub music: f32,
     pub camera_shake: bool,
     pub ui_scale: f32,
     pub fullscreen: bool,
@@ -261,6 +263,7 @@ impl Default for Settings {
                 .map(|action| (action, action.defaults()))
                 .to_vec(),
             volume: 0.7,
+            music: 0.5,
             camera_shake: true,
             ui_scale: 1.0,
             // A browser only goes full screen when the player asks for it.
@@ -358,6 +361,7 @@ impl Settings {
                 .unwrap_or(fallback)
         };
         settings.volume = number("volume", settings.volume, 0.0, 1.0);
+        settings.music = number("music", settings.music, 0.0, 1.0);
         settings.ui_scale = number("ui_scale", settings.ui_scale, 0.75, 2.0);
         settings.camera_shake = flag("camera_shake", settings.camera_shake);
         settings.fullscreen = flag("fullscreen", settings.fullscreen);
@@ -374,6 +378,7 @@ impl Settings {
     fn to_pairs(&self) -> BTreeMap<String, String> {
         let mut pairs = BTreeMap::new();
         pairs.insert("volume".to_string(), self.volume.to_string());
+        pairs.insert("music".to_string(), self.music.to_string());
         pairs.insert("ui_scale".to_string(), self.ui_scale.to_string());
         pairs.insert("camera_shake".to_string(), self.camera_shake.to_string());
         pairs.insert("fullscreen".to_string(), self.fullscreen.to_string());
@@ -513,6 +518,7 @@ mod tests {
     fn settings_survive_a_save_and_a_load() {
         let mut settings = Settings {
             volume: 0.25,
+            music: 0.8,
             camera_shake: false,
             ..default()
         };
@@ -525,10 +531,12 @@ mod tests {
     fn broken_settings_fall_back_to_the_defaults() {
         let mut pairs = BTreeMap::new();
         pairs.insert("volume".to_string(), "loud".to_string());
+        pairs.insert("music".to_string(), "7".to_string());
         pairs.insert("ui_scale".to_string(), "40".to_string());
         pairs.insert("bind.up".to_string(), "NoSuchKey".to_string());
         let settings = Settings::from_pairs(&pairs);
         assert_eq!(settings.volume, Settings::default().volume);
+        assert_eq!(settings.music, 1.0);
         assert_eq!(settings.ui_scale, 2.0);
         assert_eq!(settings.bindings(Action::Up), [None, None]);
         assert_eq!(settings.bindings(Action::Down), Action::Down.defaults());
