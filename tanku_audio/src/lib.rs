@@ -25,6 +25,11 @@ use synth::Synth;
 
 /// Frames of music per second.
 pub const SAMPLE_RATE: u32 = 44_100;
+/// Frames between two looks at what can't wait for the next step of the music: a millisecond
+/// and a half.
+const WATCH: u64 = 64;
+/// The bit of a packed context that says that the music is ducked.
+const DUCKED: u32 = 1 << 8;
 /// The music is in stereo: a frame is a sample for the left, then one for the right.
 pub const CHANNELS: u16 = 2;
 
@@ -99,6 +104,10 @@ impl Music {
     /// a sound thread can call it.
     pub fn render(&mut self, frames: &mut [f32]) {
         for frame in frames.as_chunks_mut::<{ CHANNELS as usize }>().0 {
+            if self.frame.is_multiple_of(WATCH) {
+                let ducked = self.context.load(Ordering::Relaxed) & DUCKED != 0;
+                self.synth.duck(ducked);
+            }
             if self.frame == self.next_step / 2 {
                 let context = unpack(self.context.load(Ordering::Relaxed));
                 let step = self.director.step(context);
@@ -118,6 +127,7 @@ fn pack(context: Context) -> u32 {
         | (context.down as u32) << 3
         | (context.muffled as u32) << 4
         | (context.threat.min(7) as u32) << 5
+        | if context.ducked { DUCKED } else { 0 }
 }
 
 fn unpack(bits: u32) -> Context {
@@ -127,6 +137,7 @@ fn unpack(bits: u32) -> Context {
         down: bits & 1 << 3 != 0,
         muffled: bits & 1 << 4 != 0,
         threat: (bits >> 5) as u8 & 7,
+        ducked: bits & DUCKED != 0,
     }
 }
 
@@ -137,13 +148,14 @@ mod tests {
     #[test]
     fn a_context_survives_the_trip_between_the_threads() {
         for place in [Place::Menu, Place::Bay, Place::Corridor, Place::Arena] {
-            for bits in 0..64u8 {
+            for bits in 0..128u8 {
                 let context = Context {
                     place,
                     fight: bits & 1 != 0,
                     down: bits & 2 != 0,
                     muffled: bits & 4 != 0,
-                    threat: bits >> 3,
+                    ducked: bits & 8 != 0,
+                    threat: bits >> 4,
                 };
                 assert_eq!(unpack(pack(context)), context);
                 let conductor = Conductor::default();
@@ -151,6 +163,41 @@ mod tests {
                 assert_eq!(conductor.context(), context);
             }
         }
+    }
+
+    #[test]
+    fn a_duck_doesnt_wait_for_a_step() {
+        let fight = Context {
+            place: Place::Corridor,
+            fight: true,
+            threat: 2,
+            ..Context::default()
+        };
+        let (mut plain, _) = music_from(fight);
+        let (mut ducked, conductor) = music_from(fight);
+        let mut listen = |frames: usize| {
+            let mut heard = [vec![0.0; 2 * frames], vec![0.0; 2 * frames]];
+            plain.render(&mut heard[0]);
+            ducked.render(&mut heard[1]);
+            heard
+        };
+        // Half a second in, which is in the middle of a step.
+        let [whole, same] = listen(22_000);
+        assert_eq!(whole, same);
+        conductor.set(Context {
+            ducked: true,
+            ..fight
+        });
+        // The music is half as loud 0.02 s later, where a step lasts 0.125 s. Below the knee
+        // of the limit, half is exact.
+        let [whole, half] = listen(2000);
+        let settled = whole.iter().zip(&half).skip(2 * 1000);
+        let mut compared = 0;
+        for (whole, half) in settled.filter(|(whole, _)| whole.abs() < 0.5) {
+            assert_eq!(*half, 0.5 * whole);
+            compared += 1;
+        }
+        assert!(compared > 1000);
     }
 
     #[test]

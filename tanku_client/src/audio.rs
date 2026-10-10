@@ -2,6 +2,8 @@
 //! the game ships without sound files. This module plays them: it knows where a sound comes
 //! from and how loud it is.
 
+use std::time::Duration;
+
 use bevy::{audio::Volume, prelude::*};
 use tanku_audio::{
     cues::{self, Cue},
@@ -9,7 +11,10 @@ use tanku_audio::{
 };
 use tanku_core::sim::{SimEvent, Team};
 
-use crate::camera::View;
+use crate::{
+    camera::View,
+    music::{self, DuckedUntil},
+};
 
 /// Present when the game must stay silent, whatever the volume is set to.
 #[derive(Resource)]
@@ -29,8 +34,9 @@ impl Cues {
 }
 
 pub fn plugin(app: &mut App) {
+    // The music hears of a cue in the frame that plays it.
     app.add_systems(Startup, setup)
-        .add_systems(Update, (play, click));
+        .add_systems(Update, (play.before(music::tell), click));
 }
 
 /// Computes the cues, each as a WAV file in memory.
@@ -47,6 +53,8 @@ fn play(
     mut events: MessageReader<SimEvent>,
     cues: Res<Cues>,
     view: Res<View>,
+    time: Res<Time<Real>>,
+    mut ducked: ResMut<DuckedUntil>,
 ) {
     for event in events.read() {
         let (cue, at) = match *event {
@@ -77,6 +85,11 @@ fn play(
         // tells what the eyes can miss.
         let nearness = at.map_or(1.0, |at| 1.0 - at.distance(view.focus()) / HEARING_RANGE);
         let volume = Volume::Linear(nearness.clamp(0.25, 1.0));
+        // The music makes room for the warning of a mine that is within hearing range, for
+        // as long as the warning sounds.
+        if cue == Cue::MineTriggered && nearness > 0.0 {
+            ducked.0 = time.elapsed() + Duration::from_secs_f32(cue.seconds());
+        }
         commands.spawn((
             AudioPlayer::new(cues.sound(cue)),
             PlaybackSettings::DESPAWN.with_volume(volume),
@@ -103,8 +116,66 @@ fn click(
 #[cfg(test)]
 mod tests {
     use bevy::audio::Source;
+    use tanku_core::sim::{Run, RunPhase};
 
     use super::*;
+    use crate::{Overlay, Screen, music::Baton};
+
+    #[test]
+    fn the_music_makes_room_for_the_warning_of_a_mine() {
+        let mut app = App::new();
+        app.init_resource::<Assets<AudioSource>>()
+            .init_resource::<View>()
+            .init_resource::<Baton>()
+            .init_resource::<DuckedUntil>()
+            .init_resource::<Time<Real>>()
+            .insert_resource(State::new(Screen::Playing))
+            .insert_resource(State::new(Overlay::None))
+            .insert_resource(Run {
+                seed_text: "TEST".into(),
+                seed: 1,
+                sector: 1,
+                cleared: 0,
+                checkpoint: 0,
+                lives: 3,
+                kills: 0,
+                ticks: 0,
+                phase: RunPhase::Playing,
+                lost_to: None,
+            })
+            .add_message::<SimEvent>()
+            .add_systems(Startup, setup)
+            .add_systems(Update, (play.before(music::tell), music::tell));
+        let ducked = |app: &App| app.world().resource::<Baton>().0.context().ducked;
+        let frame = |app: &mut App, event: Option<SimEvent>, seconds: f32| {
+            let time = Duration::from_secs_f32(seconds);
+            let mut clock = app.world_mut().resource_mut::<Time<Real>>();
+            clock.update_with_duration(time);
+            if let Some(event) = event {
+                app.world_mut().write_message(event);
+            }
+            app.update();
+        };
+        frame(&mut app, None, 0.016);
+        assert!(!ducked(&app));
+
+        // Another cue leaves the music alone, and so does a warning too far away to matter.
+        let near = Vec2::new(3.0, 4.0);
+        frame(&mut app, Some(SimEvent::MinePlaced { at: near }), 0.016);
+        assert!(!ducked(&app));
+        let far = Vec2::new(0.0, HEARING_RANGE + 1.0);
+        frame(&mut app, Some(SimEvent::MineTriggered { at: far }), 0.016);
+        assert!(!ducked(&app));
+
+        // A warning within hearing range ducks the music in the frame that plays it, for as
+        // long as it sounds.
+        frame(&mut app, Some(SimEvent::MineTriggered { at: near }), 0.016);
+        assert!(ducked(&app));
+        frame(&mut app, None, 0.5);
+        assert!(ducked(&app));
+        frame(&mut app, None, 0.2);
+        assert!(!ducked(&app));
+    }
 
     #[test]
     fn the_sound_library_reads_every_cue_back() {

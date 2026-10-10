@@ -159,6 +159,7 @@ const fn at(place: Place) -> Context {
         threat: 0,
         down: false,
         muffled: false,
+        ducked: false,
     }
 }
 

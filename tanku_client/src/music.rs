@@ -27,6 +27,11 @@ const BLOCK: usize = 128 * CHANNELS as usize;
 #[derive(Resource, Default)]
 pub struct Baton(pub Conductor);
 
+/// The time, on the clock of the machine, until which the music stays half as loud: the
+/// warning of a mine sounds.
+#[derive(Resource, Default)]
+pub struct DuckedUntil(pub Duration);
+
 /// The piece, as something that the sound library can play.
 #[derive(Asset, TypePath)]
 struct Piece(Conductor);
@@ -93,6 +98,7 @@ impl Source for Stream {
 pub fn plugin(app: &mut App) {
     app.add_audio_source::<Piece>()
         .init_resource::<Baton>()
+        .init_resource::<DuckedUntil>()
         .add_systems(Startup, start)
         .add_systems(Update, (tell, set_volume));
 }
@@ -143,6 +149,7 @@ fn context(
     run: Option<&Run>,
     kind: Option<SectorKind>,
     smartest: Option<u8>,
+    ducked: bool,
 ) -> Context {
     // The main menu and the game over screen. A run that is over is no place either: its
     // last moments are still on the screen, and so is the start of the run that follows it.
@@ -165,17 +172,20 @@ fn context(
         down: run.phase != RunPhase::Playing,
         // The settings leave the music clear, so that its volume is set by ear.
         muffled: overlay == Overlay::Pause,
+        ducked,
     }
 }
 
 /// Tells the music what happens in the game.
-fn tell(
+pub fn tell(
     baton: Res<Baton>,
     screen: Res<State<Screen>>,
     overlay: Res<State<Overlay>>,
     run: Option<Res<Run>>,
     sectors: Query<&Sector>,
     enemies: Query<(&Enemy, &Tank)>,
+    time: Res<Time<Real>>,
+    ducked: Res<DuckedUntil>,
 ) {
     let run = run.as_deref();
     let reached = run.map_or(0, |run| run.sector);
@@ -185,9 +195,16 @@ fn tell(
         .map(|plan| plan.kind);
     let awake = enemies.iter().filter(|(enemy, _)| enemy.awake);
     let smartest = awake.map(|(_, tank)| tank.genome.brain()).max();
-    baton
-        .0
-        .set(context(*screen.get(), *overlay.get(), run, kind, smartest));
+    // A warning sounds whether or not the game is paused, so its time is that of the clock.
+    let ducked = time.elapsed() < ducked.0;
+    baton.0.set(context(
+        *screen.get(),
+        *overlay.get(),
+        run,
+        kind,
+        smartest,
+        ducked,
+    ));
 }
 
 #[cfg(test)]
@@ -317,10 +334,11 @@ mod tests {
 
     #[test]
     fn the_music_is_told_where_the_run_is() {
-        let told = |screen, run: &Run, kind| context(screen, Overlay::None, Some(run), kind, None);
+        let told =
+            |screen, run: &Run, kind| context(screen, Overlay::None, Some(run), kind, None, false);
         let playing = run(3, RunPhase::Playing);
         // No run, or a screen that isn't the game: the menu.
-        let menu = context(Screen::Menu, Overlay::None, None, None, None);
+        let menu = context(Screen::Menu, Overlay::None, None, None, None, false);
         assert_eq!(menu, Context::default());
         assert_eq!(menu.place, Place::Menu);
         assert_eq!(told(Screen::Menu, &playing, Some(SectorKind::Arena)), menu);
@@ -340,7 +358,14 @@ mod tests {
     fn the_music_is_told_of_fights_and_of_losses() {
         let corridor = Some(SectorKind::Corridor);
         let told = |overlay, run: &Run, smartest| {
-            context(Screen::Playing, overlay, Some(run), corridor, smartest)
+            context(
+                Screen::Playing,
+                overlay,
+                Some(run),
+                corridor,
+                smartest,
+                false,
+            )
         };
         let playing = run(3, RunPhase::Playing);
         let calm = told(Overlay::None, &playing, None);
@@ -366,8 +391,17 @@ mod tests {
         // The pause menu muffles the music, and the settings don't.
         assert!(told(Overlay::Pause, &playing, Some(2)).muffled);
         assert!(!told(Overlay::Settings, &playing, Some(2)).muffled);
-        let settings_of_the_menu = context(Screen::Menu, Overlay::Settings, None, None, None);
+        let settings_of_the_menu =
+            context(Screen::Menu, Overlay::Settings, None, None, None, false);
         assert!(!settings_of_the_menu.muffled);
+
+        // The warning of a mine ducks the music of a run, under a menu too.
+        let warned = |overlay| {
+            let playing = Some(&playing);
+            context(Screen::Playing, overlay, playing, corridor, Some(2), true)
+        };
+        assert!(!fight.ducked && warned(Overlay::None).ducked);
+        assert!(warned(Overlay::Pause).ducked && warned(Overlay::Pause).muffled);
     }
 
     /// An enemy with a brain of some tier.
@@ -386,6 +420,8 @@ mod tests {
     fn the_game_tells_the_music_every_frame() {
         let mut app = App::new();
         app.init_resource::<Baton>()
+            .init_resource::<DuckedUntil>()
+            .init_resource::<Time<Real>>()
             .insert_resource(State::new(Screen::Playing))
             .insert_resource(State::new(Overlay::None))
             .add_systems(Update, tell);

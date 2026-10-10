@@ -3,7 +3,8 @@
 //! `TANKU_DEV_SCRIPT` holds commands separated by semicolons, run one after the other:
 //! `start SEED`, `wait SECONDS`, `warp SECTOR`, `turn QUARTERS`, `peek ENEMY`, `flag SECTOR`,
 //! `look X Y`, `zoom METERS`, `clear`, `reach`, `bubble`, `die`, `pause`, `settings`, `resume`,
-//! `lose ENEMY`, `blast X Y`, which sets off a mine at a point of the map, `shot PATH` and
+//! `lose ENEMY`, `blast X Y`, which sets off a mine at a point of the map, `warn X Y`, which
+//! sounds the warning of a mine there without any mine, `shot PATH` and
 //! `quit`, plus `play DX DY AX AY SECONDS`, which drives the tank in a direction while it fires
 //! at a point relative to itself, `press LABEL`, which presses the button of a menu that bears
 //! this label, in capitals or not, `lineup`, which lays out one bullet of each kind next to the
@@ -474,6 +475,11 @@ fn run_script(
                     InSector(run.sector),
                 ));
             }
+        }
+        // Sounds the warning of a mine at a point of the map. Nothing blows up.
+        "warn" => {
+            let at = Vec2::new(number(1), number(2));
+            events.write(SimEvent::MineTriggered { at });
         }
         // Ends the run as the loss of the last life does. With a number, it was lost to the
         // bullet of the enemy with this number, among those that are loaded or on display.

@@ -39,6 +39,9 @@ pub struct Context {
     pub down: bool,
     /// A menu is open over the game.
     pub muffled: bool,
+    /// The warning of a mine sounds: the music makes room for it. The director has no say in
+    /// this, which can't wait for a step.
+    pub ducked: bool,
 }
 
 const HIGHEST_THREAT: u8 = 4;

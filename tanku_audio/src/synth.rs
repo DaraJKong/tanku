@@ -99,6 +99,12 @@ const MUFFLE_LEVEL: f32 = 0.5;
 /// It takes 0.2 s to get there and as long to come back.
 const MUFFLE_RATE: f32 = 1.0 / (0.2 * RATE);
 
+/// A ducked music is half as loud. It gets there in 0.02 s, in time for the first beep of a
+/// warning, and takes 0.2 s to come back.
+const DUCK_LEVEL: f32 = 0.5;
+const DUCK_IN: f32 = 1.0 / (0.02 * RATE);
+const DUCK_OUT: f32 = 1.0 / (0.2 * RATE);
+
 /// The mix is left alone below this level and bent above it, so that it never clips.
 const KNEE: f32 = 0.6;
 
@@ -573,6 +579,9 @@ pub struct Synth {
     /// How muffled the music is, from 0 to 1, and its muffled version on each side.
     muffle: f32,
     dull: [[f32; 2]; 2],
+    ducked: bool,
+    /// How ducked the music is, from 0 to 1.
+    duck: f32,
 }
 
 impl Default for Synth {
@@ -602,6 +611,8 @@ impl Default for Synth {
             muffled: false,
             muffle: 0.0,
             dull: [[0.0; 2]; 2],
+            ducked: false,
+            duck: 0.0,
         }
     }
 }
@@ -659,6 +670,12 @@ impl Synth {
         }
     }
 
+    /// Makes room for a sound that must be heard, or takes the room back. It doesn't wait
+    /// for a step: the music is half as loud a moment later.
+    pub fn duck(&mut self, ducked: bool) {
+        self.ducked = ducked;
+    }
+
     /// The next frame of the music: its left and its right.
     pub fn frame(&mut self) -> [f32; 2] {
         // While the music is hushed, the bass holds its note.
@@ -684,6 +701,10 @@ impl Synth {
 
         let target = if self.muffled { 1.0 } else { 0.0 };
         self.muffle += (target - self.muffle).clamp(-MUFFLE_RATE, MUFFLE_RATE);
+        let target = if self.ducked { 1.0 } else { 0.0 };
+        self.duck += (target - self.duck).clamp(-DUCK_OUT, DUCK_IN);
+        // Both leave the level as it is, to the bit, when the music is neither.
+        let level = (1.0 - MUFFLE_LEVEL * self.muffle) * (1.0 - DUCK_LEVEL * self.duck);
 
         let mut out = [0.0; 2];
         for (side, out) in out.iter_mut().enumerate() {
@@ -699,7 +720,7 @@ impl Synth {
             *first += MUFFLE_POLE * (mix - *first);
             *second += MUFFLE_POLE * (*first - *second);
             let heard = mix + self.muffle * (*second - mix);
-            *out = limit(heard * (1.0 - MUFFLE_LEVEL * self.muffle));
+            *out = limit(heard * level);
         }
         out
     }
@@ -874,5 +895,36 @@ mod tests {
         let muffled = power(&listen(&mut synth, 20_000)[10_000..]);
         assert_eq!(synth.muffle, 1.0);
         assert!(muffled < clear / 8.0, "{muffled} against {clear}");
+    }
+
+    #[test]
+    fn a_ducked_music_is_half_as_loud_and_comes_back_as_it_was() {
+        // Two synthesizers play the same long notes, and one of them makes room for a while.
+        let mut synths = [Synth::default(), Synth::default()];
+        for synth in &mut synths {
+            synth.play(&note("lead", 81, 64), 0);
+            synth.play(&note("bass", 45, 64), 0);
+        }
+        let [plain, ducked] = &mut synths;
+        assert_eq!(listen(plain, 5000), listen(ducked, 5000));
+
+        ducked.duck(true);
+        // It is there within 0.02 s, which is 882 frames.
+        let (before, after) = (listen(plain, 1000), listen(ducked, 1000));
+        assert_eq!(ducked.duck, 1.0);
+        assert!(after[998].abs() <= before[998].abs());
+        // From then on every sample is half of what it would be: nothing else has changed.
+        let (whole, half) = (listen(plain, 5000), listen(ducked, 5000));
+        assert!(whole.iter().any(|level| level.abs() > 0.05));
+        for (whole, half) in whole.iter().zip(&half) {
+            assert_eq!(*half, 0.5 * whole);
+        }
+
+        ducked.duck(false);
+        // It is back within 0.2 s, to the bit.
+        let (rising, _) = (listen(ducked, 9000), listen(plain, 9000));
+        assert_eq!(ducked.duck, 0.0);
+        assert!(rising.iter().all(|level| level.is_finite()));
+        assert_eq!(listen(plain, 5000), listen(ducked, 5000));
     }
 }

@@ -196,6 +196,7 @@ The context is all that the music knows about the game. The client writes it eve
 | Threat | 0 to 4 | The highest brain tier among the enemies that are awake, and 0 when none is |
 | Down | On or off | In solo, the player's tank is destroyed and on its way back |
 | Muffled | On or off | The pause menu is open over the game. The settings leave the music clear, so that its volume is set by ear. |
+| Ducked | On or off | The warning of a mine sounds within hearing range |
 
 In multiplayer the context is the team's, so every player hears the same arrangement, and a fight starts for everyone when the first player crosses. A wrecked player hears the music muffled until repaired.
 
@@ -247,6 +248,7 @@ Three rules make the music answer fast and stay in time:
 | The run ends | The same | On the next bar line: the intro starts. The game over screen comes 1.4 s after the end, so the intro is there before it or soon after. |
 | A run starts | Nothing: the intro goes on | The count of phrases starts over |
 | The pause menu opens over the game | Within 0.2 s the music loses what is above 600 Hz and half its loudness. It gets them back when the menu closes, or when the settings open from it. | Nothing |
+| The warning of a mine sounds within hearing range | Within 0.02 s the music is half as loud, without waiting for a step | When the warning is over, 0.6 s later: the music comes back in 0.2 s |
 
 The fight sections are counted in phrases: the two of the verse, then the two of the chorus, then the verse again. A fight opens on the phrase after the one where the last fight ended. The first fight of a run opens the verse, so every run begins the same way, and the short fights of the first sectors walk through the whole piece instead of repeating its first bars.
 
@@ -272,7 +274,7 @@ The kick has no noise in it because every weapon cue has some. The bass stays ab
 - **Two volumes.** The settings have a second level, Music, next to Volume. Volume sets everything and Music sets the music against the cues. It starts at 50%. At 0 the music keeps counting its bars and stays silent.
 - **Under the cues.** At the default settings, the loudest arrangement peaks 12 dB below a shot fired next to the player. With Music all the way up it peaks 6 dB below that shot.
 - **Melody on top.** The melody is the loudest thing with a pitch. The arpeggio of the pluck and the octave that the lead adds at threat 4 are quieter than the line they go with.
-- **Ducking.** While the warning of a mine sounds within hearing range, the music is half as loud.
+- **Ducking.** While the warning of a mine sounds within hearing range, the music is half as loud. It gets there in 0.02 s, in time for the first beep, and takes 0.2 s to come back once the warning is over. Hearing range is 50 m from the middle of the screen. No other cue ducks the music.
 - **Stereo.** The music is in stereo and the cues stay in the middle. The pluck and the lead, which share the pitches of the cues, sit to the sides.
 - **Dry.** There is no reverb. The arpeggio of the pluck has one echo, three steps later, a third as loud and on the other side. Its melodies have none: with an echo, the intro sounded too relaxed.
 - **No clipping.** The sum of the instruments goes through a soft limit.
@@ -334,7 +336,7 @@ music.render(&mut frames);
 |---|---|
 | Output | Stereo, 44,100 frames per second, 32-bit floats. It is the rate the sound library opens by default on Linux and on the web, so nothing resamples the music there. |
 | Dependencies | None, not even Bevy |
-| Real time | `render` never allocates, locks or waits. The context crosses between the threads as one atomic number, read at the start of every step. |
+| Real time | `render` never allocates, locks or waits. The context crosses between the threads as one atomic number, read at the start of every step, and about 700 times a second for the ducking, which can't wait for a step. |
 | Cost | Under 10 ms of one core for one second of the fullest arrangement. It takes 1.3 ms on the development machine. |
 | Development builds | The crate is compiled with full optimization, like the dependencies, because it runs in real time |
 | Start | Nothing is computed ahead, so the music adds nothing to the time the game takes to start or to restart |
@@ -364,11 +366,12 @@ It writes one sound file per arrangement, a tour through a made-up run with the 
 - **Connected.** For every note the lead can be on, the connection goes to degree 5 one step of the scale at a time and never turns back.
 - **Sound in both modes.** The motifs use the five degrees, the chords are major or minor, and every melody, with its skeleton and its ornaments, passes the check on semitones above the root.
 - **Whole.** Each cue lasts as long as it says, never goes past full scale and ends without a click.
+- **Ducked.** A ducked music is half as loud within 0.02 s, wherever the step is, and comes back to what it was, to the bit.
 - **Cost.** A benchmark renders ten seconds of a fight in an arena at threat 4.
 
 The client has its own:
 
-- **Told right.** The context follows the screen, the run, the kind of its sector and the enemies that are awake. The smartest of them sets the threat, which falls when it is destroyed, and those that sleep don't count. A run that is over counts as the menu, and only the pause menu muffles.
+- **Told right.** The context follows the screen, the run, the kind of its sector and the enemies that are awake. The smartest of them sets the threat, which falls when it is destroyed, and those that sleep don't count. A run that is over counts as the menu, and only the pause menu muffles. The warning of a mine within hearing range ducks the music from the frame that plays it to the moment it ends, and a warning further away doesn't.
 - **Unchanged on the way.** The sound library reads the very samples that the crate renders, and reads every cue back from its sound file to a step of 16 bits.
 - **Under the cues.** At the default settings, the loudest arrangement peaks 12 dB below the shot of a player, within half a decibel.
 - **Heard.** On request, a test plays the piece on the sound device of the machine at no volume, and checks that the device asks for more: `cargo test -p tanku_client reaches_the_sound_device -- --ignored`.
