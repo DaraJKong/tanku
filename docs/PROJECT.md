@@ -302,6 +302,8 @@ An enemy's model is assembled from its genome, so players can read a tank before
 | Total budget | Color intensity. Weak tanks are pale, strong ones saturated. |
 | Largest spending group | Hue: one for mobility, one for firepower, one for mines and shield, one for software |
 
+The lenses of the sight and the pointed tip of the barrel glow in a pale tint of the tank's own hue.
+
 Player tanks have fixed models in reserved colors that no enemy uses. All tanks have the same size.
 
 ## Enemy brains
