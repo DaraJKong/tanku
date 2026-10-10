@@ -90,6 +90,12 @@ cargo test --workspace
 
 The server-only check exists because a workspace build gives the server the client's Bevy features.
 
+The tests check the map generator over a dozen seeds. A wider check over a thousand seeds takes two to three minutes and is worth running after a change to the generator:
+
+```bash
+cargo test -p tanku_core many_seeds -- --ignored
+```
+
 Benchmarks measure generation and the simulation, and take under a minute:
 
 ```bash

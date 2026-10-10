@@ -5066,7 +5066,7 @@ dependencies = [
 
 [[package]]
 name = "tanku_client"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bevy",
  "tanku_core",
@@ -5075,7 +5075,7 @@ dependencies = [
 
 [[package]]
 name = "tanku_core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bevy",
  "criterion",
@@ -5083,7 +5083,7 @@ dependencies = [
 
 [[package]]
 name = "tanku_server"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bevy",
  "criterion",

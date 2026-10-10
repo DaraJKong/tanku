@@ -18,6 +18,8 @@ pub const SECTOR_GAP: i32 = 6;
 pub const MAX_DESCENT: i32 = 60;
 /// Enemies are placed at least this far from the entry of their sector.
 pub const SPAWN_DISTANCE: i32 = 15;
+/// Enemies are placed at least this far from the barrier of their sector.
+pub const SPAWN_CLEARANCE: i32 = 3;
 /// Spawn points prepared per sector, enough for an arena with four players.
 pub const MAX_SPAWNS: usize = 24;
 
@@ -29,6 +31,8 @@ const DRIFT: i32 = 12;
 const SIDE_DRIFT: i32 = 6;
 /// Straight stretch behind an entry and in front of an exit.
 const APRON: i32 = 4;
+/// An arena is deep enough for a group to start far from the entry and clear of the barrier.
+const ARENA_MIN_LENGTH: i32 = 32;
 
 /// Squared distances below are in half meters, so that the centers of blocks stay integers.
 /// 1.8 m: a lattice path with this clearance is more than 3 m wide everywhere.
@@ -239,11 +243,24 @@ impl<'a> Walk<'a> {
 
     fn fits(&self, left: Change, right: Change) -> bool {
         let (l, r) = (self.l + left.shift(), self.r + right.shift());
+        // A step moves its wall at once and a slant little by little, so the width is checked
+        // where the changes start as well as where they end.
+        let stepped = |u: i32, change: Change| match change {
+            Change::Step(du) => u + du,
+            _ => u,
+        };
+        let (l_start, r_start) = (stepped(self.l, left), stepped(self.r, right));
+        let fitting = |l: i32, r: i32| (self.width.0..=self.width.1).contains(&(r - l));
+        // The corner of a step also faces the other wall as it was just before the step.
+        let open = |l: i32, r: i32| r - l >= self.width.0;
         // Two walls on the shallowest slope would leave a passage narrower than it measures.
         let shallow = |change| matches!(change, Change::Slant(_, true));
         let pinched =
             (shallow(left) && right != Change::None) || (shallow(right) && left != Change::None);
-        (self.width.0..=self.width.1).contains(&(r - l))
+        open(l_start, self.r)
+            && open(self.l, r_start)
+            && fitting(l_start, r_start)
+            && fitting(l, r)
             && l >= self.reach.0
             && r <= self.reach.1
             && !pinched
@@ -351,8 +368,8 @@ fn arena_shape(rng: &mut Stream, sector: u32, entry: i32) -> Shape {
     let taper = narrowing + flare_left + flare_right;
     let taper_left = rng.range((taper - 9).max(0), taper.min(9));
     let taper_right = taper - taper_left;
-    let body = rng.range(8, 14);
-    let length = 4 + flare_left.max(flare_right) + body + taper_left.max(taper_right);
+    let ends = 4 + flare_left.max(flare_right) + taper_left.max(taper_right);
+    let length = (ends + rng.range(8, 14)).max(ARENA_MIN_LENGTH);
 
     let wall = |start: i32, flare: i32, taper: i32, side: i32| {
         let wide = start + side * flare;
@@ -559,7 +576,8 @@ impl Corridor {
             seed,
             plans: vec![plan_sector(seed, 0, frame, BAY_WIDTH, &spec)],
             maneuvers: 0,
-            arena_in: Stream::new(seed, Purpose::Maneuver, u32::MAX, 0).range(5, 8) as u32,
+            // The streams of the maneuvers have 0 as their second number.
+            arena_in: Stream::new(seed, Purpose::Maneuver, 0, 1).range(5, 8) as u32,
         }
     }
 
@@ -815,13 +833,17 @@ impl SectorLayout {
     }
 
     fn place_spawns(&mut self, rng: &mut Stream, reachable: HashSet<IVec2>) {
-        let entry = self.plan.entry.0 + self.plan.entry.1;
+        // Distances are measured to the whole width of the entry and of the barrier. A point of
+        // the lattice can lie on either line, and a tank that starts there is on neither side.
+        let (entry, gate) = (self.plan.entry, self.plan.gate);
         let far_2 = (2 * SPAWN_DISTANCE as i64).pow(2);
+        let clear_2 = (2 * SPAWN_CLEARANCE as i64).pow(2);
         let mut candidates: Vec<IVec2> = reachable
             .into_iter()
             .filter(|&point| {
-                let offset = point * 2 - entry;
-                (offset.x as i64).pow(2) + (offset.y as i64).pow(2) >= far_2
+                let half = point * 2;
+                far_from_segment(half, entry.0 * 2, entry.1 * 2, far_2)
+                    && far_from_segment(half, gate.0 * 2, gate.1 * 2, clear_2)
             })
             .collect();
         // A hash set has no order of its own.
@@ -909,7 +931,7 @@ mod tests {
         let combined = (0..30).fold(0u64, |hash, i| {
             hash.rotate_left(7) ^ corridor.layout(i).fingerprint()
         });
-        assert_eq!(combined, 14_109_271_918_055_966_551);
+        assert_eq!(combined, 3_536_754_374_413_674_072);
     }
 
     #[test]
@@ -1004,27 +1026,100 @@ mod tests {
         }
     }
 
+    /// Checks what the generator promises about the inside of one sector.
+    fn check_layout(seed: u64, layout: &SectorLayout) {
+        let plan = &layout.plan;
+        let at = format!("seed {seed}, sector {}", plan.index);
+        assert!(
+            layout.reachable().contains(&plan.gate_point),
+            "{at}: no way through"
+        );
+        let arena = plan.kind == SectorKind::Arena;
+        let needed = progression::enemy_count(plan.index, 1, arena) as usize;
+        assert!(
+            layout.spawns.len() >= needed,
+            "{at}: {} spawns for {needed} enemies",
+            layout.spawns.len()
+        );
+
+        let distance = |point: IVec2, ends: (IVec2, IVec2)| {
+            crate::geom::distance_to_segment(point.as_vec2(), ends.0.as_vec2(), ends.1.as_vec2())
+        };
+        for (number, &spawn) in layout.spawns.iter().enumerate() {
+            assert!(plan.contains_half(spawn * 2), "{at}: {spawn} is outside");
+            assert!(
+                distance(spawn, plan.entry) >= SPAWN_DISTANCE as f32,
+                "{at}: {spawn} is close to the entry"
+            );
+            // A tank that starts on the line of its barrier can end up behind it, out of reach.
+            // Seed 85GVTHQA had one in sector 7, whose barrier is on a side wall.
+            assert!(
+                distance(spawn, plan.gate) >= SPAWN_CLEARANCE as f32,
+                "{at}: {spawn} is close to the barrier"
+            );
+            for &wall in &plan.walls {
+                assert!(distance(spawn, wall) >= 1.8, "{at}: {spawn} is in a wall");
+            }
+            for &corner in layout.blocks.iter().chain(&layout.crates) {
+                assert!(
+                    far_from_square(spawn * 2, corner, PATH_CLEARANCE_2),
+                    "{at}: {spawn} is in an obstacle"
+                );
+            }
+            // Two tanks side by side need 1.8 m.
+            for &other in &layout.spawns[..number] {
+                assert!(
+                    (other - spawn).length_squared() >= 4,
+                    "{at}: {spawn} overlaps {other}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn every_sector_has_a_way_through_and_fair_spawns() {
         for seed in SEEDS {
             let mut corridor = Corridor::new(seed);
             for index in 1..=SECTORS {
-                let layout = corridor.layout(index);
-                assert!(
-                    layout.reachable().contains(&layout.plan.gate_point),
-                    "seed {seed}, sector {index}: no way through"
-                );
-                assert!(
-                    layout.spawns.len() >= 9,
-                    "seed {seed}, sector {index}: {} spawns",
-                    layout.spawns.len()
-                );
-                let entry = (layout.plan.entry.0 + layout.plan.entry.1).as_vec2() / 2.0;
-                for spawn in &layout.spawns {
-                    assert!(spawn.as_vec2().distance(entry) >= SPAWN_DISTANCE as f32);
-                }
+                check_layout(seed, &corridor.layout(index));
             }
         }
+    }
+
+    /// The same over many seeds, which takes a few minutes:
+    /// `cargo test -p tanku_core many_seeds -- --ignored`.
+    #[test]
+    #[ignore]
+    fn guarantees_hold_for_many_seeds() {
+        for seed in 1000..2000 {
+            let mut corridor = Corridor::new(seed);
+            for index in 1..=SECTORS {
+                check_layout(seed, &corridor.layout(index));
+            }
+            let mut north = i32::MIN;
+            for (i, plan) in corridor.plans.iter().enumerate() {
+                for other in &corridor.plans[..i.saturating_sub(1)] {
+                    assert!(plan.apart_from(other), "seed {seed}, sector {i}");
+                }
+                assert!(
+                    plan.min.y >= north.saturating_sub(MAX_DESCENT),
+                    "seed {seed}, sector {i}"
+                );
+                north = north.max(plan.max.y);
+            }
+        }
+    }
+
+    #[test]
+    fn a_step_never_pinches_the_corridor() {
+        // Sector 57 is 8 to 14 m wide. A wall that steps 4 m inward while the opposite wall
+        // starts to slant away leaves 6 m where the step is, whatever the width further on.
+        let mut rng = Stream::new(0, Purpose::Shape, 0, 0);
+        let walk = Walk::new(&mut rng, 10, 57, &Spec::corridor(Exit::Ahead, DRIFT));
+        assert!(walk.fits(Change::None, Change::Slant(4, false)));
+        assert!(walk.fits(Change::Step(2), Change::Slant(4, false)));
+        assert!(!walk.fits(Change::Step(4), Change::Slant(4, false)));
+        assert!(!walk.fits(Change::Slant(-4, false), Change::Step(-4)));
     }
 
     #[test]
