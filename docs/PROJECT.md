@@ -107,6 +107,15 @@ Enemy groups grow with the number of players (see [Progression](#progression)). 
 
 Normal, hard and impossible are the three difficulties. Chosen seed and free mode are options that combine with any of them.
 
+### Playtest
+
+A playtest is a way to test the game faster, not a mode for players. It starts with the `--playtest` option on the command line and lets the solo player cheat from the menu in two ways:
+
+- **Infinite lives.** The tank comes back as often as it is destroyed. This is on at the start and can be turned off.
+- **Skipping to a sector.** The player picks any sector and comes back at the end of the one before it, as after capturing a flag there.
+
+A playtest says on screen that it is one. It sets no record and earns no achievement.
+
 ## Controls
 
 | Action | Keyboard and mouse | Notes |
