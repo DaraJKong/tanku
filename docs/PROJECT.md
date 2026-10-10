@@ -179,7 +179,9 @@ The cooldown is the only drawback. A shield saves a tank from one threat, and fo
 
 ### Repair
 
-A player repairs a wrecked teammate by holding the repair key within 3 m of the wreck for 4 s. The repairer can't shoot, place mines or shield while repairing, and all progress is lost if the repair is interrupted. The repaired tank returns with a full magazine and 1 s of protection.
+A player repairs a wrecked teammate by holding the repair key within 3 m of the wreck for 4 s. The repairer can drive within that reach, but can't shoot, place mines or shield while repairing, and all progress is lost if the repair is interrupted. The repaired tank returns with a full magazine and 1 s of protection, during which bullets end on it and blasts leave it alone.
+
+Nothing destroys a wreck again: it absorbs bullets, sets off no mine and stays through any blast.
 
 ### Constants
 
@@ -323,7 +325,7 @@ Player tanks have fixed models in reserved colors that no enemy uses. All tanks 
 
 ## Enemy brains
 
-A brain is the controller of one enemy tank. It observes the fight (its own state, the tanks, bullets and mines around it, the nearby walls) and issues the same commands a player has: move, aim, shoot, place a mine, shield. Brains don't cheat: their tanks obey the same hardware limits and the same rules as player tanks. Enemies in an active sector always know where the players are. What they do with that knowledge depends on their software.
+A brain is the controller of one enemy tank. It observes the fight (its own state, the tanks, bullets and mines around it, the nearby walls) and issues the same commands a player has: move, aim, shoot, place a mine, shield. Brains don't cheat: their tanks obey the same hardware limits and the same rules as player tanks. Enemies in an active sector always know where the players are. What they do with that knowledge depends on their software. An enemy fights the nearest player in its sector whose tank still runs, and keeps that target until another player is clearly nearer.
 
 Two things make a brain better. Its tiers, bought with points, decide what it is able to do. Its experience, which depends only on the sector, decides how well it does it: experience shortens the reaction delay from 0.50 s to 0.12 s and shrinks the aiming error from 8° to 1°.
 
@@ -339,7 +341,7 @@ $$B(n) = B_{\max} - (B_{\max} - B_0)\, e^{-(n-1)/15}$$
 
 with $B_0 = 10$ and $B_{\max} = 100$ in normal mode. It rises fast at first and flattens toward the cap. The cap stays below the 135 points of a fully equipped tank, so even late enemies must specialize. Every stat also stops at its own highest level.
 
-The number of enemies in a sector is $N(n) = \min(6,\ 1 + \lfloor n/3 \rfloor)$ in solo and $\lceil N(n)\,(1 + 0.5\,(P - 1)) \rceil$ with $P$ players. Arenas hold 1.5 times as many.
+The number of enemies in a sector is $N(n) = \min(6,\ 1 + \lfloor n/3 \rfloor)$ in solo and $\lceil N(n)\,(1 + 0.5\,(P - 1)) \rceil$ with $P$ players. Arenas hold 1.5 times as many. The group of a sector is set when the sector is loaded, one sector ahead of the players. A sector that is too small for its whole group holds as many enemies as fit. That happens in the smallest arenas: to about one in a thousand with four players, and almost never with fewer.
 
 Experience is $E(n) = 1 - e^{-(n-1)/20}$, where 0 is a novice and 1 a flawless brain. It keeps closing in on flawless play without ever reaching it. The highest brain tier allowed is $\min(4,\ 1 + \lfloor (n-1)/5 \rfloor)$ and the highest ballistics tier is $\min(3,\ \lfloor (n+2)/5 \rfloor)$.
 
