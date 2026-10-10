@@ -205,7 +205,8 @@ pub struct Run {
 }
 
 /// Present when the game was started as a playtest, which lets the player cheat. The runs of
-/// a playtest set no record.
+/// a playtest set no record. Whoever starts the game inserts it and sets its options, and the
+/// server follows them.
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Playtest {
     /// A destroyed player comes back without losing a life.

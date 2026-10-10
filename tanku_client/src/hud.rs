@@ -3,7 +3,10 @@
 use bevy::prelude::*;
 use tanku_core::{
     progression,
-    sim::{Enemy, Gun, Mine, Player, Position, Run, Shield, ShieldState, SimEvent, Tank, Team},
+    sim::{
+        Enemy, Gun, Mine, Player, Playtest, Position, Run, Shield, ShieldState, SimEvent, Tank,
+        Team,
+    },
     stats::Stat,
 };
 
@@ -25,6 +28,10 @@ struct SectorLabel;
 
 #[derive(Component)]
 struct LifePip(u32);
+
+/// What stands for the lives when a playtest doesn't count them.
+#[derive(Component)]
+struct LivesNote;
 
 #[derive(Component)]
 struct RoundPip(u8);
@@ -108,7 +115,9 @@ fn bar(marker: impl Component) -> impl Bundle {
     )
 }
 
-fn build(mut commands: Commands) {
+fn build(mut commands: Commands, playtest: Option<Res<Playtest>>) {
+    // A playtest says so, because it sets no record.
+    let mode = if playtest.is_some() { "PLAYTEST" } else { "" };
     commands.spawn((
         DespawnOnExit(Screen::Playing),
         Node {
@@ -129,7 +138,17 @@ fn build(mut commands: Commands) {
                     ..default()
                 },
                 children![
-                    (SectorLabel, theme::text("", 26.0, theme::TEXT)),
+                    (
+                        Node {
+                            flex_direction: FlexDirection::Column,
+                            row_gap: px(4),
+                            ..default()
+                        },
+                        children![
+                            (SectorLabel, theme::text("", 26.0, theme::TEXT)),
+                            theme::text(mode, 13.0, theme::ACCENT),
+                        ],
+                    ),
                     (Toast(0.0), theme::text("", 20.0, theme::TEXT)),
                     (
                         row(),
@@ -138,6 +157,7 @@ fn build(mut commands: Commands) {
                             pip(LifePip(1)),
                             pip(LifePip(2)),
                             pip(LifePip(3)),
+                            (LivesNote, theme::text("", 13.0, theme::ACCENT)),
                         ],
                     ),
                 ],
@@ -207,10 +227,12 @@ fn build(mut commands: Commands) {
 
 fn status(
     run: Option<Res<Run>>,
+    playtest: Option<Res<Playtest>>,
     settings: Res<Settings>,
-    mut sector: Single<&mut Text, (With<SectorLabel>, Without<Hint>)>,
-    mut hint: Single<&mut Text, (With<Hint>, Without<SectorLabel>)>,
-    mut lives: Query<(&LifePip, &mut BackgroundColor)>,
+    mut sector: Single<&mut Text, (With<SectorLabel>, Without<Hint>, Without<LivesNote>)>,
+    mut hint: Single<&mut Text, (With<Hint>, Without<SectorLabel>, Without<LivesNote>)>,
+    mut note: Single<&mut Text, (With<LivesNote>, Without<SectorLabel>, Without<Hint>)>,
+    mut lives: Query<(&LifePip, &mut BackgroundColor, &mut Node)>,
 ) {
     let Some(run) = run else {
         return;
@@ -220,7 +242,14 @@ fn status(
     } else {
         format!("SECTOR {}", run.sector)
     };
-    for (pip, mut color) in &mut lives {
+    let infinite_lives = playtest.is_some_and(|playtest| playtest.infinite_lives);
+    note.0 = if infinite_lives { "INFINITE" } else { "" }.to_string();
+    for (pip, mut color, mut node) in &mut lives {
+        node.display = if infinite_lives {
+            Display::None
+        } else {
+            Display::Flex
+        };
         color.0 = if pip.0 <= run.lives {
             theme::ACCENT
         } else {
@@ -319,10 +348,12 @@ fn weapons(
 fn toasts(
     time: Res<Time>,
     run: Option<Res<Run>>,
+    playtest: Option<Res<Playtest>>,
     mut events: MessageReader<SimEvent>,
     mut toast: Single<(&mut Toast, &mut Text, &mut TextColor)>,
 ) {
     let (toast, text, color) = &mut *toast;
+    let infinite_lives = playtest.is_some_and(|playtest| playtest.infinite_lives);
     // Several things can happen at once, such as capturing a flag and unlocking its barrier.
     // The message that matters most is shown.
     let mut news: Option<(u8, String)> = None;
@@ -343,7 +374,13 @@ fn toasts(
                 team: Team::Players,
                 ..
             } => {
-                let message = match run.as_ref().map_or(0, |run| run.lives) {
+                // A playtest that doesn't count its lives has none to announce.
+                let lives = if infinite_lives {
+                    0
+                } else {
+                    run.as_ref().map_or(0, |run| run.lives)
+                };
+                let message = match lives {
                     0 => "Tank destroyed".to_string(),
                     1 => "Tank destroyed - last life".to_string(),
                     lives => format!("Tank destroyed - {lives} lives left"),

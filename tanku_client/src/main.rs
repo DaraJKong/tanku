@@ -1,5 +1,6 @@
 mod audio;
 mod camera;
+mod cli;
 #[cfg(feature = "development")]
 mod dev;
 mod effects;
@@ -13,7 +14,7 @@ mod storage;
 mod theme;
 
 use bevy::prelude::*;
-use tanku_core::CorePlugin;
+use tanku_core::{CorePlugin, sim::Playtest};
 use tanku_server::ServerPlugin;
 
 /// What the player is looking at.
@@ -35,6 +36,7 @@ pub enum Overlay {
 }
 
 fn main() {
+    let options = cli::Options::from_command_line();
     let mut app = App::new();
     #[cfg(feature = "development")]
     let scripted = dev::scripted();
@@ -73,6 +75,12 @@ fn main() {
             menu::plugin,
             audio::plugin,
         ));
+    if options.playtest {
+        // The lives count again once the pause menu says so.
+        app.insert_resource(Playtest {
+            infinite_lives: true,
+        });
+    }
     #[cfg(feature = "development")]
     app.add_plugins(dev::plugin);
     app.run();
