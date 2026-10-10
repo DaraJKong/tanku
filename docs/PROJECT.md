@@ -68,7 +68,7 @@ The corridor is a chain of sectors. Each sector holds one group of enemies and e
 1. Bullets and blasts never pass a barrier, and enemies never cross one.
 2. A barrier unlocks when every enemy in its sector is destroyed and every living player is within 8 m of it. It then stays unlocked.
 3. Players cross an unlocked barrier forward only.
-4. The enemies of a sector are dormant until the first player crosses into it. Dormant enemies are visible through the barrier.
+4. The enemies of a sector are dormant until the first player crosses into it. Dormant enemies are visible through the barrier. Until then, the sector and its enemies are drawn darker than the rest of the corridor.
 
 These rules let the players study the next group, pick the moment to engage and enter together. They also rule out both driving past enemies and fighting from a doorway. When the last living player has crossed, any wreck left behind is towed across and the sectors further back are unloaded. When two or fewer enemies remain in a sector, markers at the screen edge point to them.
 
@@ -167,7 +167,7 @@ Blasts are neutral. They destroy every unshielded tank in range, whoever caused 
 
 ### Mines
 
-A tank drops a mine at its own position, at most one every 0.5 s, and can have as many armed mines as its Mines stat allows. A mine arms after 1 s. It then detonates when an opposing tank comes within 2 m (after a 0.6 s warning) or when its 10 s fuse runs out. A bullet or a blast detonates it at any time, even before it is armed. The blast has a radius of 3 m. Blasts are the only way to remove destructible blocks.
+A tank drops a mine at its own position, at most one every 0.5 s, and can have as many armed mines as its Mines stat allows. A mine arms after 1 s. It then detonates when an opposing tank comes within 2 m (after a 0.6 s warning) or when its 10 s fuse runs out. A bullet or a blast detonates it at any time, even before it is armed. The blast has a radius of 3 m. An armed mine shows the circle within which an opposing tank sets it off. A triggered mine shows the circle that its blast will reach. Blasts are the only way to remove destructible blocks.
 
 ### Shield
 
@@ -313,7 +313,7 @@ An enemy's model is assembled from its genome, so players can read a tank before
 | Total budget | Color intensity. Weak tanks are pale, strong ones saturated. |
 | Largest spending group | Hue: one for mobility, one for firepower, one for mines and shield, one for software |
 
-The lenses of the sight and the pointed tip of the barrel glow in a pale tint of the tank's own hue.
+The lenses of the sight and the pointed tip of the barrel are a pale tint of the tank's own hue.
 
 Player tanks have fixed models in reserved colors that no enemy uses. All tanks have the same size.
 
@@ -434,17 +434,17 @@ North is at the top of the screen by default. A player can rotate their own view
 
 ### Visual style
 
-The map and the tanks are simple 3D shapes with flat colors. Tanks are assembled from parts by the game, not modeled by hand. Bullets glow and are the most visible objects on screen, in one color for the players' bullets and another for the enemies'. A bullet is an elongated shell with one dark stripe for each bounce it has left: it loses a stripe at every bounce, and a plain bullet won't bounce again. The void outside the corridor is empty and dark.
+The game is drawn as a technical drawing on a dark sheet, and nothing is lit: a solid shows its height by its darker sides. The floor carries a grid with a line every meter and a heavier one every 5 m. Walls are bands between two pale lines, destructible blocks are hatched and explosive crates are crossed in red. Tanks are assembled from parts by the game, not modeled by hand: the body is in the tank's color, and the other parts are dark and edged in pale lines. Bullets are the brightest objects on screen, in one color for the players' bullets and another for the enemies', and each leaves a short line behind it and a patch of light on the floor. A bullet is an elongated shell with one dark stripe for each bounce it has left: it loses a stripe at every bounce, and a plain bullet won't bounce again. The void outside the corridor is empty and dark.
 
 ### Interface
 
-The interface is dark and flat, in the spirit of Material Design, with one accent color per player.
+The interface is the margin of the drawing: ruled panels with square corners, labels in capitals, numbers in a monospaced typeface, and one accent color per player.
 
 | Screen | Content |
 |---|---|
 | Main menu | Solo, host, join, achievements, settings, quit |
 | Lobby | Players, mode, seed, start |
-| Heads-up display | Rounds and reload progress, mines left, shield state, sector number, lives (solo), teammates' state (multiplayer) |
+| Heads-up display | Rounds and reload progress, mines left, shield state, sector number, lives (solo), seed and version, a scale and a north arrow, teammates' state (multiplayer). Rounds, reload and mines are also on an arc under the player's own tank. |
 | Menu | Resume, settings, quit, and the seed with its version |
 | Game over | Sectors cleared, time, kills, seed and version, retry, new run |
 | Settings | Controls, video, audio, accessibility |
