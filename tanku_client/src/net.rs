@@ -148,6 +148,9 @@ fn join(
     };
     let config = NetcodeConfig {
         client_timeout_secs: patience.0,
+        // The host would read a time limit by its own clock, and the clocks of two machines
+        // needn't agree. The patience above is the limit.
+        token_expire_secs: -1,
         ..default()
     };
     let Ok(netcode) = NetcodeClient::new(auth, config) else {
@@ -550,6 +553,7 @@ fn follow_host(
 #[cfg(test)]
 mod tests {
     use bevy::state::app::StatesPlugin;
+    use lightyear::link::LinkSystems;
     use tanku_core::{
         CorePlugin,
         sim::{Tank, Wreck},
@@ -850,6 +854,36 @@ mod tests {
             screen(games[2]) == Screen::Lobby
         });
         assert_eq!((own_seat(&second), own_seat(&third)), (1, 2));
+    }
+
+    /// Brings what a guest sends to the game on this machine, whatever address the guest
+    /// asked for. That is what a network does between two machines: the address by which a
+    /// guest finds its host is not one that the host's game knows as its own.
+    fn reroute(guest: &mut App, port: u16) {
+        let here = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port);
+        let turn = move |mut peers: Query<&mut PeerAddr, With<Client>>| {
+            for mut peer in &mut peers {
+                peer.0 = here;
+            }
+        };
+        guest.add_systems(PostUpdate, turn.before(LinkSystems::Send));
+    }
+
+    #[test]
+    fn a_guest_joins_by_an_address_that_the_host_does_not_know_as_its_own() {
+        let port = free_port();
+        let mut host = host(port);
+        let mut guest = game();
+        reroute(&mut guest, port);
+        // An address kept for documents, which no machine has.
+        let asked = format!("192.0.2.1:{port}");
+        ask(&mut guest, SessionRequest::Join(asked));
+        run_until("an answer", &mut [&mut host, &mut guest], |games| {
+            let refused = games[1].world().resource::<Notice>().0.is_some();
+            refused || screen(games[1]) == Screen::Lobby
+        });
+        assert_eq!(guest.world().resource::<Notice>().0, None);
+        assert_eq!(own_seat(&guest), 1);
     }
 
     /// Makes what a game receives come late, unevenly, and sometimes not at all, as on a line

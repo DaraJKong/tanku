@@ -108,6 +108,10 @@ pub fn open(commands: &mut Commands, port: u16) -> io::Result<()> {
                 // Every player but the host is a client.
                 max_clients: MAX_PLAYERS as usize - 1,
                 connection_request_handler: Some(Arc::new(Doorkeeper(open.clone()))),
+                // A guest names the address by which it found this machine: the one it has
+                // on its network, or the one of its router. The game listens on all of them
+                // and knows none as its own, so it must not turn away those who name one.
+                server_addr_check: false,
                 ..default()
             }),
             LocalAddr(address),
