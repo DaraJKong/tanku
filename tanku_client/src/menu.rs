@@ -192,7 +192,7 @@ fn panel(
 
 fn heading(parent: &mut ChildSpawnerCommands, content: &str) {
     parent.spawn((
-        theme::text(content.to_uppercase(), 40.0, theme::TEXT),
+        theme::title(content, 40.0, theme::TEXT),
         Node {
             margin: UiRect::bottom(px(8)),
             ..default()
@@ -202,6 +202,22 @@ fn heading(parent: &mut ChildSpawnerCommands, content: &str) {
 
 fn line(parent: &mut ChildSpawnerCommands, content: impl Into<String>, color: Color) {
     parent.spawn(theme::text(content, 17.0, color));
+}
+
+/// The name of a group of rows, a little apart from what comes before it.
+fn section(parent: &mut ChildSpawnerCommands, content: &str) {
+    parent.spawn((
+        theme::label(content, 13.0, theme::TEXT_DIM),
+        Node {
+            margin: UiRect::top(px(8)),
+            ..default()
+        },
+    ));
+}
+
+/// A line that is read character by character, as a seed and its version are.
+fn data(parent: &mut ChildSpawnerCommands, content: impl Into<String>, color: Color) {
+    parent.spawn(theme::figure(content, 15.0, color));
 }
 
 fn button_node(width: Val) -> Node {
@@ -221,7 +237,7 @@ fn button(parent: &mut ChildSpawnerCommands, content: impl Into<String>, press: 
         button_node(Val::Auto),
         BackgroundColor(theme::SURFACE_RAISED),
         BorderColor::all(theme::RULE),
-        children![theme::text(content, 20.0, theme::TEXT)],
+        children![theme::title(content, 20.0, theme::TEXT)],
     ));
 }
 
@@ -234,7 +250,7 @@ fn primary(parent: &mut ChildSpawnerCommands, content: impl Into<String>, press:
         button_node(Val::Auto),
         BackgroundColor(theme::ACCENT),
         BorderColor::all(theme::ACCENT),
-        children![theme::text(content, 20.0, theme::TEXT_ON_ACCENT)],
+        children![theme::title(content, 20.0, theme::TEXT_ON_ACCENT)],
     ));
 }
 
@@ -243,7 +259,7 @@ fn placeholder(parent: &mut ChildSpawnerCommands, content: &str) {
     parent.spawn((
         button_node(Val::Auto),
         BorderColor::all(theme::RULE_DIM),
-        children![theme::text(
+        children![theme::title(
             format!("{content} (later)"),
             20.0,
             theme::TEXT_DIM
@@ -287,7 +303,7 @@ fn small(parent: &mut ChildSpawnerCommands, content: impl Into<String>, width: f
         },
         BackgroundColor(theme::SURFACE_RAISED),
         BorderColor::all(theme::RULE),
-        children![theme::text(content, 15.0, theme::TEXT)],
+        children![theme::figure(content, 15.0, theme::TEXT)],
     ));
 }
 
@@ -308,8 +324,8 @@ fn figure(parent: &mut ChildSpawnerCommands, name: &str, value: String, last: bo
         },
         BorderColor::all(theme::RULE),
         children![
-            theme::text(name, 12.0, theme::TEXT_DIM),
-            theme::text(value, 36.0, theme::TEXT),
+            theme::label(name, 12.0, theme::TEXT_DIM),
+            theme::figure(value, 36.0, theme::TEXT),
         ],
     ));
 }
@@ -357,9 +373,9 @@ fn main_menu(
                 ..default()
             })
             .with_children(|parent| {
-                line(parent, format!("VERSION {VERSION}"), theme::TEXT_DIM);
+                data(parent, format!("VERSION {VERSION}"), theme::TEXT_DIM);
                 parent.spawn((
-                    theme::text("TANKU", 112.0, theme::TEXT),
+                    theme::title("TANKU", 112.0, theme::TEXT),
                     Node {
                         margin: UiRect::bottom(px(14)),
                         ..default()
@@ -383,8 +399,8 @@ fn main_menu(
                         ..default()
                     }),
                     children![
-                        theme::text("RECORD", 12.0, theme::TEXT_DIM),
-                        theme::text(record_line(&records), 16.0, theme::TEXT),
+                        theme::label("RECORD", 12.0, theme::TEXT_DIM),
+                        theme::figure(record_line(&records), 15.0, theme::TEXT),
                     ],
                 ));
                 if playtest.is_some() {
@@ -422,8 +438,8 @@ fn main_menu(
                         },
                         BorderColor::all(theme::RULE),
                         children![
-                            theme::text("DRAWING", 12.0, theme::TEXT_DIM),
-                            theme::text("PLAYER TANK", 18.0, theme::TEXT),
+                            theme::label("DRAWING", 12.0, theme::TEXT_DIM),
+                            theme::title("PLAYER TANK", 18.0, theme::TEXT),
                         ],
                     ),
                     (
@@ -434,8 +450,8 @@ fn main_menu(
                             ..default()
                         },
                         children![
-                            theme::text("BUDGET", 12.0, theme::TEXT_DIM),
-                            theme::text(
+                            theme::label("BUDGET", 12.0, theme::TEXT_DIM),
+                            theme::figure(
                                 format!("{} POINTS", Genome::PLAYER.budget),
                                 18.0,
                                 theme::TEXT
@@ -553,7 +569,7 @@ fn pause_menu(
             button(parent, "Settings", Press::OpenSettings);
             button(parent, "Quit to the menu", Press::Abandon);
             if let Some(playtest) = playtest {
-                line(parent, "PLAYTEST", theme::TEXT_DIM);
+                section(parent, "Playtest");
                 row(parent, "Infinite lives", |row| {
                     let state = on_off(playtest.infinite_lives);
                     small(row, state, 70.0, Press::InfiniteLives);
@@ -567,7 +583,7 @@ fn pause_menu(
                 button(parent, skip, Press::Skip);
             }
             if let Some(run) = run {
-                line(
+                data(
                     parent,
                     format!("Seed {}, v{VERSION}", run.seed_text),
                     theme::TEXT_DIM,
@@ -639,7 +655,7 @@ fn game_over(
                     },
                     BorderColor::all(theme::DANGER),
                     UiTransform::from_rotation(Rot2::degrees(-3.0)),
-                    children![theme::text(ending(run.sector), 20.0, theme::DANGER)],
+                    children![theme::title(ending(run.sector), 20.0, theme::DANGER)],
                 ));
                 let seconds = run.ticks / TICK_RATE as u64;
                 parent
@@ -650,7 +666,7 @@ fn game_over(
                         figure(figures, "TIME", time, false);
                         figure(figures, "KILLS", run.kills.to_string(), true);
                     });
-                line(
+                data(
                     parent,
                     format!("Seed {}, v{VERSION}", run.seed_text),
                     theme::TEXT_DIM,
@@ -661,7 +677,7 @@ fn game_over(
             } else if outcome.new_record {
                 line(parent, "New record", theme::GOOD);
             } else {
-                line(parent, record_line(&records), theme::TEXT_DIM);
+                data(parent, record_line(&records), theme::TEXT_DIM);
             }
             primary(parent, "Retry this seed", Press::Retry);
             button(parent, "New run", Press::NewRun);
@@ -689,7 +705,7 @@ fn settings_menu(mut commands: Commands, settings: Res<Settings>, capture: Res<C
                         ..default()
                     };
                     columns.spawn(column.clone()).with_children(|controls| {
-                        line(controls, "CONTROLS", theme::TEXT_DIM);
+                        section(controls, "Controls");
                         for action in Action::ALL {
                             row(controls, action.label(), |row| {
                                 for (slot, binding) in
@@ -705,38 +721,38 @@ fn settings_menu(mut commands: Commands, settings: Res<Settings>, capture: Res<C
                             });
                         }
                         row(controls, "Menu", |row| {
-                            row.spawn(theme::text("Esc", 16.0, theme::TEXT_DIM));
+                            row.spawn(theme::figure("Esc", 15.0, theme::TEXT_DIM));
                         });
                         button(controls, "Reset the controls", Press::ResetBindings);
                     });
 
                     columns.spawn(column).with_children(|options| {
-                        line(options, "VIDEO", theme::TEXT_DIM);
+                        section(options, "Video");
                         row(options, "Fullscreen", |row| {
                             small(row, on_off(settings.fullscreen), 70.0, Press::Fullscreen);
                         });
                         row(options, "Vertical sync", |row| {
                             small(row, on_off(settings.vsync), 70.0, Press::Vsync);
                         });
-                        line(options, "AUDIO", theme::TEXT_DIM);
+                        section(options, "Audio");
                         row(options, "Volume", |row| {
                             small(row, "-", 34.0, Press::Volume(-0.1));
-                            row.spawn(theme::text(
+                            row.spawn(theme::figure(
                                 format!("{:.0}%", settings.volume * 100.0),
-                                16.0,
+                                15.0,
                                 theme::TEXT,
                             ));
                             small(row, "+", 34.0, Press::Volume(0.1));
                         });
-                        line(options, "ACCESSIBILITY", theme::TEXT_DIM);
+                        section(options, "Accessibility");
                         row(options, "Camera shake", |row| {
                             small(row, on_off(settings.camera_shake), 70.0, Press::Shake);
                         });
                         row(options, "Interface size", |row| {
                             small(row, "-", 34.0, Press::Scale(-0.25));
-                            row.spawn(theme::text(
+                            row.spawn(theme::figure(
                                 format!("{:.0}%", settings.ui_scale * 100.0),
-                                16.0,
+                                15.0,
                                 theme::TEXT,
                             ));
                             small(row, "+", 34.0, Press::Scale(0.25));

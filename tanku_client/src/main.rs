@@ -66,6 +66,7 @@ fn main() {
         .init_state::<Screen>()
         .init_state::<Overlay>()
         .add_plugins((
+            theme::plugin,
             settings::plugin,
             input::plugin,
             camera::plugin,

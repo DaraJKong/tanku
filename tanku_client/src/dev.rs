@@ -5,10 +5,11 @@
 //! `look X Y`, `zoom METERS`, `clear`, `reach`, `bubble`, `die`, `pause`, `settings`, `resume`,
 //! `lose`, `shot PATH` and `quit`, plus `play DX DY AX AY SECONDS`, which drives the tank in a
 //! direction while it fires at a point relative to itself, `press LABEL`, which presses the
-//! button of a menu that bears this label, `lineup`, which lays out one bullet of each kind
-//! next to the tank, `showcase STAT`, which lines up in the start bay one tank for each level
-//! of a stat, and `palette`, which lines up there three tanks of each hue, from a weak one to a
-//! strong one. It is how the game is looked at without anyone at the keyboard.
+//! button of a menu that bears this label, in capitals or not, `lineup`, which lays out one
+//! bullet of each kind next to the tank, `showcase STAT`, which lines up in the start bay one
+//! tank for each level of a stat, and `palette`, which lines up there three tanks of each hue,
+//! from a weak one to a strong one. It is how the game is looked at without anyone at the
+//! keyboard.
 //!
 //! A scripted run opens no window: it draws into an image, which `shot` saves. It makes no
 //! sound, starts from the default settings and leaves the player's files alone.
@@ -262,7 +263,7 @@ fn press(
     };
     let bears = |children: &Children| {
         let mut texts = children.iter().filter_map(|child| labels.get(child).ok());
-        texts.any(|text| text.0 == label)
+        texts.any(|text| text.0.eq_ignore_ascii_case(&label))
     };
     match buttons.iter_mut().find(|(_, children)| bears(children)) {
         Some((mut interaction, _)) => *interaction = Interaction::Pressed,

@@ -209,7 +209,7 @@ fn cell(grow: f32, last: bool) -> impl Bundle {
 }
 
 fn caption(content: &str) -> impl Bundle {
-    theme::text(content, 12.0, theme::TEXT_DIM)
+    theme::label(content, 12.0, theme::TEXT_DIM)
 }
 
 fn label(content: &str) -> impl Bundle {
@@ -218,7 +218,7 @@ fn label(content: &str) -> impl Bundle {
             width: px(78),
             ..default()
         },
-        children![theme::text(content, 13.0, theme::TEXT_DIM)],
+        children![theme::label(content, 13.0, theme::TEXT_DIM)],
     )
 }
 
@@ -285,7 +285,7 @@ fn weapons_panel() -> impl Bundle {
                         },
                         BackgroundColor(theme::ACCENT),
                     ),
-                    theme::text("PLAYER 1", 15.0, theme::TEXT),
+                    theme::title("PLAYER 1", 15.0, theme::TEXT),
                 ],
             ),
             (
@@ -318,7 +318,7 @@ fn weapons_panel() -> impl Bundle {
                     bar(Bar::Shield),
                     (
                         Readout::Shield,
-                        theme::text("", 13.0, theme::TEXT_DIM),
+                        theme::label("", 13.0, theme::TEXT_DIM),
                         Node {
                             margin: UiRect::left(px(6)),
                             ..default()
@@ -350,15 +350,15 @@ fn title_block(mode: &str) -> impl Bundle {
                         cell(1.3, false),
                         children![
                             caption("GAME"),
-                            theme::text("TANKU", 26.0, theme::TEXT),
-                            theme::text(mode, 13.0, theme::ACCENT),
+                            theme::title("TANKU", 26.0, theme::TEXT),
+                            theme::label(mode, 13.0, theme::ACCENT),
                         ],
                     ),
                     (
                         cell(1.0, false),
                         children![
                             caption("SECTOR"),
-                            (Readout::Sector, theme::text("", 40.0, theme::TEXT)),
+                            (Readout::Sector, theme::figure("", 40.0, theme::TEXT)),
                         ],
                     ),
                     (
@@ -375,7 +375,7 @@ fn title_block(mode: &str) -> impl Bundle {
                                     pip(Pip::Life(1)),
                                     pip(Pip::Life(2)),
                                     pip(Pip::Life(3)),
-                                    (Readout::Lives, theme::text("", 13.0, theme::ACCENT)),
+                                    (Readout::Lives, theme::label("", 13.0, theme::ACCENT)),
                                 ],
                             ),
                         ],
@@ -389,12 +389,15 @@ fn title_block(mode: &str) -> impl Bundle {
                         cell(1.3, false),
                         children![
                             caption("SEED"),
-                            (Readout::Seed, theme::text("", 15.0, theme::TEXT)),
+                            (Readout::Seed, theme::figure("", 15.0, theme::TEXT)),
                         ],
                     ),
                     (
                         cell(2.0, true),
-                        children![caption("VERSION"), theme::text(VERSION, 15.0, theme::TEXT)],
+                        children![
+                            caption("VERSION"),
+                            theme::figure(VERSION, 15.0, theme::TEXT)
+                        ],
                     ),
                 ],
             ),
@@ -444,13 +447,13 @@ fn instruments_row() -> impl Bundle {
                             ..default()
                         },
                         children![
-                            theme::text("0", 12.0, theme::TEXT_DIM),
-                            theme::text("5 m", 12.0, theme::TEXT_DIM),
+                            theme::figure("0", 12.0, theme::TEXT_DIM),
+                            theme::figure("5 m", 12.0, theme::TEXT_DIM),
                         ],
                     ),
                 ],
             ),
-            theme::text("N", 13.0, theme::TEXT_DIM),
+            theme::title("N", 13.0, theme::TEXT_DIM),
             // A needle from the middle of a ring to its edge, which points north.
             (
                 NorthArrow,
@@ -530,7 +533,7 @@ fn build(mut commands: Commands, playtest: Option<Res<Playtest>>) {
                     justify_content: JustifyContent::Center,
                     ..default()
                 },
-                children![(Toast(0.0), theme::text("", 20.0, theme::TEXT))],
+                children![(Toast(0.0), theme::title("", 20.0, theme::TEXT))],
             ),
             weapons_panel(),
             (

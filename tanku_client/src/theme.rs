@@ -1,9 +1,9 @@
-//! The colors of the game and of its interface: a dark sheet drawn in pale lines, on which
-//! only tanks and bullets are bright.
+//! The colors of the game and of its interface, and the lettering of the interface: a dark
+//! sheet drawn in pale lines, on which only tanks and bullets are bright.
 //!
 //! Nothing is lit, so a color on screen is the color written here.
 
-use bevy::prelude::*;
+use bevy::{prelude::*, text::LetterSpacing};
 
 /// A color from its hexadecimal code.
 const fn hex(code: u32) -> Color {
@@ -92,20 +92,109 @@ pub fn over(ground: Color, line: Color, strength: f32) -> Color {
     )
 }
 
-pub fn text(content: impl Into<String>, size: f32, color: Color) -> impl Bundle {
+/// The lettering of a drawing: a narrow face, for everything that is read as words. Its
+/// regular weight is too thin for the small labels of the interface, so the medium one stands
+/// in for it.
+const LETTERING: &str = "Barlow Semi Condensed";
+const PLAIN: FontWeight = FontWeight::MEDIUM;
+const HEAVY: FontWeight = FontWeight::SEMIBOLD;
+/// A face whose characters all have the same width, for everything that is read character by
+/// character: counts, times, seeds, versions and keys.
+const FIGURES: &str = "Share Tech Mono";
+/// How far apart the letters of a label or of a title stand, as a share of their size.
+const TRACKING: f32 = 0.14;
+
+/// The font files. The game carries them in itself, so that there is nothing to load, on a
+/// desktop or in a browser. Their licenses are next to them.
+const FACES: [&[u8]; 3] = [
+    include_bytes!("../assets/fonts/barlow_semi_condensed/BarlowSemiCondensed-Medium.ttf"),
+    include_bytes!("../assets/fonts/barlow_semi_condensed/BarlowSemiCondensed-SemiBold.ttf"),
+    include_bytes!("../assets/fonts/share_tech_mono/ShareTechMono-Regular.ttf"),
+];
+
+/// Keeps the faces at hand: text asks for them by the name of their family.
+#[derive(Resource)]
+struct Faces(#[expect(dead_code, reason = "held so that the fonts stay loaded")] [Handle<Font>; 3]);
+
+pub fn plugin(app: &mut App) {
+    let mut fonts = app.world_mut().resource_mut::<Assets<Font>>();
+    let faces = FACES.map(|file| fonts.add(Font::from_bytes(file.to_vec())));
+    app.insert_resource(Faces(faces));
+}
+
+fn lettered(
+    content: String,
+    (family, weight): (&str, FontWeight),
+    (size, tracking): (f32, f32),
+    color: Color,
+) -> impl Bundle {
     (
         Text::new(content),
         TextFont {
+            font: family.into(),
             font_size: FontSize::Px(size),
+            weight,
             ..default()
         },
+        // Whole pixels: small letters would stand unevenly apart otherwise.
+        LetterSpacing::Px((size * tracking).round()),
         TextColor(color),
     )
 }
 
+/// Running text: a sentence, a hint.
+pub fn text(content: impl Into<String>, size: f32, color: Color) -> impl Bundle {
+    lettered(content.into(), (LETTERING, PLAIN), (size, 0.0), color)
+}
+
+/// A label: the name of what stands next to it, in capitals that stand apart.
+pub fn label(content: impl Into<String>, size: f32, color: Color) -> impl Bundle {
+    let face = (LETTERING, PLAIN);
+    lettered(content.into().to_uppercase(), face, (size, TRACKING), color)
+}
+
+/// A title, or the name of a button: a heavier label.
+pub fn title(content: impl Into<String>, size: f32, color: Color) -> impl Bundle {
+    let face = (LETTERING, HEAVY);
+    lettered(content.into().to_uppercase(), face, (size, TRACKING), color)
+}
+
+/// A figure, or anything else that is read character by character.
+pub fn figure(content: impl Into<String>, size: f32, color: Color) -> impl Bundle {
+    let face = (FIGURES, FontWeight::NORMAL);
+    lettered(content.into(), face, (size, 0.0), color)
+}
+
 #[cfg(test)]
 mod tests {
+    use bevy::text::{FontCx, load_font_assets_into_font_collection};
+
     use super::*;
+
+    #[test]
+    fn the_font_files_hold_the_faces_that_text_asks_for() {
+        let mut app = App::new();
+        app.init_resource::<Assets<Font>>()
+            .init_resource::<FontCx>()
+            .add_systems(Update, load_font_assets_into_font_collection);
+        plugin(&mut app);
+        app.update();
+        let mut fonts = app.world_mut().resource_mut::<FontCx>();
+        let mut weights = |family: &str| {
+            let found = fonts.collection.family_id(family);
+            let family = found.and_then(|id| fonts.collection.family(id));
+            let faces = family.expect("a family by that name");
+            let mut weights: Vec<f32> = faces
+                .fonts()
+                .iter()
+                .map(|face| face.weight().value())
+                .collect();
+            weights.sort_by(f32::total_cmp);
+            weights
+        };
+        assert_eq!(weights(LETTERING), [PLAIN.0 as f32, HEAVY.0 as f32]);
+        assert_eq!(weights(FIGURES), [FontWeight::NORMAL.0 as f32]);
+    }
 
     #[test]
     fn colors_are_read_from_their_codes() {
