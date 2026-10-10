@@ -116,7 +116,7 @@ A playtest is a way to test the game faster, not a mode for players. It starts w
 
 A playtest can also choose its seed without unlocking that option: `--seed` followed by a seed starts every run on it, which brings back a situation that a player reported.
 
-A playtest says on screen that it is one. It sets no record and earns no achievement.
+A playtest says on screen that it is one. It sets no record and earns no achievement. A playtest can host a game: the cheats are the host's alone, and the run sets no record for anyone in it.
 
 ## Controls
 
@@ -410,12 +410,18 @@ Every game, solo included, is run by a server that has the final say on everythi
 | Session | How it works |
 |---|---|
 | Solo | The client runs its own server. Nothing goes over the network. |
-| Hosted game | One player's client hosts up to three others. The game is announced on the local network. It can also be joined by address from the internet if the host's UDP port is reachable. An optional password protects it. |
+| Hosted game | One player's client hosts up to three others. The game is announced on the local network, and it is joined by the address of the host's machine, which the lobby shows. From the internet, the host's UDP port 28405 must be reachable. An optional password protects it. |
 | Official server | Later. Dedicated servers run by the project, which also remove the need to open a port. |
 
 Players in a browser can play solo and join games. They can't host, because a browser can't accept connections.
 
-Players gather in a lobby, where the host picks the mode and the seed, and the run starts for everyone at once. Nobody can join a run in progress. A player who disconnects loses their tank, and later sectors are generated for the remaining number of players. If the host leaves, the run ends. All players must run the same game version.
+Players gather in a lobby, where the host picks the mode and the seed, and the run starts for everyone at once. Nobody can join a run in progress. A host who starts alone plays a solo run, with its lives and its flags.
+
+Each player has a seat, which gives them their number and their color. The host has the first seat, and the others take the next ones in the order they joined. When a player leaves the lobby, those behind them move up. Seats don't change during a run: they move up again when the next one starts.
+
+When a run is over, the host decides what comes next: the same seed again, a new run, or the lobby. The host can also end a run from the menu, which brings everyone back to the lobby.
+
+A player who disconnects loses their tank, and later sectors are generated for the remaining number of players. A player whose machine stays silent for 5 s has disconnected. If the host leaves, the run ends, and the other players are back at their main menu. All players must run the same game version: a game of another version doesn't answer.
 
 The game must stay playable up to a round trip of 120 ms. A player's own tank responds to input immediately, and the server confirms it afterward.
 
@@ -460,10 +466,11 @@ The interface is the margin of the drawing: ruled panels with square corners, la
 | Screen | Content |
 |---|---|
 | Main menu | Solo, host, join, achievements, settings, quit |
-| Lobby | Players, mode, seed, start |
+| Join | The address of the host, join |
+| Lobby | Players, mode, seed, the address to join at (host), start (host) |
 | Heads-up display | Rounds and reload progress, mines left, shield state, sector number, lives (solo), seed and version, a scale and a north arrow, a ruler along the edge of the screen that gives the distance to the barrier, teammates' state (multiplayer). Rounds, reload and mines are also on an arc under the player's own tank. |
-| Menu | Resume, settings, quit, and the seed with its version |
-| Game over | Sectors cleared, time, kills, seed and version, the tank that ended the run with the list of its parts, retry, new run |
+| Menu | Resume, settings, quit, and the seed with its version. In multiplayer, the host goes back to the lobby or closes the game, and the others leave it. |
+| Game over | Sectors cleared, time, kills, seed and version, the tank that ended the run with the list of its parts, retry, new run. In multiplayer, the choice is the host's. |
 | Settings | Controls, video, audio, accessibility |
 
 The game opens in full screen the first time. After that, it opens the way the player left it.
@@ -482,7 +489,7 @@ Color is never the only carrier of information. Camera shake can be turned off, 
 
 Achievements unlock modes, and their conditions are listed under [Modes](#modes). An unlocked mode is another way to play, not an advantage: nothing a player unlocks makes a run easier. An achievement earned by a team is awarded to each member. Runs on a chosen seed don't count toward achievements, so a seed can't be practiced to unlock them.
 
-The game stores settings, bindings, unlocks and records on the player's machine, or in the browser's storage on the web. Records keep the best sector reached per mode and number of players, with the seed and the version.
+The game stores settings, bindings, unlocks and records on the player's machine, or in the browser's storage on the web. Records keep the best sector reached per mode and number of players, with the seed and the version. The number of players is the one at the start of the run, and each player keeps the record on their own machine.
 
 ## Technical requirements
 
