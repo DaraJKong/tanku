@@ -2,12 +2,13 @@
 //!
 //! `TANKU_DEV_SCRIPT` holds commands separated by semicolons, run one after the other:
 //! `start SEED`, `wait SECONDS`, `warp SECTOR`, `turn QUARTERS`, `peek ENEMY`, `flag SECTOR`,
-//! `look X Y`, `zoom METERS`, `clear`, `reach`, `bubble`, `pause`, `settings`, `resume`, `lose`,
-//! `shot PATH` and `quit`, plus `play DX DY AX AY SECONDS`, which drives the tank in a direction
-//! while it fires at a point relative to itself, `lineup`, which lays out one bullet of each
-//! kind next to the tank, `showcase STAT`, which lines up in the start bay one tank for each
-//! level of a stat, and `palette`, which lines up there three tanks of each hue, from a weak
-//! one to a strong one. It is how the game is looked at without anyone at the keyboard.
+//! `look X Y`, `zoom METERS`, `clear`, `reach`, `bubble`, `die`, `pause`, `settings`, `resume`,
+//! `lose`, `shot PATH` and `quit`, plus `play DX DY AX AY SECONDS`, which drives the tank in a
+//! direction while it fires at a point relative to itself, `press LABEL`, which presses the
+//! button of a menu that bears this label, `lineup`, which lays out one bullet of each kind
+//! next to the tank, `showcase STAT`, which lines up in the start bay one tank for each level
+//! of a stat, and `palette`, which lines up there three tanks of each hue, from a weak one to a
+//! strong one. It is how the game is looked at without anyone at the keyboard.
 //!
 //! A scripted run opens no window: it draws into an image, which `shot` saves. It makes no
 //! sound, starts from the default settings and leaves the player's files alone.
@@ -22,6 +23,7 @@ use bevy::{
         render_resource::TextureFormat,
         view::screenshot::{Screenshot, save_to_disk},
     },
+    ui::UiSystems,
     window::ExitCondition,
     winit::WinitPlugin,
 };
@@ -53,6 +55,8 @@ struct Script {
     wait: f32,
     /// What the script makes the player's tank do, and for how long.
     play: Option<(Vec2, Vec2, f32)>,
+    /// The label of the button that the script presses.
+    press: Option<String>,
 }
 
 /// The image that stands in for the window.
@@ -156,10 +160,17 @@ pub fn plugin(app: &mut App) {
             .collect(),
         wait: 0.0,
         play: None,
+        press: None,
     })
     .add_systems(PostStartup, draw_into_an_image)
     .add_systems(Update, run_script)
-    .add_systems(PreUpdate, play.after(input::command_player));
+    .add_systems(
+        PreUpdate,
+        (
+            play.after(input::command_player),
+            press.after(UiSystems::Focus),
+        ),
+    );
 }
 
 /// Points the camera at an image, and the interface with it.
@@ -236,6 +247,26 @@ fn display(
             },
             InSector(0),
         ));
+    }
+}
+
+/// Presses the button that the script asked for, as a click does. It comes after the interface
+/// has looked for the cursor, which would let go of the button, and before the menus react.
+fn press(
+    mut script: ResMut<Script>,
+    mut buttons: Query<(&mut Interaction, &Children), With<Button>>,
+    labels: Query<&Text>,
+) {
+    let Some(label) = script.press.take() else {
+        return;
+    };
+    let bears = |children: &Children| {
+        let mut texts = children.iter().filter_map(|child| labels.get(child).ok());
+        texts.any(|text| text.0 == label)
+    };
+    match buttons.iter_mut().find(|(_, children)| bears(children)) {
+        Some((mut interaction, _)) => *interaction = Interaction::Pressed,
+        None => warn!("no button bears the label: {label}"),
     }
 }
 
@@ -334,6 +365,11 @@ fn run_script(
                 }
             }
         }
+        "press" => script.press = Some(words[1..].join(" ")),
+        // Destroys the player's tank.
+        "die" => casualties
+            .tanks
+            .extend(player.iter().map(|(entity, _)| entity)),
         // Destroys the enemies of the sector the player is in.
         "clear" => {
             let sector = run.as_ref().map_or(0, |run| run.sector);
