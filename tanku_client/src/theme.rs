@@ -60,13 +60,18 @@ pub const SHIELD: Color = Color::WHITE;
 /// A flag that nobody has captured.
 pub const FLAG: Color = hex(0xA8ADB8);
 
-/// How much of its light a sector keeps until a player enters it, and a tank until it wakes
-/// up. Darker, but of the same hue: the hue is how players read a tank.
+/// How much of its light a sector keeps until a player enters it.
 pub const DORMANT: f32 = 0.45;
 
 /// The light of what is dormant, to multiply a color with.
 pub fn dormant() -> Color {
     LinearRgba::rgb(DORMANT, DORMANT, DORMANT).into()
+}
+
+/// A color as it shows in a sector that no player has entered yet.
+pub fn dull(color: Color) -> Color {
+    let lit = color.to_linear();
+    LinearRgba::rgb(lit.red * DORMANT, lit.green * DORMANT, lit.blue * DORMANT).into()
 }
 
 /// How much darker the sides of a solid are than its top. With no light, this is what shows

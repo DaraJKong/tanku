@@ -8,8 +8,9 @@
 //! at a point relative to itself, `press LABEL`, which presses the button of a menu that bears
 //! this label, in capitals or not, `lineup`, which lays out one bullet of each kind next to the
 //! tank, `showcase STAT`, which lines up in the start bay one tank for each level of a stat,
-//! and `palette`, which lines up there three tanks of each hue, from a weak one to a strong
-//! one. It is how the game is looked at without anyone at the keyboard.
+//! `palette`, which lines up there three tanks of each hue, from a weak one to a strong one,
+//! and `doze`, which puts the tanks that are lined up to sleep. It is how the game is looked
+//! at without anyone at the keyboard.
 //!
 //! A scripted run opens no window: it draws into an image, which `shot` saves. It makes no
 //! sound, starts from the default settings and leaves the player's files alone.
@@ -358,6 +359,12 @@ fn run_script(
         }
         // Lines up three tanks of each hue, from a weak one to a strong one.
         "palette" => display(&mut commands, &exhibits, palette()),
+        // Puts the tanks on display to sleep: they are drawn as dormant enemies are.
+        "doze" => {
+            for exhibit in &exhibits {
+                commands.entity(exhibit).insert(Enemy { awake: false });
+            }
+        }
         // Raises the shield of every tank that has one, for ten seconds.
         "bubble" => {
             for (tank, mut shield) in &mut shields {

@@ -920,12 +920,11 @@ fn dress_obstacles(
 }
 
 /// Whether a sector is still waiting for its first player: the players are in an earlier one.
-fn is_dormant(sector: u32, run: Option<&Run>) -> bool {
+pub fn is_dormant(sector: u32, run: Option<&Run>) -> bool {
     run.is_some_and(|run| sector > run.sector)
 }
 
-/// A sector is drawn dull until a player enters it, as its enemies are. Then the drawing
-/// comes to life.
+/// A sector is drawn dull until a player enters it. Then the drawing comes to life.
 fn wake_sectors(
     run: Option<Res<Run>>,
     paints: Res<Paints>,

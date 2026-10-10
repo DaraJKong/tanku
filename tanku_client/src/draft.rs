@@ -12,6 +12,10 @@ use bevy::{asset::RenderAssetUsages, mesh::PrimitiveTopology, prelude::*};
 pub const LINE: f32 = 0.04;
 /// How far a line lies above the face it is drawn on, so that the two don't fight.
 pub const LIFT: f32 = 0.004;
+/// A dash of a line that stands for what isn't there, and the gap after it.
+pub const DASH: (f32, f32) = (0.12, 0.08);
+/// A circle too small for this many dashes is drawn whole.
+const FEWEST_DASHES: usize = 4;
 /// Sides of the polygon that stands for a circle of one meter in radius. Smaller circles
 /// get fewer, down to [`FEWEST_SIDES`].
 const SIDES_PER_METER: f32 = 40.0;
@@ -19,6 +23,13 @@ const FEWEST_SIDES: usize = 10;
 
 fn sides(radius: f32) -> usize {
     ((radius * SIDES_PER_METER) as usize).clamp(FEWEST_SIDES, 96)
+}
+
+/// How many dashes a line of this length is drawn with: as many as fit it best, with a gap
+/// between each two.
+fn dash_count(length: f32) -> usize {
+    let (dash, gap) = DASH;
+    (((length + gap) / (dash + gap)).round() as usize).max(1)
 }
 
 /// The point of a circle around the vertical axis: `turn` is a share of a full turn.
@@ -169,6 +180,64 @@ impl Draft {
         );
     }
 
+    /// A flat strip in dashes between two points of the same height. It starts and ends with
+    /// a dash, and the dashes are stretched a little to fit: a strip too short for two of
+    /// them is whole.
+    pub fn dashed(&mut self, from: Vec3, to: Vec3, width: f32, color: Color) {
+        let (dash, gap) = DASH;
+        let count = dash_count(from.distance(to));
+        // As shares of the strip.
+        let fitted = count as f32 * dash + (count - 1) as f32 * gap;
+        let (dash, pitch) = (dash / fitted, (dash + gap) / fitted);
+        for index in 0..count {
+            let start = index as f32 * pitch;
+            let end = (start + dash).min(1.0);
+            self.line(from.lerp(to, start), from.lerp(to, end), width, color);
+        }
+    }
+
+    /// A flat ring in dashes, lying at the height of its center. A small one is whole.
+    pub fn dashed_ring(&mut self, center: Vec3, (inner, outer): (f32, f32), color: Color) {
+        let (dash, gap) = DASH;
+        // A ring has as many gaps as dashes.
+        let count = (TAU * outer / (dash + gap)).round() as usize;
+        let dashes = if count < FEWEST_DASHES {
+            (1, 1.0)
+        } else {
+            (count, dash / (dash + gap))
+        };
+        self.ring(center, (inner, outer), dashes, color);
+    }
+
+    /// A rectangle lying flat around `center`.
+    pub fn plate(&mut self, center: Vec3, size: Vec2, color: Color) {
+        let half = size / 2.0;
+        let corner = |x: f32, z: f32| center + Vec3::new(half.x * x, 0.0, half.y * z);
+        self.face(
+            &[
+                corner(-1.0, -1.0),
+                corner(-1.0, 1.0),
+                corner(1.0, 1.0),
+                corner(1.0, -1.0),
+            ],
+            color,
+        );
+    }
+
+    /// The outline of a rectangle lying flat around `center`, in dashes of this width drawn
+    /// inside it. Each side starts and ends with a dash, so every corner is drawn.
+    pub fn dashed_frame(&mut self, center: Vec3, size: Vec2, width: f32, color: Color) {
+        // The strip along a side reaches both of its corners, and its middle is half a
+        // width inside the rectangle.
+        let (half, inset) = (size / 2.0, size / 2.0 - Vec2::splat(width / 2.0));
+        let at = |x: f32, z: f32| center + Vec3::new(x, 0.0, z);
+        for side in [-1.0, 1.0] {
+            let (along, across) = (side * inset.y, side * inset.x);
+            self.dashed(at(-half.x, along), at(half.x, along), width, color);
+            self.dashed(at(across, -half.y), at(across, half.y), width, color);
+        }
+    }
+
     /// The outline of a rectangle lying flat around `center`, as a band of this width. A
     /// positive width draws inside the rectangle, a negative one outside it.
     pub fn frame(&mut self, center: Vec3, size: Vec2, width: f32, color: Color) {
@@ -317,6 +386,65 @@ mod tests {
         dashed.ring(Vec3::ZERO, (1.9, 2.0), (24, 0.5), INK);
         let share = dashed.area(INK) / whole.area(INK);
         assert!((share - 0.5).abs() < 0.01, "{share}");
+    }
+
+    #[test]
+    fn a_dashed_line_starts_and_ends_with_a_dash() {
+        let (dash, gap) = DASH;
+        for length in [0.5, 1.0, 1.7, 2.0, 6.3] {
+            let mut draft = Draft::default();
+            draft.dashed(Vec3::ZERO, Vec3::X * length, 0.1, INK);
+            let (lowest, highest) = draft.bounds();
+            assert!(close(lowest.x, 0.0) && close(highest.x, length), "{length}");
+            // The dashes and the gaps keep their shares of the line.
+            let dashes = dash_count(length) as f32;
+            let share = dashes * dash / (dashes * dash + (dashes - 1.0) * gap);
+            assert!(close(draft.area(INK), length * 0.1 * share), "{length}");
+            assert!(share > 0.6 && share < 0.75, "{length}");
+        }
+        // A line too short for two dashes is whole.
+        let mut short = Draft::default();
+        short.dashed(Vec3::ZERO, Vec3::Z * 0.2, 0.1, INK);
+        assert!(close(short.area(INK), 0.02));
+    }
+
+    #[test]
+    fn a_dashed_frame_draws_every_corner() {
+        let size = Vec2::new(2.0, 1.0);
+        let mut dashed = Draft::default();
+        dashed.dashed_frame(Vec3::ZERO, size, 0.1, INK);
+        let mut whole = Draft::default();
+        whole.frame(Vec3::ZERO, size, 0.1, INK);
+        // It reaches the four corners of the rectangle, and stays inside it.
+        assert_eq!(dashed.bounds(), whole.bounds());
+        assert!(dashed.area(INK) > 0.5 * whole.area(INK));
+        assert!(dashed.area(INK) < 0.8 * whole.area(INK));
+    }
+
+    #[test]
+    fn a_dashed_ring_is_whole_when_it_is_small() {
+        let (dash, gap) = DASH;
+        let ink = |radius: f32| {
+            let (mut dashed, mut whole) = (Draft::default(), Draft::default());
+            dashed.dashed_ring(Vec3::ZERO, (radius - 0.04, radius), INK);
+            whole.ring(Vec3::ZERO, (radius - 0.04, radius), (1, 1.0), INK);
+            dashed.area(INK) / whole.area(INK)
+        };
+        assert!(close(ink(0.11), 1.0));
+        let share = dash / (dash + gap);
+        assert!((ink(0.5) - share).abs() < 0.03, "{}", ink(0.5));
+        assert!((ink(0.9) - share).abs() < 0.03, "{}", ink(0.9));
+    }
+
+    #[test]
+    fn a_plate_is_as_large_as_asked() {
+        let mut draft = Draft::default();
+        draft.plate(Vec3::Y, Vec2::new(2.0, 3.0), INK);
+        assert!(close(draft.area(INK), 6.0));
+        assert_eq!(
+            draft.bounds(),
+            (Vec3::new(-1.0, 1.0, -1.5), Vec3::new(1.0, 1.0, 1.5))
+        );
     }
 
     #[test]
