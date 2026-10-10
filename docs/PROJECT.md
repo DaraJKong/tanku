@@ -102,7 +102,7 @@ Enemy groups grow with the number of players (see [Progression](#progression)). 
 | Normal | The rules of this document | Available from the start |
 | Chosen seed | The players type a seed instead of getting a random one. | Reaching sector 10 |
 | Free mode | Each player redistributes the 59 points of the player tank before the run. | Reaching sector 20 |
-| Hard mode | Sector budgets start at 40 and are capped at 130, all software tiers are available from sector 1, and experience is that of 20 sectors further. | Reaching sector 30 |
+| Hard mode | Sector budgets start at 40 and are capped at 130, all software tiers are available from sector 1, and experience and the cap on Muzzle are those of 20 sectors further. | Reaching sector 30 |
 | Impossible mode | Later. Enemies adapt to the players during the run (see [Impossible mode](#impossible-mode)). | Reaching sector 20 in hard mode |
 
 Normal, hard and impossible are the three difficulties. Chosen seed and free mode are options that combine with any of them.
@@ -211,7 +211,7 @@ Level 0 of each stat is free. Costs are cumulative: each number is the total pri
 | Engine | Top speed in m/s | 0, 2, 3, 4, 5, 6, 7, 8 | 0, 2, 4, 6, 8, 11, 14, 17 |
 | Tracks | Hull turn rate in °/s | 90, 135, 180, 225, 270, 315, 360 | 0, 1, 2, 3, 4, 5, 6 |
 | Turret | Turret turn rate in °/s (enemies only) | 45, 60, 90, 120, 180, 270, 360 | 0, 1, 2, 3, 5, 7, 10 |
-| Muzzle | Bullet speed in m/s | 6, 7.5, 9, 12, 14, 16, 18, 20 | 0, 1, 3, 6, 9, 12, 16, 21 |
+| Muzzle | Bullet speed in m/s | 6, 7.5, 9, 11, 13, 15, 17, 19 | 0, 1, 3, 6, 9, 12, 16, 21 |
 | Magazine | Rounds held | 1, 2, 3, 4, 5, 6 | 0, 3, 6, 9, 12, 15 |
 | Loader | Seconds to reload one round | 4.0, 3.2, 2.5, 2.0, 1.6, 1.25, 1.0, 0.8 | 0, 1, 2, 4, 6, 9, 12, 16 |
 | Ricochet | Bounces per bullet | 0, 1, 2, 3 | 0, 4, 10, 18 |
@@ -219,7 +219,7 @@ Level 0 of each stat is free. Costs are cumulative: each number is the total pri
 | Shield | Cooldown in s | none, 10, 9, 8, 7, 6 | 0, 6, 9, 12, 15, 18 |
 | Piercing | Bullets that each of its bullets pierces | 0, 1 | 0, 4 |
 
-Every stat stops at its highest level. These limits keep the game sound: a bullet, for instance, never gets fast enough to pass through a wall. Buying every hardware stat at its highest level costs 135 points.
+Every stat stops at its highest level. These limits keep the game sound: a bullet, for instance, never gets fast enough to pass through a wall. Buying every hardware stat at its highest level costs 135 points. An enemy's Muzzle level is also limited by its sector (see [Progression](#progression)).
 
 ### Software stats
 
@@ -248,6 +248,7 @@ A price should reflect how much more dangerous a level makes a tank, and not eve
 | Entry fee | Mines, Shield, Piercing | The first level buys a new ability. Later levels, where there are any, only improve it. |
 | Share of budget | Brain, Ballistics | Software multiplies the value of the hardware it drives: the same brain is worth more in a better tank. |
 | Prerequisite | Tracks, Mines, Shield, Ballistics 2 and 3 | The stat is worthless alone, so the generator never buys it alone. |
+| Cap by sector | Muzzle | About a quarter of the enemies favor their gun and take the fastest one they can pay. The cap decides how fast that is in each sector, and the price decides what else such a tank can afford. |
 
 The prerequisites are: Tracks need Engine 1. On enemies, Mines and Shield need Brain 1. Ballistics 2 needs Ricochet 1, and Ballistics 3 needs Ricochet 2.
 
@@ -276,24 +277,24 @@ Each enemy is generated from the seed, its sector and its index in the group:
 1. Draw the tank's budget, uniformly between 60% and 100% of the sector budget.
 2. Draw its software tiers within the sector's tier caps, and pay their shares.
 3. Draw a specialization: two or three favorite hardware stats that will receive most of the points.
-4. Spend the remaining points one level at a time, at random with the favorites weighted up, respecting prerequisites, until nothing affordable is left.
+4. Spend the remaining points one level at a time, at random with the favorites weighted up, respecting prerequisites and the sector's cap on Muzzle, until nothing affordable is left.
 
 Specialization matters more than balance. A tank with a few strong stats has a recognizable shape and asks the players a clear question.
 
 ### Reference builds
 
-The price list can express the enemy roster of Tanks!, in roughly the order in which that game introduces it. This is a sanity check of the prices, not a list of tanks to ship. The roster is taken from the [StrategyWiki page on Tanks!](https://strategywiki.org/wiki/Wii_Play/Tanks!).
+The price list can express the enemy roster of Tanks!, in roughly the order in which that game introduces it. This is a sanity check of the prices, not a list of tanks to ship. The guns of the Sniper and of the Banker are the fastest that their sectors allow. The roster is taken from the [StrategyWiki page on Tanks!](https://strategywiki.org/wiki/Wii_Play/Tanks!).
 
 | Build | Key stats | Budget | Possible from sector |
 |---|---|---|---|
 | Sentry (brown) | Stationary, 9 m/s bullets with 1 bounce, no brain | 10 | 1 |
 | Rover (gray) | 2 m/s, same gun, brain 1 | 15 | 2 |
-| Sniper (teal) | 2 m/s, 18 m/s bullets without bounce, brain 2, ballistics 1 | 31 | 6 |
+| Sniper (teal) | 2 m/s, 11 m/s bullets without bounce, brain 2, ballistics 1 | 19 | 6 |
 | Burster (pink) | 4 m/s, 3 rounds, brain 2 | 34 | 6 |
 | Miner (yellow) | 6 m/s, 4 mines, brain 1 | 39 | 7 |
-| Banker (green) | Stationary, 18 m/s bullets with 2 bounces, ballistics 3 | 50 | 13 |
+| Banker (green) | Stationary, 13 m/s bullets with 2 bounces, ballistics 3 | 42 | 13 |
 | Raider (purple) | 6 m/s, 5 rounds, 2 mines, brain 3 | 72 | 19 |
-| Hunter (black) | 8 m/s, 18 m/s bullets, 2 mines, brain 4 | 96 | 46 |
+| Hunter (black) | 8 m/s, 17 m/s bullets, 2 mines, brain 4 | 96 | 46 |
 
 ### Appearance
 
@@ -330,7 +331,7 @@ Brains are hand-written, one set of behavior per tier. In normal and hard mode t
 
 ## Progression
 
-Difficulty depends only on the sector number $n$, the mode and the number of players $P$. Five things grow with $n$: the enemies' budget, their number, their software tiers, their experience and the harshness of the terrain. In solo, flags also become sparser.
+Difficulty depends only on the sector number $n$, the mode and the number of players $P$. Six things grow with $n$: the enemies' budget, their number, their software tiers, the speed of their fastest bullets, their experience and the harshness of the terrain. In solo, flags also become sparser.
 
 The sector budget is the most points an enemy of sector $n$ can have:
 
@@ -342,16 +343,20 @@ The number of enemies in a sector is $N(n) = \min(6,\ 1 + \lfloor n/3 \rfloor)$ 
 
 Experience is $E(n) = 1 - e^{-(n-1)/20}$, where 0 is a novice and 1 a flawless brain. It keeps closing in on flawless play without ever reaching it. The highest brain tier allowed is $\min(4,\ 1 + \lfloor (n-1)/5 \rfloor)$ and the highest ballistics tier is $\min(3,\ \lfloor (n+2)/5 \rfloor)$.
 
-| Sector | Sector budget | Enemies in solo | Highest brain tier | Highest ballistics tier | Experience |
-|---|---|---|---|---|---|
-| 1 | 10 | 1 | 1 | 0 | 0.00 |
-| 3 | 21 | 2 | 1 | 1 | 0.10 |
-| 5 | 31 | 2 | 1 | 1 | 0.18 |
-| 10 | 51 | 4 | 2 | 2 | 0.36 |
-| 15 | 65 | 6 | 3 | 3 | 0.50 |
-| 20 | 75 | 6 | 4 | 3 | 0.61 |
-| 30 | 87 | 6 | 4 | 3 | 0.77 |
-| 50 | 97 | 6 | 4 | 3 | 0.91 |
+The highest Muzzle level an enemy can have is $\min(7,\ 2 + \lfloor (n+1)/5 \rfloor)$: the level of the player tank in the first three sectors, then one more at sectors 4, 9, 14, 19 and 24, between the steps of the software tiers. The cap is for enemies only.
+
+The cap follows what a player can dodge. A player's tank that keeps moving needs about 0.55 s to react to a shot and move out of its way, which a bullet covers in 5 m at 9 m/s, 7.2 m at 13 m/s and 8.3 m at 15 m/s. Enemies with a brain keep 8 to 14 m away. Until sector 13, a player who keeps moving can therefore dodge every bullet at that distance. From sector 14, the fastest guns beat reaction at close range, and the players need distance, cover or the shield.
+
+| Sector | Sector budget | Enemies in solo | Highest brain tier | Highest ballistics tier | Highest Muzzle level | Experience |
+|---|---|---|---|---|---|---|
+| 1 | 10 | 1 | 1 | 0 | 2 | 0.00 |
+| 3 | 21 | 2 | 1 | 1 | 2 | 0.10 |
+| 5 | 31 | 2 | 1 | 1 | 3 | 0.18 |
+| 10 | 51 | 4 | 2 | 2 | 4 | 0.36 |
+| 15 | 65 | 6 | 3 | 3 | 5 | 0.50 |
+| 20 | 75 | 6 | 4 | 3 | 6 | 0.61 |
+| 30 | 87 | 6 | 4 | 3 | 7 | 0.77 |
+| 50 | 97 | 6 | 4 | 3 | 7 | 0.91 |
 
 Every lever has a limit, so difficulty flattens after about sector 50. From there, a run is a test of endurance at full difficulty.
 
@@ -368,7 +373,7 @@ The terrain gets harsher along four levers:
 
 Impossible mode comes later and starts as an experiment. In this mode, enemies adapt to the players during the run. A seed still fixes the map, but it no longer fixes the enemies, which makes this the one mode that sets the third pillar aside.
 
-Enemies are bred. The game scores every enemy on how it did against the players: destroying a player counts most, then forcing a shield, then surviving. Each new group descends from the best-scoring tanks so far, with their genomes recombined and slightly mutated within the sector budget. A team that struggles against fast bullets therefore meets more of them.
+Enemies are bred. The game scores every enemy on how it did against the players: destroying a player counts most, then forcing a shield, then surviving. Each new group descends from the best-scoring tanks so far, with their genomes recombined and slightly mutated within the sector budget and the cap on Muzzle. A team that struggles against fast bullets therefore meets more of them.
 
 Brains that learn are a second step. An enemy's brain becomes a neural network whose size is a stat, and the networks are bred along with the genomes. They start from weights trained offline, never from random ones, so that enemies play decently from the first sector.
 
