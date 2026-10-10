@@ -392,6 +392,7 @@ The switch of step 2 was an experiment, to settle by ear whether the music needs
 
 ## Open questions
 
+- The warning of a mine is hardly ever heard, so the ducking that goes with it hardly ever happens. By the rules, a mine warns only when an opposing tank comes within 2 m of it. Brains from the grunt up keep 4 m away from every mine, so only a sentry that wanders into one, or a player who drives up to one, sets it off that way. A mine whose fuse runs out, which is how most of the players' mines end, blows without a warning, and so does one that a bullet or a blast sets off. Should the last 0.6 s of a fuse sound the warning too?
 - Far from the middle of the screen, two cues stand hardly above the fullest music on some beats, by an estimate of their level in their own bands: a destroyed bullet against the hi-hat, and a placed mine when the lead plays the E that the cue now plays too. Every other cue is at least 12 dB above the music there, and all are next to the player. Are these two heard far away?
 - How long are the frames of the web build when a sector loads, and is the gap they leave in the music acceptable?
 - Two machines in one room play the same piece out of step, because each has its own clock. Does co-op in one room need them in step?
