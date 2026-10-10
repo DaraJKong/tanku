@@ -295,7 +295,7 @@ An enemy's model is assembled from its genome, so players can read a tank before
 | Loader | Vents on the turret sides, more with level |
 | Ricochet | Rings around the muzzle, one per bounce |
 | Mines | Mine rack at the rear, one mine per slot |
-| Shield | Emitter dome on the hull, larger with level |
+| Shield | White disk under the turret, of which only the edge shows. The edge is a little wider with level. |
 | Piercing | Pointed tip on the barrel. Its bullets have a pointed tip too, until they have pierced. |
 | Brain | Antennas, one per tier |
 | Ballistics | Sight on the turret, one lens per tier |
