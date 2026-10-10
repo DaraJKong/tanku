@@ -5,8 +5,9 @@
 //! `look X Y`, `zoom METERS`, `clear`, `reach`, `bubble`, `pause`, `settings`, `resume`, `lose`,
 //! `shot PATH` and `quit`, plus `play DX DY AX AY SECONDS`, which drives the tank in a direction
 //! while it fires at a point relative to itself, `lineup`, which lays out one bullet of each
-//! kind next to the tank, and `showcase STAT`, which lines up in the start bay one tank for
-//! each level of a stat. It is how the game is looked at without anyone at the keyboard.
+//! kind next to the tank, `showcase STAT`, which lines up in the start bay one tank for each
+//! level of a stat, and `palette`, which lines up there three tanks of each hue, from a weak
+//! one to a strong one. It is how the game is looked at without anyone at the keyboard.
 //!
 //! A scripted run opens no window: it draws into an image, which `shot` saves. It makes no
 //! sound, starts from the default settings and leaves the player's files alone.
@@ -91,6 +92,38 @@ const SHOWN_ON: [(Stat, u8); 9] = [
     (Stat::Brain, 2),
 ];
 
+/// What `palette` gives its tanks so that each hue shows: most of the points go to mobility,
+/// to firepower, to mines and shield, then to software.
+const HUES: [&[(Stat, u8)]; 4] = [
+    &[(Stat::Engine, 6), (Stat::Tracks, 4)],
+    &[
+        (Stat::Engine, 2),
+        (Stat::Muzzle, 5),
+        (Stat::Magazine, 3),
+        (Stat::Loader, 4),
+    ],
+    &[(Stat::Engine, 2), (Stat::Mines, 4), (Stat::Shield, 5)],
+    &[(Stat::Engine, 1), (Stat::Brain, 4)],
+];
+
+/// The budgets of the tanks of `palette`, from a pale tank to a saturated one.
+const STRENGTHS: [u16; 3] = [15, 55, 100];
+
+/// Three tanks of each hue, each with a sight and a pointed tip.
+fn palette() -> impl Iterator<Item = Genome> {
+    HUES.into_iter().flat_map(|levels| {
+        STRENGTHS.map(|budget| {
+            let mut genome = Genome::empty(budget);
+            for &(stat, level) in levels {
+                genome.set(stat, level);
+            }
+            genome.set(Stat::Piercing, 1);
+            genome.set(Stat::Ballistics, 3);
+            genome
+        })
+    })
+}
+
 /// Whether a script runs the game.
 pub fn scripted() -> bool {
     std::env::var_os("TANKU_DEV_SCRIPT").is_some()
@@ -168,6 +201,44 @@ fn play(
     }
 }
 
+/// Puts tanks on display in rows of six from the north of the start bay, in place of those
+/// that were there. The tanks do nothing.
+fn display(
+    commands: &mut Commands,
+    exhibits: &Query<Entity, With<Exhibit>>,
+    genomes: impl Iterator<Item = Genome>,
+) {
+    for exhibit in exhibits {
+        commands.entity(exhibit).despawn();
+    }
+    for (place, genome) in genomes.enumerate() {
+        let (row, column) = (place / 6, place % 6);
+        let at = Vec2::new(column as f32 * 2.2 - 5.5, 12.5 - row as f32 * 2.8);
+        let facing = std::f32::consts::FRAC_PI_2;
+        commands.spawn((
+            Exhibit,
+            Tank {
+                genome,
+                team: Team::Enemies,
+                sector: 0,
+            },
+            Position(at),
+            PreviousPosition(at),
+            Motion {
+                hull: facing,
+                turret: facing + 0.5,
+                ..default()
+            },
+            // Aiming where the turret already points keeps it still.
+            TankCommand {
+                aim: at + Vec2::from_angle(facing + 0.5) * 10.0,
+                ..default()
+            },
+            InSector(0),
+        ));
+    }
+}
+
 fn run_script(
     mut commands: Commands,
     time: Res<Time<Real>>,
@@ -237,48 +308,24 @@ fn run_script(
         // Shows this many meters of ground from the bottom to the top of the screen. The
         // game shows 30.
         "zoom" => view.span = Some(number(1)).filter(|span| *span > 0.0),
-        // Lines up one tank for each level of a stat, in rows of six from the north of the
-        // start bay. The tanks do nothing.
+        // Lines up one tank for each level of a stat.
         "showcase" => {
-            for exhibit in &exhibits {
-                commands.entity(exhibit).despawn();
-            }
             let Some(&(_, stat)) = STATS.iter().find(|(name, _)| *name == word(1)) else {
                 warn!("unknown stat: {}", word(1));
                 return;
             };
-            for level in 0..=stat.max_level() {
+            let levels = (0..=stat.max_level()).map(|level| {
                 let mut genome = Genome::empty(70);
                 for (other, shown) in SHOWN_ON {
                     genome.set(other, shown);
                 }
                 genome.set(stat, level);
-                let (row, column) = (level / 6, level % 6);
-                let at = Vec2::new(column as f32 * 2.2 - 5.5, 12.5 - row as f32 * 2.8);
-                let facing = std::f32::consts::FRAC_PI_2;
-                commands.spawn((
-                    Exhibit,
-                    Tank {
-                        genome,
-                        team: Team::Enemies,
-                        sector: 0,
-                    },
-                    Position(at),
-                    PreviousPosition(at),
-                    Motion {
-                        hull: facing,
-                        turret: facing + 0.5,
-                        ..default()
-                    },
-                    // Aiming where the turret already points keeps it still.
-                    TankCommand {
-                        aim: at + Vec2::from_angle(facing + 0.5) * 10.0,
-                        ..default()
-                    },
-                    InSector(0),
-                ));
-            }
+                genome
+            });
+            display(&mut commands, &exhibits, levels);
         }
+        // Lines up three tanks of each hue, from a weak one to a strong one.
+        "palette" => display(&mut commands, &exhibits, palette()),
         // Raises the shield of every tank that has one, for ten seconds.
         "bubble" => {
             for (tank, mut shield) in &mut shields {
