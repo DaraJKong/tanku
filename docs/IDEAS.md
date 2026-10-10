@@ -11,6 +11,7 @@ Ideas that aren't in the specification. They are ranked by likely usefulness and
 | Pings | Medium | A key that marks a spot or an enemy for teammates. | Co-op playtest |
 | Camera that turns with the corridor | Low | The view rotates by itself to keep progress pointing one way. Saves key presses, but takes control away and can disorient. | Compare with manual rotation in the corridor prototype |
 | More piercing levels | Low | A piercing bullet pierces one bullet. Each further level would pierce one more. | Playtest against enemies that pierce, once the price of piercing is settled |
+| Hitbox as long as the bullet | Low | Bullets are drawn 0.9 m long but collide as a circle 0.45 m across, so the two ends of the drawing touch nothing. A capsule would match the drawing and make every collision test longer to write. | Playtest: watch for bullets that seem to pass through each other |
 | Glow around bullets | Low | Bloom on bullets and lights. Bullets are bright and flat for now, which already reads well. Costs frame time on the web. | Compare screenshots with and without it |
 | Smaller web build | Low | The web build is 38 MB, 9 MB compressed. `wasm-opt` would shrink it. | Measure the loading time first |
 | Reflecting shield | Low | The shield sends bullets back. Fun, but hard to balance with friendly fire. | Variant of the shield prototype |
