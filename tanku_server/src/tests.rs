@@ -642,6 +642,27 @@ fn a_mine_blows_when_an_opposing_tank_comes_close_or_a_bullet_hits_it() {
     assert_eq!(run(&app).lives, 3);
 }
 
+#[test]
+fn a_tank_fires_over_the_mine_it_stands_on() {
+    let mut app = start("TEST");
+    command(
+        &mut app,
+        TankCommand {
+            mine: true,
+            ..default()
+        },
+    );
+    tick(&mut app, 1);
+    // The bullet starts in the turret, right above the mine, and leaves it alone.
+    shoot_at(&mut app, START + Vec2::Y * 6.0);
+    tick(&mut app, seconds(0.5));
+    let events = events(&mut app);
+    let blasts = count(&events, |event| matches!(event, SimEvent::Blast { .. }));
+    assert_eq!(blasts, 0);
+    let world = app.world_mut();
+    assert_eq!(world.query::<&Mine>().iter(world).count(), 1);
+}
+
 /// Waits until the player's tank is destroyed, and tells what the run says destroyed it.
 fn wait_for_the_loss(app: &mut App, at_most: f32) -> Option<Blow> {
     for _ in 0..seconds(at_most) {
