@@ -2,7 +2,7 @@
 
 A cooperative top-down tank game for one to four players, built with Rust and Bevy. The players fight their way through an endless, procedurally generated corridor of enemy tanks, and one hit destroys a tank.
 
-The solo game is playable: the corridor, the generated enemies and their brains, lives and checkpoints, the menus, the sound cues and, on the desktop, the music are in. Co-op, achievements and the other modes are not. The specification is in [docs/PROJECT.md](docs/PROJECT.md).
+The solo game is playable: the corridor, the generated enemies and their brains, lives and checkpoints, the menus, the sound cues and the music are in. Co-op, achievements and the other modes are not. The specification is in [docs/PROJECT.md](docs/PROJECT.md).
 
 ## Workspace
 
@@ -143,7 +143,7 @@ TANKU_DEV_SCRIPT="tape run.wav; wait 4; start TANKU; wait 4; play 0 1 0 0 4; wai
 
 ## Listening to the music
 
-The music is specified in [docs/MUSIC.md](docs/MUSIC.md). The game plays it on the desktop, and the settings have a volume for it. A tool also writes it to sound files, to hear an arrangement without playing up to it:
+The music is specified in [docs/MUSIC.md](docs/MUSIC.md). The game plays it, on the desktop and on the web, and the settings have a volume for it. A tool also writes it to sound files, to hear an arrangement without playing up to it:
 
 ```bash
 cargo run -p tanku_audio --example render

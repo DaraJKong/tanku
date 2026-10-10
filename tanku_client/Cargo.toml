@@ -14,7 +14,19 @@ tanku_core.workspace = true
 tanku_server.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-web-sys = { workspace = true, features = ["Storage", "Window"] }
+web-sys = { workspace = true, features = [
+    "AudioBuffer",
+    "AudioBufferSourceNode",
+    "AudioContext",
+    "AudioContextOptions",
+    "AudioContextState",
+    "AudioDestinationNode",
+    "AudioNode",
+    "AudioParam",
+    "GainNode",
+    "Storage",
+    "Window",
+] }
 
 # Development conveniences, enabled by default.
 # Build releases with `--no-default-features`.

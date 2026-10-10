@@ -12,7 +12,7 @@
 use std::f32::consts::TAU;
 
 use crate::{
-    SAMPLE_RATE,
+    DUCKED, SAMPLE_RATE,
     director::{Step, Tone},
     math::{Noise, frequency, sine},
 };
@@ -99,9 +99,8 @@ const MUFFLE_LEVEL: f32 = 0.5;
 /// It takes 0.2 s to get there and as long to come back.
 const MUFFLE_RATE: f32 = 1.0 / (0.2 * RATE);
 
-/// A ducked music is half as loud. It gets there in 0.02 s, in time for the first beep of a
-/// warning, and takes 0.2 s to come back.
-const DUCK_LEVEL: f32 = 0.5;
+/// A ducked music gets to its lower level in 0.02 s, in time for the first beep of a warning,
+/// and takes 0.2 s to come back.
 const DUCK_IN: f32 = 1.0 / (0.02 * RATE);
 const DUCK_OUT: f32 = 1.0 / (0.2 * RATE);
 
@@ -704,7 +703,7 @@ impl Synth {
         let target = if self.ducked { 1.0 } else { 0.0 };
         self.duck += (target - self.duck).clamp(-DUCK_OUT, DUCK_IN);
         // Both leave the level as it is, to the bit, when the music is neither.
-        let level = (1.0 - MUFFLE_LEVEL * self.muffle) * (1.0 - DUCK_LEVEL * self.duck);
+        let level = (1.0 - MUFFLE_LEVEL * self.muffle) * (1.0 - (1.0 - DUCKED) * self.duck);
 
         let mut out = [0.0; 2];
         for (side, out) in out.iter_mut().enumerate() {

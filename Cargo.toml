@@ -16,7 +16,8 @@ tanku_audio = { path = "tanku_audio" }
 tanku_core = { path = "tanku_core" }
 # Without default features, so that a release client doesn't inherit the server's development ones.
 tanku_server = { path = "tanku_server", default-features = false }
-# Already part of every web build of Bevy. The client uses it for the storage of the browser.
+# Already part of every web build of Bevy. The client uses it for the storage of the browser,
+# and to hand its music to the browser.
 web-sys = "0.3"
 
 criterion = "0.8"

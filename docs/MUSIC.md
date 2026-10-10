@@ -1,6 +1,6 @@
 # Tanku: music specification
 
-Status: steps 1 to 4 of the [steps](#steps) are built. The sketch of step 1 was listened to four times, and its notes are accepted. With step 2 the game plays the music on the desktop, where it follows the place and the fight and has a volume of its own. A playtest answered its questions: the music that follows the fight too was kept over music that follows the place only, and a shot sounds different from the beat, so one is told from the other. Steps 3 and 4 have not been judged by ear yet. With step 3 the lead, the bass and the pluck follow the brains of the enemies that are awake. With step 4 the waveforms of the cues are in the crate, two cues are tuned to the music, and the warning of a mine ducks it. A playtest never heard that warning, which only a tank next to a mine could set off: the last 0.6 s of a fuse now sound it too. The web build has no music until step 5.
+Status: the five [steps](#steps) are built. The sketch of step 1 was listened to four times, and its notes are accepted. With step 2 the game plays the music on the desktop, where it follows the place and the fight and has a volume of its own. A playtest answered its questions: the music that follows the fight too was kept over music that follows the place only, and a shot sounds different from the beat, so one is told from the other. Steps 3 to 5 have not been judged by ear yet. With step 3 the lead, the bass and the pluck follow the brains of the enemies that are awake. With step 4 the waveforms of the cues are in the crate, two cues are tuned to the music, and the warning of a mine ducks it. A playtest never heard that warning, which only a tank next to a mine could set off: the last 0.6 s of a fuse now sound it too. With step 5 the web build has its sound, which a browser had never let it start, and the music with it, handed over ahead of time so that a long frame leaves no hole in it.
 
 The music of Tanku is one piece that never stops. The game makes it while it plays, from two short motifs and six instruments that it computes itself, so no sound file ships. The piece is the same for every seed and on every platform. What changes is its arrangement, which follows the run: where the players are, whether they are fighting, and how smart the enemies in front of them are.
 
@@ -306,7 +306,7 @@ The four cues that played A and E already had their E a pure fifth above A, at 6
 
 - **Nothing is random.** The noise of the hi-hat, the snare and the pluck comes from a generator of its own that always starts from the same state, and so does the noise of the cues.
 - **The score is integers.** What each instrument plays on a step is a function of the step number and of the context. Steps are counted in half frames, at 44,100 frames per second: one lasts 11,025 half frames at 120 beats per minute and 12,600 in the bridge. Nothing is rounded along the way, so nothing drifts.
-- **The crate does its own math.** The synthesizer and the cues add, subtract, multiply and divide 32-bit floats, and take sines and decays from a few lines of their own. They never call a library function such as `sin` or `exp`, whose last bit differs between platforms. Their output is therefore the same bit for bit on every platform, which lets a test compare it with a stored value.
+- **The crate does its own math.** The synthesizer and the cues add, subtract, multiply and divide 32-bit floats, and take sines and decays from a few lines of their own. They never call a library function such as `sin` or `exp`, whose last bit differs between platforms. Their output is therefore the same bit for bit on every platform, which lets a test compare it with a stored value. The web build gives the same stored values, and the first piece of music that its page hands to the browser is the native one to the bit.
 
 ## Engine
 
@@ -341,11 +341,11 @@ music.render(&mut frames);
 | Development builds | The crate is compiled with full optimization, like the dependencies, because it runs in real time |
 | Start | Nothing is computed ahead, so the music adds nothing to the time the game takes to start or to restart |
 
-In the client, the music is an asset that implements Bevy's `Decodable`, which Bevy mixes with the cues. It is played once and has no end. A system writes the context every frame from `Screen`, `Overlay`, `Run`, the `Sector` the run has reached and the genomes of the enemies that are awake. Another keeps the music as loud as the settings say, because Bevy counts the volume of the game into a sound only when the sound starts. Nothing changes in the server or in the simulation, and the headless server has no music.
+On a desktop, the music is an asset that implements Bevy's `Decodable`, which Bevy mixes with the cues. It is played once and has no end. A system writes the context every frame from `Screen`, `Overlay`, `Run`, the `Sector` the run has reached and the genomes of the enemies that are awake. Another keeps the music as loud as the settings say, because Bevy counts the volume of the game into a sound only when the sound starts. Nothing changes in the server or in the simulation, and the headless server has no music.
 
 A scripted run plays no music either, but it can keep what it would have played: from its command `tape` on, it computes the music frame by frame and writes it to a sound file when it quits, next to the list of what the music was told and when. It is how the music is checked against a real run without anyone listening.
 
-The web build has no music until step 5. There, the browser lets no sound play before the first click or key, so the music will start with it. The web build also mixes its sound on the main thread, 46 ms at a time: a frame that takes longer than about 50 ms leaves a gap in the music. The cues have the same limit today, but a gap in a held note is heard far more than one in a short cue.
+The web build plays the music in a way of its own, which [In a browser](#in-a-browser) describes.
 
 A tool renders the music without the game:
 
@@ -354,6 +354,41 @@ cargo run -p tanku_audio --example render
 ```
 
 It writes one sound file per arrangement, a tour through a made-up run with the list of what happens in it and when, and a file of short fights that each end with the lead on another note, to hear every connection. It also writes a file of the cues: each one alone, then over the fullest music, next to the player and as far away as a cue gets, all as loud as the game plays them with the settings it starts with.
+
+## In a browser
+
+The web build plays the same music, sample for sample. A browser sets three conditions of its own.
+
+**No sound before the first click or key.** The sound library of the engine asks the browser for its sound when the game starts, which is too early, and never asks again: until step 5 the web build was silent, cues included. The page of the game now asks again each time the player clicks or presses a key. The music therefore starts with the first click, from its first bar.
+
+**Sound is handed over between two frames.** A page gives the browser its sound in pieces of 46 ms, and can only do so while it isn't busy. The sound library keeps one piece in hand: a frame that takes longer than about 40 ms leaves a hole in the sound, and a much longer one garbles it for about as long as the frame lasted. The cues stay with that library, because they are short and must not be late.
+
+The music has a source of sound of its own, which the client feeds every frame, a few pieces ahead:
+
+| When | What the music does |
+|---|---|
+| At first | It is handed over 0.1 s ahead |
+| After each hole | It reaches 0.1 s further, up to 0.4 s |
+| A frame takes longer than its reach | A hole, as long as what was missing, and the music goes on from where it was |
+| The page was hidden | Nothing: sound that ran out then says nothing about the machine |
+
+The price is that the music hears of the game that much later: a roll starts a tenth of a second later than on a desktop, and up to four tenths on a machine whose frames are long. The ducking can't wait that long, so a browser turns down the loudness of the music's source, where the desktop turns down the music itself.
+
+Measured in Firefox on the development machine, with the page held up on purpose, four times for each length:
+
+| Page held up for | Hole in the music | Its reach afterward | Hole in the cues |
+|---|---|---|---|
+| 30 ms | None | 0.1 s | None |
+| 60 ms | None | 0.1 s | 4 to 27 ms |
+| 90 ms | None | 0.1 s | 24 to 53 ms |
+| 150 ms | 78 ms the first time, then none | 0.2 s | 77 to 126 ms |
+| 250 ms | 52 ms the first time, then none | 0.3 s | 191 to 254 ms |
+| 350 ms | 87 ms the first time, then none | 0.4 s | 303 to 378 ms |
+| 600 ms | About 220 ms each time | 0.4 s | About 620 ms |
+
+On that machine the game itself never holds the page up for so long. Over runs that went up to sector 53, no frame took longer than 33 ms, except one of 50 ms the first time a run starts. That one frame was enough to leave a hole of 10 ms in the music while it was still played through the sound library.
+
+**A page that isn't shown draws no frame.** The game stands still there, so the page stops its sound too, and starts it again when it is shown.
 
 ## Tests and benchmarks
 
@@ -375,6 +410,7 @@ The client has its own:
 - **Unchanged on the way.** The sound library reads the very samples that the crate renders, and reads every cue back from its sound file to a step of 16 bits.
 - **Under the cues.** At the default settings, the loudest arrangement peaks 12 dB below the shot of a player, within half a decibel.
 - **Heard.** On request, a test plays the piece on the sound device of the machine at no volume, and checks that the device asks for more: `cargo test -p tanku_client reaches_the_sound_device -- --ignored`.
+- **Ahead.** In a browser, steady frames leave no hole in the music and keep it a tenth of a second ahead. A long frame leaves one hole, after which the music reaches further, up to four tenths of a second. A page that was hidden teaches nothing.
 
 ## Steps
 
@@ -394,6 +430,7 @@ The switch of step 2 was an experiment, to settle by ear whether the music needs
 
 - Every mine now warns at the end of its fuse, and most mines end that way: brains from the grunt up keep 4 m away from every mine, so few are set off by a tank. A fight with many mines therefore has many warnings, and the music dips for each one within hearing range. Is that too often, for the beeps or for the dips?
 - Far from the middle of the screen, two cues stand hardly above the fullest music on some beats, by an estimate of their level in their own bands: a destroyed bullet against the hi-hat, and a placed mine when the lead plays the E that the cue now plays too. Every other cue is at least 12 dB above the music there, and all are next to the player. Are these two heard far away?
-- How long are the frames of the web build when a sector loads, and is the gap they leave in the music acceptable?
+- In a browser the music hears of the game a tenth of a second later than on a desktop, and later still on a machine with long frames. Is a roll still felt as the answer to a crossing there?
+- The first time a run starts, the web build takes one frame of 50 ms on the development machine, and longer on a slower one, where it leaves a hole in the music once before the music reaches further. What takes that long?
 - Two machines in one room play the same piece out of step, because each has its own clock. Does co-op in one room need them in step?
 - In hard mode every tier is available from sector 1, so the lead is at its fullest almost at once. Is that the right sound for hard mode, or does it waste the build-up?

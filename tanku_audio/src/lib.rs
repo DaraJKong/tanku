@@ -29,11 +29,15 @@ pub const SAMPLE_RATE: u32 = 44_100;
 /// way up. Halfway up, where that setting starts, the loudest arrangement peaks 12 dB below a
 /// shot fired next to the player.
 pub const MUSIC_LEVEL: f32 = 0.54;
+/// How loud a ducked music is, against what it was. Whoever computes the music ahead of time,
+/// as the web build does, turns it down this much where it is played instead: the music
+/// itself would do it too late.
+pub const DUCKED: f32 = 0.5;
 /// Frames between two looks at what can't wait for the next step of the music: a millisecond
 /// and a half.
 const WATCH: u64 = 64;
 /// The bit of a packed context that says that the music is ducked.
-const DUCKED: u32 = 1 << 8;
+const DUCKED_BIT: u32 = 1 << 8;
 /// The music is in stereo: a frame is a sample for the left, then one for the right.
 pub const CHANNELS: u16 = 2;
 
@@ -109,7 +113,7 @@ impl Music {
     pub fn render(&mut self, frames: &mut [f32]) {
         for frame in frames.as_chunks_mut::<{ CHANNELS as usize }>().0 {
             if self.frame.is_multiple_of(WATCH) {
-                let ducked = self.context.load(Ordering::Relaxed) & DUCKED != 0;
+                let ducked = self.context.load(Ordering::Relaxed) & DUCKED_BIT != 0;
                 self.synth.duck(ducked);
             }
             if self.frame == self.next_step / 2 {
@@ -131,7 +135,7 @@ fn pack(context: Context) -> u32 {
         | (context.down as u32) << 3
         | (context.muffled as u32) << 4
         | (context.threat.min(7) as u32) << 5
-        | if context.ducked { DUCKED } else { 0 }
+        | if context.ducked { DUCKED_BIT } else { 0 }
 }
 
 fn unpack(bits: u32) -> Context {
@@ -141,7 +145,7 @@ fn unpack(bits: u32) -> Context {
         down: bits & 1 << 3 != 0,
         muffled: bits & 1 << 4 != 0,
         threat: (bits >> 5) as u8 & 7,
-        ducked: bits & DUCKED != 0,
+        ducked: bits & DUCKED_BIT != 0,
     }
 }
 

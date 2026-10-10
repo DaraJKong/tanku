@@ -1,23 +1,28 @@
-//! The music. The crate `tanku_audio` computes it while it plays. This module hands it to the
-//! sound library and tells it, every frame, what happens in the game.
+//! The music. The crate `tanku_audio` computes it while it plays. This module tells it, every
+//! frame, what happens in the game, and hands it to what plays it: the sound library of the
+//! engine on a desktop, and the browser itself on the web.
+
+#[cfg(any(test, target_arch = "wasm32"))]
+mod ahead;
+#[cfg(not(target_arch = "wasm32"))]
+mod device;
+#[cfg(target_arch = "wasm32")]
+mod web;
 
 use std::time::Duration;
 
-use bevy::{
-    audio::{AddAudioSource, ChannelCount, SampleRate, Source, Volume},
-    prelude::*,
-};
-use tanku_audio::{CHANNELS, Conductor, Context, MUSIC_LEVEL, Music, Place, SAMPLE_RATE};
+use bevy::prelude::*;
+use tanku_audio::{Conductor, Context, MUSIC_LEVEL, Place};
 use tanku_core::{
     map::SectorKind,
     sim::{Enemy, Run, RunPhase, Sector, Tank},
 };
 
-use crate::{Overlay, Screen, audio::Muted, settings::Settings};
+use crate::{Overlay, Screen, settings::Settings};
 
-/// Samples that the music computes at a time: 3 ms of it. The sound library reads them one
-/// by one.
-const BLOCK: usize = 128 * CHANNELS as usize;
+/// Whether the music turns itself down when it is ducked. On the web it is computed ahead of
+/// time, so it would be late: its loudness is turned down where it is played instead.
+const DUCKS_ITSELF: bool = cfg!(not(target_arch = "wasm32"));
 
 /// The end of the music that the game holds, to tell it what happens.
 #[derive(Resource, Default)]
@@ -28,112 +33,19 @@ pub struct Baton(pub Conductor);
 #[derive(Resource, Default)]
 pub struct DuckedUntil(pub Duration);
 
-/// The piece, as something that the sound library can play.
-#[derive(Asset, TypePath)]
-struct Piece(Conductor);
-
-impl Decodable for Piece {
-    type Decoder = Stream;
-
-    fn decoder(&self) -> Stream {
-        Stream::new(self.0.music())
-    }
-}
-
-/// The music as the sound library reads it: one sample at a time, without an end.
-struct Stream {
-    music: Music,
-    block: [f32; BLOCK],
-    /// The sample of the block that comes next.
-    next: usize,
-}
-
-impl Stream {
-    fn new(music: Music) -> Self {
-        Self {
-            music,
-            block: [0.0; BLOCK],
-            // Nothing is computed before it is asked for.
-            next: BLOCK,
-        }
-    }
-}
-
-impl Iterator for Stream {
-    type Item = f32;
-
-    fn next(&mut self) -> Option<f32> {
-        if self.next == BLOCK {
-            self.music.render(&mut self.block);
-            self.next = 0;
-        }
-        let sample = self.block[self.next];
-        self.next += 1;
-        Some(sample)
-    }
-}
-
-impl Source for Stream {
-    fn current_span_len(&self) -> Option<usize> {
-        None
-    }
-
-    fn channels(&self) -> ChannelCount {
-        ChannelCount::new(CHANNELS).unwrap()
-    }
-
-    fn sample_rate(&self) -> SampleRate {
-        SampleRate::new(SAMPLE_RATE).unwrap()
-    }
-
-    fn total_duration(&self) -> Option<Duration> {
-        None
-    }
-}
-
 pub fn plugin(app: &mut App) {
-    app.add_audio_source::<Piece>()
-        .init_resource::<Baton>()
+    app.init_resource::<Baton>()
         .init_resource::<DuckedUntil>()
-        .add_systems(Startup, start)
-        .add_systems(Update, (tell, set_volume));
+        .add_systems(Update, tell);
+    #[cfg(not(target_arch = "wasm32"))]
+    app.add_plugins(device::plugin);
+    #[cfg(target_arch = "wasm32")]
+    app.add_plugins(web::plugin);
 }
 
 /// How loud the music is against the cues, under the volume of the game.
 fn loudness(settings: &Settings) -> f32 {
     settings.music * MUSIC_LEVEL
-}
-
-/// Starts the music, which never stops from then on. A game that must stay silent has none.
-fn start(
-    mut commands: Commands,
-    mut pieces: ResMut<Assets<Piece>>,
-    baton: Res<Baton>,
-    settings: Res<Settings>,
-    muted: Option<Res<Muted>>,
-) {
-    // Not on the web yet. A browser mixes the sound between two frames of the game, so a long
-    // frame leaves a gap, and nobody has listened for gaps there.
-    if muted.is_some() || cfg!(target_arch = "wasm32") {
-        return;
-    }
-    commands.spawn((
-        AudioPlayer(pieces.add(Piece(baton.0.clone()))),
-        // The music has no end, so it is played once and not in a loop, which would keep
-        // every sample of it.
-        PlaybackSettings::ONCE.with_volume(Volume::Linear(loudness(&settings))),
-    ));
-}
-
-/// Keeps the music as loud as the settings say. The volume of the game reaches a sound only
-/// when it starts, and the music starts once.
-fn set_volume(settings: Res<Settings>, mut sinks: Query<&mut AudioSink, With<AudioPlayer<Piece>>>) {
-    let wanted = Volume::Linear(settings.volume * loudness(&settings));
-    for mut sink in &mut sinks {
-        if sink.volume() != wanted {
-            sink.set_volume(wanted);
-        }
-    }
 }
 
 /// What the music is told about the game: where the run has got to, given the kind of its
@@ -192,7 +104,7 @@ pub fn tell(
     let awake = enemies.iter().filter(|(enemy, _)| enemy.awake);
     let smartest = awake.map(|(_, tank)| tank.genome.brain()).max();
     // A warning sounds whether or not the game is paused, so its time is that of the clock.
-    let ducked = time.elapsed() < ducked.0;
+    let ducked = DUCKS_ITSELF && time.elapsed() < ducked.0;
     baton.0.set(context(
         *screen.get(),
         *overlay.get(),
@@ -205,8 +117,7 @@ pub fn tell(
 
 #[cfg(test)]
 mod tests {
-    use bevy::audio::AudioPlugin;
-    use tanku_audio::cues::Cue;
+    use tanku_audio::{CHANNELS, SAMPLE_RATE, cues::Cue};
     use tanku_core::{
         enemy,
         map::Corridor,
@@ -230,77 +141,6 @@ mod tests {
             phase,
             lost_to: None,
         }
-    }
-
-    #[test]
-    fn the_sound_library_reads_the_music_as_it_is() {
-        let fight = Context {
-            place: Place::Arena,
-            fight: true,
-            threat: 4,
-            ..default()
-        };
-        let (mut music, conductor) = tanku_audio::music_from(fight);
-        // Three seconds, which don't end on a block.
-        let mut frames = vec![0.0; 3 * SAMPLE_RATE as usize * CHANNELS as usize + 14];
-        music.render(&mut frames);
-
-        let (music, _) = tanku_audio::music_from(conductor.context());
-        let mut stream = Stream::new(music);
-        assert_eq!(stream.channels().get(), 2);
-        assert_eq!(stream.sample_rate().get(), 44_100);
-        // It has no end, and nothing tells the library to look at it again.
-        assert_eq!(stream.current_span_len(), None);
-        assert_eq!(stream.total_duration(), None);
-        let read: Vec<f32> = stream.by_ref().take(frames.len()).collect();
-        assert!(read.iter().any(|sample| *sample != 0.0));
-        assert_eq!(read, frames);
-    }
-
-    #[test]
-    fn the_piece_starts_from_its_first_bar_when_it_is_played() {
-        // The game has told the music where it is before the sound library asks for it.
-        let piece = Piece(Conductor::default());
-        let (mut music, _) = tanku_audio::music();
-        let mut frames = vec![0.0; 2 * BLOCK];
-        music.render(&mut frames);
-        let read: Vec<f32> = piece.decoder().take(frames.len()).collect();
-        assert_eq!(read, frames);
-    }
-
-    /// Plays the piece on the sound device of the machine for half a second, with the volume
-    /// of the game at nothing:
-    /// `cargo test -p tanku_client reaches_the_sound_device -- --ignored`
-    #[test]
-    #[ignore = "needs a sound device"]
-    fn the_music_reaches_the_sound_device() {
-        let silent = Volume::Linear(0.0);
-        let mut app = App::new();
-        app.add_plugins((
-            MinimalPlugins,
-            AssetPlugin::default(),
-            AudioPlugin {
-                global_volume: silent.into(),
-                ..default()
-            },
-        ))
-        .init_resource::<Settings>()
-        .insert_resource(State::new(Screen::Menu))
-        .insert_resource(State::new(Overlay::None))
-        .add_plugins(plugin);
-        app.world_mut().resource_mut::<Settings>().volume = 0.0;
-        for _ in 0..25 {
-            app.update();
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        let world = app.world_mut();
-        let mut sinks = world.query_filtered::<&AudioSink, With<AudioPlayer<Piece>>>();
-        let sink = sinks.single(world).expect("the piece is not playing");
-        assert_eq!(sink.volume(), silent);
-        // The device has asked for the first moments of the piece, and goes on asking.
-        let played = sink.position();
-        assert!(played > Duration::from_millis(100), "{played:?}");
-        assert!(!sink.empty() && !sink.is_paused());
     }
 
     #[test]
