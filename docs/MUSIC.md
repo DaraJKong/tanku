@@ -1,6 +1,6 @@
 # Tanku: music specification
 
-Status: step 1 of the [steps](#steps) is built and has been listened to twice. The crate holds the score, the director, rough instruments and the listening tool. Nothing plays in the game, and [PROJECT.md](PROJECT.md) still says that music comes later.
+Status: step 1 of the [steps](#steps) is built and has been listened to three times. The crate holds the score, the director, rough instruments and the listening tool. Nothing plays in the game, and [PROJECT.md](PROJECT.md) still says that music comes later.
 
 The music of Tanku is one piece that never stops. The game makes it while it plays, from two short motifs and six instruments that it computes itself, so no sound file ships. The piece is the same for every seed and on every platform. What changes is its arrangement, which follows the run: where the players are, whether they are fighting, and how smart the enemies in front of them are.
 
@@ -11,8 +11,8 @@ All numbers and all notes in this document are starting values to tune by ear.
 | Topic | Summary |
 |---|---|
 | Piece | One, in A, at 120 beats per minute and at 105 in its bridge, without an end |
-| Written by hand | Three motifs, the fall, the chords of the verse and of the chorus, nine rhythm patterns |
-| Derived by rule | Everything else: both modes, every section, every arrangement, every sound |
+| Written by hand | Three motifs, the chords of the verse and of the chorus, nine rhythm patterns |
+| Derived by rule | Everything else: both modes, every section, every arrangement, every connection, every sound |
 | Instruments | Bass, pluck, lead, kick, hi-hat and snare, all synthesized by the game |
 | Follows | The place (bay, corridor, arena), the fight (on or off) and the threat (the highest brain tier awake) |
 | Ignores | The seed, the platform and the clock of the machine |
@@ -41,7 +41,7 @@ All numbers and all notes in this document are starting values to tune by ear.
 | Arrangement | The layers that play together |
 | Context | What the game tells the music |
 | Threat | The highest brain tier among the enemies that are awake |
-| Marker | A short gesture that answers an event at once: the roll that announces a fight, the fall that ends it |
+| Marker | A short gesture that answers an event: the roll that announces a fight, the connection that ends it |
 
 ## Time
 
@@ -103,14 +103,26 @@ A grid shows bars of 16 steps, in four beats. In a melody, a digit starts a note
 Motif A, the question    1..2 ..3. 5..3 ..2. | 3..5 ..6. .... 5...
 Motif B, the answer      8... ..9. 8... 6... | 5..6 ..5. 3..2 ..1.
 Motif C, the call        ---- 5.8. ---- ----
-The fall                 8.7. 6.5.
 ```
 
 Motif A climbs and stops on degree 5, so it asks for more. Motif B starts on the high tonic and comes down to the tonic, so it closes. The first bar of A and the second bar of B share one rhythm, twice 3 + 3 + 2 steps. It is the rhythm of the fights, and the bass plays it too.
 
 Motif C belongs to the bridge. It is two notes in a row, the second a fourth above the first and left to ring. Over the eight bars of the bridge its second note is degree 8, 7, 8, 9, 8, 7, 8 and 4 in turn, so the last call falls where the others rise.
 
-The fall is the way out of a fight. In two beats it comes down from the tonic to degree 5, the one on which the bridge stays, so the tune of a fight is never cut off: it lands where the bridge begins. It is in Dorian even after an arena, where its F♯ is the first sign that the fight is over.
+### Connection
+
+The connection is the way out of a fight. It leads the tune from the note the lead is on to degree 5, the one on which the bridge stays, so the tune of a fight is never cut off: it arrives where the bridge begins. It goes by steps of the scale and never turns back on the way, in four notes at most. The bass and the pluck go with the lead, each in its own octave, and a lead that is silent leaves them the fall.
+
+| The lead is on | Connection | What it is |
+|---|---|---|
+| 8 or 9 (the upper A, or the B above it) | `8.7. 6.5.` | The fall: A, G, F♯, E |
+| 6 (F♯, or F in an arena) | `6... 5...` | One step down, a beat each |
+| 5 (E) | `5... ....` | The lead is there already, and stays |
+| 3 (C) | `3.4. 5...` | A rise: C, D, E |
+| 1 or 2 (the lower A, or B) | `2.3. 4.5.` | A rise: B, C, D, E. From A it starts one step on, where four notes are left. |
+| Nothing: the lead is silent | `8.7. 6.5.` | The fall, on the pluck and the bass |
+
+It is in Dorian even after an arena, where its F♯ is the first sign that the fight is over. It replaces a fall that always started from the upper A: when the tune had just come down, the fall went back up to start, which sounded wrong.
 
 ### Chords
 
@@ -156,6 +168,7 @@ Syncopation lives in the bass, the pluck and the lead. The drums stay on a plain
 | Octave | Plays the same line an octave higher as well | Lead at threat 4 |
 | Turnaround | Swaps the long degree 6 of motif A for degree 2, a note of chord 5: its second bar becomes `3..5 ..2. .... 5...` | Last bar of the intro and of the verse, which is on chord 5 |
 | Answer | Plays the two notes of a call in the other order, two beats later and short | Lead in the bridge |
+| Connection | Goes by steps of the scale from the note the lead is on to degree 5, without turning back | Lead, pluck and bass at the end of a fight |
 
 One check guards every change to the notes. In both modes, a note that lies a semitone above the root of its chord must pass quickly: it lasts one step if it starts on a beat, and three steps at most otherwise. The turnaround exists because of it: without it, the last bar of the verse would hold F over E minor in an arena.
 
@@ -216,13 +229,13 @@ The threat falls during a fight when the smartest enemies are destroyed first, a
 Three rules make the music answer fast and stay in time:
 
 1. A change within a fight waits for the bar line.
-2. A fight has a way in and a way out, which start at once and last two beats each: a roll, and a fall.
-3. What follows a roll or a fall starts on its own first beat, wherever the bar was. The bridge has a tempo of its own, so nothing has to line up.
+2. A fight has a way in and a way out, which last two beats each. The roll starts at once. The connection starts on the next beat of the fight, so that the kick never stumbles.
+3. What follows a roll or a connection starts on its own first beat, wherever the bar was. The bridge has a tempo of its own, so nothing has to line up.
 
 | Event | At once | Then |
 |---|---|---|
 | A fight starts | A roll of two beats that grows louder, on the hi-hat in a corridor and on the snare in an arena. Nothing else starts while it lasts. | When the roll is over, one second later: the fight sections start, in Aeolian in an arena |
-| The fight ends | The fall: in two beats that slow down to the tempo of the bridge, the bass, the pluck and the lead, if it was playing, come down together from the tonic to degree 5. The kick keeps the beat under them and the other drums stop. | When the fall is over, one second later: the bridge starts on its first beat |
+| The fight ends | The fight plays on to its next beat, half a second away at most. Then the [connection](#connection): in two beats that slow down to the tempo of the bridge, the bass, the pluck and the lead, if it was playing, go together to degree 5. The kick keeps the beat under them and the other drums stop. | When the connection is over: the bridge starts on its first beat |
 | The threat changes | Nothing | On the next bar line: lead, bass and pluck change |
 | The player's tank is destroyed | Everything stops but the bass, which holds the root of the chord | On the bar line after the tank is back: the context decides again |
 | The run ends | The same | On the next bar line: the intro starts |
@@ -231,7 +244,7 @@ Three rules make the music answer fast and stay in time:
 
 The fight sections are counted in phrases: the two of the verse, then the two of the chorus, then the verse again. A fight opens on the phrase after the one where the last fight ended. The first fight of a run opens the verse, so every run begins the same way, and the short fights of the first sectors walk through the whole piece instead of repeating its first bars.
 
-A roll or a fall is heard within one step of its event. A fight is in full swing one second after it starts and the bridge one second after it ends. Every other change is complete within one bar.
+A roll is heard within one step of its event, and the fight is in full swing one second later. A connection starts within half a second of the end of a fight, and the bridge one second after that: the sound cue of a cleared sector is what answers at once. Every other change is complete within one bar.
 
 ## Instruments
 
@@ -322,7 +335,7 @@ A tool renders the music without the game:
 cargo run -p tanku_audio --example render
 ```
 
-It writes one sound file per arrangement and a tour through a made-up run, with the list of what happens in it and when. From step 4 it also lays cues over the music.
+It writes one sound file per arrangement, a tour through a made-up run with the list of what happens in it and when, and a file of short fights that each end with the lead on another note, to hear every connection. From step 4 it also lays cues over the music.
 
 ## Tests and benchmarks
 
@@ -331,7 +344,8 @@ It writes one sound file per arrangement and a tour through a made-up run, with 
 - **Never silent.** Every bar of every arrangement makes sound.
 - **Never too loud.** No frame of any arrangement or of any change goes past full scale, and none is NaN.
 - **Seamless.** The third pass of a loop is identical to the second.
-- **On time.** A fight that is announced on each of the 16 steps of a bar gives a roll at once and the fight two beats later. A fight that ends on each of them gives a fall at once and the bridge two beats later.
+- **On time.** A fight that is announced on each of the 16 steps of a bar gives a roll at once and the fight two beats later. A fight that ends on each of them plays on to its next beat, and gives a connection there and the bridge two beats later.
+- **Connected.** For every note the lead can be on, the connection goes to degree 5 one step of the scale at a time and never turns back.
 - **Sound in both modes.** The motifs use the five degrees, the chords are major or minor, and every melody, with its skeleton and its ornaments, passes the check on semitones above the root.
 - **Cost.** A benchmark renders ten seconds of a fight in an arena at threat 4.
 

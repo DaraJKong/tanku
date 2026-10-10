@@ -2,16 +2,17 @@
 //! instrument starts.
 //!
 //! Three rules make the music answer fast and stay in time. A change within a fight, such as
-//! a new threat, waits for the bar line. A fight has a way in and a way out that start at once
-//! and always last two beats: a roll announces it, and a fall brings its tune down and slows
-//! it into what follows. And what follows a roll or a fall starts on its own first beat,
-//! wherever the bar was: the bridge has a tempo of its own, so nothing has to line up.
+//! a new threat, waits for the bar line. A fight has a way in and a way out, which last two
+//! beats each: a roll announces it at once, and a connection leads its tune, from the next
+//! beat on, to where the bridge begins. And what follows a roll or a connection starts on its
+//! own first beat, wherever the bar was: the bridge has a tempo of its own, so nothing has to
+//! line up.
 //!
 //! All of it is integer logic, so it gives the same answer on every platform.
 
 use crate::score::{
     self, A1, A2, A3, A4, BARS, BASS_LEAPING, BASS_LONG, BASS_PLAIN, BRIDGE, BRIDGE_ANSWERS,
-    BRIDGE_BASS, BRIDGE_STEP, CHORUS, FALL, FALL_STEPS, HAT_ARENA, HAT_CORRIDOR, KICK_FIGHT,
+    BRIDGE_BASS, BRIDGE_STEP, CHORUS, CONNECTION_STEPS, HAT_ARENA, HAT_CORRIDOR, KICK_FIGHT,
     KICK_HEART, Line, Mode, PEDAL, PLUCK_ARPEGGIO, Pattern, SNARE_ARENA, STEP, STEPS, TICK, VERSE,
 };
 
@@ -115,7 +116,7 @@ const SNARE: u8 = 230;
 /// A roll starts this loud and ends at full strength.
 const ROLL_START: u16 = 40;
 /// A roll lasts two beats, at the tempo of the fight it announces.
-const ROLL_HITS: u8 = 8;
+pub const ROLL_HITS: u8 = 8;
 /// Phrases that the fights walk through: two for the verse and two for the chorus.
 const PHRASES: u8 = 4;
 const BARS_IN_PHRASE: u8 = 4;
@@ -153,10 +154,12 @@ struct Roll {
     done: u8,
 }
 
-/// The fall that ends a fight.
+/// The connection that leads from a fight into what follows.
 #[derive(Clone, Copy, Debug)]
-struct Fall {
-    /// Whether the lead comes down with the pluck and the bass: it does if it was playing.
+struct Connection {
+    /// The way from the note the lead was on to the degree on which the bridge stays.
+    line: Line,
+    /// Whether the lead goes that way with the pluck and the bass: it does if it was playing.
     lead: bool,
     done: u8,
 }
@@ -176,7 +179,9 @@ pub struct Director {
     /// The phrase that the next fight opens on.
     next_phrase: u8,
     roll: Option<Roll>,
-    fall: Option<Fall>,
+    connection: Option<Connection>,
+    /// The degree of the last note that the lead started in the fight, if the lead is playing.
+    lead_on: Option<u8>,
     /// Everything has stopped but the bass, until the next bar line.
     hush: bool,
     /// Whether the last step was outside a run, to tell when one starts.
@@ -195,7 +200,8 @@ impl Default for Director {
             threat: 0,
             next_phrase: 0,
             roll: None,
-            fall: None,
+            connection: None,
+            lead_on: None,
             hush: false,
             in_menu: true,
         }
@@ -250,8 +256,8 @@ impl Director {
         self.in_menu = !playing;
         let fight = is_fight(context);
 
-        // A roll that is over gives way to the fight, and a fall to what follows the fight,
-        // wherever the bar was.
+        // A roll that is over gives way to the fight, and a connection to what follows the
+        // fight, wherever the bar was.
         if self.roll.is_some_and(|roll| roll.done == ROLL_HITS) {
             self.roll = None;
             if fight {
@@ -259,16 +265,19 @@ impl Director {
                 out.fresh = true;
             }
         }
-        if self.fall.is_some_and(|fall| fall.done == FALL_STEPS) {
-            self.fall = None;
+        if self
+            .connection
+            .is_some_and(|link| link.done == CONNECTION_STEPS)
+        {
+            self.connection = None;
             self.enter(calm_part(context));
             out.fresh = true;
         }
-        let between = self.roll.is_some() || self.fall.is_some();
+        let between = self.roll.is_some() || self.connection.is_some();
 
         // On a bar line, what was decided since the last one takes effect. A tank that is
-        // still destroyed keeps everything waiting, and so do a roll and a fall: the section
-        // under them stands still.
+        // still destroyed keeps everything waiting, and so do a roll and a connection: the
+        // section under them stands still.
         if self.step == 0 && !context.down && !between {
             let calm = calm_part(context);
             let elsewhere = self.part != Part::Fight && self.part != calm && !fight;
@@ -278,7 +287,7 @@ impl Director {
                 out.fresh = true;
             }
             // A fight that goes on takes the threat of the moment. One that has just ended
-            // keeps its own for its fall.
+            // keeps its own for its connection.
             if self.part == Part::Fight && fight {
                 self.arrange(context);
             }
@@ -288,19 +297,24 @@ impl Director {
         let run_left = !playing && self.part != Part::Intro;
         if context.down || run_left {
             if !self.hush {
-                if self.part == Part::Fight && self.fall.is_none() {
+                if self.part == Part::Fight && self.connection.is_none() {
                     self.end_fight();
                 }
                 self.hush = true;
                 self.roll = None;
-                self.fall = None;
+                self.connection = None;
                 out.bass = Some(self.root());
             }
         } else if self.part == Part::Fight && !fight {
-            if !self.hush && self.fall.is_none() {
+            // The fight plays on to its next beat, so that the kick never stumbles. The
+            // connection starts there, from the note the lead is on.
+            let on_a_beat = self.step.is_multiple_of(4);
+            if !self.hush && self.connection.is_none() && on_a_beat {
                 self.end_fight();
-                self.fall = Some(Fall {
-                    lead: self.threat > 0,
+                let lead = self.lead_on.filter(|_| self.threat > 0);
+                self.connection = Some(Connection {
+                    line: score::connection(lead),
+                    lead: lead.is_some(),
                     done: 0,
                 });
             }
@@ -331,8 +345,8 @@ impl Director {
             out.length = STEP;
             return out;
         }
-        if let Some(fall) = self.fall {
-            self.fall_step(fall, calm_part(context), &mut out);
+        if let Some(link) = self.connection {
+            self.connect(link, calm_part(context), &mut out);
             return out;
         }
 
@@ -353,15 +367,14 @@ impl Director {
         out
     }
 
-    /// One step of the fall. The kick keeps the beat while it slows down, and the bass, the
-    /// pluck and the lead come down together, each in its own octave, to the degree on which
-    /// the bridge stays.
-    fn fall_step(&mut self, fall: Fall, next: Part, out: &mut Step) {
-        let step = fall.done as usize;
-        if step.is_multiple_of(4) {
+    /// One step of a connection. The kick keeps the beat while it slows down, and the bass,
+    /// the pluck and the lead go together, each in its own octave, to the degree on which the
+    /// bridge stays.
+    fn connect(&mut self, link: Connection, next: Part, out: &mut Step) {
+        if link.done.is_multiple_of(4) {
             out.kick = HIT;
         }
-        let cell = FALL[step];
+        let cell = link.line[link.done as usize];
         if cell.degree != 0 {
             let tone = |tonic: u8| {
                 Some(Tone {
@@ -370,18 +383,21 @@ impl Director {
                     level: HIT,
                 })
             };
-            out.bass = tone(A1);
+            // A line that rises starts low in the scale, where the bass is an octave higher
+            // so as not to go below its range.
+            let rising = link.line[0].degree < PEDAL;
+            out.bass = tone(if rising { A2 } else { A1 });
             out.pluck = tone(A3);
-            if fall.lead {
+            if link.lead {
                 out.lead[0] = tone(A4);
             }
         }
         // Each step is a little longer than the one before, up to the tempo of what follows.
         let slower = next.step() - STEP;
-        out.length = STEP + slower * (fall.done as u32 + 1) / FALL_STEPS as u32;
-        self.fall = Some(Fall {
-            done: fall.done + 1,
-            ..fall
+        out.length = STEP + slower * (link.done as u32 + 1) / CONNECTION_STEPS as u32;
+        self.connection = Some(Connection {
+            done: link.done + 1,
+            ..link
         });
     }
 
@@ -398,6 +414,7 @@ impl Director {
         self.part = Part::Fight;
         self.bar = self.next_phrase * BARS_IN_PHRASE;
         self.step = 0;
+        self.lead_on = None;
         self.arrange(context);
     }
 
@@ -416,6 +433,10 @@ impl Director {
     fn arrange(&mut self, context: Context) {
         self.arena = context.place == Place::Arena;
         self.threat = context.threat.min(HIGHEST_THREAT);
+        if self.threat == 0 {
+            // The lead is silent.
+            self.lead_on = None;
+        }
         self.mode = if self.arena { Mode::Aeolian } else { HOME };
     }
 
@@ -466,7 +487,7 @@ impl Director {
         });
     }
 
-    fn fight(&self, out: &mut Step) {
+    fn fight(&mut self, out: &mut Step) {
         out.kick = hit(&KICK_FIGHT, self.step, HIT);
         if self.arena {
             let (soft, loud) = ARENA_HATS;
@@ -502,7 +523,9 @@ impl Director {
         if self.threat > 0 {
             let chorus = self.section() == Section::Chorus;
             let lines = &LEAD[self.threat as usize - 1][chorus as usize];
-            if let Some(tone) = self.note(&lines[self.bar() as usize], A4) {
+            let line = &lines[self.bar() as usize];
+            if let Some(tone) = self.note(line, A4) {
+                self.lead_on = Some(line[self.step as usize].degree);
                 out.lead[0] = Some(tone);
                 if self.threat == HIGHEST_THREAT {
                     out.lead[1] = Some(Tone {
@@ -575,6 +598,7 @@ mod tests {
 
     const BAR: usize = STEPS;
     const ROLL: usize = ROLL_HITS as usize;
+    const LINK: usize = CONNECTION_STEPS as usize;
 
     fn at(place: Place) -> Context {
         Context {
@@ -721,37 +745,38 @@ mod tests {
     }
 
     #[test]
-    fn a_fall_of_two_beats_leads_into_the_bridge() {
-        let fall = FALL_STEPS as usize;
-        // Wherever the fight ends in its bar, the bar line included.
+    fn a_connection_starts_on_the_next_beat_and_leads_into_the_bridge() {
+        // Wherever the fight ends in its bar. Its lead is silent, so the connection is the
+        // fall, on the pluck and the bass.
         for offset in 0..BAR {
-            let mut director = Director::settled(fight(Place::Arena, 3));
-            play(&mut director, fight(Place::Arena, 3), BAR + offset);
-            let steps = play(&mut director, at(Place::Arena), fall + BAR);
-            // The kick keeps the beat and nothing else drums.
-            let falling = &steps[..fall];
-            assert_eq!(
-                on(falling, |step| step.kick == HIT),
-                [0, 4],
-                "offset {offset}"
-            );
-            assert!(falling.iter().all(|step| step.hat == 0 && step.snare == 0));
-            assert!(falling.iter().all(|step| !step.fresh && !step.hush));
-            // Bass, pluck and lead come down from A to E, each in its octave. After an arena
-            // the F sharp of the piece is back.
-            assert_eq!(pitches(falling, |step| step.bass), [45, 43, 42, 40]);
-            assert_eq!(pitches(falling, |step| step.pluck), [69, 67, 66, 64]);
-            assert_eq!(pitches(falling, |step| step.lead[0]), [81, 79, 78, 76]);
-            assert_eq!(on(falling, |step| step.pluck.is_some()), [0, 2, 4, 6]);
+            let mut director = Director::settled(fight(Place::Corridor, 0));
+            play(&mut director, fight(Place::Corridor, 0), BAR + offset);
+            let wait = (4 - offset % 4) % 4;
+            let steps = play(&mut director, at(Place::Corridor), wait + LINK + BAR);
+            // The fight plays on to its next beat, with its drums.
+            for (index, step) in steps[..wait].iter().enumerate() {
+                let at = (offset + index) as u8;
+                assert_eq!((step.kick, step.hat), (0, hit(&HAT_CORRIDOR, at, HAT)));
+                assert!(!step.fresh && step.length == STEP, "offset {offset}");
+            }
+            // The connection starts on that beat: its kick is where the kick of the fight
+            // would be, and nothing else drums.
+            let link = &steps[wait..wait + LINK];
+            assert_eq!(on(link, |step| step.kick == HIT), [0, 4], "offset {offset}");
+            assert!(link.iter().all(|step| step.hat == 0 && step.snare == 0));
+            assert!(link.iter().all(|step| !step.fresh && !step.hush));
+            assert_eq!(pitches(link, |step| step.pluck), [69, 67, 66, 64]);
+            assert_eq!(pitches(link, |step| step.bass), [45, 43, 42, 40]);
+            assert!(link.iter().all(|step| step.lead == [None; 2]));
             // It slows down from the tempo of the fight to the tempo of the bridge.
-            let lengths: Vec<u32> = falling.iter().map(|step| step.length).collect();
-            assert!(lengths[0] > STEP && lengths[fall - 1] == BRIDGE_STEP);
+            let lengths: Vec<u32> = link.iter().map(|step| step.length).collect();
+            assert!(lengths[0] > STEP && lengths[LINK - 1] == BRIDGE_STEP);
             assert!(
                 lengths.windows(2).all(|pair| pair[0] < pair[1]),
                 "{lengths:?}"
             );
             // Then the bridge starts on its first beat.
-            let bridge = &steps[fall..];
+            let bridge = &steps[wait + LINK..];
             assert!(bridge[0].fresh, "offset {offset}");
             assert_eq!(bridge[0].kick, HEART.0);
             assert!(bridge.iter().all(|step| step.length == BRIDGE_STEP));
@@ -761,12 +786,64 @@ mod tests {
     }
 
     #[test]
-    fn the_lead_falls_only_if_it_was_playing() {
-        let mut director = Director::settled(fight(Place::Corridor, 0));
-        play(&mut director, fight(Place::Corridor, 0), 5);
-        let steps = play(&mut director, at(Place::Corridor), FALL_STEPS as usize);
-        assert_eq!(pitches(&steps, |step| step.pluck), [69, 67, 66, 64]);
-        assert!(steps.iter().all(|step| step.lead == [None; 2]));
+    fn a_connection_starts_from_the_note_the_lead_is_on() {
+        // What the lead, the pluck and the bass play in the connection, and the steps on which
+        // the lead starts a note, for a fight that is seen to be over after some steps.
+        let link = |place: Place, threat: u8, fought: usize| {
+            let mut director = Director::settled(fight(place, threat));
+            play(&mut director, fight(place, threat), fought);
+            let wait = (4 - fought % 4) % 4;
+            let steps = play(&mut director, at(place), wait + LINK);
+            let link = &steps[wait..];
+            (
+                pitches(link, |step| step.lead[0]),
+                on(link, |step| step.lead[0].is_some()),
+                pitches(link, |step| step.pluck),
+                pitches(link, |step| step.bass),
+            )
+        };
+        let (verse, chorus) = (0, BARS * BAR);
+        let corridor = Place::Corridor;
+
+        // The verse has motif A: A, B, C, E, C, B, then C, E, F sharp, E. From C, the lead
+        // rises to E by steps of the scale, and the pluck and the bass with it.
+        let rise = (
+            vec![72, 74, 76],
+            vec![0, 2, 4],
+            vec![60, 62, 64],
+            vec![48, 50, 52],
+        );
+        assert_eq!(link(corridor, 2, verse + 8), rise);
+        // A fight that ends between two beats gets the same: it plays on to the beat.
+        assert_eq!(link(corridor, 2, verse + 7), rise);
+        // From B it rises through four notes, and from the tonic it starts on that B too.
+        let long_rise = (
+            vec![71, 72, 74, 76],
+            vec![0, 2, 4, 6],
+            vec![59, 60, 62, 64],
+            vec![47, 48, 50, 52],
+        );
+        assert_eq!(link(corridor, 2, verse + 4), long_rise);
+        assert_eq!(link(corridor, 1, verse + 4), long_rise);
+        // From E, the lead is there already: it stays for the two beats.
+        let stay = (vec![76], vec![0], vec![64], vec![40]);
+        assert_eq!(link(corridor, 2, verse + BAR + 4), stay);
+        // From F sharp, one step down, a beat each.
+        let step_down = (vec![78, 76], vec![0, 4], vec![66, 64], vec![42, 40]);
+        assert_eq!(link(corridor, 2, verse + BAR + 8), step_down);
+        // In an arena the lead is on F there, and the F sharp of the piece comes back first.
+        assert_eq!(link(Place::Arena, 2, verse + BAR + 8), step_down);
+
+        // The chorus has motif B, which starts on the upper A and touches the B above it:
+        // from either, the fall.
+        let fall = (
+            vec![81, 79, 78, 76],
+            vec![0, 2, 4, 6],
+            vec![69, 67, 66, 64],
+            vec![45, 43, 42, 40],
+        );
+        assert_eq!(link(corridor, 2, chorus + 4), fall);
+        assert_eq!(link(corridor, 2, chorus + 8), fall);
     }
 
     #[test]

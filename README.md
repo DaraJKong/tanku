@@ -151,6 +151,7 @@ The files go to `target/music`, or to the directory given after `--`:
 | `corridor_threat_0.wav` to `corridor_threat_4.wav` | The verse and the chorus of a fight in a corridor, at each threat |
 | `arena_threat_0.wav` to `arena_threat_4.wav` | The same in an arena |
 | `tour.wav`, `tour.txt` | Three minutes of a made-up run, and what happens in it and when |
+| `connections.wav`, `connections.txt` | Eight short fights that each end with the lead on another note, to hear every way from a fight into the bridge, and which is which |
 
 ## License
 

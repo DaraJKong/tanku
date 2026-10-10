@@ -10,11 +10,26 @@
 //! - `corridor_threat_0.wav` to `corridor_threat_4.wav`, and the same for `arena`: the verse
 //!   and the chorus of a fight at each threat;
 //! - `tour.wav`: three minutes of a made-up run, and `tour.txt`, which tells what happens in
-//!   it and when.
+//!   it and when;
+//! - `connections.wav`: eight short fights that each end with the lead on another note, to
+//!   hear every way from a fight into the bridge, and `connections.txt`, which tells them
+//!   apart.
 
-use std::{error::Error, fmt::Write, fs, path::PathBuf};
+use std::{
+    error::Error,
+    fmt::Write,
+    fs,
+    path::{Path, PathBuf},
+};
 
-use tanku_audio::{CHANNELS, Context, Music, Place, SAMPLE_RATE, music, music_from, wav};
+use tanku_audio::{
+    CHANNELS, Context, Music, Place, SAMPLE_RATE,
+    director::{Director, ROLL_HITS},
+    music, music_from,
+    score::{CONNECTION_STEPS, STEPS},
+    synth::Synth,
+    wav,
+};
 
 /// Seconds in a bar, and in a bar of the bridge, which is slower.
 const BAR: f32 = 2.0;
@@ -88,6 +103,55 @@ const TOUR: [(f32, &str, Context); 19] = [
     (190.0, "The end of the tour", at(Place::Menu)),
 ];
 
+/// The fights of the file of connections: where each is, its threat, how many steps it lasts
+/// once its roll is over, and the note its lead is on when it ends. Each fight opens on the
+/// next phrase of the piece, and none lasts longer than its phrase.
+const CONNECTIONS: [(Place, u8, usize, &str); 8] = [
+    (
+        Place::Corridor,
+        2,
+        40,
+        "The lead is on C: it rises, C, D, E",
+    ),
+    (
+        Place::Corridor,
+        2,
+        24,
+        "The lead is on F sharp: one step down, a beat each",
+    ),
+    (
+        Place::Corridor,
+        2,
+        40,
+        "The lead is on the B above the upper A: the fall, A, G, F sharp, E",
+    ),
+    (Place::Corridor, 2, 24, "The lead is on E: it stays there"),
+    (
+        Place::Corridor,
+        2,
+        36,
+        "The lead is on B: it rises, B, C, D, E",
+    ),
+    (
+        Place::Corridor,
+        1,
+        36,
+        "The lead is on the lower A: it rises from the B above it",
+    ),
+    (
+        Place::Corridor,
+        0,
+        40,
+        "The lead is silent: the fall, on the pluck and the bass",
+    ),
+    (
+        Place::Arena,
+        2,
+        48,
+        "An arena, where the lead is on F: F sharp, then E",
+    ),
+];
+
 const fn at(place: Place) -> Context {
     Context {
         place,
@@ -151,9 +215,54 @@ fn main() -> Result<(), Box<dyn Error>> {
         writeln!(notes, "{minutes}:{seconds:04.1}  {label}")?;
     }
     fs::write(directory.join("tour.txt"), notes)?;
+    connections(&directory)?;
 
     println!("Wrote the music to {}", directory.display());
     Ok(())
+}
+
+/// Writes the file of connections. The game is played step by step here, so that each fight
+/// ends on the very note it should.
+fn connections(directory: &Path) -> Result<(), Box<dyn Error>> {
+    let mut director = Director::settled(at(Place::Corridor));
+    let mut synth = Synth::default();
+    let (mut frames, mut notes) = (Vec::new(), String::new());
+    // Where the next step starts, in half frames.
+    let mut next = 0u64;
+    let mut run = |context: Context, steps: usize, frames: &mut Vec<f32>| {
+        for _ in 0..steps {
+            let step = director.step(context);
+            synth.play(&step, next);
+            next += step.length as u64;
+            while (frames.len() as u64) < next / 2 * CHANNELS as u64 {
+                frames.extend(synth.frame());
+            }
+        }
+    };
+
+    run(at(Place::Corridor), STEPS, &mut frames);
+    for (place, threat, fought, what) in CONNECTIONS {
+        run(
+            fight(place, threat),
+            ROLL_HITS as usize + fought,
+            &mut frames,
+        );
+        let start = (frames.len() / CHANNELS as usize) as f32 / SAMPLE_RATE as f32;
+        writeln!(
+            notes,
+            "{}:{:04.1}  {what}",
+            (start / 60.0) as u32,
+            start % 60.0
+        )?;
+        // The connection, then two bars of the bridge.
+        run(
+            at(place),
+            CONNECTION_STEPS as usize + 2 * STEPS,
+            &mut frames,
+        );
+    }
+    wav::write(directory.join("connections.wav"), &frames)?;
+    Ok(fs::write(directory.join("connections.txt"), notes)?)
 }
 
 /// Writes some seconds of the music of a game that stays in one context.

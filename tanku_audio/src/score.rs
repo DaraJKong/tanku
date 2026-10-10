@@ -185,12 +185,58 @@ pub const KICK_HEART: Pattern = pattern("x.o. .... .... ....");
 /// not among them, so the bridge has no mode: it is neither major nor minor.
 pub const NEUTRAL: [u8; 5] = [1, 2, 4, 5, 7];
 
-/// The fall, which leads from a fight into the bridge: in two beats, the tune comes down from
-/// the tonic to the degree that the bridge never leaves.
-pub const FALL: Line = line("8.7. 6.5. ---- ----");
-/// Steps that the fall lasts. They get longer one after the other, from the tempo of the
-/// fight to the tempo of what follows.
-pub const FALL_STEPS: u8 = 8;
+/// Steps that a connection lasts: two beats. They get longer one after the other, from the
+/// tempo of the fight to the tempo of what follows.
+pub const CONNECTION_STEPS: u8 = 8;
+/// Notes that a connection has at most.
+const CONNECTION_NOTES: usize = 4;
+
+/// The connection, which leads from a fight into the bridge: the tune goes by steps of the
+/// scale from the note the lead is on to the degree on which the bridge stays, and never
+/// turns back on the way. From the upper tonic that is the four notes of a fall, and from
+/// lower down it is a rise. `lead` is the degree the lead is on, or `None` if it is silent:
+/// the connection is then the fall.
+///
+/// The notes are spread over the two beats: one to a beat when there are two of them, two to
+/// a beat when there are more, and the last one takes what is left. A walk of more than four
+/// notes starts further on, where four are left.
+pub const fn connection(lead: Option<u8>) -> Line {
+    let from = match lead {
+        Some(degree) => degree,
+        None => 8,
+    };
+    let rising = from < PEDAL;
+    let mut count = if rising {
+        (PEDAL - from) as usize + 1
+    } else {
+        (from - PEDAL) as usize + 1
+    };
+    if count > CONNECTION_NOTES {
+        count = CONNECTION_NOTES;
+    }
+    let apart = if count == 2 { 4 } else { 2 };
+    let mut out = [REST; STEPS];
+    let mut note = 0;
+    while note < count {
+        // The notes are counted back from the last one, which is the degree of the bridge.
+        let before = (count - 1 - note) as u8;
+        let start = apart * note;
+        out[start] = Cell {
+            degree: if rising {
+                PEDAL - before
+            } else {
+                PEDAL + before
+            },
+            steps: if note + 1 == count {
+                CONNECTION_STEPS - start as u8
+            } else {
+                apart as u8
+            },
+        };
+        note += 1;
+    }
+    out
+}
 
 pub const KICK_FIGHT: Pattern = pattern("x... x... x... x...");
 pub const HAT_CORRIDOR: Pattern = pattern("..x. ..x. ..x. ..x.");
@@ -538,11 +584,45 @@ mod tests {
     }
 
     #[test]
-    fn the_fall_comes_down_to_the_degree_of_the_bridge() {
-        let degrees: Vec<u8> = FALL.iter().map(|cell| cell.degree).collect();
-        assert_eq!(degrees[..FALL_STEPS as usize], [8, 0, 7, 0, 6, 0, 5, 0]);
-        assert_eq!(FALL[6].degree, PEDAL);
-        // In the mode of the piece it has F sharp: A, G, F sharp, E.
+    fn a_connection_goes_to_the_degree_of_the_bridge_without_turning_back() {
+        // What the connection plays in its two beats, for each note the lead can be on.
+        let walk = |lead: Option<u8>| grid(&connection(lead))[..9].to_string();
+        // From the upper tonic, and from the note above it, the four notes of a fall.
+        assert_eq!(walk(Some(8)), "8.7. 6.5.");
+        assert_eq!(walk(Some(9)), "8.7. 6.5.");
+        // From nearer, the notes that are left, the last one for as long as it takes.
+        assert_eq!(walk(Some(6)), "6... 5...");
+        assert_eq!(walk(Some(5)), "5... ....");
+        // From below, a rise. From the tonic it starts one step on, where four notes are left.
+        assert_eq!(walk(Some(3)), "3.4. 5...");
+        assert_eq!(walk(Some(2)), "2.3. 4.5.");
+        assert_eq!(walk(Some(1)), "2.3. 4.5.");
+        // A lead that is silent has nothing to connect from: the fall.
+        assert_eq!(walk(None), "8.7. 6.5.");
+
+        for lead in (1..=10).map(Some).chain([None]) {
+            let line = connection(lead);
+            let notes: Vec<Cell> = line
+                .iter()
+                .copied()
+                .filter(|cell| cell.degree != 0)
+                .collect();
+            // It fills the two beats and nothing after them, and ends on the degree of the
+            // bridge.
+            let steps: u8 = notes.iter().map(|cell| cell.steps).sum();
+            assert_eq!(steps, CONNECTION_STEPS, "{lead:?}");
+            assert!(
+                starts(&line)
+                    .iter()
+                    .all(|&step| step < CONNECTION_STEPS as usize)
+            );
+            assert_eq!(notes.last().unwrap().degree, PEDAL, "{lead:?}");
+            // One step of the scale at a time, always the same way.
+            let degrees: Vec<i32> = notes.iter().map(|cell| cell.degree as i32).collect();
+            let moves: Vec<i32> = degrees.windows(2).map(|pair| pair[1] - pair[0]).collect();
+            assert!(moves.iter().all(|&by| by == 1) || moves.iter().all(|&by| by == -1));
+        }
+        // In the mode of the piece the fall has F sharp: A, G, F sharp, E.
         let notes = [8, 7, 6, 5].map(|degree| name(A4 + Mode::Dorian.semitones(degree)));
         assert_eq!(notes, ["A", "G", "F#", "E"]);
     }
