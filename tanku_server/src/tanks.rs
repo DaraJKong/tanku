@@ -236,11 +236,15 @@ pub fn operate(
     }
 }
 
-/// Dormant enemies and tanks without anyone at the controls do nothing.
-pub fn idle(mut tanks: Query<(&mut TankCommand, &Enemy)>) {
-    for (mut command, enemy) in &mut tanks {
+/// Dormant enemies do nothing.
+pub fn idle(mut tanks: Query<(&mut TankCommand, &Enemy, &Position, &Motion)>) {
+    for (mut command, enemy, position, motion) in &mut tanks {
         if !enemy.awake {
-            *command = TankCommand::default();
+            // Aiming where the turret already points keeps it still.
+            *command = TankCommand {
+                aim: position.0 + Vec2::from_angle(motion.turret),
+                ..default()
+            };
         }
     }
 }

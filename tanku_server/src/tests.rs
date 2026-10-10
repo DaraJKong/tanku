@@ -914,6 +914,31 @@ fn a_barrier_absorbs_bullets_and_unlocks_when_the_player_comes_close() {
 }
 
 #[test]
+fn a_dormant_enemy_keeps_its_turret_on_the_way_in() {
+    // The sixth sector of this seed runs west: the way in is to the east of its enemies, and
+    // the place where the run started is far to the south.
+    let mut app = start("KTVD3CA6");
+    for _ in 0..5 {
+        let sector = run(&app).sector;
+        clear_sector(&mut app, sector);
+        cross_barrier(&mut app);
+    }
+    assert_eq!(run(&app).sector, 5);
+    let dormant = enemies(&mut app, 6);
+    assert!(!dormant.is_empty());
+    tick(&mut app, seconds(8.0));
+    let mut field = app.world_mut().resource_mut::<Field>();
+    let plan = field.corridor.plan(6).clone();
+    let entry = (plan.entry.0 + plan.entry.1).as_vec2() / 2.0;
+    for enemy in dormant {
+        let to_the_way_in = (entry - position(&mut app, enemy)).to_angle();
+        let turret = app.world().get::<Motion>(enemy).unwrap().turret;
+        let off = tanku_core::geom::angle_difference(turret, to_the_way_in).abs();
+        assert!(off < 1e-3, "the turret is {off} rad off the way in");
+    }
+}
+
+#[test]
 fn an_enemy_never_crosses_a_barrier() {
     let mut app = start("TEST");
     let enemy = spawn_enemy(&mut app, Vec2::new(0.0, 14.0), &[(Stat::Engine, 7)]);
