@@ -432,6 +432,8 @@ Impossible mode keeps the first row of this table and gives up the second: its e
 
 The camera looks down at the ground at a steep angle. It shows about 30 m of ground from the bottom to the top of the screen, and more from side to side. Each player has their own view. It follows that player's tank smoothly and shifts a little toward the cursor, so players see further where they aim. Markers at the screen edge point to teammates who are out of view.
 
+Once a sector has no enemy left and none of their bullets in flight, the view of a player whose tank comes close to its barrier runs up to 10 m ahead of the tank, past the barrier, so that the next group can be studied before crossing. It comes back to the tank once the tank is through.
+
 North is at the top of the screen by default. A player can rotate their own view a quarter turn at a time, for instance to put north on the right and see further ahead on a wide screen. The view never rotates on its own, and the movement keys always follow the screen.
 
 ### Visual style
