@@ -389,7 +389,7 @@ fn title_block(mode: &str) -> impl Bundle {
                         cell(1.3, false),
                         children![
                             caption("SEED"),
-                            (Readout::Seed, theme::figure("", 15.0, theme::TEXT)),
+                            (Readout::Seed, theme::code("", 16.0, theme::TEXT)),
                         ],
                     ),
                     (

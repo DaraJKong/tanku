@@ -98,8 +98,9 @@ pub fn over(ground: Color, line: Color, strength: f32) -> Color {
 const LETTERING: &str = "Barlow Semi Condensed";
 const PLAIN: FontWeight = FontWeight::MEDIUM;
 const HEAVY: FontWeight = FontWeight::SEMIBOLD;
-/// A face whose characters all have the same width, for everything that is read character by
-/// character: counts, times, seeds, versions and keys.
+/// A face whose characters all have the same width, for numbers: counts, times and versions.
+/// It draws B like 8, S like 5 and Z like 2, so nothing that mixes letters and figures is set
+/// in it: a seed that is read wrong gives another map.
 const FIGURES: &str = "Share Tech Mono";
 /// How far apart the letters of a label or of a title stand, as a share of their size.
 const TRACKING: f32 = 0.14;
@@ -159,10 +160,16 @@ pub fn title(content: impl Into<String>, size: f32, color: Color) -> impl Bundle
     lettered(content.into().to_uppercase(), face, (size, TRACKING), color)
 }
 
-/// A figure, or anything else that is read character by character.
+/// A number, or a word that stands among numbers.
 pub fn figure(content: impl Into<String>, size: f32, color: Color) -> impl Bundle {
     let face = (FIGURES, FontWeight::NORMAL);
     lettered(content.into(), face, (size, 0.0), color)
+}
+
+/// A seed: letters and figures that must not be taken for each other, so they are set in the
+/// lettering, heavy and apart.
+pub fn code(content: impl Into<String>, size: f32, color: Color) -> impl Bundle {
+    lettered(content.into(), (LETTERING, HEAVY), (size, TRACKING), color)
 }
 
 #[cfg(test)]

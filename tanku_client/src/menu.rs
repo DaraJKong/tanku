@@ -215,11 +215,6 @@ fn section(parent: &mut ChildSpawnerCommands, content: &str) {
     ));
 }
 
-/// A line that is read character by character, as a seed and its version are.
-fn data(parent: &mut ChildSpawnerCommands, content: impl Into<String>, color: Color) {
-    parent.spawn(theme::figure(content, 15.0, color));
-}
-
 fn button_node(width: Val) -> Node {
     Node {
         width,
@@ -303,7 +298,7 @@ fn small(parent: &mut ChildSpawnerCommands, content: impl Into<String>, width: f
         },
         BackgroundColor(theme::SURFACE_RAISED),
         BorderColor::all(theme::RULE),
-        children![theme::figure(content, 15.0, theme::TEXT)],
+        children![theme::text(content, 16.0, theme::TEXT)],
     ));
 }
 
@@ -373,7 +368,11 @@ fn main_menu(
                 ..default()
             })
             .with_children(|parent| {
-                data(parent, format!("VERSION {VERSION}"), theme::TEXT_DIM);
+                parent.spawn(theme::figure(
+                    format!("VERSION {VERSION}"),
+                    15.0,
+                    theme::TEXT_DIM,
+                ));
                 parent.spawn((
                     theme::title("TANKU", 112.0, theme::TEXT),
                     Node {
@@ -400,7 +399,7 @@ fn main_menu(
                     }),
                     children![
                         theme::label("RECORD", 12.0, theme::TEXT_DIM),
-                        theme::figure(record_line(&records), 15.0, theme::TEXT),
+                        theme::text(record_line(&records), 16.0, theme::TEXT),
                     ],
                 ));
                 if playtest.is_some() {
@@ -583,7 +582,7 @@ fn pause_menu(
                 button(parent, skip, Press::Skip);
             }
             if let Some(run) = run {
-                data(
+                line(
                     parent,
                     format!("Seed {}, v{VERSION}", run.seed_text),
                     theme::TEXT_DIM,
@@ -666,7 +665,7 @@ fn game_over(
                         figure(figures, "TIME", time, false);
                         figure(figures, "KILLS", run.kills.to_string(), true);
                     });
-                data(
+                line(
                     parent,
                     format!("Seed {}, v{VERSION}", run.seed_text),
                     theme::TEXT_DIM,
@@ -677,7 +676,7 @@ fn game_over(
             } else if outcome.new_record {
                 line(parent, "New record", theme::GOOD);
             } else {
-                data(parent, record_line(&records), theme::TEXT_DIM);
+                line(parent, record_line(&records), theme::TEXT_DIM);
             }
             primary(parent, "Retry this seed", Press::Retry);
             button(parent, "New run", Press::NewRun);
@@ -721,7 +720,7 @@ fn settings_menu(mut commands: Commands, settings: Res<Settings>, capture: Res<C
                             });
                         }
                         row(controls, "Menu", |row| {
-                            row.spawn(theme::figure("Esc", 15.0, theme::TEXT_DIM));
+                            row.spawn(theme::text("Esc", 16.0, theme::TEXT_DIM));
                         });
                         button(controls, "Reset the controls", Press::ResetBindings);
                     });
