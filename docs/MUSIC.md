@@ -1,6 +1,6 @@
 # Tanku: music specification
 
-Status: a proposal. Nothing in it is built, nobody has heard the notes, and [PROJECT.md](PROJECT.md) still says that music comes later.
+Status: step 1 of the [steps](#steps) is built. The crate holds the score, the director, rough instruments and the listening tool. Nobody has judged the notes by ear yet, nothing plays in the game, and [PROJECT.md](PROJECT.md) still says that music comes later.
 
 The music of Tanku is one piece that never stops. The game makes it while it plays, from two short motifs and six instruments that it computes itself, so no sound file ships. The piece is the same for every seed and on every platform. What changes is its arrangement, which follows the run: where the players are, whether they are fighting, and how smart the enemies in front of them are.
 
@@ -202,9 +202,9 @@ Two rules make the music answer fast and stay in time:
 | Event | At once | On the next bar line |
 |---|---|---|
 | A fight starts | A roll that grows louder up to the bar line, on the hi-hat in a corridor and on the snare in an arena. It lasts one beat at least: when the bar line is closer than that, it runs to the one after. | The fight sections start, in Aeolian in an arena |
-| The fight ends | The drums stop and the notes that are sounding are held | The bridge starts from its first bar, in Ionian |
+| The fight ends | The drums stop, the bass lands on the root of the chord, and the notes that are sounding are held | The bridge starts from its first bar, in Ionian |
 | The threat changes | Nothing | Lead, bass and pluck change |
-| The player's tank is destroyed | Everything stops but the bass, which holds its note | Once the tank is back, the context decides again |
+| The player's tank is destroyed | Everything stops but the bass, which holds the root of the chord | Once the tank is back, the context decides again |
 | The run ends | The same | The intro starts |
 | A run starts | Nothing: the intro goes on | The count of phrases starts over |
 | A menu opens over the game | Within 0.2 s the music loses what is above 600 Hz and half its loudness. It gets them back when the menu closes. | Nothing |
@@ -232,6 +232,7 @@ The kick has no noise in it because every weapon cue has some. The bass stays ab
 
 - **Two volumes.** The settings get a second level, Music, next to Volume. Volume sets everything and Music sets the music against the cues. It starts at 50%. At 0 the music keeps counting its bars and stays silent.
 - **Under the cues.** At the default settings, the loudest arrangement peaks 12 dB below a shot fired next to the player.
+- **Melody on top.** The melody is the loudest thing with a pitch. The arpeggio of the pluck, the chords of the lead and the octave that the lead adds at threat 4 are quieter than the line they go with.
 - **Ducking.** While the warning of a mine sounds within hearing range, the music is half as loud.
 - **Stereo.** The music is in stereo and the cues stay in the middle. The pluck and the lead, which share the pitches of the cues, sit to the sides.
 - **Dry.** There is no reverb. The pluck has one echo, three steps later, a third as loud and on the other side.
@@ -268,7 +269,7 @@ tanku_audio
 ├── score       the motifs, the chords, the patterns and the rules of derivation
 ├── director    from the context to what each instrument plays on each step
 ├── synth       the six instruments, the echo and the mix
-├── cues        the waveforms of the sound cues
+├── cues        the waveforms of the sound cues, from step 4
 └── wav         writes a sound file, for the listening tool and the tests
 ```
 
@@ -277,7 +278,7 @@ The crate has two ends. The game holds a `Conductor` and writes the context into
 ```rust
 let (music, conductor) = tanku_audio::music();
 // In the client, every frame:
-conductor.set(Context { place: Place::Corridor, fight: true, threat: 2, ..default() });
+conductor.set(Context { place: Place::Corridor, fight: true, threat: 2, ..Context::default() });
 // On the sound thread, whenever the device wants more:
 music.render(&mut frames);
 ```
@@ -287,7 +288,7 @@ music.render(&mut frames);
 | Output | Stereo, 44,100 frames per second, 32-bit floats. It is the rate the sound library opens by default on Linux and on the web, so nothing resamples the music there. |
 | Dependencies | None, not even Bevy |
 | Real time | `render` never allocates, locks or waits. The context crosses between the threads as one atomic number, read at the start of every step. |
-| Cost | Under 10 ms of one core for one second of the fullest arrangement |
+| Cost | Under 10 ms of one core for one second of the fullest arrangement. It takes 1.3 ms on the development machine. |
 | Development builds | The crate is compiled with full optimization, like the dependencies, because it runs in real time |
 | Start | Nothing is computed ahead, so the music adds nothing to the time the game takes to start or to restart |
 
@@ -298,14 +299,15 @@ On the web, the browser lets no sound play before the first click or key, so the
 A tool renders the music without the game:
 
 ```bash
-cargo run -p tanku_audio --example render -- tour.wav
+cargo run -p tanku_audio --example render
 ```
 
-It writes a tour through a made-up run, or one arrangement at a time, and it can lay cues over the music.
+It writes one sound file per arrangement and a tour through a made-up run, with the list of what happens in it and when. From step 4 it also lays cues over the music.
 
 ## Tests and benchmarks
 
 - **Stable.** Sixteen bars of each arrangement match a stored value, as the map of a seed does.
+- **In tune.** Every instrument plays the lowest and the highest note of its range within 3 hundredths of a semitone.
 - **Never silent.** Every bar of every arrangement makes sound.
 - **Never too loud.** No frame of any arrangement or of any change goes past full scale, and none is NaN.
 - **Seamless.** The third pass of a loop is identical to the second.
@@ -319,7 +321,7 @@ Each step answers a question, and the first one changes nothing in the game.
 
 | Step | Content | Question it answers |
 |---|---|---|
-| 1, Sketch | The crate with the score, rough instruments and the listening tool. Sound files of each section in both modes, of each threat, and of a tour of three minutes. | Are the two motifs worth keeping? Does the minor mode suit the arenas? |
+| 1, Sketch | The crate with the score, rough instruments and the listening tool. Sound files of the intro, of the bridge, of a fight in a corridor and in an arena at each threat, and of a tour of three minutes. | Are the two motifs worth keeping? Does the minor mode suit the arenas? |
 | 2, In the game | The music plays in the client and follows the place and the fight. The Music volume. A switch in the playtest menu between drums that follow the place only and drums that follow the fight too. | Does the music feel tied to what happens? Can a shot off screen still be told from the beat? |
 | 3, Threat | Lead, bass and pluck follow the brain tier | Can a player tell the smarter of two groups by ear? |
 | 4, Cues | The waveforms of the cues move to the crate, two cues are retuned, and the warning of a mine ducks the music | Is any cue lost under the music? |

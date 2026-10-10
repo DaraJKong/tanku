@@ -11,6 +11,7 @@ The solo game is playable: the corridor, the generated enemies and their brains,
 | `tanku_core` | The rules both sides share: stats, progression, map and enemy generation, simulation types |
 | `tanku_server` | The authoritative simulation: a library that the client embeds for solo and hosted games, and a headless binary |
 | `tanku_client` | The game: rendering, input, interface and sound |
+| `tanku_audio` | The sound that the game computes. For now it holds the music, which doesn't play in the game yet. |
 
 ## Playing
 
@@ -118,10 +119,10 @@ The tests check the map generator over a dozen seeds. A wider check over a thous
 cargo test -p tanku_core many_seeds -- --ignored
 ```
 
-Benchmarks measure generation and the simulation, and take under a minute:
+Benchmarks measure generation, the simulation and the music, and take under a minute:
 
 ```bash
-cargo bench -p tanku_core -p tanku_server
+cargo bench -p tanku_core -p tanku_server -p tanku_audio
 ```
 
 ## Looking at the game without playing
@@ -133,6 +134,23 @@ A scripted run opens no window and needs no display: it draws into an image of 1
 ```bash
 TANKU_DEV_SCRIPT="start TANKU; wait 1; warp 12; wait 1; peek 0; wait 1; shot sector12.png; quit" cargo run -p tanku_client
 ```
+
+## Listening to the music
+
+The music is specified in [docs/MUSIC.md](docs/MUSIC.md). It doesn't play in the game yet: a tool writes it to sound files, to judge it by ear first.
+
+```bash
+cargo run -p tanku_audio --example render
+```
+
+The files go to `target/music`, or to the directory given after `--`:
+
+| File | Content |
+|---|---|
+| `intro.wav`, `bridge.wav` | Two turns of each loop |
+| `corridor_threat_0.wav` to `corridor_threat_4.wav` | The verse and the chorus of a fight in a corridor, at each threat |
+| `arena_threat_0.wav` to `arena_threat_4.wav` | The same in an arena |
+| `tour.wav`, `tour.txt` | Three minutes of a made-up run, and what happens in it and when |
 
 ## License
 
