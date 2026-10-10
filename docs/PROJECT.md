@@ -169,7 +169,7 @@ Blasts are neutral. They destroy every unshielded tank in range, whoever caused 
 
 ### Mines
 
-A tank drops a mine at its own position, at most one every 0.5 s, and can have as many armed mines as its Mines stat allows. A mine arms after 1 s. It then detonates when an opposing tank comes within 2 m (after a 0.6 s warning) or when its 10 s fuse runs out. A bullet or a blast detonates it at any time, even before it is armed. The blast has a radius of 3 m. An armed mine shows the circle within which an opposing tank sets it off. A triggered mine shows the circle that its blast will reach. Blasts are the only way to remove destructible blocks.
+A tank drops a mine at its own position, at most one every 0.5 s, and can have as many armed mines as its Mines stat allows. A mine arms after 1 s. It then detonates when an opposing tank comes within 2 m (after a 0.6 s warning) or when its 10 s fuse runs out. A bullet or a blast detonates it at any time, even before it is armed. A shot passes over a mine that lies under the barrel of the tank that fires it. The blast has a radius of 3 m. An armed mine shows the circle within which an opposing tank sets it off. A triggered mine shows the circle that its blast will reach. Blasts are the only way to remove destructible blocks.
 
 ### Shield
 
