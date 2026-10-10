@@ -14,7 +14,7 @@ const FIELD_OF_VIEW: f32 = 20.0;
 /// Meters of ground visible from the bottom to the top of the screen.
 const VISIBLE_GROUND: f32 = 30.0;
 /// How far the view shifts toward the cursor, as a share of the distance and in meters at most.
-const LOOK_AHEAD: (f32, f32) = (0.125, 3.0);
+const LOOK_AHEAD: (f32, f32) = (0.03125, 0.75);
 
 #[derive(Component)]
 pub struct MainCamera;
