@@ -1,6 +1,6 @@
 # Tanku: music specification
 
-Status: steps 1 and 2 of the [steps](#steps) are built. The sketch of step 1 was listened to four times, and its notes are accepted. With step 2 the game plays the music on the desktop, where it follows the place and the fight and has a volume of its own. A playtest answered its questions: the music that follows the fight too was kept over music that follows the place only, and a shot sounds different from the beat, so one is told from the other. Every fight has the same threat until step 3, and the web build has no music until step 5.
+Status: steps 1 to 3 of the [steps](#steps) are built. The sketch of step 1 was listened to four times, and its notes are accepted. With step 2 the game plays the music on the desktop, where it follows the place and the fight and has a volume of its own. A playtest answered its questions: the music that follows the fight too was kept over music that follows the place only, and a shot sounds different from the beat, so one is told from the other. With step 3 the lead, the bass and the pluck follow the brains of the enemies that are awake: nobody has played with it yet. The web build has no music until step 5.
 
 The music of Tanku is one piece that never stops. The game makes it while it plays, from two short motifs and six instruments that it computes itself, so no sound file ships. The piece is the same for every seed and on every platform. What changes is its arrangement, which follows the run: where the players are, whether they are fighting, and how smart the enemies in front of them are.
 
@@ -193,7 +193,7 @@ The context is all that the music knows about the game. The client writes it eve
 |---|---|---|
 | Place | Menu, bay, corridor, arena | The sector the run has reached. The main menu and the game over screen count as the menu, and so does a run from the moment it is over. A switchback is a corridor. |
 | Fight | On or off | On while at least one enemy is awake |
-| Threat | 0 to 4 | The highest brain tier among the enemies that are awake. Until step 3 it is 2 in every fight. |
+| Threat | 0 to 4 | The highest brain tier among the enemies that are awake, and 0 when none is |
 | Down | On or off | In solo, the player's tank is destroyed and on its way back |
 | Muffled | On or off | The pause menu is open over the game. The settings leave the music clear, so that its volume is set by ear. |
 
@@ -222,7 +222,13 @@ During a fight, the threat sets the three instruments that have a pitch:
 | 3 | Veteran | The motif with ornaments | Leaping | Arpeggio |
 | 4 | Ace | The motif with ornaments, in octaves | Leaping | Arpeggio, twice as fast |
 
-The threat falls during a fight when the smartest enemies are destroyed first, and the lead then thins out. At the start of a fight it is the highest tier the sector allows about three times out of four, so over a run it mostly rises with the sector number: the lead comes in during the first sectors, plays the whole motif from sector 6 and reaches its fullest form from sector 16.
+The threat falls during a fight when the smartest enemies are destroyed first, and the lead then thins out. At the start of a fight it is the highest tier the sector allows about three times out of four, and half the time in the first two sectors, which have one enemy each. Over a run it therefore mostly rises with the sector number: the lead comes in during the first sectors, plays the whole motif from sector 6 and reaches its fullest form from sector 16.
+
+To know what to listen for on a seed, a test lists the brains of the first thirty groups and the threat that each fight starts with:
+
+```bash
+TANKU_SEED=TANKU cargo test -p tanku_client threats_of_a_seed -- --ignored --nocapture
+```
 
 ## Changes
 
@@ -327,7 +333,7 @@ music.render(&mut frames);
 | Development builds | The crate is compiled with full optimization, like the dependencies, because it runs in real time |
 | Start | Nothing is computed ahead, so the music adds nothing to the time the game takes to start or to restart |
 
-In the client, the music is an asset that implements Bevy's `Decodable`, which Bevy mixes with the cues. It is played once and has no end. A system writes the context every frame from `Screen`, `Overlay`, `Run`, the `Sector` the run has reached and the enemies that are awake, and from step 3 on from their genomes. Another keeps the music as loud as the settings say, because Bevy counts the volume of the game into a sound only when the sound starts. Nothing changes in the server or in the simulation, and the headless server has no music.
+In the client, the music is an asset that implements Bevy's `Decodable`, which Bevy mixes with the cues. It is played once and has no end. A system writes the context every frame from `Screen`, `Overlay`, `Run`, the `Sector` the run has reached and the genomes of the enemies that are awake. Another keeps the music as loud as the settings say, because Bevy counts the volume of the game into a sound only when the sound starts. Nothing changes in the server or in the simulation, and the headless server has no music.
 
 A scripted run plays no music either, but it can keep what it would have played: from its command `tape` on, it computes the music frame by frame and writes it to a sound file when it quits, next to the list of what the music was told and when. It is how the music is checked against a real run without anyone listening.
 
@@ -355,7 +361,7 @@ It writes one sound file per arrangement, a tour through a made-up run with the 
 
 The client has its own:
 
-- **Told right.** The context follows the screen, the run, the kind of its sector and the enemies that are awake. A run that is over counts as the menu, and only the pause menu muffles.
+- **Told right.** The context follows the screen, the run, the kind of its sector and the enemies that are awake. The smartest of them sets the threat, which falls when it is destroyed, and those that sleep don't count. A run that is over counts as the menu, and only the pause menu muffles.
 - **Unchanged on the way.** The sound library reads the very samples that the crate renders.
 - **Under the cues.** At the default settings, the loudest arrangement peaks 12 dB below the shot of a player, within half a decibel.
 - **Heard.** On request, a test plays the piece on the sound device of the machine at no volume, and checks that the device asks for more: `cargo test -p tanku_client reaches_the_sound_device -- --ignored`.
