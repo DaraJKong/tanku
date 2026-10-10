@@ -18,7 +18,7 @@
       "Bash(git pull *)",
       "Bash(git merge *)",
       "Bash(git rebase *)",
-      "Bash(git reset *)",
+      "Bash(git reset *)"
     ],
     "deny": [
       "Bash(git push --force *)"
