@@ -5066,14 +5066,14 @@ dependencies = [
 
 [[package]]
 name = "tanku_audio"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "criterion",
 ]
 
 [[package]]
 name = "tanku_client"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "bevy",
  "tanku_audio",
@@ -5084,7 +5084,7 @@ dependencies = [
 
 [[package]]
 name = "tanku_core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "bevy",
  "criterion",
@@ -5092,7 +5092,7 @@ dependencies = [
 
 [[package]]
 name = "tanku_server"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "bevy",
  "criterion",

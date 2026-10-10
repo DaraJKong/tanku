@@ -99,7 +99,7 @@ mod tests {
         let genome = generate(crate::seed::seed_value("TANKU"), 20, 0);
         assert_eq!(
             format!("{genome:?}"),
-            "Genome { levels: [1, 0, 6, 7, 3, 2, 1, 0, 0, 1, 0, 0], budget: 45 }"
+            "Genome { levels: [0, 0, 6, 7, 2, 0, 1, 0, 0, 1, 0, 0], budget: 45 }"
         );
     }
 

@@ -1,7 +1,7 @@
 //! Tank stats: their levels, what each level is worth and what it costs.
 
 /// Total budget of the player tank.
-pub const PLAYER_BUDGET: u16 = 58;
+pub const PLAYER_BUDGET: u16 = 59;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Stat {
@@ -49,7 +49,7 @@ impl Stat {
             Stat::Engine => &[0, 2, 4, 6, 8, 11, 14, 17],
             Stat::Tracks => &[0, 1, 2, 3, 4, 5, 6],
             Stat::Turret => &[0, 1, 2, 3, 5, 7, 10],
-            Stat::Muzzle => &[0, 1, 2, 4, 6, 8, 11, 14],
+            Stat::Muzzle => &[0, 1, 3, 6, 9, 12, 16, 21],
             Stat::Magazine => &[0, 3, 6, 9, 12, 15],
             Stat::Loader => &[0, 1, 2, 4, 6, 9, 12, 16],
             Stat::Ricochet => &[0, 4, 10, 18],
@@ -115,7 +115,7 @@ pub struct Genome {
 }
 
 impl Genome {
-    /// The fixed tank of a player: 58 points and no software.
+    /// The fixed tank of a player: 59 points and no software.
     pub const PLAYER: Genome = Genome {
         //       Eng Trk Tur Muz Mag Ldr Ric Min Shd Prc Brn Bal
         levels: [4, 5, 0, 2, 4, 6, 1, 2, 2, 0, 0, 0],
@@ -274,12 +274,28 @@ mod tests {
     }
 
     #[test]
-    fn full_hardware_costs_128_points() {
+    fn full_hardware_costs_135_points() {
         let total: u32 = Stat::HARDWARE
             .iter()
             .map(|stat| stat.price(stat.max_level()))
             .sum();
-        assert_eq!(total, 128);
+        assert_eq!(total, 135);
+    }
+
+    #[test]
+    fn no_level_is_cheaper_than_the_one_before_it() {
+        for stat in Stat::HARDWARE {
+            let step = |level: u8| stat.price(level) - stat.price(level - 1);
+            for level in 2..=stat.max_level() {
+                // The first level of these buys a new ability, which the next levels only
+                // improve.
+                let entry_fee = matches!(stat, Stat::Mines | Stat::Shield) && level == 2;
+                assert!(
+                    entry_fee || step(level) >= step(level - 1),
+                    "{stat:?} {level}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -294,36 +310,133 @@ mod tests {
     #[test]
     fn reference_builds_cost_what_the_specification_says() {
         use Stat::*;
-        let sentry = build(10, &[(Turret, 2), (Muzzle, 2), (Loader, 2), (Ricochet, 1)]);
-        assert_eq!(sentry.cost(), 10);
-        let sniper = build(
-            25,
-            &[
-                (Engine, 1),
-                (Tracks, 1),
-                (Turret, 3),
-                (Muzzle, 6),
-                (Loader, 2),
-                (Brain, 2),
-                (Ballistics, 1),
-            ],
-        );
-        assert_eq!(sniper.cost(), 25);
-        let hunter = build(
-            89,
-            &[
-                (Engine, 7),
-                (Tracks, 5),
-                (Turret, 5),
-                (Muzzle, 6),
-                (Magazine, 1),
-                (Loader, 4),
-                (Mines, 2),
-                (Brain, 4),
-                (Ballistics, 1),
-            ],
-        );
-        assert_eq!(hunter.cost(), 89);
+
+        use crate::progression::{ballistics_cap, brain_cap, sector_budget};
+        // Each build with its budget and the first sector that can have it.
+        let builds: [(&str, u16, u32, &[(Stat, u8)]); 8] = [
+            (
+                "sentry",
+                10,
+                1,
+                &[(Turret, 2), (Muzzle, 2), (Loader, 1), (Ricochet, 1)],
+            ),
+            (
+                "rover",
+                15,
+                2,
+                &[
+                    (Engine, 1),
+                    (Tracks, 1),
+                    (Turret, 2),
+                    (Muzzle, 2),
+                    (Loader, 1),
+                    (Ricochet, 1),
+                    (Brain, 1),
+                ],
+            ),
+            (
+                "sniper",
+                31,
+                6,
+                &[
+                    (Engine, 1),
+                    (Tracks, 1),
+                    (Turret, 3),
+                    (Muzzle, 6),
+                    (Loader, 2),
+                    (Brain, 2),
+                    (Ballistics, 1),
+                ],
+            ),
+            (
+                "burster",
+                34,
+                6,
+                &[
+                    (Engine, 3),
+                    (Tracks, 2),
+                    (Turret, 3),
+                    (Muzzle, 2),
+                    (Magazine, 2),
+                    (Loader, 3),
+                    (Ricochet, 1),
+                    (Brain, 2),
+                ],
+            ),
+            (
+                "miner",
+                39,
+                7,
+                &[
+                    (Engine, 5),
+                    (Tracks, 3),
+                    (Turret, 2),
+                    (Muzzle, 2),
+                    (Loader, 2),
+                    (Ricochet, 1),
+                    (Mines, 4),
+                    (Brain, 1),
+                ],
+            ),
+            (
+                "banker",
+                50,
+                13,
+                &[
+                    (Turret, 4),
+                    (Muzzle, 6),
+                    (Magazine, 1),
+                    (Loader, 3),
+                    (Ricochet, 2),
+                    (Brain, 1),
+                    (Ballistics, 3),
+                ],
+            ),
+            (
+                "raider",
+                72,
+                19,
+                &[
+                    (Engine, 5),
+                    (Tracks, 3),
+                    (Turret, 4),
+                    (Muzzle, 2),
+                    (Magazine, 4),
+                    (Loader, 4),
+                    (Ricochet, 1),
+                    (Mines, 2),
+                    (Brain, 3),
+                    (Ballistics, 1),
+                ],
+            ),
+            (
+                "hunter",
+                96,
+                46,
+                &[
+                    (Engine, 7),
+                    (Tracks, 5),
+                    (Turret, 5),
+                    (Muzzle, 6),
+                    (Magazine, 1),
+                    (Loader, 4),
+                    (Mines, 2),
+                    (Brain, 4),
+                    (Ballistics, 1),
+                ],
+            ),
+        ];
+        for (name, budget, sector, levels) in builds {
+            let genome = build(budget, levels);
+            assert_eq!(genome.cost(), budget as u32, "{name}");
+            let possible = |sector: &u32| {
+                sector_budget(*sector) >= budget as u32
+                    && brain_cap(*sector) >= genome.brain()
+                    && ballistics_cap(*sector) >= genome.ballistics()
+            };
+            assert_eq!((1..).find(possible), Some(sector), "{name}");
+        }
+        let hunter = build(96, builds[7].3);
         assert_eq!(hunter.main_group(), SpendingGroup::Software);
     }
 }

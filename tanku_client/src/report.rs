@@ -571,7 +571,7 @@ mod tests {
 
     /// The burster of the specification: 4 m/s, 3 rounds, a soldier's brain.
     fn burster() -> Genome {
-        let mut genome = Genome::empty(33);
+        let mut genome = Genome::empty(34);
         let levels = [
             (Stat::Engine, 3),
             (Stat::Tracks, 2),
@@ -600,7 +600,7 @@ mod tests {
                 ("Engine 3", "4 m/s", 6),
                 ("Tracks 2", "180\u{b0}/s", 2),
                 ("Turret 2", "90\u{b0}/s", 2),
-                ("Muzzle 2", "9 m/s", 2),
+                ("Muzzle 2", "9 m/s", 3),
                 ("Magazine 2", "3 rounds", 6),
                 ("Loader 3", "2 s", 4),
                 ("Brain 2", "Soldier", 6),
