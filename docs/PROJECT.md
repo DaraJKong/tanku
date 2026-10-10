@@ -114,6 +114,8 @@ A playtest is a way to test the game faster, not a mode for players. It starts w
 - **Infinite lives.** The tank comes back as often as it is destroyed. This is on at the start and can be turned off.
 - **Skipping to a sector.** The player picks any sector and comes back at the end of the one before it, as after capturing a flag there.
 
+A playtest can also choose its seed without unlocking that option: `--seed` followed by a seed starts every run on it, which brings back a situation that a player reported.
+
 A playtest says on screen that it is one. It sets no record and earns no achievement.
 
 ## Controls
