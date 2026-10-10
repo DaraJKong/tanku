@@ -198,9 +198,9 @@ impl Genome {
         degrees.to_radians()
     }
 
-    /// Bullet speed in m/s.
+    /// Bullet speed in m/s. Each level above the one of the players' tank adds as much.
     pub fn bullet_speed(&self) -> f32 {
-        [6.0, 7.5, 9.0, 12.0, 14.0, 16.0, 18.0, 20.0][self.level(Stat::Muzzle) as usize]
+        [6.0, 7.5, 9.0, 11.0, 13.0, 15.0, 17.0, 19.0][self.level(Stat::Muzzle) as usize]
     }
 
     /// Rounds the magazine holds.
@@ -270,6 +270,17 @@ mod tests {
         assert_eq!(player.mines(), 2);
         assert_eq!(player.shield_cooldown(), Some(9.0));
         assert_eq!(player.piercing(), 0);
+    }
+
+    #[test]
+    fn bullets_gain_2_m_per_second_with_each_level_above_the_players_own() {
+        let speed = |level: u8| build(0, &[(Stat::Muzzle, level)]).bullet_speed();
+        let own = Genome::PLAYER.level(Stat::Muzzle);
+        assert_eq!((speed(0), speed(1), speed(own)), (6.0, 7.5, 9.0));
+        for level in own + 1..=Stat::Muzzle.max_level() {
+            assert_eq!(speed(level) - speed(level - 1), 2.0);
+        }
+        assert_eq!(speed(Stat::Muzzle.max_level()), 19.0);
     }
 
     #[test]
