@@ -2,11 +2,11 @@
 
 use bevy::prelude::*;
 use tanku_core::{
-    rules::{RESPAWN_DELAY, SOLO_LIVES, SPAWN_FIRE_DELAY, TICK},
+    rules::{PLAYTEST_LAST_SECTOR, RESPAWN_DELAY, SOLO_LIVES, SPAWN_FIRE_DELAY, TICK},
     seed,
     sim::{
-        Gun, Motion, Player, Position, PreviousPosition, Run, RunPhase, RunRequest, SimEvent, Tank,
-        Team,
+        Gun, Motion, Player, Playtest, Position, PreviousPosition, Run, RunPhase, RunRequest,
+        SimEvent, Tank, Team,
     },
     stats::Genome,
 };
@@ -67,6 +67,25 @@ fn enter(commands: &mut Commands, field: &mut Field, sector: u32) -> Vec2 {
     position
 }
 
+/// Brings the player back at the checkpoint. Every sector beyond it is regenerated from the
+/// seed.
+fn respawn(
+    commands: &mut Commands,
+    run: &mut Run,
+    field: &mut Field,
+    entities: &Query<Entity, Or<(With<InSector>, With<Player>)>>,
+    casualties: &mut Casualties,
+    events: &mut MessageWriter<SimEvent>,
+) {
+    clear(commands, entities, casualties);
+    let checkpoint = run.checkpoint;
+    field.cleared.retain(|&sector| sector <= checkpoint);
+    let at = enter(commands, field, checkpoint);
+    run.sector = checkpoint;
+    run.phase = RunPhase::Playing;
+    events.write(SimEvent::PlayerRespawned { at });
+}
+
 pub fn handle_requests(
     mut commands: Commands,
     mut requests: MessageReader<RunRequest>,
@@ -75,9 +94,9 @@ pub fn handle_requests(
     mut events: MessageWriter<SimEvent>,
 ) {
     for request in requests.read() {
-        clear(&mut commands, &entities, &mut casualties);
         match request {
             RunRequest::Start { seed: seed_text } => {
+                clear(&mut commands, &entities, &mut casualties);
                 let seed = seed::seed_value(seed_text);
                 let mut field = Field::new(seed);
                 enter(&mut commands, &mut field, 0);
@@ -96,11 +115,48 @@ pub fn handle_requests(
                 events.write(SimEvent::RunStarted);
             }
             RunRequest::Abandon => {
+                clear(&mut commands, &entities, &mut casualties);
                 commands.remove_resource::<Run>();
                 commands.remove_resource::<Field>();
             }
+            // Left to `skip`, which only a playtest runs.
+            RunRequest::SkipTo { .. } => {}
         }
     }
+}
+
+/// In a playtest, puts the player in front of the sector that was asked for.
+pub fn skip(
+    mut commands: Commands,
+    mut requests: MessageReader<RunRequest>,
+    mut run: ResMut<Run>,
+    mut field: ResMut<Field>,
+    entities: Query<Entity, Or<(With<InSector>, With<Player>)>>,
+    mut casualties: ResMut<Casualties>,
+    mut events: MessageWriter<SimEvent>,
+) {
+    let asked = requests.read().filter_map(|request| match request {
+        RunRequest::SkipTo { sector } => Some(*sector),
+        _ => None,
+    });
+    // The last request wins.
+    let Some(sector) = asked.last() else {
+        return;
+    };
+    // The player comes back at the end of the sector before it, as after capturing a flag
+    // there.
+    let checkpoint = sector.clamp(1, PLAYTEST_LAST_SECTOR) - 1;
+    run.checkpoint = checkpoint;
+    run.cleared = run.cleared.max(checkpoint);
+    field.cleared.extend(0..=checkpoint);
+    respawn(
+        &mut commands,
+        &mut run,
+        &mut field,
+        &entities,
+        &mut casualties,
+        &mut events,
+    );
 }
 
 /// Removes the tanks that were destroyed this tick. Losing the player's tank costs a life.
@@ -108,9 +164,11 @@ pub fn casualties(
     mut commands: Commands,
     mut casualties: ResMut<Casualties>,
     mut run: ResMut<Run>,
+    playtest: Option<Res<Playtest>>,
     tanks: Query<(&Tank, &Position, Has<Player>)>,
     mut events: MessageWriter<SimEvent>,
 ) {
+    let infinite_lives = playtest.is_some_and(|playtest| playtest.infinite_lives);
     casualties.tanks.sort();
     casualties.tanks.dedup();
     for entity in casualties.tanks.drain(..) {
@@ -125,7 +183,9 @@ pub fn casualties(
         if !is_player {
             run.kills += 1;
         } else if run.phase == RunPhase::Playing {
-            run.lives -= 1;
+            if !infinite_lives {
+                run.lives -= 1;
+            }
             run.phase = if run.lives == 0 {
                 events.write(SimEvent::RunOver);
                 RunPhase::Over
@@ -153,12 +213,12 @@ pub fn clock(
         run.phase = RunPhase::Respawning(left - TICK);
         return;
     }
-    // Every sector beyond the checkpoint is regenerated from the seed.
-    clear(&mut commands, &entities, &mut casualties);
-    let checkpoint = run.checkpoint;
-    field.cleared.retain(|&sector| sector <= checkpoint);
-    let at = enter(&mut commands, &mut field, checkpoint);
-    run.sector = checkpoint;
-    run.phase = RunPhase::Playing;
-    events.write(SimEvent::PlayerRespawned { at });
+    respawn(
+        &mut commands,
+        &mut run,
+        &mut field,
+        &entities,
+        &mut casualties,
+        &mut events,
+    );
 }

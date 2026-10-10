@@ -45,3 +45,6 @@ pub const SOLO_LIVES: u32 = 3;
 pub const RESPAWN_DELAY: f32 = 1.5;
 /// A player's tank can't shoot for this long after it appears.
 pub const SPAWN_FIRE_DELAY: f32 = 0.5;
+
+/// The furthest sector a playtest can skip to.
+pub const PLAYTEST_LAST_SECTOR: u32 = 999;

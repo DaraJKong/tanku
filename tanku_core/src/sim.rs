@@ -204,11 +204,26 @@ pub struct Run {
     pub phase: RunPhase,
 }
 
+/// Present when the game was started as a playtest, which lets the player cheat. The runs of
+/// a playtest set no record.
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Playtest {
+    /// A destroyed player comes back without losing a life.
+    pub infinite_lives: bool,
+}
+
 /// What the client asks of the server.
 #[derive(Message, Clone, Debug)]
 pub enum RunRequest {
-    Start { seed: String },
+    Start {
+        seed: String,
+    },
     Abandon,
+    /// In a playtest: puts the player in front of a sector, as if every sector before it was
+    /// cleared and the flag of the last one captured.
+    SkipTo {
+        sector: u32,
+    },
 }
 
 /// Things that happened in the simulation, for effects, sounds and the interface.
