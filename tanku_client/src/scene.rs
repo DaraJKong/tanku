@@ -9,9 +9,9 @@ use bevy::{
     prelude::*,
 };
 use tanku_core::{
-    rules::{BLOCK_SIZE, BULLET_RADIUS, MINE_RADIUS},
+    rules::{BLOCK_SIZE, BULLET_RADIUS, FLAG_CAPTURE_RADIUS, MINE_RADIUS},
     sim::{
-        Barrier, Block, Bullet, ExplosiveCrate, Mine, MineState, Position, PreviousPosition,
+        Barrier, Block, Bullet, ExplosiveCrate, Flag, Mine, MineState, Position, PreviousPosition,
         Sector, Team,
     },
     stats::Stat,
@@ -32,6 +32,9 @@ const STRIPE_WIDTH: f32 = 0.12;
 const STRIPE_GAP: f32 = 0.09;
 /// Stripes are dark on a bright bullet. A vertex color multiplies the color of the material.
 const STRIPE_COLOR: [f32; 4] = [0.03, 0.03, 0.04, 1.0];
+const FLAG_HEIGHT: f32 = 2.4;
+/// Width and height of the cloth of a flag.
+const FLAG_CLOTH: Vec2 = Vec2::new(1.3, 0.8);
 
 pub fn to_world(point: Vec2, height: f32) -> Vec3 {
     Vec3::new(point.x, height, -point.y)
@@ -58,6 +61,8 @@ pub struct Shapes {
     pub cone: Handle<Mesh>,
     /// Lying flat, 1 across.
     pub ring: Handle<Mesh>,
+    /// The same, but thin: a line on the ground.
+    pub circle: Handle<Mesh>,
     /// Bullets at their real size, flying along `+x`. The index is the number of bounces left,
     /// which is the number of stripes.
     pub bullets: Vec<Handle<Mesh>>,
@@ -78,7 +83,13 @@ pub struct Paints {
     pub enemy_bullet: Handle<StandardMaterial>,
     pub mine_off: Handle<StandardMaterial>,
     pub mine_on: Handle<StandardMaterial>,
+    pub flag: Handle<StandardMaterial>,
+    pub flag_captured: Handle<StandardMaterial>,
 }
+
+/// The parts of a flag that change color when it is captured: its cloth and its circle.
+#[derive(Component)]
+struct FlagPart;
 
 pub fn plugin(app: &mut App) {
     app.add_systems(PreStartup, setup).add_systems(
@@ -90,8 +101,9 @@ pub fn plugin(app: &mut App) {
                 dress_obstacles,
                 dress_mines,
                 dress_bullets,
+                dress_flags,
             ),
-            (paint_barriers, blink_mines, stripe_bullets),
+            (paint_barriers, blink_mines, stripe_bullets, paint_flags),
             place,
         )
             .chain(),
@@ -109,6 +121,7 @@ fn setup(
         sphere: meshes.add(Sphere::new(0.5)),
         cone: meshes.add(Cone::new(0.5, 1.0)),
         ring: meshes.add(Torus::new(0.3, 0.5)),
+        circle: meshes.add(Torus::new(0.46, 0.5)),
         bullets: (0..=Stat::Ricochet.max_level())
             .map(|stripes| meshes.add(bullet_mesh(false, stripes)))
             .collect(),
@@ -155,6 +168,8 @@ fn setup(
         player_bullet: glowing(theme::PLAYER_BULLET, 1.0),
         enemy_bullet: glowing(theme::ENEMY_BULLET, 1.0),
         mine_on: glowing(theme::DANGER, 1.0),
+        flag: glowing(theme::FLAG, 1.0),
+        flag_captured: glowing(theme::GOOD, 1.0),
     });
 }
 
@@ -453,6 +468,83 @@ fn blink_mines(
         };
         if material.0 != *wanted {
             material.0 = wanted.clone();
+        }
+    }
+}
+
+fn flag_paint<'a>(paints: &'a Paints, flag: &Flag) -> &'a Handle<StandardMaterial> {
+    if flag.captured {
+        &paints.flag_captured
+    } else {
+        &paints.flag
+    }
+}
+
+fn dress_flags(
+    mut commands: Commands,
+    flags: Query<(Entity, &Flag, &Position), Added<Flag>>,
+    shapes: Res<Shapes>,
+    paints: Res<Paints>,
+) {
+    for (entity, flag, position) in &flags {
+        let paint = flag_paint(&paints, flag);
+        commands.entity(entity).insert((
+            Transform::from_translation(to_world(position.0, 0.0)),
+            Visibility::default(),
+            children![
+                // The pole.
+                (
+                    Mesh3d(shapes.cylinder.clone()),
+                    MeshMaterial3d(paints.wall.clone()),
+                    Transform {
+                        translation: Vec3::Y * FLAG_HEIGHT / 2.0,
+                        scale: Vec3::new(0.14, FLAG_HEIGHT, 0.14),
+                        ..default()
+                    },
+                ),
+                // The cloth leans back, so that it shows from above whichever way the view
+                // is turned.
+                (
+                    FlagPart,
+                    Mesh3d(shapes.cube.clone()),
+                    MeshMaterial3d(paint.clone()),
+                    Transform {
+                        translation: Vec3::new(FLAG_CLOTH.x / 2.0 + 0.07, FLAG_HEIGHT - 0.25, 0.0),
+                        rotation: Quat::from_rotation_x(-0.95),
+                        scale: Vec3::new(FLAG_CLOTH.x, FLAG_CLOTH.y, 0.06),
+                    },
+                ),
+                // The circle on the ground: a tank inside it captures the flag.
+                (
+                    FlagPart,
+                    Mesh3d(shapes.circle.clone()),
+                    MeshMaterial3d(paint.clone()),
+                    Transform {
+                        translation: Vec3::Y * 0.02,
+                        scale: Vec3::new(
+                            2.0 * FLAG_CAPTURE_RADIUS,
+                            0.12,
+                            2.0 * FLAG_CAPTURE_RADIUS
+                        ),
+                        ..default()
+                    },
+                ),
+            ],
+        ));
+    }
+}
+
+/// A captured flag changes color.
+fn paint_flags(
+    flags: Query<(&Flag, &Children), Changed<Flag>>,
+    mut parts: Query<&mut MeshMaterial3d<StandardMaterial>, With<FlagPart>>,
+    paints: Res<Paints>,
+) {
+    for (flag, children) in &flags {
+        for child in children.iter() {
+            if let Ok(mut material) = parts.get_mut(child) {
+                material.0 = flag_paint(&paints, flag).clone();
+            }
         }
     }
 }

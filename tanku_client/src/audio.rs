@@ -8,6 +8,10 @@ use tanku_core::sim::{SimEvent, Team};
 
 use crate::camera::View;
 
+/// Present when the game must stay silent, whatever the volume is set to.
+#[derive(Resource)]
+pub struct Muted;
+
 const SAMPLE_RATE: u32 = 22_050;
 /// Distance at which a sound is at its quietest.
 const HEARING_RANGE: f32 = 50.0;
@@ -25,6 +29,7 @@ struct Cues {
     shield_blocked: Handle<AudioSource>,
     shield_overloaded: Handle<AudioSource>,
     cleared: Handle<AudioSource>,
+    captured: Handle<AudioSource>,
     unlocked: Handle<AudioSource>,
     respawned: Handle<AudioSource>,
     run_over: Handle<AudioSource>,
@@ -127,6 +132,9 @@ fn setup(mut commands: Commands, mut sources: ResMut<Assets<AudioSource>>) {
         cleared: cue(0.5, &|t, _| {
             0.3 * (note(t, 0.0, 660.0) + note(t, 0.14, 880.0))
         }),
+        captured: cue(0.6, &|t, _| {
+            0.3 * (note(t, 0.0, 660.0) + note(t, 0.1, 880.0) + note(t, 0.2, 1320.0))
+        }),
         unlocked: cue(0.45, &|t, _| {
             0.3 * (note(t, 0.0, 880.0) + note(t, 0.12, 1320.0))
         }),
@@ -167,6 +175,7 @@ fn play(
             SimEvent::ShieldBlocked { at } => (&cues.shield_blocked, Some(at)),
             SimEvent::ShieldOverloaded { at } => (&cues.shield_overloaded, Some(at)),
             SimEvent::SectorCleared { sector } if sector > 0 => (&cues.cleared, None),
+            SimEvent::FlagCaptured { .. } => (&cues.captured, None),
             SimEvent::BarrierUnlocked { sector } if sector > 0 => (&cues.unlocked, None),
             SimEvent::PlayerRespawned { .. } => (&cues.respawned, None),
             SimEvent::RunOver => (&cues.run_over, None),

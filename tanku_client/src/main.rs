@@ -36,29 +36,43 @@ pub enum Overlay {
 
 fn main() {
     let mut app = App::new();
-    app.add_plugins(DefaultPlugins.set(WindowPlugin {
-        primary_window: Some(Window {
-            title: "Tanku".into(),
-            fit_canvas_to_parent: true,
+    #[cfg(feature = "development")]
+    let scripted = dev::scripted();
+    #[cfg(not(feature = "development"))]
+    let scripted = false;
+    if scripted {
+        #[cfg(feature = "development")]
+        dev::add_engine(&mut app);
+    } else {
+        let settings = settings::Settings::load();
+        app.add_plugins(DefaultPlugins.set(WindowPlugin {
+            primary_window: Some(Window {
+                title: "Tanku".into(),
+                fit_canvas_to_parent: true,
+                // Set from the start, so that the window doesn't open in one mode and jump
+                // to the other.
+                mode: settings.window_mode(),
+                present_mode: settings.present_mode(),
+                ..default()
+            }),
             ..default()
-        }),
-        ..default()
-    }))
+        }));
+    }
     // The client embeds the server for solo and hosted games.
-    .add_plugins((CorePlugin, ServerPlugin))
-    .init_state::<Screen>()
-    .init_state::<Overlay>()
-    .add_plugins((
-        settings::plugin,
-        input::plugin,
-        camera::plugin,
-        scene::plugin,
-        models::plugin,
-        effects::plugin,
-        hud::plugin,
-        menu::plugin,
-        audio::plugin,
-    ));
+    app.add_plugins((CorePlugin, ServerPlugin))
+        .init_state::<Screen>()
+        .init_state::<Overlay>()
+        .add_plugins((
+            settings::plugin,
+            input::plugin,
+            camera::plugin,
+            scene::plugin,
+            models::plugin,
+            effects::plugin,
+            hud::plugin,
+            menu::plugin,
+            audio::plugin,
+        ));
     #[cfg(feature = "development")]
     app.add_plugins(dev::plugin);
     app.run();

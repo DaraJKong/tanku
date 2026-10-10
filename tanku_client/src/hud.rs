@@ -1,6 +1,6 @@
 //! The heads-up display: rounds, mines, shield, sector and lives.
 
-use bevy::{prelude::*, window::PrimaryWindow};
+use bevy::prelude::*;
 use tanku_core::{
     progression,
     sim::{Enemy, Gun, Mine, Player, Position, Run, Shield, ShieldState, SimEvent, Tank, Team},
@@ -323,26 +323,40 @@ fn toasts(
     mut toast: Single<(&mut Toast, &mut Text, &mut TextColor)>,
 ) {
     let (toast, text, color) = &mut *toast;
+    // Several things can happen at once, such as capturing a flag and unlocking its barrier.
+    // The message that matters most is shown.
+    let mut news: Option<(u8, String)> = None;
     for event in events.read() {
-        let message = match *event {
+        let (weight, message) = match *event {
             SimEvent::SectorCleared { sector } if sector > 0 => {
                 if progression::is_checkpoint(sector) {
-                    format!("Sector {sector} cleared - checkpoint")
+                    (1, format!("Sector {sector} cleared - capture the flag"))
                 } else {
-                    format!("Sector {sector} cleared")
+                    (1, format!("Sector {sector} cleared"))
                 }
             }
-            SimEvent::BarrierUnlocked { sector } if sector > 0 => "Barrier unlocked".to_string(),
+            SimEvent::BarrierUnlocked { sector } if sector > 0 => {
+                (1, "Barrier unlocked".to_string())
+            }
+            SimEvent::FlagCaptured { .. } => (2, "Flag captured".to_string()),
             SimEvent::TankDestroyed {
                 team: Team::Players,
                 ..
-            } => match run.as_ref().map_or(0, |run| run.lives) {
-                0 => "Tank destroyed".to_string(),
-                1 => "Tank destroyed - last life".to_string(),
-                lives => format!("Tank destroyed - {lives} lives left"),
-            },
+            } => {
+                let message = match run.as_ref().map_or(0, |run| run.lives) {
+                    0 => "Tank destroyed".to_string(),
+                    1 => "Tank destroyed - last life".to_string(),
+                    lives => format!("Tank destroyed - {lives} lives left"),
+                };
+                (3, message)
+            }
             _ => continue,
         };
+        if news.as_ref().is_none_or(|(shown, _)| weight >= *shown) {
+            news = Some((weight, message));
+        }
+    }
+    if let Some((_, message)) = news {
         text.0 = message;
         toast.0 = TOAST_TIME;
     }
@@ -354,7 +368,6 @@ fn toasts(
 fn mark_enemies(
     run: Option<Res<Run>>,
     ui_scale: Res<UiScale>,
-    window: Single<&Window, With<PrimaryWindow>>,
     camera: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
     enemies: Query<(&Tank, &Position), With<Enemy>>,
     mut markers: Query<(&EnemyMarker, &mut Node)>,
@@ -366,7 +379,9 @@ fn mark_enemies(
         .filter(|(tank, _)| tank.sector == sector)
         .map(|(_, position)| position.0)
         .collect();
-    let size = Vec2::new(window.width(), window.height());
+    let Some(size) = camera.logical_viewport_size() else {
+        return;
+    };
     let margin = Vec2::splat(28.0);
     for (marker, mut node) in &mut markers {
         let on_screen = left

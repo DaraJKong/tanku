@@ -25,6 +25,7 @@ struct Glows {
     fire: Handle<StandardMaterial>,
     spark: Handle<StandardMaterial>,
     cold: Handle<StandardMaterial>,
+    good: Handle<StandardMaterial>,
 }
 
 pub fn plugin(app: &mut App) {
@@ -45,6 +46,7 @@ fn setup(mut commands: Commands, mut materials: ResMut<Assets<StandardMaterial>>
         fire: glow(theme::ENEMY_BULLET, 0.75),
         spark: glow(Color::WHITE, 0.9),
         cold: glow(theme::PLAYER_BULLET, 0.6),
+        good: glow(theme::GOOD, 0.5),
     });
 }
 
@@ -71,6 +73,7 @@ fn spawn(
             SimEvent::BulletDestroyed { at } => (at, 0.8, 0.8, 0.15, &glows.spark),
             SimEvent::ShieldBlocked { at } => (at, 0.6, 3.4, 0.2, &glows.cold),
             SimEvent::PlayerRespawned { at } => (at, 0.6, 4.0, 0.5, &glows.cold),
+            SimEvent::FlagCaptured { at } => (at, 0.6, 5.0, 0.5, &glows.good),
             _ => continue,
         };
         // Blasts shake the camera, the more the closer they are.

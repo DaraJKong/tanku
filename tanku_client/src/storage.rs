@@ -2,7 +2,19 @@
 //!
 //! The web build keeps them in the local storage of the browser.
 
-use std::collections::BTreeMap;
+use std::{
+    collections::BTreeMap,
+    sync::atomic::{AtomicBool, Ordering},
+};
+
+/// Set for a run that must leave the player's files alone.
+static KEEPS_NOTHING: AtomicBool = AtomicBool::new(false);
+
+/// Makes this run read and write nothing: it starts from the defaults and leaves no trace.
+#[cfg(feature = "development")]
+pub fn keep_nothing() {
+    KEEPS_NOTHING.store(true, Ordering::Relaxed);
+}
 
 /// The directory where the game keeps its files, if the platform has one.
 #[cfg(not(target_arch = "wasm32"))]
@@ -22,10 +34,16 @@ fn directory() -> Option<std::path::PathBuf> {
 
 /// Reads a file of pairs. A missing or unreadable file reads as empty.
 pub fn load(name: &str) -> BTreeMap<String, String> {
+    if KEEPS_NOTHING.load(Ordering::Relaxed) {
+        return BTreeMap::new();
+    }
     parse(&read(name).unwrap_or_default())
 }
 
 pub fn save(name: &str, pairs: &BTreeMap<String, String>) {
+    if KEEPS_NOTHING.load(Ordering::Relaxed) {
+        return;
+    }
     let text: String = pairs
         .iter()
         .map(|(key, value)| format!("{key} = {value}\n"))

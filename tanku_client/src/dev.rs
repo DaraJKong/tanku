@@ -1,28 +1,49 @@
 //! Development tools, left out of release builds.
 //!
 //! `TANKU_DEV_SCRIPT` holds commands separated by semicolons, run one after the other:
-//! `start SEED`, `wait SECONDS`, `warp SECTOR`, `turn QUARTERS`, `peek ENEMY`, `pause`,
-//! `settings`, `resume`, `lose`, `shot PATH` and `quit`, plus `play DX DY AX AY SECONDS`, which
-//! drives the tank in a direction while it fires at a point relative to itself, and `lineup`,
-//! which lays out one bullet of each kind next to the tank. It is how the game is looked at
-//! without anyone at the keyboard.
+//! `start SEED`, `wait SECONDS`, `warp SECTOR`, `turn QUARTERS`, `peek ENEMY`, `flag SECTOR`,
+//! `clear`, `reach`, `pause`, `settings`, `resume`, `lose`, `shot PATH` and `quit`, plus
+//! `play DX DY AX AY SECONDS`, which drives the tank in a direction while it fires at a point
+//! relative to itself, and `lineup`, which lays out one bullet of each kind next to the tank.
+//! It is how the game is looked at without anyone at the keyboard.
+//!
+//! A scripted run opens no window: it draws into an image, which `shot` saves. It makes no
+//! sound, starts from the default settings and leaves the player's files alone.
 
-use std::collections::VecDeque;
+use std::{collections::VecDeque, time::Duration};
 
 use bevy::{
+    app::ScheduleRunnerPlugin,
+    camera::RenderTarget,
     prelude::*,
-    render::view::screenshot::{Screenshot, save_to_disk},
+    render::{
+        render_resource::TextureFormat,
+        view::screenshot::{Screenshot, save_to_disk},
+    },
+    window::ExitCondition,
+    winit::WinitPlugin,
 };
 use tanku_core::{
     sim::{
-        Bullet, Enemy, Player, Position, PreviousPosition, Run, RunPhase, RunRequest, SimEvent,
-        TankCommand, Team,
+        Bullet, Enemy, Flag, Player, Position, PreviousPosition, Run, RunPhase, RunRequest,
+        SimEvent, Tank, TankCommand, Team,
     },
     stats::Stat,
 };
-use tanku_server::field::{Field, InSector};
+use tanku_server::{
+    Casualties,
+    field::{Field, InSector},
+};
 
-use crate::{Overlay, Screen, camera::View, input};
+use crate::{
+    Overlay, Screen,
+    audio::Muted,
+    camera::{MainCamera, View},
+    input, storage,
+};
+
+/// Size of the image that a scripted run draws into.
+const CANVAS: (u32, u32) = (1920, 1080);
 
 #[derive(Resource)]
 struct Script {
@@ -30,6 +51,31 @@ struct Script {
     wait: f32,
     /// What the script makes the player's tank do, and for how long.
     play: Option<(Vec2, Vec2, f32)>,
+}
+
+/// The image that stands in for the window.
+#[derive(Resource)]
+struct Canvas(Handle<Image>);
+
+/// Whether a script runs the game.
+pub fn scripted() -> bool {
+    std::env::var_os("TANKU_DEV_SCRIPT").is_some()
+}
+
+/// Adds the engine for a scripted run: no window, and frames at a steady pace.
+pub fn add_engine(app: &mut App) {
+    storage::keep_nothing();
+    app.add_plugins((
+        DefaultPlugins
+            .set(WindowPlugin {
+                primary_window: None,
+                exit_condition: ExitCondition::DontExit,
+                ..default()
+            })
+            .disable::<WinitPlugin>(),
+        ScheduleRunnerPlugin::run_loop(Duration::from_secs_f64(1.0 / 60.0)),
+    ))
+    .insert_resource(Muted);
 }
 
 pub fn plugin(app: &mut App) {
@@ -44,8 +90,27 @@ pub fn plugin(app: &mut App) {
         wait: 0.0,
         play: None,
     })
+    .add_systems(PostStartup, draw_into_an_image)
     .add_systems(Update, run_script)
     .add_systems(PreUpdate, play.after(input::command_player));
+}
+
+/// Points the camera at an image, and the interface with it.
+fn draw_into_an_image(
+    mut commands: Commands,
+    mut images: ResMut<Assets<Image>>,
+    camera: Single<Entity, With<MainCamera>>,
+) {
+    let canvas = images.add(Image::new_target_texture(
+        CANVAS.0,
+        CANVAS.1,
+        TextureFormat::Rgba8UnormSrgb,
+        None,
+    ));
+    commands
+        .entity(*camera)
+        .insert((RenderTarget::from(canvas.clone()), IsDefaultUiCamera));
+    commands.insert_resource(Canvas(canvas));
 }
 
 /// Takes the controls of the player's tank while the script plays.
@@ -79,8 +144,11 @@ fn run_script(
     mut view: ResMut<View>,
     mut run: Option<ResMut<Run>>,
     mut field: Option<ResMut<Field>>,
-    enemies: Query<&Position, With<Enemy>>,
-    player: Query<(Entity, &Position), With<Player>>,
+    mut casualties: ResMut<Casualties>,
+    enemies: Query<(Entity, &Tank, &Position), With<Enemy>>,
+    mut player: Query<(Entity, &mut Position), (With<Player>, Without<Enemy>)>,
+    flags: Query<(&Flag, &Position), Without<Player>>,
+    canvas: Res<Canvas>,
     mut events: MessageWriter<SimEvent>,
     mut exit: MessageWriter<AppExit>,
 ) {
@@ -115,8 +183,29 @@ fn run_script(
         "turn" => view.turns = number(1) as i32,
         // Looks at the enemy with this number for a few seconds.
         "peek" => {
-            if let Some(position) = enemies.iter().nth(number(1) as usize) {
+            if let Some((_, _, position)) = enemies.iter().nth(number(1) as usize) {
                 view.look_at(position.0, 3.0);
+            }
+        }
+        // Looks at the flag of a loaded sector for a few seconds.
+        "flag" => {
+            let sector = number(1) as u32;
+            if let Some((_, position)) = flags.iter().find(|(flag, _)| flag.sector == sector) {
+                view.look_at(position.0, 3.0);
+            }
+        }
+        // Destroys the enemies of the sector the player is in.
+        "clear" => {
+            let sector = run.as_ref().map_or(0, |run| run.sector);
+            let doomed = enemies.iter().filter(|(_, tank, _)| tank.sector == sector);
+            casualties.tanks.extend(doomed.map(|(entity, ..)| entity));
+        }
+        // Puts the tank next to the flag of its sector.
+        "reach" => {
+            let sector = run.as_ref().map_or(0, |run| run.sector);
+            let flag = flags.iter().find(|(flag, _)| flag.sector == sector);
+            if let (Some((_, flag)), Ok((_, mut position))) = (flag, player.single_mut()) {
+                position.0 = flag.0 + Vec2::X;
             }
         }
         "play" => {
@@ -140,6 +229,7 @@ fn run_script(
             let (Ok((owner, position)), Some(run)) = (player.single(), run.as_ref()) else {
                 return;
             };
+            let position = *position;
             let kinds = [
                 (Team::Players, 0),
                 (Team::Players, 1),
@@ -171,7 +261,7 @@ fn run_script(
         "resume" => overlay.set(Overlay::None),
         "shot" => {
             commands
-                .spawn(Screenshot::primary_window())
+                .spawn(Screenshot::image(canvas.0.clone()))
                 .observe(save_to_disk(std::path::PathBuf::from(word(1))));
             script.wait = 0.5;
         }
