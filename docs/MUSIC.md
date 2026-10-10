@@ -1,6 +1,6 @@
 # Tanku: music specification
 
-Status: steps 1 to 3 of the [steps](#steps) are built. The sketch of step 1 was listened to four times, and its notes are accepted. With step 2 the game plays the music on the desktop, where it follows the place and the fight and has a volume of its own. A playtest answered its questions: the music that follows the fight too was kept over music that follows the place only, and a shot sounds different from the beat, so one is told from the other. With step 3 the lead, the bass and the pluck follow the brains of the enemies that are awake: nobody has played with it yet. The web build has no music until step 5.
+Status: steps 1 to 4 of the [steps](#steps) are built. The sketch of step 1 was listened to four times, and its notes are accepted. With step 2 the game plays the music on the desktop, where it follows the place and the fight and has a volume of its own. A playtest answered its questions: the music that follows the fight too was kept over music that follows the place only, and a shot sounds different from the beat, so one is told from the other. Steps 3 and 4 have not been judged by ear yet. With step 3 the lead, the bass and the pluck follow the brains of the enemies that are awake. With step 4 the waveforms of the cues are in the crate, two cues are tuned to the music, and the warning of a mine ducks it. The web build has no music until step 5.
 
 The music of Tanku is one piece that never stops. The game makes it while it plays, from two short motifs and six instruments that it computes itself, so no sound file ships. The piece is the same for every seed and on every platform. What changes is its arrangement, which follows the run: where the players are, whether they are fighting, and how smart the enemies in front of them are.
 
@@ -353,7 +353,7 @@ A tool renders the music without the game:
 cargo run -p tanku_audio --example render
 ```
 
-It writes one sound file per arrangement, a tour through a made-up run with the list of what happens in it and when, and a file of short fights that each end with the lead on another note, to hear every connection. From step 4 it also lays cues over the music.
+It writes one sound file per arrangement, a tour through a made-up run with the list of what happens in it and when, and a file of short fights that each end with the lead on another note, to hear every connection. It also writes a file of the cues: each one alone, then over the fullest music, next to the player and as far away as a cue gets, all as loud as the game plays them with the settings it starts with.
 
 ## Tests and benchmarks
 
@@ -392,6 +392,7 @@ The switch of step 2 was an experiment, to settle by ear whether the music needs
 
 ## Open questions
 
+- Far from the middle of the screen, two cues stand hardly above the fullest music on some beats, by an estimate of their level in their own bands: a destroyed bullet against the hi-hat, and a placed mine when the lead plays the E that the cue now plays too. Every other cue is at least 12 dB above the music there, and all are next to the player. Are these two heard far away?
 - How long are the frames of the web build when a sector loads, and is the gap they leave in the music acceptable?
 - Two machines in one room play the same piece out of step, because each has its own clock. Does co-op in one room need them in step?
 - In hard mode every tier is available from sector 1, so the lead is at its fullest almost at once. Is that the right sound for hard mode, or does it waste the build-up?

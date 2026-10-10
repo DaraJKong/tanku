@@ -7,7 +7,7 @@ use bevy::{
     audio::{AddAudioSource, ChannelCount, SampleRate, Source, Volume},
     prelude::*,
 };
-use tanku_audio::{CHANNELS, Conductor, Context, Music, Place, SAMPLE_RATE};
+use tanku_audio::{CHANNELS, Conductor, Context, MUSIC_LEVEL, Music, Place, SAMPLE_RATE};
 use tanku_core::{
     map::SectorKind,
     sim::{Enemy, Run, RunPhase, Sector, Tank},
@@ -15,10 +15,6 @@ use tanku_core::{
 
 use crate::{Overlay, Screen, audio::Muted, settings::Settings};
 
-/// How loud the music is against the cues with its volume all the way up. Halfway up, where
-/// the setting starts, the loudest arrangement peaks 12 dB below a shot fired next to the
-/// player.
-const LOUDEST: f32 = 0.54;
 /// Samples that the music computes at a time: 3 ms of it. The sound library reads them one
 /// by one.
 const BLOCK: usize = 128 * CHANNELS as usize;
@@ -103,9 +99,9 @@ pub fn plugin(app: &mut App) {
         .add_systems(Update, (tell, set_volume));
 }
 
-/// How loud the music is, under the volume of the game.
+/// How loud the music is against the cues, under the volume of the game.
 fn loudness(settings: &Settings) -> f32 {
-    settings.music * LOUDEST
+    settings.music * MUSIC_LEVEL
 }
 
 /// Starts the music, which never stops from then on. A game that must stay silent has none.

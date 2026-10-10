@@ -158,6 +158,7 @@ The files go to `target/music`, or to the directory given after `--`:
 | `arena_threat_0.wav` to `arena_threat_4.wav` | The same in an arena |
 | `tour.wav`, `tour.txt` | Three minutes of a made-up run, and what happens in it and when |
 | `connections.wav`, `connections.txt` | Eight short fights that each end with the lead on another note, to hear every way from a fight into the bridge, and which is which |
+| `cues.wav`, `cues.txt` | Every sound cue alone, then over the fullest music as loud as the game plays both with the settings it starts with: next to the player, then as far away as a cue gets. The list tells which is which. |
 
 In the game, the lead tells how smart the enemies are. To know which sectors of a seed to compare by ear, list the brains of its first thirty groups and what the lead plays for each:
 

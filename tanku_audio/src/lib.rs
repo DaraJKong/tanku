@@ -25,6 +25,10 @@ use synth::Synth;
 
 /// Frames of music per second.
 pub const SAMPLE_RATE: u32 = 44_100;
+/// How loud the music is against the cues when the game has the volume of its music all the
+/// way up. Halfway up, where that setting starts, the loudest arrangement peaks 12 dB below a
+/// shot fired next to the player.
+pub const MUSIC_LEVEL: f32 = 0.54;
 /// Frames between two looks at what can't wait for the next step of the music: a millisecond
 /// and a half.
 const WATCH: u64 = 64;

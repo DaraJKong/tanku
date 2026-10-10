@@ -13,7 +13,9 @@
 //!   it and when;
 //! - `connections.wav`: eight short fights that each end with the lead on another note, to
 //!   hear every way from a fight into the bridge, and `connections.txt`, which tells them
-//!   apart.
+//!   apart;
+//! - `cues.wav`: every sound cue alone, then over the fullest music, as loud as the game plays
+//!   both with the settings it starts with, and `cues.txt`, which tells them apart.
 
 use std::{
     error::Error,
@@ -23,7 +25,8 @@ use std::{
 };
 
 use tanku_audio::{
-    CHANNELS, Context, Music, Place, SAMPLE_RATE,
+    CHANNELS, Context, MUSIC_LEVEL, Music, Place, SAMPLE_RATE,
+    cues::{self, Cue},
     director::{Director, ROLL_HITS},
     music, music_from,
     score::{CONNECTION_STEPS, STEPS},
@@ -152,6 +155,53 @@ const CONNECTIONS: [(Place, u8, usize, &str); 8] = [
     ),
 ];
 
+/// The settings that the game starts with: its volume, and the volume of its music.
+const VOLUME: f32 = 0.7;
+const MUSIC_VOLUME: f32 = 0.5;
+/// How loud the game plays a cue that sounds as far away as a cue gets.
+const FAR: f32 = 0.25;
+/// Seconds of the file of cues before its music starts.
+const ALONE: f32 = 26.0;
+/// The music of the file of cues: the fullest there is.
+const FULLEST: Context = fight(Place::Arena, 4);
+
+/// The cues that sound where something happens, which the game plays quieter the further that
+/// is from the middle of the screen. The others are as loud wherever the players are.
+const PLACED: [Cue; 10] = [
+    Cue::Shot,
+    Cue::EnemyShot,
+    Cue::Ricochet,
+    Cue::Pop,
+    Cue::MinePlaced,
+    Cue::MineTriggered,
+    Cue::Blast,
+    Cue::ShieldRaised,
+    Cue::ShieldBlocked,
+    Cue::ShieldOverloaded,
+];
+
+/// What a cue tells.
+fn told(cue: Cue) -> &'static str {
+    match cue {
+        Cue::Shot => "A player fires",
+        Cue::EnemyShot => "An enemy fires",
+        Cue::Ricochet => "A bullet bounces",
+        Cue::Pop => "A bullet is destroyed",
+        Cue::MinePlaced => "A mine is placed",
+        Cue::MineTriggered => "The warning of a mine",
+        Cue::Blast => "A blast",
+        Cue::ShieldRaised => "A shield is raised",
+        Cue::ShieldBlocked => "A shield destroys a bullet",
+        Cue::ShieldOverloaded => "A shield overloads",
+        Cue::Cleared => "A sector is cleared",
+        Cue::Captured => "A flag is captured",
+        Cue::Unlocked => "A barrier unlocks",
+        Cue::Respawned => "The player's tank is back",
+        Cue::RunOver => "The run is over",
+        Cue::Click => "A button is pressed",
+    }
+}
+
 const fn at(place: Place) -> Context {
     Context {
         place,
@@ -217,6 +267,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     fs::write(directory.join("tour.txt"), notes)?;
     connections(&directory)?;
+    cues(&directory)?;
 
     println!("Wrote the music to {}", directory.display());
     Ok(())
@@ -264,6 +315,91 @@ fn connections(directory: &Path) -> Result<(), Box<dyn Error>> {
     }
     wav::write(directory.join("connections.wav"), &frames)?;
     Ok(fs::write(directory.join("connections.txt"), notes)?)
+}
+
+/// Writes the file of cues: each one alone, then over the fullest music, next to the player
+/// and as far away as a cue gets. Everything is as loud as the game plays it when it starts.
+fn cues(directory: &Path) -> Result<(), Box<dyn Error>> {
+    // When each cue starts, and how loud the game plays it.
+    let mut hits: Vec<(f32, Cue, f32)> = Vec::new();
+    let mut notes = String::new();
+    let mut hit = |notes: &mut String, at: f32, cue: Cue, level: f32, more: &str| {
+        hits.push((at, cue, level));
+        let (minutes, seconds) = ((at / 60.0) as u32, at % 60.0);
+        writeln!(notes, "{minutes}:{seconds:04.1}  {}{more}", told(cue))
+    };
+
+    writeln!(notes, "Each cue alone:")?;
+    for (number, cue) in Cue::ALL.into_iter().enumerate() {
+        hit(&mut notes, 1.0 + 1.5 * number as f32, cue, 1.0, "")?;
+    }
+    // Over the music, a cue starts on the second beat of a bar, where the kick, the snare and
+    // the hi-hat hit together: the music is at its fullest there.
+    writeln!(
+        notes,
+        "\nOver the fight of an arena at the highest threat, next to the player:"
+    )?;
+    let near = |number: usize| 4.5 + 2.0 * number as f32;
+    for (number, cue) in Cue::ALL.into_iter().enumerate() {
+        let ducks = cue == Cue::MineTriggered;
+        let more = if ducks { ": the music makes room" } else { "" };
+        hit(&mut notes, ALONE + near(number), cue, 1.0, more)?;
+    }
+    writeln!(
+        notes,
+        "\nThe cues that sound where something happens, as far away as a cue gets:"
+    )?;
+    let far = |number: usize| near(Cue::ALL.len() + number);
+    for (number, cue) in PLACED.into_iter().enumerate() {
+        let stays = cue == Cue::MineTriggered;
+        let more = if stays {
+            ": out of hearing range, so the music stays as it is"
+        } else {
+            ""
+        };
+        hit(&mut notes, ALONE + far(number), cue, FAR, more)?;
+    }
+
+    // The music, which makes room for the warning that sounds next to the player.
+    let (mut music, conductor) = music_from(FULLEST);
+    let mut played = Vec::new();
+    let warning = near(Cue::MineTriggered as usize);
+    play(&mut music, warning, &mut played);
+    conductor.set(Context {
+        ducked: true,
+        ..FULLEST
+    });
+    play(&mut music, Cue::MineTriggered.seconds(), &mut played);
+    conductor.set(FULLEST);
+    let rest = far(PLACED.len()) + 1.5 - warning - Cue::MineTriggered.seconds();
+    play(&mut music, rest, &mut played);
+
+    let frames_in = |seconds: f32| (seconds * SAMPLE_RATE as f32).round() as usize;
+    let mut frames = vec![0.0; frames_in(ALONE) * CHANNELS as usize];
+    frames.extend(
+        played
+            .iter()
+            .map(|level| level * MUSIC_VOLUME * MUSIC_LEVEL),
+    );
+    for (at, cue, level) in hits {
+        // A cue has half the frames of the music, and is in the middle of the stereo.
+        assert_eq!(SAMPLE_RATE, 2 * cues::SAMPLE_RATE);
+        let samples = cue.samples();
+        let start = frames_in(at);
+        for (index, &sample) in samples.iter().enumerate() {
+            let next = samples.get(index + 1).copied().unwrap_or(0.0);
+            for (half, heard) in [sample, (sample + next) / 2.0].into_iter().enumerate() {
+                let frame = (start + 2 * index + half) * CHANNELS as usize;
+                frames[frame] += level * heard;
+                frames[frame + 1] += level * heard;
+            }
+        }
+    }
+    for frame in &mut frames {
+        *frame *= VOLUME;
+    }
+    wav::write(directory.join("cues.wav"), &frames)?;
+    Ok(fs::write(directory.join("cues.txt"), notes)?)
 }
 
 /// Writes some seconds of the music of a game that stays in one context.
