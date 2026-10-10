@@ -2048,3 +2048,57 @@ fn the_same_seed_and_inputs_give_the_same_run_of_several_players() {
     assert_eq!(played("ECHO"), played("ECHO"));
     assert_ne!(played("ECHO"), played("FOXTROT"));
 }
+
+/// What was touched during a tick: guests of a game are told of it, changed or not.
+#[derive(Resource, Default)]
+struct Touched {
+    guns: usize,
+    shields: usize,
+}
+
+fn note_what_was_touched(
+    mut touched: ResMut<Touched>,
+    guns: Query<(), Changed<Gun>>,
+    shields: Query<(), Changed<Shield>>,
+) {
+    touched.guns += guns.iter().count();
+    touched.shields += shields.iter().count();
+}
+
+#[test]
+fn a_gun_and_a_shield_that_do_not_change_are_left_alone() {
+    // Two players and the dormant enemies of the first sector, all at rest.
+    let mut app = team("TANKU", 2);
+    app.init_resource::<Touched>()
+        .add_systems(FixedPostUpdate, note_what_was_touched);
+    let step = |app: &mut App, ticks: u32| {
+        for _ in 0..ticks {
+            app.world_mut().run_schedule(FixedUpdate);
+            app.world_mut().run_schedule(FixedPostUpdate);
+        }
+        std::mem::take(&mut *app.world_mut().resource_mut::<Touched>())
+    };
+    // Whatever still ran down after the start has run down by now.
+    step(&mut app, seconds(1.0));
+    let idle = step(&mut app, seconds(2.0));
+    assert_eq!((idle.guns, idle.shields), (0, 0));
+
+    // A shot and a raised shield are changes, and so is what follows them: the reload, and
+    // the cooldown of the shield.
+    command(
+        &mut app,
+        TankCommand {
+            aim: START + Vec2::new(-2.0, 9.0),
+            fire: true,
+            shield: true,
+            ..default()
+        },
+    );
+    let busy = step(&mut app, 1);
+    assert!(busy.guns >= 1 && busy.shields >= 1, "{} guns", busy.guns);
+    command(&mut app, TankCommand::default());
+    // Once the round is back and the shield is ready again, nothing is touched any more.
+    step(&mut app, seconds(11.0));
+    let idle = step(&mut app, seconds(2.0));
+    assert_eq!((idle.guns, idle.shields), (0, 0));
+}

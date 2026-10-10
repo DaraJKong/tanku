@@ -34,7 +34,10 @@ pub fn shields(
         };
         match shield.state {
             ShieldState::Ready => {
-                shield.cooldown = (shield.cooldown - TICK).max(0.0);
+                // What doesn't change is left alone: guests are told of what was touched.
+                if shield.cooldown > 0.0 {
+                    shield.cooldown = (shield.cooldown - TICK).max(0.0);
+                }
                 // A tank that repairs a wreck has its hands full.
                 let free = !repairers.0.contains(&entity);
                 if command.shield && free && shield.cooldown == 0.0 {
@@ -155,9 +158,17 @@ pub fn operate(
 ) {
     for (entity, tank, position, motion, command, mut gun) in &mut tanks {
         let genome = &tank.genome;
-        gun.cooldown = (gun.cooldown - TICK).max(0.0);
-        gun.mine_cooldown = (gun.mine_cooldown - TICK).max(0.0);
-        gun.mines = mines.iter().filter(|mine| mine.owner == entity).count() as u8;
+        // What doesn't change is left alone: guests are told of what was touched.
+        if gun.cooldown > 0.0 {
+            gun.cooldown = (gun.cooldown - TICK).max(0.0);
+        }
+        if gun.mine_cooldown > 0.0 {
+            gun.mine_cooldown = (gun.mine_cooldown - TICK).max(0.0);
+        }
+        let laid = mines.iter().filter(|mine| mine.owner == entity).count() as u8;
+        if gun.mines != laid {
+            gun.mines = laid;
+        }
         if gun.rounds < genome.magazine() {
             gun.reload += TICK;
             if gun.reload >= genome.reload_time() {
