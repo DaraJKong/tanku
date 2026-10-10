@@ -46,6 +46,8 @@ pub struct TankCommand {
     pub fire: bool,
     pub mine: bool,
     pub shield: bool,
+    /// Repair the wreck of a teammate that is within reach.
+    pub repair: bool,
 }
 
 #[derive(Component, Clone, Copy, Debug)]
@@ -92,8 +94,23 @@ impl Shield {
     }
 }
 
-#[derive(Component, Clone, Copy, Debug)]
-pub struct Player;
+/// The tank of a player. Seats number the players of a run from 0.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Player {
+    pub seat: u8,
+}
+
+/// A player's tank that was destroyed in a run of several players. It stays where it is, blocks
+/// the way and absorbs bullets until a teammate has repaired it.
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
+pub struct Wreck {
+    /// Seconds of repair done so far.
+    pub repair: f32,
+}
+
+/// A tank that was just repaired: nothing destroys it for this much longer.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct Protected(pub f32);
 
 #[derive(Component, Clone, Copy, Debug)]
 pub struct Enemy {
@@ -206,7 +223,12 @@ pub enum RunPhase {
 pub struct Run {
     pub seed_text: String,
     pub seed: u64,
-    /// The sector the player is in. The start bay is sector 0.
+    /// Players in the run. Sectors are generated for this many.
+    pub players: u32,
+    /// Whether the run started with a single player, who has lives and checkpoints. Several
+    /// players have wrecks and repairs instead.
+    pub solo: bool,
+    /// The furthest sector that a player has entered. The start bay is sector 0.
     pub sector: u32,
     /// The score: the furthest sector cleared.
     pub cleared: u32,
@@ -217,8 +239,8 @@ pub struct Run {
     /// Simulation ticks played.
     pub ticks: u64,
     pub phase: RunPhase,
-    /// What destroyed the player's tank the last time, if the simulation knows whose doing
-    /// it was. When the run is over, this is what ended it.
+    /// What destroyed a player's tank the last time, if the simulation knows whose doing it
+    /// was. When the run is over, this is what ended it.
     pub lost_to: Option<Blow>,
 }
 
@@ -236,8 +258,14 @@ pub struct Playtest {
 pub enum RunRequest {
     Start {
         seed: String,
+        /// How many players the run has, from 1 to 4.
+        players: u32,
     },
     Abandon,
+    /// A player leaves a run of several players, and their tank goes with them.
+    Leave {
+        seat: u8,
+    },
     /// In a playtest: puts the player in front of a sector, as if every sector before it was
     /// cleared and the flag of the last one captured.
     SkipTo {
@@ -261,6 +289,7 @@ pub enum SimEvent {
     ShieldBlocked { at: Vec2 },
     ShieldDropped { at: Vec2 },
     TankDestroyed { at: Vec2, team: Team },
+    TankRepaired { at: Vec2 },
     PlayerRespawned { at: Vec2 },
     SectorCleared { sector: u32 },
     FlagCaptured { at: Vec2 },

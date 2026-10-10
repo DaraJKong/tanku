@@ -6,8 +6,8 @@ use bevy::prelude::*;
 use tanku_core::{
     rules::{BLAST_RADIUS, BLOCK_SIZE, MINE_FUSE, MINE_TRIGGER_RADIUS, MINE_WARNING, TICK},
     sim::{
-        Block, Blow, Bullet, Enemy, ExplosiveCrate, Mine, MineState, Position, Shield, SimEvent,
-        Tank, Team, Weapon,
+        Block, Blow, Bullet, Enemy, ExplosiveCrate, Mine, MineState, Position, Protected, Shield,
+        SimEvent, Tank, Team, Weapon, Wreck,
     },
     stats::Genome,
 };
@@ -22,7 +22,7 @@ use crate::{Casualties, Maker, field::Field};
 pub fn tick(
     mut casualties: ResMut<Casualties>,
     mut mines: Query<(Entity, &mut Mine, &Position)>,
-    tanks: Query<(&Tank, &Position, Option<&Enemy>)>,
+    tanks: Query<(&Tank, &Position, Option<&Enemy>), Without<Wreck>>,
     mut events: MessageWriter<SimEvent>,
 ) {
     for (entity, mut mine, position) in &mut mines {
@@ -67,7 +67,7 @@ pub fn blast(
     crates: Query<(Entity, &Position), With<ExplosiveCrate>>,
     blocks: Query<(Entity, &Position), With<Block>>,
     bullets: Query<(Entity, &Position), With<Bullet>>,
-    tanks: Query<(Entity, &Position, &Shield), With<Tank>>,
+    tanks: Query<(Entity, &Position, &Shield), (With<Tank>, Without<Wreck>, Without<Protected>)>,
     mut events: MessageWriter<SimEvent>,
 ) {
     let culprits = std::mem::take(&mut casualties.culprits);

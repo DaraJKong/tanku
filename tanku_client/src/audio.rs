@@ -135,6 +135,8 @@ mod tests {
             .insert_resource(Run {
                 seed_text: "TEST".into(),
                 seed: 1,
+                players: 1,
+                solo: true,
                 sector: 1,
                 cleared: 0,
                 checkpoint: 0,

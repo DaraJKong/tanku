@@ -64,6 +64,11 @@ pub struct InSector(pub u32);
 #[derive(Resource)]
 pub struct Field {
     pub seed: u64,
+    /// The seats of the players in the run. Sectors are loaded for as many: enemy groups grow
+    /// with their number.
+    pub seats: Vec<u8>,
+    /// Whether the run started with a single player, whose sectors have flags.
+    pub solo: bool,
     pub corridor: Corridor,
     pub colliders: Vec<Collider>,
     /// Set when something solid appeared or disappeared.
@@ -74,15 +79,22 @@ pub struct Field {
 }
 
 impl Field {
-    pub fn new(seed: u64) -> Self {
+    pub fn new(seed: u64, players: u32) -> Self {
         Self {
             seed,
+            seats: (0..players as u8).collect(),
+            solo: players == 1,
             corridor: Corridor::new(seed),
             colliders: Vec::new(),
             stale: true,
             loaded: BTreeSet::new(),
             cleared: BTreeSet::new(),
         }
+    }
+
+    /// How many players the run has.
+    pub fn players(&self) -> u32 {
+        self.seats.len() as u32
     }
 
     /// First thing a circle touches when it moves from `origin` by `delta`.
@@ -145,6 +157,7 @@ impl Field {
 
     /// Loads a sector: its walls, its barrier, its flag if it has one, its obstacles and,
     /// unless it is cleared, its dormant enemies. `captured` tells whether its flag already is.
+    /// Only a single player has flags, and the enemies are as many as the players call for.
     pub fn load(&mut self, commands: &mut Commands, index: u32, captured: bool) {
         if !self.loaded.insert(index) {
             return;
@@ -152,7 +165,7 @@ impl Field {
         self.stale = true;
         let layout = self.corridor.layout(index);
         spawn_barrier(commands, &layout.plan);
-        if progression::is_checkpoint(index) {
+        if self.solo && progression::is_checkpoint(index) {
             commands.spawn((
                 Flag {
                     sector: index,
@@ -176,7 +189,7 @@ impl Field {
 
         if layout.plan.kind != SectorKind::Bay && !self.cleared.contains(&index) {
             let arena = layout.plan.kind == SectorKind::Arena;
-            let count = progression::enemy_count(index, 1, arena) as usize;
+            let count = progression::enemy_count(index, self.players().max(1), arena) as usize;
             let entry = (layout.plan.entry.0 + layout.plan.entry.1).as_vec2() / 2.0;
             for (number, spawn) in layout.spawns.iter().take(count).enumerate() {
                 let genome = enemy::generate(self.seed, index, number as u32);

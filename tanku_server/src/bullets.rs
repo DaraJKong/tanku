@@ -4,7 +4,10 @@ use bevy::prelude::*;
 use tanku_core::{
     geom,
     rules::{BULLET_RADIUS, MINE_RADIUS, SHIELD_RADIUS, TANK_RADIUS, TICK},
-    sim::{Blow, Bullet, Mine, Position, PreviousPosition, Shield, SimEvent, Tank, Team, Weapon},
+    sim::{
+        Blow, Bullet, Mine, Position, PreviousPosition, Protected, Shield, SimEvent, Tank, Team,
+        Weapon, Wreck,
+    },
     stats::Genome,
 };
 
@@ -78,6 +81,8 @@ enum Target {
     Tank(Entity),
     Shield(Vec2),
     Mine(Entity),
+    /// A wreck, or a tank that was just repaired: the bullet ends there and destroys nothing.
+    Hulk,
 }
 
 pub fn fly(
@@ -91,7 +96,17 @@ pub fn fly(
         &mut PreviousPosition,
         Option<&Maker>,
     )>,
-    tanks: Query<(Entity, &Tank, &Position, &Shield), Without<Bullet>>,
+    tanks: Query<
+        (
+            Entity,
+            &Tank,
+            &Position,
+            &Shield,
+            Has<Wreck>,
+            Has<Protected>,
+        ),
+        Without<Bullet>,
+    >,
     mines: Query<(Entity, &Position), (With<Mine>, Without<Bullet>)>,
     mut events: MessageWriter<SimEvent>,
 ) {
@@ -121,15 +136,22 @@ pub fn fly(
                     first = Some((t, target));
                 }
             };
-            for (tank_entity, tank, tank_position, shield) in &tanks {
+            for (tank_entity, tank, tank_position, shield, wreck, safe) in &tanks {
                 let reach = |radius: f32| {
                     geom::sweep_circle_point(from, delta, tank_position.0, radius + BULLET_RADIUS)
                 };
                 // A tank's own shot leaves its bubble, but doesn't come back through it.
-                if shield.is_active() && (tank_entity != flying.owner || flying.bounced) {
+                if wreck {
+                    consider(reach(TANK_RADIUS), Target::Hulk);
+                } else if shield.is_active() && (tank_entity != flying.owner || flying.bounced) {
                     consider(reach(SHIELD_RADIUS), Target::Shield(tank_position.0));
                 } else if tanks::hits(&flying, tank_entity, tank.team) {
-                    consider(reach(TANK_RADIUS), Target::Tank(tank_entity));
+                    let target = if safe {
+                        Target::Hulk
+                    } else {
+                        Target::Tank(tank_entity)
+                    };
+                    consider(reach(TANK_RADIUS), target);
                 }
             }
             for (mine_entity, mine_position) in &mines {
@@ -163,6 +185,7 @@ pub fn fly(
                     events.write(SimEvent::ShieldBlocked { at: center });
                 }
                 Target::Mine(mine) => casualties.detonations.push(mine),
+                Target::Hulk => {}
             }
             let team = bullet.team;
             events.write(SimEvent::BulletDestroyed { at, team });

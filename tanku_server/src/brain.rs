@@ -12,7 +12,7 @@ use tanku_core::{
     rules::{BLAST_RADIUS, BULLET_RADIUS, TANK_RADIUS, TICK},
     sim::{
         Bullet, Enemy, ExplosiveCrate, Gun, Mine, Motion, Player, Position, Shield, ShieldState,
-        Tank, TankCommand, Team,
+        Tank, TankCommand, Team, Wreck,
     },
 };
 
@@ -21,6 +21,8 @@ use crate::field::Field;
 /// Distances a brain of tier 1 or more tries to keep from the player.
 const NEAR: f32 = 8.0;
 const FAR: f32 = 14.0;
+/// A brain keeps its target until another player is this many times nearer.
+const TARGET_HOLD: f32 = 1.25;
 /// How far ahead a brain looks for obstacles.
 const LOOKAHEAD: f32 = 2.5;
 /// Directions tried when looking for a bank shot.
@@ -46,6 +48,8 @@ pub struct Brain {
     strafe: f32,
     /// The bullet the brain is watching and for how long it has seen it coming.
     threat: Option<(Entity, f32)>,
+    /// The player the brain fights.
+    target: Option<Entity>,
 }
 
 impl Brain {
@@ -64,6 +68,7 @@ impl Brain {
             wander_timer: 0.0,
             strafe: 1.0,
             threat: None,
+            target: None,
         }
     }
 
@@ -140,7 +145,7 @@ fn steer(field: &Field, tank: &Tank, from: Vec2, wanted: Vec2) -> Vec2 {
 
 pub fn think(
     field: Res<Field>,
-    player: Query<(&Position, &Motion), With<Player>>,
+    players: Query<(Entity, &Player, &Tank, &Position, &Motion), Without<Wreck>>,
     mut enemies: Query<
         (
             Entity,
@@ -163,6 +168,16 @@ pub fn think(
         .iter()
         .map(|(entity, _, position, ..)| (entity, position.0))
         .collect();
+    // The tanks of the players that still run: where each one is, in its sector, and how it
+    // moves. They are in the order of their seats, so that the same fight goes the same way.
+    let mut rivals: Vec<(u8, Entity, u32, Vec2, Vec2)> = players
+        .iter()
+        .map(|(entity, player, tank, position, motion)| {
+            let (at, velocity) = (position.0, motion.velocity);
+            (player.seat, entity, tank.sector, at, velocity)
+        })
+        .collect();
+    rivals.sort_by_key(|rival| rival.0);
 
     for (entity, tank, position, motion, gun, shield, enemy, mut brain, mut command) in &mut enemies
     {
@@ -170,28 +185,37 @@ pub fn think(
             continue;
         }
         let me = position.0;
-        let Ok((player_position, player_motion)) = player.single() else {
+        let brain = &mut *brain;
+        // An enemy fights the players that are in its sector: the nearest one, and it keeps
+        // that one until another is clearly nearer.
+        let here = || rivals.iter().filter(|rival| rival.2 == tank.sector);
+        let nearest = here().min_by(|a, b| me.distance(a.3).total_cmp(&me.distance(b.3)));
+        let Some(nearest) = nearest else {
             // Nobody to fight: hold still and hold fire.
+            brain.target = None;
             *command = TankCommand {
                 aim: command.aim,
                 ..default()
             };
             continue;
         };
+        let kept = here()
+            .find(|rival| Some(rival.1) == brain.target)
+            .filter(|kept| me.distance(kept.3) <= me.distance(nearest.3) * TARGET_HOLD);
+        let &(_, target, _, player_at, player_velocity) = kept.unwrap_or(nearest);
+        brain.target = Some(target);
         let genome = &tank.genome;
-        let brain = &mut *brain;
         if brain.awake_for == 0.0 {
             brain.reaction = brain.reaction_delay();
         }
         brain.awake_for += TICK;
         let (tier, ballistics) = (genome.brain(), genome.ballistics());
-        let player_at = player_position.0;
         let sees_player = field.sees(me, player_at);
 
         // Gunnery. The brain aims where it believes the target is, and its belief is off by an
         // error that changes a few times per second.
         let target = if ballistics >= 1 {
-            lead(me, player_at, player_motion.velocity, genome.bullet_speed())
+            lead(me, player_at, player_velocity, genome.bullet_speed())
         } else {
             player_at
         };
@@ -351,6 +375,7 @@ pub fn think(
             // Mines are dropped by reflex when the player comes close.
             mine: tier >= 1 && distance < 6.0,
             shield: raise_shield && can_shield,
+            repair: false,
         };
     }
 }
@@ -367,7 +392,7 @@ mod tests {
             b: b.into(),
             solid: Solid::Wall,
         };
-        let mut field = Field::new(0);
+        let mut field = Field::new(0, 1);
         field.colliders = vec![
             wall((0.0, 0.0), (20.0, 0.0)),
             wall((20.0, 0.0), (20.0, 10.0)),

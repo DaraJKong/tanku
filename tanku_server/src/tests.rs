@@ -5,13 +5,14 @@ use tanku_core::{
     CorePlugin,
     rng::{Purpose, Stream},
     rules::{
-        BARRIER_GATHER_DISTANCE, PLAYTEST_LAST_SECTOR, RESPAWN_DELAY, SHIELD_DURATION, SOLO_LIVES,
-        SPAWN_FIRE_DELAY, TICK_RATE,
+        BARRIER_GATHER_DISTANCE, PLAYTEST_LAST_SECTOR, REPAIR_PROTECTION, REPAIR_RADIUS,
+        REPAIR_TIME, RESPAWN_DELAY, SHIELD_DURATION, SOLO_LIVES, SPAWN_FIRE_DELAY, TANK_RADIUS,
+        TICK_RATE,
     },
     sim::{
         Barrier, Block, Blow, Bullet, Enemy, ExplosiveCrate, Flag, Gun, Mine, MineState, Motion,
-        Player, Playtest, Position, PreviousPosition, Run, RunPhase, RunRequest, Sector, Shield,
-        SimEvent, Tank, TankCommand, Team, Weapon,
+        Player, Playtest, Position, PreviousPosition, Protected, Run, RunPhase, RunRequest, Sector,
+        Shield, SimEvent, Tank, TankCommand, Team, Weapon, Wreck,
     },
     stats::{Genome, Stat},
 };
@@ -35,14 +36,27 @@ fn tick(app: &mut App, ticks: u32) {
     }
 }
 
-/// Starts a run. The tank has just appeared and can't shoot yet.
-fn begin(seed: &str) -> App {
+/// Starts a run of this many players. The tanks have just appeared and can't shoot yet.
+fn begin_with(seed: &str, players: u32) -> App {
     let mut app = App::new();
     app.add_plugins((MinimalPlugins, CorePlugin, ServerPlugin));
+    let seed = seed.into();
     app.world_mut()
-        .write_message(RunRequest::Start { seed: seed.into() });
+        .write_message(RunRequest::Start { seed, players });
     tick(&mut app, 1);
     events(&mut app);
+    app
+}
+
+/// Starts the run of a single player. The tank has just appeared and can't shoot yet.
+fn begin(seed: &str) -> App {
+    begin_with(seed, 1)
+}
+
+/// Starts a run of this many players and waits until the tanks may shoot.
+fn team(seed: &str, players: u32) -> App {
+    let mut app = begin_with(seed, players);
+    tick(&mut app, seconds(SPAWN_FIRE_DELAY));
     app
 }
 
@@ -1309,6 +1323,7 @@ fn a_skip_asked_with_the_start_of_a_run_applies_to_that_run() {
         });
     app.world_mut().write_message(RunRequest::Start {
         seed: "TEST".into(),
+        players: 1,
     });
     skip_to(&mut app, 5);
     assert_eq!((run(&app).sector, loaded(&app)), (4, vec![4, 5]));
@@ -1509,6 +1524,7 @@ fn play(seed: &str, sectors: u32) -> App {
                         fire: true,
                         mine,
                         shield: step % 301 == 0,
+                        repair: false,
                     },
                 );
             }
@@ -1565,4 +1581,470 @@ fn the_same_seed_and_the_same_inputs_give_the_same_run() {
     assert_eq!(fingerprint(&mut first), fingerprint(&mut second));
     let mut other = play("ECHO", 6);
     assert_ne!(fingerprint(&mut first), fingerprint(&mut other));
+}
+
+/// The tank of a seat, in a run of several players.
+fn seat(app: &mut App, seat: u8) -> Entity {
+    let world = app.world_mut();
+    let mut tanks = world.query::<(Entity, &Player)>();
+    let found = tanks.iter(world).find(|(_, player)| player.seat == seat);
+    found.unwrap().0
+}
+
+/// What the player of a seat asks of their tank from now on.
+fn order(app: &mut App, entity: Entity, command: TankCommand) {
+    *app.world_mut().get_mut::<TankCommand>(entity).unwrap() = command;
+}
+
+/// Destroys a tank, as a blast would.
+fn destroy(app: &mut App, entity: Entity) {
+    let mut casualties = app.world_mut().resource_mut::<Casualties>();
+    casualties.tanks.push(entity);
+    tick(app, 1);
+}
+
+fn is_wreck(app: &App, entity: Entity) -> bool {
+    app.world().get::<Wreck>(entity).is_some()
+}
+
+fn barrier(app: &mut App, sector: u32) -> Barrier {
+    let world = app.world_mut();
+    let mut barriers = world.query::<&Barrier>();
+    *barriers
+        .iter(world)
+        .find(|barrier| barrier.sector == sector)
+        .unwrap()
+}
+
+/// Puts a tank in front of the barrier of a sector, or just past it.
+fn carry(app: &mut App, entity: Entity, sector: u32, past: bool) {
+    let barrier = barrier(app, sector);
+    let middle = (barrier.from + barrier.to) / 2.0;
+    let along = (barrier.to - barrier.from).normalize();
+    // Tanks stand side by side there, one seat next to the other.
+    let seat = app.world().get::<Player>(entity).unwrap().seat as f32;
+    let side = along * (seat - 1.5) * 2.0;
+    let depth = if past { 2.0 } else { -1.0 };
+    teleport(app, entity, middle + side + barrier.outward * depth);
+}
+
+#[test]
+fn several_players_start_side_by_side_against_larger_groups() {
+    let mut app = team("TEST", 2);
+    let state = run(&app);
+    assert_eq!((state.players, state.solo, state.sector), (2, false, 0));
+    let (first, second) = (seat(&mut app, 0), seat(&mut app, 1));
+    assert_eq!(position(&mut app, first), START + Vec2::new(-1.25, 0.0));
+    assert_eq!(position(&mut app, second), START + Vec2::new(1.25, 0.0));
+    // One enemy waits for a single player in sector 1, and two for two players. Several
+    // players have no flags to capture.
+    assert_eq!(enemies(&mut app, 1).len(), 2);
+    assert!(flag(&mut app, 1).is_none());
+
+    let mut app = team("TEST", 4);
+    let places: Vec<Vec2> = (0..4)
+        .map(|number| {
+            let entity = seat(&mut app, number);
+            position(&mut app, entity) - START
+        })
+        .collect();
+    let rows = [(-1.25, 0.0), (1.25, 0.0), (-1.25, -2.5), (1.25, -2.5)];
+    assert_eq!(places, rows.map(|(x, y)| Vec2::new(x, y)));
+    assert_eq!(enemies(&mut app, 1).len(), 3);
+    // The same map, whoever plays.
+    let walls = |app: &mut App| {
+        let world = app.world_mut();
+        let mut sectors = world.query::<&Sector>();
+        let mut walls: Vec<_> = sectors
+            .iter(world)
+            .map(|sector| (sector.layout.plan.index, sector.layout.plan.walls.clone()))
+            .collect();
+        walls.sort_by_key(|(index, _)| *index);
+        walls
+    };
+    assert_eq!(walls(&mut app), walls(&mut start("TEST")));
+
+    // A run has four players at most.
+    let mut app = team("TEST", 9);
+    assert_eq!((run(&app).players, players(&mut app)), (4, 4));
+}
+
+#[test]
+fn a_destroyed_tank_of_several_players_becomes_a_wreck() {
+    let mut app = team("TEST", 2);
+    let (first, second) = (seat(&mut app, 0), seat(&mut app, 1));
+    let place = position(&mut app, second);
+    destroy(&mut app, second);
+    let state = run(&app);
+    assert_eq!((state.phase, state.lives), (RunPhase::Playing, SOLO_LIVES));
+    assert!(is_wreck(&app, second) && !is_wreck(&app, first));
+    let destroyed = SimEvent::TankDestroyed {
+        at: place,
+        team: Team::Players,
+    };
+    assert_eq!(count(&events(&mut app), |event| *event == destroyed), 1);
+
+    // The wreck obeys nobody.
+    let orders = TankCommand {
+        drive: Vec2::Y,
+        aim: place + Vec2::Y * 9.0,
+        fire: true,
+        mine: true,
+        shield: true,
+        repair: false,
+    };
+    order(&mut app, second, orders);
+    tick(&mut app, seconds(1.0));
+    assert_eq!(position(&mut app, second), place);
+    assert_eq!(bullets(&mut app), 0);
+    assert!(!app.world().get::<Shield>(second).unwrap().is_active());
+
+    // It absorbs the bullets of both sides, and nothing destroys it again.
+    for team in [Team::Enemies, Team::Players] {
+        spawn_bullet(&mut app, team, place + Vec2::Y * 4.0, Vec2::NEG_Y * 10.0, 0);
+        tick(&mut app, seconds(0.6));
+        assert_eq!(bullets(&mut app), 0);
+    }
+    destroy(&mut app, second);
+    let told = events(&mut app);
+    assert_eq!(
+        count(&told, |event| matches!(
+            event,
+            SimEvent::TankDestroyed { .. }
+        )),
+        0
+    );
+    assert_eq!(run(&app).phase, RunPhase::Playing);
+
+    // It blocks the way: a tank that drives straight into it stops against it, and the wreck
+    // stays.
+    teleport(&mut app, first, place + Vec2::NEG_X * 4.0);
+    app.world_mut().get_mut::<Motion>(first).unwrap().hull = 0.0;
+    order(
+        &mut app,
+        first,
+        TankCommand {
+            drive: Vec2::X,
+            ..default()
+        },
+    );
+    tick(&mut app, seconds(2.0));
+    assert_eq!(position(&mut app, second), place);
+    let gap = position(&mut app, first).distance(place);
+    assert!((gap - 2.0 * TANK_RADIUS).abs() < 0.05, "{gap}");
+}
+
+#[test]
+fn a_teammate_repairs_a_wreck_in_four_seconds() {
+    let mut app = team("TEST", 2);
+    let (first, second) = (seat(&mut app, 0), seat(&mut app, 1));
+    destroy(&mut app, second);
+    events(&mut app);
+    let progress = |app: &App| app.world().get::<Wreck>(second).map(|wreck| wreck.repair);
+    let hold = TankCommand {
+        repair: true,
+        ..default()
+    };
+
+    // From too far, nothing happens.
+    let wreck_at = position(&mut app, second);
+    teleport(
+        &mut app,
+        first,
+        wreck_at + Vec2::NEG_X * (REPAIR_RADIUS + 0.5),
+    );
+    order(&mut app, first, hold);
+    tick(&mut app, seconds(1.0));
+    assert_eq!(progress(&app), Some(0.0));
+
+    // From close by, the repair goes on for as long as the key is held, and starts over
+    // when it is let go.
+    teleport(
+        &mut app,
+        first,
+        wreck_at + Vec2::NEG_X * (REPAIR_RADIUS - 0.5),
+    );
+    tick(&mut app, seconds(2.0));
+    assert!((progress(&app).unwrap() - 2.0).abs() < 0.05);
+    order(&mut app, first, TankCommand::default());
+    tick(&mut app, 1);
+    assert_eq!(progress(&app), Some(0.0));
+
+    // The tank that repairs can't shoot, place mines or shield.
+    let busy = TankCommand {
+        aim: wreck_at + Vec2::Y * 9.0,
+        fire: true,
+        mine: true,
+        shield: true,
+        repair: true,
+        ..default()
+    };
+    order(&mut app, first, busy);
+    tick(&mut app, seconds(REPAIR_TIME) - 2);
+    assert!(is_wreck(&app, second));
+    let told = events(&mut app);
+    let idle = |event: &SimEvent| {
+        matches!(
+            event,
+            SimEvent::Shot { .. } | SimEvent::MinePlaced { .. } | SimEvent::ShieldRaised { .. }
+        )
+    };
+    assert_eq!(count(&told, idle), 0);
+
+    // After four seconds the tank is back, with a full magazine.
+    order(&mut app, first, hold);
+    tick(&mut app, 3);
+    assert!(!is_wreck(&app, second));
+    let rounds = app.world().get::<Gun>(second).unwrap().rounds;
+    assert_eq!(rounds, Genome::PLAYER.magazine());
+    let repaired = SimEvent::TankRepaired { at: wreck_at };
+    assert_eq!(count(&events(&mut app), |event| *event == repaired), 1);
+
+    // Nothing destroys it for a second: a bullet ends on it, and a blast leaves it alone.
+    assert!(app.world().get::<Protected>(second).is_some());
+    spawn_bullet(
+        &mut app,
+        Team::Enemies,
+        wreck_at + Vec2::Y * 2.0,
+        Vec2::NEG_Y * 10.0,
+        0,
+    );
+    tick(&mut app, seconds(0.4));
+    destroy(&mut app, second);
+    assert_eq!(bullets(&mut app), 0);
+    assert!(!is_wreck(&app, second));
+    tick(&mut app, seconds(REPAIR_PROTECTION));
+    assert!(app.world().get::<Protected>(second).is_none());
+    destroy(&mut app, second);
+    assert!(is_wreck(&app, second));
+}
+
+#[test]
+fn the_run_of_several_players_ends_when_every_tank_is_a_wreck() {
+    let mut app = team("TEST", 3);
+    for number in 0..2 {
+        let entity = seat(&mut app, number);
+        destroy(&mut app, entity);
+        assert_eq!(run(&app).phase, RunPhase::Playing);
+    }
+    let last = seat(&mut app, 2);
+    destroy(&mut app, last);
+    assert_eq!(run(&app).phase, RunPhase::Over);
+    assert_eq!(
+        count(&events(&mut app), |event| *event == SimEvent::RunOver),
+        1
+    );
+    // The simulation stops with the run.
+    let ticks = run(&app).ticks;
+    tick(&mut app, 10);
+    assert_eq!(run(&app).ticks, ticks);
+
+    // Two tanks that are destroyed at once end it too.
+    let mut app = team("TEST", 2);
+    let both = [seat(&mut app, 0), seat(&mut app, 1)];
+    let mut casualties = app.world_mut().resource_mut::<Casualties>();
+    casualties.tanks.extend(both);
+    tick(&mut app, 1);
+    assert_eq!(run(&app).phase, RunPhase::Over);
+}
+
+#[test]
+fn a_teammate_s_bullet_wrecks_a_tank() {
+    let mut app = team("TEST", 2);
+    let (first, second) = (seat(&mut app, 0), seat(&mut app, 1));
+    let target = position(&mut app, second);
+    order(
+        &mut app,
+        first,
+        TankCommand {
+            aim: target,
+            ..default()
+        },
+    );
+    tick(&mut app, seconds(0.3));
+    order(
+        &mut app,
+        first,
+        TankCommand {
+            aim: target,
+            fire: true,
+            ..default()
+        },
+    );
+    tick(&mut app, seconds(0.2));
+    assert!(is_wreck(&app, second) && !is_wreck(&app, first));
+    let blow = run(&app).lost_to.unwrap();
+    assert_eq!((blow.weapon, blow.team), (Weapon::Bullet, Team::Players));
+}
+
+#[test]
+fn a_barrier_waits_for_every_running_tank_and_each_player_crosses_alone() {
+    let mut app = team("TEST", 2);
+    let (first, second) = (seat(&mut app, 0), seat(&mut app, 1));
+    // The start bay has no enemy, but its barrier stays locked until both players are close.
+    carry(&mut app, first, 0, false);
+    tick(&mut app, 2);
+    assert!(!barrier(&mut app, 0).unlocked);
+    let far = position(&mut app, second);
+    let reach = (barrier(&mut app, 0).from.y - far.y).abs();
+    assert!(reach > BARRIER_GATHER_DISTANCE);
+    carry(&mut app, second, 0, false);
+    tick(&mut app, 2);
+    assert!(barrier(&mut app, 0).unlocked);
+
+    // The first player through wakes the enemies. The other one is still in the bay, which
+    // stays loaded for it.
+    let sector_of = |app: &App, entity| app.world().get::<Tank>(entity).unwrap().sector;
+    carry(&mut app, first, 0, true);
+    tick(&mut app, 1);
+    assert_eq!(run(&app).sector, 1);
+    assert_eq!((sector_of(&app, first), sector_of(&app, second)), (1, 0));
+    assert!(
+        enemies(&mut app, 1)
+            .iter()
+            .all(|&enemy| app.world().get::<Enemy>(enemy).unwrap().awake)
+    );
+    assert_eq!(loaded(&app), [0, 1, 2]);
+    carry(&mut app, second, 0, true);
+    tick(&mut app, 1);
+    assert_eq!((sector_of(&app, second), loaded(&app)), (1, vec![0, 1, 2]));
+    let entered = SimEvent::SectorEntered { sector: 1 };
+    assert_eq!(count(&events(&mut app), |event| *event == entered), 1);
+
+    // A wreck holds no barrier back. When the last running tank has crossed, the wreck is
+    // towed across and the sectors further back are unloaded.
+    clear_sector(&mut app, 1);
+    destroy(&mut app, second);
+    carry(&mut app, first, 1, false);
+    tick(&mut app, 2);
+    assert!(barrier(&mut app, 1).unlocked);
+    carry(&mut app, first, 1, true);
+    tick(&mut app, 1);
+    assert_eq!((run(&app).sector, loaded(&app)), (2, vec![1, 2, 3]));
+    assert!(is_wreck(&app, second));
+    assert_eq!(sector_of(&app, second), 2);
+    let towed = position(&mut app, second);
+    let gate = barrier(&mut app, 1);
+    let depth = (towed - gate.from).dot(gate.outward);
+    assert!(depth > TANK_RADIUS && depth < 6.0, "{depth}");
+    // It can be repaired there.
+    teleport(&mut app, first, towed + gate.outward * 2.0);
+    order(
+        &mut app,
+        first,
+        TankCommand {
+            repair: true,
+            ..default()
+        },
+    );
+    tick(&mut app, seconds(REPAIR_TIME) + 1);
+    assert!(!is_wreck(&app, second));
+}
+
+#[test]
+fn an_enemy_fights_the_nearest_player_whose_tank_still_runs() {
+    let mut app = team("TEST", 2);
+    let (first, second) = (seat(&mut app, 0), seat(&mut app, 1));
+    teleport(&mut app, first, Vec2::new(-5.0, 3.0));
+    teleport(&mut app, second, Vec2::new(5.0, 9.0));
+    let at = Vec2::new(4.0, 13.0);
+    let enemy = spawn_veteran(&mut app, at, &[(Stat::Turret, 6), (Stat::Brain, 1)]);
+    let aims_at = |app: &mut App, target: Entity| {
+        let aim = app.world().get::<TankCommand>(enemy).unwrap().aim;
+        let wanted = position(app, target) - at;
+        (aim - at).angle_to(wanted).abs() < 0.2
+    };
+    tick(&mut app, seconds(0.5));
+    assert!(aims_at(&mut app, second));
+    // A wreck is no target.
+    destroy(&mut app, second);
+    tick(&mut app, seconds(0.5));
+    assert!(aims_at(&mut app, first));
+}
+
+#[test]
+fn a_player_who_leaves_takes_their_tank_and_later_groups_shrink() {
+    let mut app = team("TEST", 4);
+    assert_eq!(enemies(&mut app, 1).len(), 3);
+    for number in [2, 3] {
+        app.world_mut()
+            .write_message(RunRequest::Leave { seat: number });
+    }
+    // A request that comes twice counts once.
+    app.world_mut().write_message(RunRequest::Leave { seat: 3 });
+    tick(&mut app, 1);
+    assert_eq!((run(&app).players, players(&mut app)), (2, 2));
+    assert_eq!(run(&app).phase, RunPhase::Playing);
+
+    // The sectors that are loaded keep their groups. The next ones are for two players.
+    let (first, second) = (seat(&mut app, 0), seat(&mut app, 1));
+    for entity in [first, second] {
+        carry(&mut app, entity, 0, false);
+    }
+    tick(&mut app, 2);
+    for entity in [first, second] {
+        carry(&mut app, entity, 0, true);
+    }
+    tick(&mut app, 1);
+    assert_eq!(run(&app).sector, 1);
+    assert_eq!(enemies(&mut app, 1).len(), 3);
+    assert_eq!(enemies(&mut app, 2).len(), 2);
+
+    // When the last running tank leaves, the run is over.
+    destroy(&mut app, first);
+    app.world_mut().write_message(RunRequest::Leave { seat: 1 });
+    tick(&mut app, 1);
+    assert_eq!(run(&app).phase, RunPhase::Over);
+
+    // A single player doesn't leave: the run is abandoned instead.
+    let mut app = start("TEST");
+    app.world_mut().write_message(RunRequest::Leave { seat: 0 });
+    tick(&mut app, 2);
+    assert_eq!((run(&app).phase, players(&mut app)), (RunPhase::Playing, 1));
+}
+
+#[test]
+fn a_playtest_brings_several_players_back_together() {
+    let mut app = team("TEST", 3);
+    app.insert_resource(Playtest {
+        infinite_lives: true,
+    });
+    let wrecked = seat(&mut app, 2);
+    destroy(&mut app, wrecked);
+    skip_to(&mut app, 5);
+    assert_eq!((run(&app).sector, players(&mut app)), (4, 3));
+    let world = app.world_mut();
+    assert_eq!(world.query::<&Wreck>().iter(world).count(), 0);
+    let mut tanks = world.query::<(&Player, &Tank)>();
+    assert!(tanks.iter(world).all(|(_, tank)| tank.sector == 4));
+}
+
+#[test]
+fn the_same_seed_and_inputs_give_the_same_run_of_several_players() {
+    let played = |seed: &str| {
+        let mut app = team(seed, 2);
+        for step in 0..seconds(12.0) {
+            for number in 0..2u8 {
+                let entity = seat(&mut app, number);
+                let turn = step as f32 * 0.03 + number as f32 * 2.0;
+                let at = position(&mut app, entity);
+                order(
+                    &mut app,
+                    entity,
+                    TankCommand {
+                        drive: Vec2::from_angle(turn),
+                        aim: at + Vec2::from_angle(-turn) * 8.0,
+                        fire: step % 40 == 0,
+                        mine: step % 211 == 0,
+                        shield: step % 307 == 0,
+                        repair: step % 2 == 0,
+                    },
+                );
+            }
+            tick(&mut app, 1);
+        }
+        fingerprint(&mut app)
+    };
+    assert_eq!(played("ECHO"), played("ECHO"));
+    assert_ne!(played("ECHO"), played("FOXTROT"));
 }

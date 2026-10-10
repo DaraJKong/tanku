@@ -835,7 +835,7 @@ fn press(
                     // The moment of the click is all the entropy a seed needs.
                     _ => new_seed(&options, time.elapsed().as_nanos() as u64),
                 };
-                requests.write(RunRequest::Start { seed });
+                requests.write(RunRequest::Start { seed, players: 1 });
                 next_screen.set(Screen::Playing);
                 next_overlay.set(Overlay::None);
             }
@@ -1020,6 +1020,8 @@ mod tests {
         let run = Run {
             seed_text: "TEST".into(),
             seed: 1,
+            players: 1,
+            solo: true,
             sector: 41,
             cleared: 40,
             checkpoint: 40,

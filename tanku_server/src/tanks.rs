@@ -11,7 +11,7 @@ use tanku_core::{
     },
     sim::{
         Bullet, Enemy, Gun, Mine, MineState, Motion, Player, Position, PreviousPosition, Shield,
-        ShieldState, SimEvent, Tank, TankCommand, Team,
+        ShieldState, SimEvent, Tank, TankCommand, Team, Wreck,
     },
 };
 
@@ -19,21 +19,25 @@ use crate::{
     Casualties, Maker,
     bullets::{self, Flight},
     field::{Field, InSector},
+    repair::Repairers,
 };
 
 /// Runs the shields: the bubble, then the cooldown.
 pub fn shields(
-    mut tanks: Query<(&Tank, &Position, &TankCommand, &mut Shield)>,
+    repairers: Res<Repairers>,
+    mut tanks: Query<(Entity, &Tank, &Position, &TankCommand, &mut Shield), Without<Wreck>>,
     mut events: MessageWriter<SimEvent>,
 ) {
-    for (tank, position, command, mut shield) in &mut tanks {
+    for (entity, tank, position, command, mut shield) in &mut tanks {
         let Some(cooldown) = tank.genome.shield_cooldown() else {
             continue;
         };
         match shield.state {
             ShieldState::Ready => {
                 shield.cooldown = (shield.cooldown - TICK).max(0.0);
-                if command.shield && shield.cooldown == 0.0 {
+                // A tank that repairs a wreck has its hands full.
+                let free = !repairers.0.contains(&entity);
+                if command.shield && free && shield.cooldown == 0.0 {
                     shield.state = ShieldState::Active(SHIELD_DURATION);
                     events.write(SimEvent::ShieldRaised { at: position.0 });
                 }
@@ -51,17 +55,20 @@ pub fn shields(
     }
 }
 
-/// Moves the hulls and turns the turrets.
+/// Moves the hulls and turns the turrets. A wreck stays as it is.
 pub fn drive(
     field: Res<Field>,
-    mut tanks: Query<(
-        &Tank,
-        &mut Position,
-        &mut PreviousPosition,
-        &mut Motion,
-        &TankCommand,
-        Has<Player>,
-    )>,
+    mut tanks: Query<
+        (
+            &Tank,
+            &mut Position,
+            &mut PreviousPosition,
+            &mut Motion,
+            &TankCommand,
+            Has<Player>,
+        ),
+        Without<Wreck>,
+    >,
 ) {
     for (tank, mut position, mut previous, mut motion, command, is_player) in &mut tanks {
         previous.0 = position.0;
@@ -101,10 +108,15 @@ pub fn drive(
     }
 }
 
-/// Tanks are solid to each other. A tank without an engine doesn't give way.
-pub fn separate(field: Res<Field>, mut tanks: Query<(&Tank, &mut Position, &mut Motion)>) {
+/// Tanks are solid to each other. A tank without an engine doesn't give way, and neither does
+/// a wreck.
+pub fn separate(
+    field: Res<Field>,
+    mut tanks: Query<(&Tank, &mut Position, &mut Motion, Has<Wreck>)>,
+) {
     let mut pairs = tanks.iter_combinations_mut();
-    while let Some([(tank_a, mut a, _), (tank_b, mut b, _)]) = pairs.fetch_next() {
+    while let Some([(tank_a, mut a, _, wreck_a), (tank_b, mut b, _, wreck_b)]) = pairs.fetch_next()
+    {
         let offset = b.0 - a.0;
         let distance = offset.length();
         if distance >= 2.0 * TANK_RADIUS || distance < 1e-5 {
@@ -112,8 +124,8 @@ pub fn separate(field: Res<Field>, mut tanks: Query<(&Tank, &mut Position, &mut 
         }
         let push = offset / distance * (2.0 * TANK_RADIUS - distance);
         let (a_moves, b_moves) = (
-            tank_a.genome.top_speed() > 0.0,
-            tank_b.genome.top_speed() > 0.0,
+            tank_a.genome.top_speed() > 0.0 && !wreck_a,
+            tank_b.genome.top_speed() > 0.0 && !wreck_b,
         );
         match (a_moves, b_moves) {
             (true, false) => a.0 -= push,
@@ -124,7 +136,7 @@ pub fn separate(field: Res<Field>, mut tanks: Query<(&Tank, &mut Position, &mut 
             }
         }
     }
-    for (tank, mut position, mut motion) in &mut tanks {
+    for (tank, mut position, mut motion, _) in &mut tanks {
         let mut velocity = motion.velocity;
         field.push_out(tank, &mut position.0, &mut velocity);
         motion.velocity = velocity;
@@ -136,7 +148,8 @@ pub fn operate(
     mut commands: Commands,
     field: Res<Field>,
     mut casualties: ResMut<Casualties>,
-    mut tanks: Query<(Entity, &Tank, &Position, &Motion, &TankCommand, &mut Gun)>,
+    repairers: Res<Repairers>,
+    mut tanks: Query<(Entity, &Tank, &Position, &Motion, &TankCommand, &mut Gun), Without<Wreck>>,
     mines: Query<&Mine>,
     mut events: MessageWriter<SimEvent>,
 ) {
@@ -150,6 +163,10 @@ pub fn operate(
                 gun.reload = 0.0;
                 gun.rounds += 1;
             }
+        }
+        // A tank that repairs a wreck has its hands full.
+        if repairers.0.contains(&entity) {
+            continue;
         }
 
         if command.fire && gun.rounds > 0 && gun.cooldown == 0.0 {

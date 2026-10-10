@@ -1169,7 +1169,10 @@ mod tests {
             "{at}: no way through"
         );
         let arena = plan.kind == SectorKind::Arena;
-        let needed = progression::enemy_count(plan.index, 1, arena) as usize;
+        // There is room for the group that two players call for. The smallest arenas are too
+        // small for the whole group of three or four players, by a few tanks: they hold as
+        // many as fit. That happens to about one arena in a thousand with four players.
+        let needed = progression::enemy_count(plan.index, 2, arena) as usize;
         assert!(
             layout.spawns.len() >= needed,
             "{at}: {} spawns for {needed} enemies",

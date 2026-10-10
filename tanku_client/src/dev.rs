@@ -1,7 +1,7 @@
 //! Development tools, left out of release builds.
 //!
 //! `TANKU_DEV_SCRIPT` holds commands separated by semicolons, run one after the other:
-//! `start SEED`, `wait SECONDS`, `warp SECTOR`, `turn QUARTERS`, `peek ENEMY`, `flag SECTOR`,
+//! `start SEED PLAYERS`, `wait SECONDS`, `warp SECTOR`, `turn QUARTERS`, `peek ENEMY`, `flag SECTOR`,
 //! `look X Y`, `zoom METERS`, `clear`, `reach`, `bubble`, `die`, `pause`, `settings`, `resume`,
 //! `lose ENEMY`, `blast X Y`, which sets off a mine at a point of the map, `warn X Y`, which
 //! sounds the warning of a mine there without any mine, `shot PATH` and
@@ -270,6 +270,7 @@ fn play(
             fire: aim != Vec2::ZERO,
             mine: left % 2.0 < 0.1,
             shield: false,
+            repair: false,
         };
     }
 }
@@ -369,6 +370,7 @@ fn run_script(
         "start" => {
             requests.write(RunRequest::Start {
                 seed: word(1).to_string(),
+                players: (number(2) as u32).max(1),
             });
             screen.set(Screen::Playing);
         }

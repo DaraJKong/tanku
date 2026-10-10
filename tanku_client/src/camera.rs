@@ -285,7 +285,7 @@ mod tests {
             .add_systems(Update, follow);
         app.world_mut().spawn((MainCamera, Transform::default()));
         app.world_mut().spawn((
-            Player,
+            Player { seat: 0 },
             Transform::from_translation(scene::to_world(TANK, 0.0)),
         ));
         app
@@ -296,6 +296,8 @@ mod tests {
         Run {
             seed_text: "TEST".into(),
             seed: 1,
+            players: 1,
+            solo: true,
             sector,
             cleared: 0,
             checkpoint: 0,

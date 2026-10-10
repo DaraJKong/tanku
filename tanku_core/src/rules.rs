@@ -42,6 +42,14 @@ pub const BARRIER_GATHER_DISTANCE: f32 = 8.0;
 /// A flag is captured by a player who comes this close to it.
 pub const FLAG_CAPTURE_RADIUS: f32 = 2.0;
 
+/// The most players a run can have.
+pub const MAX_PLAYERS: u32 = 4;
+/// A player repairs the wreck of a teammate from this close, in this long.
+pub const REPAIR_RADIUS: f32 = 3.0;
+pub const REPAIR_TIME: f32 = 4.0;
+/// Time during which nothing destroys a tank that was just repaired.
+pub const REPAIR_PROTECTION: f32 = 1.0;
+
 pub const SOLO_LIVES: u32 = 3;
 /// Delay between the destruction of the solo player and the respawn.
 pub const RESPAWN_DELAY: f32 = 1.5;

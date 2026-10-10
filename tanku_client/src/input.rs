@@ -69,6 +69,7 @@ pub fn command_player(
         fire: passes(held(Action::Shoot), &mut let_go[0]),
         mine: passes(held(Action::Mine), &mut let_go[1]),
         shield: passes(held(Action::Shield), &mut let_go[2]),
+        repair: false,
     };
 }
 

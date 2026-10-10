@@ -14,6 +14,7 @@ fn fight(sector: u32) -> App {
     app.add_plugins((MinimalPlugins, CorePlugin, ServerPlugin));
     app.world_mut().write_message(RunRequest::Start {
         seed: "BENCH".into(),
+        players: 1,
     });
     app.world_mut().run_schedule(FixedUpdate);
 

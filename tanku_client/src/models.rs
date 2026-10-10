@@ -978,7 +978,7 @@ mod tests {
             team,
             sector: 0,
         };
-        let player = (tank(tanku_core::sim::Team::Players), Player);
+        let player = (tank(tanku_core::sim::Team::Players), Player { seat: 0 });
         let player = app.world_mut().spawn(player).id();
         let awake = (tank(tanku_core::sim::Team::Enemies), Enemy { awake: true });
         let awake = app.world_mut().spawn(awake).id();
