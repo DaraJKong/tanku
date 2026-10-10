@@ -423,7 +423,11 @@ When a run is over, the host decides what comes next: the same seed again, a new
 
 A player who disconnects loses their tank, and later sectors are generated for the remaining number of players. A player whose machine stays silent for 5 s has disconnected. If the host leaves, the run ends, and the other players are back at their main menu. All players must run the same game version: a game of another version doesn't answer.
 
-The game must stay playable up to a round trip of 120 ms. A player's own tank responds to input immediately, and the server confirms it afterward.
+The game must stay playable up to a round trip of 120 ms. What the host tells comes late, so a player who joined a game is shown three things in three ways:
+
+- **Their own tank** responds to input immediately. Their machine moves it as the host will, and brings it to its place without a jump when the host tells otherwise.
+- **Bullets** are shown where they are at that moment, in the time of the player's own tank. What comes at a tank is where the screen shows it: a bullet that is dodged on screen is dodged.
+- **The other tanks** are shown about 50 ms in the past, between two tellings of the host, so that they move evenly.
 
 ## Determinism
 
