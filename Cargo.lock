@@ -5071,6 +5071,7 @@ dependencies = [
  "bevy",
  "tanku_core",
  "tanku_server",
+ "web-sys",
 ]
 
 [[package]]

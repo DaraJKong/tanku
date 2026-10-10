@@ -1,4 +1,6 @@
 //! Small text files kept on the player's machine: one `key = value` pair per line.
+//!
+//! The web build keeps them in the local storage of the browser.
 
 use std::collections::BTreeMap;
 
@@ -55,14 +57,24 @@ fn write(name: &str, text: &str) {
     }
 }
 
-// The web build keeps nothing yet: browser storage needs a dependency the project doesn't have.
+/// The local storage of the page, if the browser allows one.
 #[cfg(target_arch = "wasm32")]
-fn read(_name: &str) -> Option<String> {
-    None
+fn browser() -> Option<web_sys::Storage> {
+    web_sys::window()?.local_storage().ok()?
 }
 
 #[cfg(target_arch = "wasm32")]
-fn write(_name: &str, _text: &str) {}
+fn read(name: &str) -> Option<String> {
+    browser()?.get_item(&format!("tanku/{name}")).ok()?
+}
+
+#[cfg(target_arch = "wasm32")]
+fn write(name: &str, text: &str) {
+    let written = browser().map(|storage| storage.set_item(&format!("tanku/{name}"), text));
+    if !matches!(written, Some(Ok(()))) {
+        bevy::log::warn!("could not save {name}");
+    }
+}
 
 #[cfg(test)]
 mod tests {

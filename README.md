@@ -66,7 +66,7 @@ Serve it locally:
 python3 -m http.server --directory target/web-dist
 ```
 
-The web build doesn't keep settings or records yet.
+The web build keeps settings and records in the local storage of the browser.
 
 ## Checks
 
