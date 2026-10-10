@@ -38,6 +38,12 @@ pub fn ballistics_cap(sector: u32) -> u8 {
     ((sector + 2) / 5).min(3) as u8
 }
 
+/// Highest level of Muzzle an enemy of this sector can have: the level of the players' own
+/// tank at first, then one more every five sectors.
+pub fn muzzle_cap(sector: u32) -> u8 {
+    (2 + (sector + 1) / 5).min(7) as u8
+}
+
 /// How well brains execute, from 0 for a novice toward 1 for a flawless brain.
 ///
 /// Experience drives behavior only, never generation, so floating point is fine here.
@@ -101,27 +107,40 @@ mod tests {
 
     #[test]
     fn progression_matches_the_specification_table() {
-        // Sector, budget, enemies in solo, brain cap, ballistics cap, experience.
+        // Sector, budget, enemies in solo, brain cap, ballistics cap, Muzzle cap, experience.
         let table = [
-            (1, 10, 1, 1, 0, 0.00),
-            (3, 21, 2, 1, 1, 0.10),
-            (5, 31, 2, 1, 1, 0.18),
-            (10, 51, 4, 2, 2, 0.36),
-            (15, 65, 6, 3, 3, 0.50),
-            (20, 75, 6, 4, 3, 0.61),
-            (30, 87, 6, 4, 3, 0.77),
-            (50, 97, 6, 4, 3, 0.91),
+            (1, 10, 1, 1, 0, 2, 0.00),
+            (3, 21, 2, 1, 1, 2, 0.10),
+            (5, 31, 2, 1, 1, 3, 0.18),
+            (10, 51, 4, 2, 2, 4, 0.36),
+            (15, 65, 6, 3, 3, 5, 0.50),
+            (20, 75, 6, 4, 3, 6, 0.61),
+            (30, 87, 6, 4, 3, 7, 0.77),
+            (50, 97, 6, 4, 3, 7, 0.91),
         ];
-        for (sector, budget, enemies, brain, ballistics, skill) in table {
+        for (sector, budget, enemies, brain, ballistics, muzzle, skill) in table {
             assert_eq!(sector_budget(sector), budget);
             assert_eq!(enemy_count(sector, 1, false), enemies);
             assert_eq!(brain_cap(sector), brain);
             assert_eq!(ballistics_cap(sector), ballistics);
+            assert_eq!(muzzle_cap(sector), muzzle);
             assert!(
                 (experience(sector) - skill).abs() < 0.006,
                 "sector {sector}"
             );
         }
+    }
+
+    #[test]
+    fn the_fastest_gun_starts_at_the_players_own_and_gains_a_level_every_five_sectors() {
+        use crate::stats::{Genome, Stat};
+        assert_eq!(muzzle_cap(1), Genome::PLAYER.level(Stat::Muzzle));
+        let steps: Vec<u32> = (2..=100)
+            .filter(|&sector| muzzle_cap(sector) > muzzle_cap(sector - 1))
+            .collect();
+        assert_eq!(steps, [4, 9, 14, 19, 24]);
+        assert_eq!(muzzle_cap(24), Stat::Muzzle.max_level());
+        assert_eq!(muzzle_cap(1000), Stat::Muzzle.max_level());
     }
 
     #[test]
