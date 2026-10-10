@@ -2,7 +2,7 @@
 //! patterns, with the rules that derive every other line from them.
 //!
 //! Melodies are written in degrees of the scale and not in notes, so each of them exists in
-//! both modes. A grid is one bar of 16 steps in four beats. In a melody, a digit starts a note
+//! every mode. A grid is one bar of 16 steps in four beats. In a melody, a digit starts a note
 //! on that degree and a dot holds it. In a pattern, `x` is a hit, `R` is the root of the chord
 //! of the bar, `O` is that root an octave higher, `5` is its fifth, and a dot starts nothing.
 
@@ -16,11 +16,16 @@ pub const A4: u8 = 69;
 pub const A3: u8 = A4 - 12;
 pub const A2: u8 = A3 - 12;
 
-/// The scale in use. Both have A as their tonic.
+/// The scale in use. All have A as their tonic.
+///
+/// The piece has a mode of its own, which is Dorian or Mixolydian: the choice between the two
+/// is still open. The fights of an arena are in Aeolian whichever it is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
-    /// Major.
-    Ionian,
+    /// Minor, with a major sixth.
+    Dorian,
+    /// Major, with a minor seventh.
+    Mixolydian,
     /// Minor.
     Aeolian,
 }
@@ -30,11 +35,34 @@ impl Mode {
     /// tonic an octave higher.
     pub const fn semitones(self, degree: u8) -> u8 {
         let scale = match self {
-            Mode::Ionian => [0, 2, 4, 5, 7, 9, 11],
+            Mode::Dorian => [0, 2, 3, 5, 7, 9, 10],
+            Mode::Mixolydian => [0, 2, 4, 5, 7, 9, 10],
             Mode::Aeolian => [0, 2, 3, 5, 7, 8, 10],
         };
         let index = degree as usize - 1;
         12 * (index / 7) as u8 + scale[index % 7]
+    }
+
+    /// The degree of the chord that gives the mode its color, next to the chords on 1, 4 and
+    /// 5: the major chord a tone below the tonic in Dorian and in Mixolydian, and the major
+    /// chord on the sixth degree in Aeolian.
+    pub const fn color(self) -> u8 {
+        match self {
+            Mode::Dorian | Mode::Mixolydian => 7,
+            Mode::Aeolian => 6,
+        }
+    }
+
+    /// The chords of the intro and of the verse, one per bar, each named by the degree it is
+    /// built on.
+    pub const fn verse_chords(self) -> [u8; BARS] {
+        let color = self.color();
+        [1, 1, color, 4, 1, 1, color, 5]
+    }
+
+    /// The chords of the chorus.
+    pub const fn chorus_chords(self) -> [u8; BARS] {
+        [4, 5, 1, self.color(), 4, 5, 1, 1]
     }
 }
 
@@ -126,9 +154,8 @@ pub const BRIDGE: [Line; BARS] = {
     [a, b, c, d, a, b, c, d]
 };
 
-/// The chords of each section, one per bar, each named by the degree it is built on.
-pub const VERSE_CHORDS: [u8; BARS] = [1, 1, 6, 4, 1, 1, 6, 5];
-pub const CHORUS_CHORDS: [u8; BARS] = [4, 5, 1, 6, 4, 5, 1, 1];
+/// The chords of the bridge, one per bar, each named by the degree it is built on. Those of
+/// the verse and of the chorus depend on the mode.
 pub const BRIDGE_CHORDS: [u8; BARS] = [4, 4, 1, 1, 4, 4, 5, 5];
 
 pub const KICK_CALM: Pattern = pattern("x... .... x... ....");
@@ -143,8 +170,9 @@ pub const BASS_LEAPING: Pattern = pattern("R..O ..R. R..O ..5.");
 /// The root, the third and the fifth of the chord in turn, rising.
 pub const PLUCK_ARPEGGIO: Pattern = pattern("x.x. x.x. x.x. x.x.");
 
-/// The degrees that the motifs use, within one octave. In Ionian they make the major
-/// pentatonic scale, and in Aeolian the scale known as hirajoshi.
+/// The degrees that the motifs use, within one octave. They make a scale of five notes in each
+/// mode: the major pentatonic scale in Mixolydian, and in Aeolian the scale known as hirajoshi,
+/// from which the scale of Dorian differs by its sixth degree alone.
 pub const FIVE: [u8; 5] = [1, 2, 3, 5, 6];
 
 /// The next of the five degrees above one of them.
@@ -273,7 +301,7 @@ pub const fn bass_root(mode: Mode, chord: u8) -> u8 {
 mod tests {
     use super::*;
 
-    const MODES: [Mode; 2] = [Mode::Ionian, Mode::Aeolian];
+    const MODES: [Mode; 3] = [Mode::Dorian, Mode::Mixolydian, Mode::Aeolian];
 
     /// A bar of melody as its grid.
     fn grid(line: &Line) -> String {
@@ -322,7 +350,8 @@ mod tests {
     #[test]
     fn the_modes_are_those_of_the_specification() {
         let scale = |mode: Mode| (1..=7).map(move |degree| name(A4 + mode.semitones(degree)));
-        assert!(scale(Mode::Ionian).eq(["A", "B", "C#", "D", "E", "F#", "G#"]));
+        assert!(scale(Mode::Dorian).eq(["A", "B", "C", "D", "E", "F#", "G"]));
+        assert!(scale(Mode::Mixolydian).eq(["A", "B", "C#", "D", "E", "F#", "G"]));
         assert!(scale(Mode::Aeolian).eq(["A", "B", "C", "D", "E", "F", "G"]));
         for mode in MODES {
             assert_eq!(mode.semitones(8), 12);
@@ -352,7 +381,8 @@ mod tests {
         }
         // The major pentatonic scale in one mode and hirajoshi in the other.
         let five = |mode: Mode| FIVE.map(|degree| name(A4 + mode.semitones(degree)));
-        assert_eq!(five(Mode::Ionian), ["A", "B", "C#", "E", "F#"]);
+        assert_eq!(five(Mode::Dorian), ["A", "B", "C", "E", "F#"]);
+        assert_eq!(five(Mode::Mixolydian), ["A", "B", "C#", "E", "F#"]);
         assert_eq!(five(Mode::Aeolian), ["A", "B", "C", "E", "F"]);
     }
 
@@ -368,9 +398,10 @@ mod tests {
     }
 
     #[test]
-    fn chords_are_major_or_minor_in_both_modes() {
+    fn chords_are_major_or_minor_in_every_mode() {
+        // The chords on 1, 4 and 5, then the one that gives the mode its color.
         let chords = |mode: Mode| {
-            [1, 4, 5, 6].map(|chord| {
+            [1, 4, 5, mode.color()].map(|chord| {
                 let [root, third, fifth] = triad(mode, chord, A4);
                 assert_eq!(fifth - root, 7);
                 let minor = match third - root {
@@ -381,14 +412,14 @@ mod tests {
                 format!("{}{minor}", name(root))
             })
         };
-        assert_eq!(chords(Mode::Ionian), ["A", "D", "E", "F#m"]);
+        assert_eq!(chords(Mode::Dorian), ["Am", "D", "Em", "G"]);
+        assert_eq!(chords(Mode::Mixolydian), ["A", "D", "Em", "G"]);
         assert_eq!(chords(Mode::Aeolian), ["Am", "Dm", "Em", "F"]);
-        for chord in VERSE_CHORDS
-            .iter()
-            .chain(&CHORUS_CHORDS)
-            .chain(&BRIDGE_CHORDS)
-        {
-            assert!([1, 4, 5, 6].contains(chord));
+        for mode in MODES {
+            let chords = mode.verse_chords().into_iter().chain(mode.chorus_chords());
+            for chord in chords.chain(BRIDGE_CHORDS) {
+                assert!([1, 4, 5, mode.color()].contains(&chord));
+            }
         }
     }
 
@@ -423,14 +454,16 @@ mod tests {
     #[test]
     fn no_note_rubs_against_the_root_of_its_chord() {
         for mode in MODES {
-            for (lines, chords) in [(VERSE, VERSE_CHORDS), (CHORUS, CHORUS_CHORDS)] {
+            let sections = [(VERSE, mode.verse_chords()), (CHORUS, mode.chorus_chords())];
+            for (lines, chords) in sections {
                 assert_eq!(rubs(mode, &lines, &chords), 0, "{mode:?}");
                 assert_eq!(rubs(mode, &skeletons(lines), &chords), 0, "{mode:?}");
                 assert_eq!(rubs(mode, &ornamented(lines), &chords), 0, "{mode:?}");
             }
         }
-        // The bridge is only played in Ionian.
-        assert_eq!(rubs(Mode::Ionian, &BRIDGE, &BRIDGE_CHORDS), 0);
+        // The bridge is never played in Aeolian.
+        assert_eq!(rubs(Mode::Dorian, &BRIDGE, &BRIDGE_CHORDS), 0);
+        assert_eq!(rubs(Mode::Mixolydian, &BRIDGE, &BRIDGE_CHORDS), 0);
     }
 
     #[test]
@@ -438,15 +471,18 @@ mod tests {
         // Without it, the last bar of the verse holds F over E minor.
         let mut plain = VERSE;
         plain[7] = MOTIF_A[1];
-        assert_eq!(rubs(Mode::Ionian, &plain, &VERSE_CHORDS), 0);
-        assert_eq!(rubs(Mode::Aeolian, &plain, &VERSE_CHORDS), 1);
+        assert_eq!(rubs(Mode::Dorian, &plain, &Mode::Dorian.verse_chords()), 0);
+        assert_eq!(
+            rubs(Mode::Aeolian, &plain, &Mode::Aeolian.verse_chords()),
+            1
+        );
     }
 
     #[test]
     fn every_instrument_stays_in_its_range() {
         let (e2, d3, d4, a5, b6) = (40, 50, 62, 81, 95);
         for mode in MODES {
-            for chord in [1, 4, 5, 6] {
+            for chord in [1, 4, 5, mode.color()] {
                 let root = bass_root(mode, chord);
                 assert!((e2..=d3).contains(&root), "bass on {chord}");
                 // The leaping bass goes an octave above its root.
@@ -471,7 +507,7 @@ mod tests {
             let cells = lines.iter().flatten();
             cells.map(|cell| cell.degree).max().unwrap()
         };
-        assert!(A4 + Mode::Ionian.semitones(highest(&VERSE)) <= a5);
-        assert!(A3 + Mode::Ionian.semitones(highest(&BRIDGE)) <= a5);
+        assert!(A4 + Mode::Mixolydian.semitones(highest(&VERSE)) <= a5);
+        assert!(A3 + Mode::Mixolydian.semitones(highest(&BRIDGE)) <= a5);
     }
 }

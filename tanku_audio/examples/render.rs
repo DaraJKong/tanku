@@ -4,17 +4,21 @@
 //! cargo run -p tanku_audio --example render
 //! ```
 //!
-//! The files go to `target/music`, or to the directory given after `--`:
+//! The files go to `target/music`, or to the directory given after `--`. The piece is written
+//! once in each of the two modes it may get, in the directories `dorian` and `mixolydian`:
 //!
 //! - `intro.wav` and `bridge.wav`: two turns of each loop;
-//! - `corridor_threat_0.wav` to `corridor_threat_4.wav`, and the same for `arena`: the verse
-//!   and the chorus of a fight at each threat;
-//! - `tour.wav`: three minutes of a made-up run, and `tour.txt`, which tells what happens in
-//!   it and when.
+//! - `corridor_threat_0.wav` to `corridor_threat_4.wav`: the verse and the chorus of a fight
+//!   in a corridor at each threat;
+//! - `tour.wav`: three minutes of a made-up run.
+//!
+//! Next to them, `arena_threat_0.wav` to `arena_threat_4.wav` are the fights of an arena,
+//! which sound the same whatever the mode of the piece, and `tour.txt` tells what happens in
+//! the tour and when.
 
 use std::{error::Error, fmt::Write, fs, path::PathBuf};
 
-use tanku_audio::{CHANNELS, Context, Music, Place, SAMPLE_RATE, music, music_from, wav};
+use tanku_audio::{CHANNELS, Context, Mode, Music, Place, SAMPLE_RATE, music, music_from, wav};
 
 /// Seconds in a bar.
 const BAR: f32 = 2.0;
@@ -122,39 +126,49 @@ const fn paused(place: Place, threat: u8) -> Context {
 fn main() -> Result<(), Box<dyn Error>> {
     let directory = std::env::args().nth(1).unwrap_or("target/music".into());
     let directory = PathBuf::from(directory);
-    fs::create_dir_all(&directory)?;
 
-    // Two turns of each loop, and the 16 bars of a fight.
-    let mut arrangements = vec![
-        ("intro".to_string(), at(Place::Bay)),
-        ("bridge".to_string(), at(Place::Corridor)),
-    ];
-    for (name, place) in [("corridor", Place::Corridor), ("arena", Place::Arena)] {
+    for (name, home) in [("dorian", Mode::Dorian), ("mixolydian", Mode::Mixolydian)] {
+        let directory = directory.join(name);
+        fs::create_dir_all(&directory)?;
+        // Two turns of each loop, and the 16 bars of a fight.
+        arrangement(home, at(Place::Bay), directory.join("intro.wav"))?;
+        arrangement(home, at(Place::Corridor), directory.join("bridge.wav"))?;
         for threat in 0..=4 {
-            arrangements.push((format!("{name}_threat_{threat}"), fight(place, threat)));
+            let file = directory.join(format!("corridor_threat_{threat}.wav"));
+            arrangement(home, fight(Place::Corridor, threat), file)?;
         }
-    }
-    for (name, context) in arrangements {
-        let (mut music, _conductor) = music_from(context);
+
+        let (mut music, conductor) = music(home);
         let mut frames = Vec::new();
-        play(&mut music, 16.0 * BAR, &mut frames);
-        wav::write(directory.join(format!("{name}.wav")), &frames)?;
+        for pair in TOUR.windows(2) {
+            conductor.set(pair[0].2);
+            play(&mut music, pair[1].0 - pair[0].0, &mut frames);
+        }
+        wav::write(directory.join("tour.wav"), &frames)?;
     }
 
-    let (mut music, conductor) = music();
-    let (mut frames, mut notes) = (Vec::new(), String::new());
-    for pair in TOUR.windows(2) {
-        let (start, label, context) = pair[0];
-        conductor.set(context);
-        play(&mut music, pair[1].0 - start, &mut frames);
+    // An arena sounds the same whatever the mode of the piece.
+    for threat in 0..=4 {
+        let file = directory.join(format!("arena_threat_{threat}.wav"));
+        arrangement(Mode::Dorian, fight(Place::Arena, threat), file)?;
+    }
+    let mut notes = String::new();
+    for (start, label, _) in &TOUR[..TOUR.len() - 1] {
         let (minutes, seconds) = ((start / 60.0) as u32, start % 60.0);
         writeln!(notes, "{minutes}:{seconds:04.1}  {label}")?;
     }
-    wav::write(directory.join("tour.wav"), &frames)?;
     fs::write(directory.join("tour.txt"), notes)?;
 
     println!("Wrote the music to {}", directory.display());
     Ok(())
+}
+
+/// Writes 16 bars of the music of a game that stays in one context.
+fn arrangement(home: Mode, context: Context, file: PathBuf) -> Result<(), Box<dyn Error>> {
+    let (mut music, _conductor) = music_from(home, context);
+    let mut frames = Vec::new();
+    play(&mut music, 16.0 * BAR, &mut frames);
+    Ok(wav::write(file, &frames)?)
 }
 
 /// Adds some seconds of music to what was played so far.

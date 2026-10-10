@@ -3,7 +3,7 @@
 use std::hint::black_box;
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use tanku_audio::{CHANNELS, Context, Place, SAMPLE_RATE, music_from};
+use tanku_audio::{CHANNELS, Context, Mode, Place, SAMPLE_RATE, music_from};
 
 fn render(criterion: &mut Criterion) {
     // The fullest arrangement: every instrument plays, and the lead plays in octaves.
@@ -17,7 +17,7 @@ fn render(criterion: &mut Criterion) {
     criterion.bench_function(
         "ten seconds of a fight in an arena at threat 4",
         |bencher| {
-            let mut music = music_from(fullest).0;
+            let mut music = music_from(Mode::Dorian, fullest).0;
             bencher.iter(|| music.render(black_box(&mut frames)));
         },
     );

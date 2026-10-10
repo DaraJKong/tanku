@@ -16,6 +16,7 @@ use std::sync::{
 
 use director::Director;
 pub use director::{Context, Place};
+pub use score::Mode;
 use synth::Synth;
 
 /// Frames of music per second.
@@ -29,15 +30,17 @@ pub const fn frame_of(step: u64) -> u64 {
     step * 11_025 / 2
 }
 
-/// The music from its start, in the main menu, and the conductor that goes with it.
-pub fn music() -> (Music, Conductor) {
-    with(Director::default(), Context::default())
+/// The music from its start, in the main menu, and the conductor that goes with it. `home` is
+/// the mode of the piece, Dorian or Mixolydian, for as long as the choice between them is
+/// open.
+pub fn music(home: Mode) -> (Music, Conductor) {
+    with(Director::new(home), Context::default())
 }
 
 /// The music of a game that has been in a context for a long time: it starts in the section
 /// of that context, and nothing announces it.
-pub fn music_from(context: Context) -> (Music, Conductor) {
-    with(Director::settled(context), context)
+pub fn music_from(home: Mode, context: Context) -> (Music, Conductor) {
+    with(Director::settled(home, context), context)
 }
 
 fn with(director: Director, context: Context) -> (Music, Conductor) {
