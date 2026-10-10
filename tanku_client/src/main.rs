@@ -10,6 +10,7 @@ mod input;
 mod menu;
 mod models;
 mod ruler;
+mod scars;
 mod scene;
 mod settings;
 mod storage;
@@ -75,6 +76,7 @@ fn main() {
             scene::plugin,
             models::plugin,
             effects::plugin,
+            scars::plugin,
             hud::plugin,
             tags::plugin,
             ruler::plugin,

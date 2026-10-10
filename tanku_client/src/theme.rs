@@ -31,6 +31,8 @@ pub const CRATE: Color = hex(0x371719);
 pub const CRATE_SIDE: Color = hex(0x2A1214);
 /// The parts of a tank that aren't in its color: tracks, barrel, drum and vents.
 pub const DARK_METAL: Color = hex(0x0B1119);
+/// The marks that a fight leaves on the floor, which are fainter than the drawing itself.
+pub const SCAR: Color = hex(0x8FA6C4);
 
 /// The hue reserved for the first player. No enemy uses it.
 pub const PLAYER: Color = hex(0x2980F2);

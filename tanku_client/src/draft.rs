@@ -212,6 +212,11 @@ impl Draft {
         }
     }
 
+    /// Whether nothing was drawn.
+    pub fn is_empty(&self) -> bool {
+        self.positions.is_empty()
+    }
+
     pub fn build(self) -> Mesh {
         let count = self.positions.len();
         Mesh::new(

@@ -3,13 +3,13 @@
 //! `TANKU_DEV_SCRIPT` holds commands separated by semicolons, run one after the other:
 //! `start SEED`, `wait SECONDS`, `warp SECTOR`, `turn QUARTERS`, `peek ENEMY`, `flag SECTOR`,
 //! `look X Y`, `zoom METERS`, `clear`, `reach`, `bubble`, `die`, `pause`, `settings`, `resume`,
-//! `lose`, `shot PATH` and `quit`, plus `play DX DY AX AY SECONDS`, which drives the tank in a
-//! direction while it fires at a point relative to itself, `press LABEL`, which presses the
-//! button of a menu that bears this label, in capitals or not, `lineup`, which lays out one
-//! bullet of each kind next to the tank, `showcase STAT`, which lines up in the start bay one
-//! tank for each level of a stat, and `palette`, which lines up there three tanks of each hue,
-//! from a weak one to a strong one. It is how the game is looked at without anyone at the
-//! keyboard.
+//! `lose`, `blast X Y`, which sets off a mine at a point of the map, `shot PATH` and `quit`,
+//! plus `play DX DY AX AY SECONDS`, which drives the tank in a direction while it fires at a
+//! point relative to itself, `press LABEL`, which presses the button of a menu that bears this
+//! label, in capitals or not, `lineup`, which lays out one bullet of each kind next to the
+//! tank, `showcase STAT`, which lines up in the start bay one tank for each level of a stat,
+//! and `palette`, which lines up there three tanks of each hue, from a weak one to a strong
+//! one. It is how the game is looked at without anyone at the keyboard.
 //!
 //! A scripted run opens no window: it draws into an image, which `shot` saves. It makes no
 //! sound, starts from the default settings and leaves the player's files alone.
@@ -30,8 +30,8 @@ use bevy::{
 };
 use tanku_core::{
     sim::{
-        Bullet, Enemy, Flag, Motion, Player, Position, PreviousPosition, Run, RunPhase, RunRequest,
-        Shield, ShieldState, SimEvent, Tank, TankCommand, Team,
+        Bullet, Enemy, Flag, Mine, MineState, Motion, Player, Position, PreviousPosition, Run,
+        RunPhase, RunRequest, Shield, ShieldState, SimEvent, Tank, TankCommand, Team,
     },
     stats::{Genome, Stat},
 };
@@ -391,6 +391,21 @@ fn run_script(
                 Vec2::new(number(3), number(4)),
             );
             script.play = Some((drive, aim, number(5)));
+        }
+        // Sets off a mine of the player at a point of the map, in the sector the player is in.
+        "blast" => {
+            if let (Ok((owner, _)), Some(run)) = (player.single(), run.as_ref()) {
+                commands.spawn((
+                    Mine {
+                        owner,
+                        team: Team::Players,
+                        sector: run.sector,
+                        state: MineState::Triggered(0.0),
+                    },
+                    Position(Vec2::new(number(1), number(2))),
+                    InSector(run.sector),
+                ));
+            }
         }
         // Ends the run as the loss of the last life does.
         "lose" => {

@@ -222,7 +222,7 @@ pub fn ink() -> StandardMaterial {
 }
 
 /// A flat color, see-through if it has an alpha.
-fn paint(materials: &mut Assets<StandardMaterial>, color: Color) -> Handle<StandardMaterial> {
+pub fn paint(materials: &mut Assets<StandardMaterial>, color: Color) -> Handle<StandardMaterial> {
     materials.add(StandardMaterial {
         base_color: color,
         alpha_mode: if color.alpha() < 1.0 {
@@ -236,7 +236,7 @@ fn paint(materials: &mut Assets<StandardMaterial>, color: Color) -> Handle<Stand
     })
 }
 
-fn setup(
+pub fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
