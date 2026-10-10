@@ -68,7 +68,7 @@ The corridor is a chain of sectors. Each sector holds one group of enemies and e
 1. Bullets and blasts never pass a barrier, and enemies never cross one.
 2. A barrier unlocks when every enemy in its sector is destroyed and every living player is within 8 m of it. It then stays unlocked.
 3. Players cross an unlocked barrier forward only.
-4. The enemies of a sector are dormant until the first player crosses into it. Dormant enemies are visible through the barrier. Until then, the sector and its enemies are drawn darker than the rest of the corridor.
+4. The enemies of a sector are dormant until the first player crosses into it. Dormant enemies are visible through the barrier. Until then, the sector is drawn darker than the rest of the corridor, and its enemies are outlines in dashes.
 
 These rules let the players study the next group, pick the moment to engage and enter together. They also rule out both driving past enemies and fighting from a doorway. When the last living player has crossed, any wreck left behind is towed across and the sectors further back are unloaded. When two or fewer enemies remain in a sector, markers at the screen edge point to them. Each end of a barrier bears a tag with the numbers of the two sectors it parts, and a caption says whether the barrier is locked or open.
 
@@ -91,7 +91,7 @@ The count starts over in each row. After sector 8, the flags are therefore in se
 
 ### Multiplayer
 
-Multiplayer has no lives and no checkpoints. A destroyed player tank becomes a wreck, and its player watches a living teammate until repaired. The run ends when all players are wrecked at the same time. Repairs are unlimited but slow, which makes them safe between fights and risky during one (see [Repair](#repair)).
+Multiplayer has no lives and no checkpoints. A destroyed player tank becomes a wreck, and its player watches a living teammate until repaired. The run ends when all players are wrecked at the same time. Repairs are unlimited but slow, which makes them safe between fights and risky during one (see [Repair](#repair)). A wreck is drawn as the outline of its tank in dashes.
 
 Enemy groups grow with the number of players (see [Progression](#progression)). The map doesn't change.
 
@@ -437,6 +437,8 @@ North is at the top of the screen by default. A player can rotate their own view
 ### Visual style
 
 The game is drawn as a technical drawing on a dark sheet, and nothing is lit: a solid shows its height by its darker sides. The floor carries a grid with a line every meter and a heavier one every 5 m. Walls are bands between two pale lines, destructible blocks are hatched and explosive crates are crossed in red. Tanks are assembled from parts by the game, not modeled by hand: the body is in the tank's color, and the other parts are dark and edged in pale lines. Bullets are the brightest objects on screen, in one color for the players' bullets and another for the enemies', and each leaves a short line behind it and a patch of light on the floor. A bullet is an elongated shell with one dark stripe for each bounce it has left: it loses a stripe at every bounce, and a plain bullet won't bounce again. The void outside the corridor is empty and dark.
+
+A line in dashes stands for what isn't there. A dormant enemy is the outline of its tank in dashes, flat on the floor and in its color, with every part that tells a stat. A bullet that is destroyed leaves a short burst of strokes in its color.
 
 A fight leaves marks on the floor: a scalloped outline where a blast went off, a square in dashes where it took a block away, and a cross where a tank was destroyed. They last as long as their sector is loaded.
 
