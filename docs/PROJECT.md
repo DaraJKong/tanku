@@ -420,6 +420,7 @@ Players get a random seed, or type their own once that option is unlocked. A see
 | Map: walls, blocks, crates, barriers | Seed, version | Identical on every platform |
 | Enemies: number, genomes, positions | Seed, version, mode, number of players | Identical on every platform |
 | Enemy behavior | All of the above and the players' actions | Not guaranteed to repeat |
+| Music: notes, patterns, sounds | Version | Identical on every platform |
 | Effects: particles, camera shake | Nothing | Random |
 
 Solo and co-op players on the same seed therefore drive through the same map, on a desktop or in a browser. A new game version may change what a seed generates, so seeds and records always show their version.
@@ -461,7 +462,9 @@ The game opens in full screen the first time. After that, it opens the way the p
 
 ### Audio
 
-Sound carries information the eyes can miss: a shot fired off screen, a ricochet, a mine about to blow, a shield overloading. A basic set of such cues arrives with the solo loop (M4), in time for the first real playtest. Music and the full sound pass come later.
+Sound carries information the eyes can miss: a shot fired off screen, a ricochet, a mine about to blow, a shield overloading. A basic set of such cues arrives with the solo loop (M4), in time for the first real playtest. The full sound pass comes later.
+
+The music is one piece that never stops, made by the game as it plays, the same for every seed and on every platform. Its drums and its mode follow the place and the fight, and its melody follows the highest brain tier awake. It never covers a cue. Its specification is in [MUSIC.md](MUSIC.md).
 
 ### Accessibility
 
@@ -500,7 +503,7 @@ Each milestone is playable and answers a question. From M1 on, the game runs as 
 | M6, Modes | Achievements, chosen seed, free mode, hard mode, brain tiers 3 and 4 | Do the unlocks give reasons to come back? |
 | M7, Impossible mode | An experiment: enemies bred from the tanks that did best against the players | Do players feel the enemies adapting to them, and is it fun? |
 
-Later, in no fixed order: controller support, local co-op on one screen (split screen, or one camera that follows all players), music and the full sound pass, interface polish and more options, a performance pass, the official server, new bullet types (splitting, seeking, exploding), and brains that learn (see [Impossible mode](#impossible-mode)).
+Later, in no fixed order: controller support, local co-op on one screen (split screen, or one camera that follows all players), the full sound pass, interface polish and more options, a performance pass, the official server, new bullet types (splitting, seeking, exploding), and brains that learn (see [Impossible mode](#impossible-mode)).
 
 ## Open questions
 
