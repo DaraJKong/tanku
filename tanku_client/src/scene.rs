@@ -526,6 +526,7 @@ pub fn place(
 
 #[cfg(test)]
 mod tests {
+    use bevy::mesh::VertexAttributeValues;
     use tanku_core::map::Corridor;
 
     use super::*;
@@ -554,6 +555,77 @@ mod tests {
                 (covered - area(&outline)).abs() < 0.01,
                 "seed {seed}, sector {index}"
             );
+        }
+    }
+
+    /// The triangles of a bullet, and whether each is part of a stripe.
+    fn bullet_triangles(pointed: bool, stripes: u8) -> Vec<([Vec3; 3], bool)> {
+        let mesh = bullet_mesh(pointed, stripes);
+        let positions = mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap();
+        let Some(VertexAttributeValues::Float32x4(colors)) = mesh.attribute(Mesh::ATTRIBUTE_COLOR)
+        else {
+            panic!("a bullet has vertex colors");
+        };
+        let corners = positions.as_float3().unwrap().chunks(3);
+        corners
+            .zip(colors.chunks(3))
+            .map(|(corners, colors)| {
+                let corners = [corners[0], corners[1], corners[2]].map(Vec3::from);
+                (corners, colors[0] == STRIPE_COLOR)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn bullets_show_one_stripe_for_each_bounce_left() {
+        for (pointed, stripes) in [false, true]
+            .into_iter()
+            .flat_map(|pointed| (0..=3u8).map(move |stripes| (pointed, stripes)))
+        {
+            // The dark stretches along the axis, joined where they touch.
+            let mut dark: Vec<(f32, f32)> = bullet_triangles(pointed, stripes)
+                .into_iter()
+                .filter(|(_, striped)| *striped)
+                .map(|(corners, _)| {
+                    let along = corners.map(|corner| corner.x);
+                    (
+                        along.into_iter().fold(f32::MAX, f32::min),
+                        along.into_iter().fold(f32::MIN, f32::max),
+                    )
+                })
+                .collect();
+            dark.sort_by(|a, b| a.0.total_cmp(&b.0));
+            let mut bands: Vec<(f32, f32)> = Vec::new();
+            for (from, to) in dark {
+                match bands.last_mut() {
+                    Some(band) if from <= band.1 + 1e-4 => band.1 = band.1.max(to),
+                    _ => bands.push((from, to)),
+                }
+            }
+            assert_eq!(bands.len(), stripes as usize);
+
+            // Stripes have the same width, are evenly spaced and centered on the bullet.
+            let centers: Vec<f32> = bands.iter().map(|band| (band.0 + band.1) / 2.0).collect();
+            assert!(centers.iter().sum::<f32>().abs() < 1e-4);
+            for band in &bands {
+                assert!((band.1 - band.0 - STRIPE_WIDTH).abs() < 1e-4);
+            }
+            for pair in centers.windows(2) {
+                assert!((pair[1] - pair[0] - STRIPE_WIDTH - STRIPE_GAP).abs() < 1e-4);
+            }
+        }
+    }
+
+    #[test]
+    fn bullets_show_their_outside() {
+        // A face is drawn from the side on which its corners turn counterclockwise.
+        for pointed in [false, true] {
+            for (corners, _) in bullet_triangles(pointed, 2) {
+                let facing = (corners[1] - corners[0]).cross(corners[2] - corners[0]);
+                let center = (corners[0] + corners[1] + corners[2]) / 3.0;
+                let away_from_axis = Vec3::new(0.0, center.y, center.z);
+                assert!(facing.dot(away_from_axis) > 0.0, "{corners:?}");
+            }
         }
     }
 
