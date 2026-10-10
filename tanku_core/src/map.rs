@@ -246,7 +246,7 @@ impl<'a> Walk<'a> {
         }
     }
 
-    fn fits(&self, left: Change, right: Change) -> bool {
+    fn fits(&self, left: Change, right: Change, dv: i32) -> bool {
         let (l, r) = (self.l + left.shift(), self.r + right.shift());
         // A step moves its wall at once, a ramp within 3 m and a slant little by little, so the
         // width is checked where the changes start as well as where they end.
@@ -264,6 +264,39 @@ impl<'a> Walk<'a> {
             && fitting(l, r)
             && l >= self.reach.0
             && r <= self.reach.1
+            && self.apart(
+                &Self::corners(self.l, self.v, dv, left),
+                &Self::corners(self.r, self.v, dv, right),
+            )
+    }
+
+    /// Whether the two walls stay apart once these corners are added to them.
+    ///
+    /// Widths are measured straight across, but a wall that has moved away leaves a corner
+    /// behind, and the other wall may come in beside it a few meters further on. The walls
+    /// keep the distance of two walls at 45 degrees in the narrowest corridor of the sector.
+    fn apart(&self, new_left: &[(i32, i32)], new_right: &[(i32, i32)]) -> bool {
+        // In half meters, so that the squared distance stays an integer.
+        let gap_2 = 2 * (self.width.0 as i64).pow(2);
+        let wall = |old: &[(i32, i32)], new: &[(i32, i32)]| -> Vec<IVec2> {
+            let corners = old.iter().chain(new);
+            corners.map(|&(u, v)| IVec2::new(u, v) * 2).collect()
+        };
+        let sides = [
+            (wall(&self.left, new_left), self.left.len()),
+            (wall(&self.right, new_right), self.right.len()),
+        ];
+        // The closest points of two walls include a corner of one of them. What was there
+        // before this step was checked when it was added.
+        [(0, 1), (1, 0)].into_iter().all(|(a, b)| {
+            let ((wall, old_wall), (corners, old_corners)) = (&sides[a], &sides[b]);
+            wall.windows(2).enumerate().all(|(i, ends)| {
+                corners.iter().enumerate().all(|(j, &corner)| {
+                    (i + 1 < *old_wall && j < *old_corners)
+                        || far_from_segment(corner, ends[0], ends[1], gap_2)
+                })
+            })
+        })
     }
 
     /// Moves forward by `dv`, with a random change on each wall that may move.
@@ -272,28 +305,38 @@ impl<'a> Walk<'a> {
         for _ in 0..4 {
             let left = self.draw_change(self.moves.0, dv);
             let right = self.draw_change(self.moves.1, dv);
-            if self.fits(left, right) {
+            if self.fits(left, right, dv) {
                 changes = (left, right);
                 break;
             }
         }
-        Self::apply(&mut self.left, &mut self.l, self.v, dv, changes.0);
-        Self::apply(&mut self.right, &mut self.r, self.v, dv, changes.1);
+        self.take(changes.0, changes.1, dv);
+    }
+
+    /// Moves forward by `dv` with these changes.
+    fn take(&mut self, left: Change, right: Change, dv: i32) {
+        self.left.extend(Self::corners(self.l, self.v, dv, left));
+        self.right.extend(Self::corners(self.r, self.v, dv, right));
+        self.l += left.shift();
+        self.r += right.shift();
         self.v += dv;
     }
 
-    fn apply(wall: &mut Vec<(i32, i32)>, u: &mut i32, v: i32, dv: i32, change: Change) {
-        *u += change.shift();
+    /// The corners that a change adds to a wall that is at `u` where the step starts, at `v`.
+    fn corners(u: i32, v: i32, dv: i32, change: Change) -> Vec<(i32, i32)> {
+        let end = u + change.shift();
+        let mut corners = Vec::with_capacity(2);
         match change {
-            Change::Step(_) => wall.push((*u, v)),
+            Change::Step(_) => corners.push((end, v)),
             Change::Ramp(du) => {
                 let run = du.abs() / 2;
                 debug_assert!(run < dv, "a ramp ends before its step does");
-                wall.push((*u, v + run));
+                corners.push((end, v + run));
             }
             Change::None | Change::Slant(_) => {}
         }
-        wall.push((*u, v + dv));
+        corners.push((end, v + dv));
+        corners
     }
 
     /// Advances to `end` in steps of 4 to 8 m.
@@ -1059,6 +1102,46 @@ mod tests {
         }
     }
 
+    /// Whether the walls before the barrier of a sector, along its outline, and the walls after
+    /// it stay 5.66 m apart. The path check needs a little less: a lattice path that keeps
+    /// 1.8 m from both sides exists wherever they are 5 m apart.
+    fn sides_stay_apart(plan: &SectorPlan) -> bool {
+        let corner = |wanted: IVec2| plan.outline.iter().position(|&point| point == wanted);
+        let (before, after) = (corner(plan.gate.0).unwrap(), corner(plan.gate.1).unwrap());
+        assert_eq!(before + 1, after, "sector {}", plan.index);
+        let sides = [&plan.outline[..=before], &plan.outline[after..]];
+        [(0, 1), (1, 0)].into_iter().all(|(a, b)| {
+            sides[a].windows(2).all(|ends| {
+                sides[b]
+                    .iter()
+                    .all(|&corner| far_from_segment(corner * 2, ends[0] * 2, ends[1] * 2, 128))
+            })
+        })
+    }
+
+    #[test]
+    fn the_two_sides_of_a_sector_stay_apart() {
+        for corridor in corridors() {
+            for plan in &corridor.plans {
+                assert!(sides_stay_apart(plan), "sector {}", plan.index);
+            }
+        }
+    }
+
+    /// The same over six thousand seeds, which takes ten seconds. It runs with the other wide
+    /// check: `cargo test -p tanku_core many_seeds -- --ignored`.
+    #[test]
+    #[ignore]
+    fn sides_stay_apart_for_many_seeds() {
+        for seed in 2000..8000 {
+            let mut corridor = Corridor::new(seed);
+            corridor.plan(SECTORS);
+            for plan in &corridor.plans {
+                assert!(sides_stay_apart(plan), "seed {seed}, sector {}", plan.index);
+            }
+        }
+    }
+
     /// Checks what the generator promises about the inside of one sector.
     fn check_layout(seed: u64, layout: &SectorLayout) {
         let plan = &layout.plan;
@@ -1149,15 +1232,28 @@ mod tests {
         // starts to slant away leaves 6 m where the step is, whatever the width further on.
         let mut rng = Stream::new(0, Purpose::Shape, 0, 0);
         let walk = Walk::new(&mut rng, 10, 57, &Spec::corridor(Exit::Ahead, DRIFT));
-        assert!(walk.fits(Change::None, Change::Slant(4)));
-        assert!(walk.fits(Change::Step(2), Change::Slant(4)));
-        assert!(!walk.fits(Change::Step(4), Change::Slant(4)));
-        assert!(!walk.fits(Change::Slant(-4), Change::Step(-4)));
+        assert!(walk.fits(Change::None, Change::Slant(4), 4));
+        assert!(walk.fits(Change::Step(2), Change::Slant(4), 4));
+        assert!(!walk.fits(Change::Step(4), Change::Slant(4), 4));
+        assert!(!walk.fits(Change::Slant(-4), Change::Step(-4), 4));
         // A ramp is as sudden as a step.
-        assert!(walk.fits(Change::Ramp(2), Change::Slant(4)));
-        assert!(!walk.fits(Change::Ramp(4), Change::Slant(4)));
-        assert!(!walk.fits(Change::Ramp(4), Change::None));
-        assert!(walk.fits(Change::Ramp(-4), Change::None));
+        assert!(walk.fits(Change::Ramp(2), Change::Slant(4), 4));
+        assert!(!walk.fits(Change::Ramp(4), Change::Slant(4), 4));
+        assert!(!walk.fits(Change::Ramp(4), Change::None, 4));
+        assert!(walk.fits(Change::Ramp(-4), Change::None, 4));
+    }
+
+    #[test]
+    fn a_wall_keeps_clear_of_the_corner_the_other_one_left_behind() {
+        // In a corridor 8 m wide, the left wall falls back by 6 m and leaves its old corner
+        // where it was. Four meters further on, the right wall is 12 m from the left one and
+        // could come in by 4 m, but that would bring it within 4.5 m of the corner.
+        let mut rng = Stream::new(0, Purpose::Shape, 0, 0);
+        let mut walk = Walk::new(&mut rng, 8, 57, &Spec::corridor(Exit::Ahead, DRIFT));
+        assert!(walk.fits(Change::Ramp(-6), Change::Slant(-2), 4));
+        walk.take(Change::Ramp(-6), Change::Slant(-2), 4);
+        assert!(walk.fits(Change::None, Change::Step(-2), 4));
+        assert!(!walk.fits(Change::None, Change::Step(-4), 4));
     }
 
     #[test]
