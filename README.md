@@ -143,7 +143,7 @@ The music is specified in [docs/MUSIC.md](docs/MUSIC.md). It doesn't play in the
 cargo run -p tanku_audio --example render
 ```
 
-The files go to `target/music`, or to the directory given after `--`. The mode of the piece is still to be chosen between two, so the piece is written once for each, in the directories `dorian` and `mixolydian`:
+The files go to `target/music`, or to the directory given after `--`. The mode of the piece is still to be chosen between two, so the piece is written once for each, with the name of the mode in front, as in `dorian_tour.wav` and `mixolydian_tour.wav`:
 
 | File | Content |
 |---|---|
@@ -151,7 +151,7 @@ The files go to `target/music`, or to the directory given after `--`. The mode o
 | `corridor_threat_0.wav` to `corridor_threat_4.wav` | The verse and the chorus of a fight in a corridor, at each threat |
 | `tour.wav` | Three minutes of a made-up run |
 
-Next to the two directories are the files that don't depend on that choice:
+The files that don't depend on that choice are written once:
 
 | File | Content |
 |---|---|
