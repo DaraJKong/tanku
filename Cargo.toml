@@ -11,9 +11,7 @@ license = "MIT OR Apache-2.0"
 [workspace.dependencies]
 # Bevy stays on 0.19 until lightyear supports 0.20.
 bevy = { version = "0.19", default-features = false }
-bevy_rand = { version = "0.15", features = ["wyrand"] }
 lightyear = "0.30"
-rand = "0.10"
 tanku_core = { path = "tanku_core" }
 # Without default features, so that a release client doesn't inherit the server's development ones.
 tanku_server = { path = "tanku_server", default-features = false }
