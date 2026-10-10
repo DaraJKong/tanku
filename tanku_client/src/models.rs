@@ -58,6 +58,12 @@ pub fn enemy_color(genome: &Genome) -> Color {
     Color::hsl(hue, 0.2 + 0.75 * strength, 0.66 - 0.2 * strength)
 }
 
+/// The color of the sight and of the tip of the barrel: a light tint of the hue of the body.
+/// These parts glow, which makes them paler still.
+fn accent_color(body: Color) -> Color {
+    Color::hsl(Hsla::from(body).hue, 1.0, 0.75)
+}
+
 /// Radius of the turret: small turrets turn fast.
 fn turret_radius(genome: &Genome) -> f32 {
     0.56 - 0.035 * genome.level(Stat::Turret) as f32
@@ -154,9 +160,9 @@ fn build(
                 ..default()
             })
         };
-        let (white, red, shield) = (
+        let (white, accent, shield) = (
             light(Color::WHITE),
-            light(theme::DANGER),
+            light(accent_color(color)),
             light(theme::SHIELD),
         );
         let bubble = materials.add(StandardMaterial {
@@ -266,7 +272,7 @@ fn build(
                                 rotation: Quat::from_rotation_z(-FRAC_PI_2),
                                 scale: Vec3::new(0.2, 0.32, 0.2),
                             };
-                            turret.part(&shapes.cone, &red, transform);
+                            turret.part(&shapes.cone, &accent, transform);
                         }
                         // Magazine: a drum behind the turret, one segment per round.
                         for round in 0..genome.magazine() {
@@ -288,7 +294,8 @@ fn build(
                         let lenses = genome.ballistics();
                         for lens in 0..lenses {
                             let across = (lens as f32 - (lenses as f32 - 1.0) / 2.0) * 0.17;
-                            turret.tube(&red, Vec3::new(radius * 0.45, 0.38, across), 0.055, 0.14);
+                            let center = Vec3::new(radius * 0.45, 0.38, across);
+                            turret.tube(&accent, center, 0.055, 0.14);
                         }
                     });
 
@@ -377,6 +384,17 @@ fn shield(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_sight_and_the_tip_are_paler_than_the_body_and_of_its_hue() {
+        // Hard mode has the largest budgets.
+        let enemies = (0..=130).map(|budget| enemy_color(&Genome::empty(budget)));
+        for body in enemies.chain([theme::PLAYER]) {
+            let (body, accent) = (Hsla::from(body), Hsla::from(accent_color(body)));
+            assert_eq!(accent.hue, body.hue);
+            assert!(accent.lightness > body.lightness + 0.05, "{body:?}");
+        }
+    }
 
     #[test]
     fn the_edge_of_a_shield_grows_with_its_level_and_stays_thin() {
