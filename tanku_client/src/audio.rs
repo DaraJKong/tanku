@@ -167,7 +167,7 @@ fn play(
                 team: Team::Enemies,
             } => (&cues.enemy_shot, Some(at)),
             SimEvent::Ricochet { at } => (&cues.ricochet, Some(at)),
-            SimEvent::BulletDestroyed { at } => (&cues.pop, Some(at)),
+            SimEvent::BulletDestroyed { at, .. } => (&cues.pop, Some(at)),
             SimEvent::MinePlaced { at } => (&cues.mine_placed, Some(at)),
             SimEvent::MineTriggered { at } => (&cues.mine_triggered, Some(at)),
             SimEvent::Blast { at } | SimEvent::TankDestroyed { at, .. } => (&cues.blast, Some(at)),

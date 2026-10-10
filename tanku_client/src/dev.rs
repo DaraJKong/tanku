@@ -7,7 +7,8 @@
 //! `quit`, plus `play DX DY AX AY SECONDS`, which drives the tank in a direction while it fires
 //! at a point relative to itself, `press LABEL`, which presses the button of a menu that bears
 //! this label, in capitals or not, `lineup`, which lays out one bullet of each kind next to the
-//! tank, `showcase STAT`, which lines up in the start bay one tank for each level of a stat,
+//! tank, `pierce`, which sends a piercing bullet at a bullet of the players there,
+//! `showcase STAT`, which lines up in the start bay one tank for each level of a stat,
 //! `palette`, which lines up there three tanks of each hue, from a weak one to a strong one,
 //! and `doze`, which puts the tanks that are lined up to sleep. It is how the game is looked
 //! at without anyone at the keyboard.
@@ -464,6 +465,33 @@ fn run_script(
                         InSector(run.sector),
                     ));
                 }
+            }
+        }
+        // Sends a piercing bullet of the enemies at a bullet of the players, north of the tank.
+        "pierce" => {
+            let (Ok((owner, position)), Some(run)) = (player.single(), run.as_ref()) else {
+                return;
+            };
+            let position = *position;
+            let shots = [
+                (Team::Enemies, 1, Vec2::new(-3.25, 3.0), Vec2::X * 3.0),
+                (Team::Players, 0, Vec2::new(0.5, 3.0), Vec2::X * 0.01),
+            ];
+            for (team, pierces_left, offset, velocity) in shots {
+                commands.spawn((
+                    Bullet {
+                        owner,
+                        team,
+                        sector: run.sector,
+                        velocity,
+                        bounces_left: 1,
+                        pierces_left,
+                        bounced: false,
+                    },
+                    Position(position.0 + offset),
+                    PreviousPosition(position.0 + offset),
+                    InSector(run.sector),
+                ));
             }
         }
         "pause" => overlay.set(Overlay::Pause),

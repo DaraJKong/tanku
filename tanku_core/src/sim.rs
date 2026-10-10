@@ -256,7 +256,7 @@ pub enum SimEvent {
     RunOver,
     Shot { at: Vec2, team: Team },
     Ricochet { at: Vec2 },
-    BulletDestroyed { at: Vec2 },
+    BulletDestroyed { at: Vec2, team: Team },
     MinePlaced { at: Vec2 },
     MineTriggered { at: Vec2 },
     Blast { at: Vec2 },

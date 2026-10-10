@@ -1,6 +1,10 @@
 //! Short-lived effects: blasts, sparks and flashes.
 //!
-//! Each one is a circle that is drawn in the air, grows to its full size and closes again.
+//! Most are a circle that is drawn in the air, grows to its full size and closes again. A
+//! bullet that is destroyed leaves a burst of short strokes in its color instead: they shoot
+//! out from where it was, then shorten until nothing is left.
+
+use std::f32::consts::TAU;
 
 use bevy::prelude::*;
 use tanku_core::{
@@ -13,6 +17,19 @@ use crate::{camera::View, draft::Draft, scene, theme};
 /// How much of the radius of a burst its line takes, and how see-through its inside is.
 const LINE_SHARE: f32 = 0.12;
 const FILL: f32 = 0.22;
+/// The strokes that a destroyed bullet leaves: how many, how far from the place of the bullet
+/// they start and end, and how wide they are.
+const STROKES: usize = 8;
+const STROKE_REACH: (f32, f32) = (0.15, 0.35);
+const STROKE_WIDTH: f32 = 0.05;
+/// How long the strokes last, and the share of that time they take to shoot out.
+const STROKE_LIFE: f32 = 0.22;
+const STROKE_RISE: f32 = 0.35;
+/// The drawings that the strokes go through, one after the other.
+const STROKE_FRAMES: usize = 12;
+/// Height at which the strokes are drawn: just over the bullets, so that the one that flies
+/// on through a bullet it has pierced doesn't hide them.
+const STROKE_HEIGHT: f32 = 1.05;
 
 /// A circle that grows to its full size, then shrinks to nothing.
 #[derive(Component)]
@@ -20,6 +37,12 @@ struct Burst {
     age: f32,
     life: f32,
     size: f32,
+}
+
+/// The strokes that a destroyed bullet leaves.
+#[derive(Component)]
+struct Strokes {
+    age: f32,
 }
 
 /// The color of a burst: its line, and the faint fill inside it.
@@ -37,11 +60,40 @@ struct Glows {
     spark: Glow,
     cold: Glow,
     good: Glow,
+    /// The strokes of a destroyed bullet, from the first drawing to the last.
+    strokes: Vec<Handle<Mesh>>,
+    /// What they are drawn with: the color of the players' bullets, and of the enemies'.
+    stroke_paints: (Handle<StandardMaterial>, Handle<StandardMaterial>),
 }
 
 pub fn plugin(app: &mut App) {
     app.add_systems(Startup, setup)
-        .add_systems(Update, (spawn, animate).chain());
+        .add_systems(Update, (spawn, (animate, fly_apart)).chain());
+}
+
+/// Where the strokes of a destroyed bullet start and end at this share of their life. They
+/// shoot out to their full length, fast at first, then shorten from the inside.
+fn stroke_ends(progress: f32) -> (f32, f32) {
+    let (inner, outer) = STROKE_REACH;
+    if progress < STROKE_RISE {
+        let left = 1.0 - progress / STROKE_RISE;
+        (inner, outer - (outer - inner) * left * left)
+    } else {
+        let gone = (progress - STROKE_RISE) / (1.0 - STROKE_RISE);
+        (inner + (outer - inner) * gone.min(1.0), outer)
+    }
+}
+
+/// The strokes of a destroyed bullet at this share of their life: a star lying flat.
+fn strokes(progress: f32) -> Draft {
+    let mut draft = Draft::default();
+    let (inner, outer) = stroke_ends(progress);
+    for stroke in 0..STROKES {
+        let (sin, cos) = (stroke as f32 / STROKES as f32 * TAU).sin_cos();
+        let along = Vec3::new(cos, 0.0, sin);
+        draft.line(along * inner, along * outer, STROKE_WIDTH, Color::WHITE);
+    }
+    draft
 }
 
 fn setup(
@@ -68,6 +120,12 @@ fn setup(
         glow(theme::PLAYER_BULLET),
         glow(theme::GOOD),
     );
+    let stroke_paints = (paint(theme::PLAYER_BULLET), paint(theme::ENEMY_BULLET));
+    // Each drawing stands for the middle of its share of the life of the strokes.
+    let frames = (0..STROKE_FRAMES).map(|frame| (frame as f32 + 0.5) / STROKE_FRAMES as f32);
+    let strokes = frames
+        .map(|progress| meshes.add(strokes(progress).build()))
+        .collect();
     let mut circle = Draft::default();
     circle.ring(
         Vec3::ZERO,
@@ -84,6 +142,8 @@ fn setup(
         spark,
         cold,
         good,
+        strokes,
+        stroke_paints,
     });
 }
 
@@ -94,6 +154,19 @@ fn spawn(
     glows: Res<Glows>,
 ) {
     for event in events.read() {
+        if let SimEvent::BulletDestroyed { at, team } = *event {
+            let paint = match team {
+                Team::Players => &glows.stroke_paints.0,
+                Team::Enemies => &glows.stroke_paints.1,
+            };
+            commands.spawn((
+                Strokes { age: 0.0 },
+                Mesh3d(glows.strokes[0].clone()),
+                MeshMaterial3d(paint.clone()),
+                Transform::from_translation(scene::to_world(at, STROKE_HEIGHT)),
+            ));
+            continue;
+        }
         let (at, height, size, life, glow) = match *event {
             SimEvent::Blast { at } => (at, 0.6, 2.0 * BLAST_RADIUS, 0.45, &glows.fire),
             SimEvent::TankDestroyed { at, .. } => (at, 0.6, 3.2, 0.5, &glows.fire),
@@ -106,7 +179,6 @@ fn spawn(
                 (at, 0.8, 0.7, 0.1, glow)
             }
             SimEvent::Ricochet { at } => (at, 0.8, 0.6, 0.12, &glows.spark),
-            SimEvent::BulletDestroyed { at } => (at, 0.8, 0.8, 0.15, &glows.spark),
             SimEvent::ShieldBlocked { at } => (at, 0.6, 3.4, 0.2, &glows.spark),
             SimEvent::PlayerRespawned { at } => (at, 0.6, 4.0, 0.5, &glows.cold),
             SimEvent::FlagCaptured { at } => (at, 0.6, 5.0, 0.5, &glows.good),
@@ -168,9 +240,130 @@ fn animate(
     }
 }
 
+/// The strokes of a destroyed bullet go through their drawings, then they are gone.
+fn fly_apart(
+    mut commands: Commands,
+    time: Res<Time>,
+    glows: Res<Glows>,
+    mut strokes: Query<(Entity, &mut Strokes, &mut Mesh3d)>,
+) {
+    for (entity, mut strokes, mut mesh) in &mut strokes {
+        strokes.age += time.delta_secs();
+        let frame = (strokes.age / STROKE_LIFE * STROKE_FRAMES as f32) as usize;
+        match glows.strokes.get(frame) {
+            Some(drawing) if mesh.0 != *drawing => mesh.0 = drawing.clone(),
+            Some(_) => {}
+            None => commands.entity(entity).despawn(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn close(found: f32, wanted: f32) -> bool {
+        (found - wanted).abs() < 1e-5
+    }
+
+    #[test]
+    fn the_strokes_of_a_destroyed_bullet_shoot_out_then_shorten() {
+        let (inner, outer) = STROKE_REACH;
+        // They start as nothing, where they are closest to the bullet.
+        assert_eq!(stroke_ends(0.0), (inner, inner));
+        // Then they are at their longest.
+        let (from, to) = stroke_ends(STROKE_RISE);
+        assert!(close(from, inner) && close(to, outer));
+        // They end as nothing, where they are farthest from it.
+        let (from, to) = stroke_ends(1.0);
+        assert!(close(from, outer) && close(to, outer));
+        // They never reach further than that, and never point backward.
+        for step in 0..=100 {
+            let (from, to) = stroke_ends(step as f32 / 100.0);
+            assert!(inner <= from && from <= to && to <= outer + 1e-6, "{step}");
+        }
+        // They shoot out fast at first.
+        assert!(stroke_ends(STROKE_RISE / 2.0).1 > (inner + outer) / 2.0);
+    }
+
+    #[test]
+    fn a_destroyed_bullet_leaves_eight_strokes_around_its_place() {
+        let draft = strokes(STROKE_RISE);
+        let (inner, outer) = STROKE_REACH;
+        let ink = STROKES as f32 * (outer - inner) * STROKE_WIDTH;
+        assert!(close(draft.area(Color::WHITE), ink));
+        // The star lies flat, and reaches as far to every side.
+        let (lowest, highest) = draft.bounds();
+        assert!(close(lowest.y, 0.0) && close(highest.y, 0.0));
+        for reach in [highest.x, highest.z, -lowest.x, -lowest.z] {
+            assert!(close(reach, outer), "{reach}");
+        }
+    }
+
+    /// A world that shows the effects of what happens in the simulation.
+    fn world_of_effects() -> App {
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<StandardMaterial>>()
+            .init_resource::<View>()
+            .init_resource::<Time>()
+            .add_message::<SimEvent>()
+            .add_systems(Startup, setup)
+            .add_systems(Update, (spawn, (animate, fly_apart)).chain());
+        app
+    }
+
+    #[test]
+    fn a_destroyed_bullet_leaves_strokes_in_its_color() {
+        let mut app = world_of_effects();
+        app.update();
+        for team in [Team::Players, Team::Enemies] {
+            let at = Vec2::new(3.0, 4.0);
+            app.world_mut()
+                .write_message(SimEvent::BulletDestroyed { at, team });
+            app.update();
+            let world = app.world_mut();
+            let mut marks = world.query::<(Entity, &Strokes, &MeshMaterial3d<StandardMaterial>)>();
+            let (mark, _, paint) = marks.single(world).unwrap();
+            let color = world.resource::<Assets<StandardMaterial>>().get(&paint.0);
+            let wanted = match team {
+                Team::Players => theme::PLAYER_BULLET,
+                Team::Enemies => theme::ENEMY_BULLET,
+            };
+            assert_eq!(color.unwrap().base_color, wanted);
+            // They are where the bullet was, and no circle is drawn there.
+            let place = world.get::<Transform>(mark).unwrap().translation;
+            assert_eq!(scene::to_ground(place), at);
+            assert_eq!(world.query::<&Burst>().iter(world).count(), 0);
+            world.despawn(mark);
+        }
+    }
+
+    #[test]
+    fn the_strokes_are_gone_when_their_time_is_up() {
+        let mut app = world_of_effects();
+        app.update();
+        let event = SimEvent::BulletDestroyed {
+            at: Vec2::ZERO,
+            team: Team::Players,
+        };
+        app.world_mut().write_message(event);
+        app.update();
+        let marks = |app: &mut App| {
+            let world = app.world_mut();
+            world.query::<&Strokes>().iter(world).count()
+        };
+        assert_eq!(marks(&mut app), 1);
+        let age = |app: &mut App, seconds: f32| {
+            let step = std::time::Duration::from_secs_f32(seconds);
+            app.world_mut().resource_mut::<Time>().advance_by(step);
+            app.update();
+        };
+        age(&mut app, STROKE_LIFE * 0.9);
+        assert_eq!(marks(&mut app), 1);
+        age(&mut app, STROKE_LIFE * 0.2);
+        assert_eq!(marks(&mut app), 0);
+    }
 
     #[test]
     fn a_burst_swells_then_closes() {

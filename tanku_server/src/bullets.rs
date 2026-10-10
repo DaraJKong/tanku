@@ -164,7 +164,8 @@ pub fn fly(
                 }
                 Target::Mine(mine) => casualties.detonations.push(mine),
             }
-            events.write(SimEvent::BulletDestroyed { at });
+            let team = bullet.team;
+            events.write(SimEvent::BulletDestroyed { at, team });
             commands.entity(entity).try_despawn();
             continue;
         }
@@ -175,7 +176,8 @@ pub fn fly(
         if let Flight::Stopped(solid) = report.end {
             let shooter = maker.map(|maker| (maker.0, bullet.team));
             strike(&mut casualties, solid, shooter);
-            events.write(SimEvent::BulletDestroyed { at: position.0 });
+            let (at, team) = (position.0, bullet.team);
+            events.write(SimEvent::BulletDestroyed { at, team });
             commands.entity(entity).try_despawn();
         }
     }
@@ -203,13 +205,15 @@ pub fn collide(
             a.1.pierces_left -= 1;
         } else {
             destroyed.push(a.0);
-            events.write(SimEvent::BulletDestroyed { at: a.2.0 });
+            let (at, team) = (a.2.0, a.1.team);
+            events.write(SimEvent::BulletDestroyed { at, team });
         }
         if b_pierces && !a_pierces {
             b.1.pierces_left -= 1;
         } else {
             destroyed.push(b.0);
-            events.write(SimEvent::BulletDestroyed { at: b.2.0 });
+            let (at, team) = (b.2.0, b.1.team);
+            events.write(SimEvent::BulletDestroyed { at, team });
         }
     }
     for entity in destroyed {

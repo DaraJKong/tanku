@@ -211,8 +211,9 @@ pub fn operate(
                 }
                 // A shot that ends in the barrel hits what stopped it all the same.
                 Flight::Stopped(solid) => {
-                    bullets::strike(&mut casualties, solid, Some((*genome, tank.team)));
-                    events.write(SimEvent::BulletDestroyed { at });
+                    let team = tank.team;
+                    bullets::strike(&mut casualties, solid, Some((*genome, team)));
+                    events.write(SimEvent::BulletDestroyed { at, team });
                 }
             }
         }

@@ -385,14 +385,26 @@ fn a_piercing_bullet_pierces_one_bullet_only() {
         )
     };
     let (first, second) = (answer(-1.0), answer(3.0));
+    events(&mut app);
+    // The bullets that were destroyed, by the team that fired them.
+    let lost = |app: &mut App| {
+        let events = events(app);
+        [Team::Players, Team::Enemies].map(|team| {
+            count(&events, |event| {
+                matches!(event, SimEvent::BulletDestroyed { team: whose, .. } if *whose == team)
+            })
+        })
+    };
 
     // The first bullet is destroyed and blunts the dart, which flies on as a normal bullet.
     tick(&mut app, seconds(0.25));
     assert!(alive(&app, dart) && !alive(&app, first) && alive(&app, second));
     assert_eq!(app.world().get::<Bullet>(dart).unwrap().pierces_left, 0);
+    assert_eq!(lost(&mut app), [1, 0]);
     // The second one destroys it.
     tick(&mut app, seconds(0.25));
     assert!(!alive(&app, dart) && !alive(&app, second));
+    assert_eq!(lost(&mut app), [1, 1]);
 }
 
 #[test]
