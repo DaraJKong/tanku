@@ -89,7 +89,7 @@ Serve it locally:
 python3 -m http.server --directory target/web-dist
 ```
 
-The web build keeps settings and records in the local storage of the browser.
+The web build keeps settings and records in the local storage of the browser. A browser lets no sound play before the first click or key, so the sound of the game starts with it.
 
 ## Checks
 

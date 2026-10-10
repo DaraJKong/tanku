@@ -19,6 +19,32 @@
     </style>
   </head>
   <body>
+    <script>
+      // A browser lets no sound play before the first click or key, and the game asks for its
+      // sound when it starts, which is too early. It is asked again here, for every source of
+      // sound that the game makes, each time the player does something that a browser counts.
+      const sounds = [];
+      const Sound = window.AudioContext;
+      window.AudioContext = class extends Sound {
+        constructor(...options) {
+          super(...options);
+          sounds.push(this);
+        }
+      };
+      const start = () => {
+        if (!document.hidden) {
+          sounds.forEach((sound) => sound.resume().catch(() => {}));
+        }
+      };
+      for (const action of ["keydown", "mousedown", "pointerdown", "pointerup", "touchend"]) {
+        addEventListener(action, start, true);
+      }
+      // A page that isn't shown draws no frame, so the game stands still there. Its sound stops
+      // with it, and comes back with the page.
+      document.addEventListener("visibilitychange", () => {
+        sounds.forEach((sound) => (document.hidden ? sound.suspend() : sound.resume()).catch(() => {}));
+      });
+    </script>
     <script type="module">
       import init from "./tanku.js";
       init();
