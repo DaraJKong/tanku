@@ -15,5 +15,5 @@ mkdir -p target/web-dist
 target/tools/bin/wasm-bindgen --target web --remove-name-section --remove-producers-section \
     --out-dir target/web-dist --out-name tanku \
     target/web/wasm32-unknown-unknown/wasm-release/tanku_client.wasm
-cp tanku_client/web/index.html target/web-dist/
+cp tanku_client/web/index.html tanku_client/web/probe.js target/web-dist/
 echo "Built target/web-dist. Serve it with: python3 -m http.server --directory target/web-dist"

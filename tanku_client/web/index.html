@@ -45,6 +45,7 @@
         sounds.forEach((sound) => (document.hidden ? sound.suspend() : sound.resume()).catch(() => {}));
       });
     </script>
+    <script src="./probe.js"></script>
     <script type="module">
       import init from "./tanku.js";
       init();

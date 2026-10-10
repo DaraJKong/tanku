@@ -390,6 +390,8 @@ On that machine the game itself never holds the page up for so long. Over runs t
 
 **A page that isn't shown draws no frame.** The game stands still there, so the page stops its sound too, and starts it again when it is shown.
 
+With `?probe` after its address, the page shows how long its frames are, how far ahead the music is handed over, and the holes in the music and in the cues. It is how to answer the question of step 5 on another machine.
+
 ## Tests and benchmarks
 
 - **Stable.** Sixteen bars of each arrangement match a stored value, as the map of a seed does, and so does each cue.

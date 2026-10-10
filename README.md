@@ -91,6 +91,12 @@ python3 -m http.server --directory target/web-dist
 
 The web build keeps settings and records in the local storage of the browser. A browser lets no sound play before the first click or key, so the sound of the game starts with it.
 
+With `?probe` after the address, the page shows how long its frames are and whether its sound has holes, for the music and for the cues. A click on those numbers starts the count again.
+
+```
+http://localhost:8000/?probe
+```
+
 ## Checks
 
 Run these before finishing a change:
