@@ -30,6 +30,11 @@ const TRACK_OVERHANG: f32 = 0.25;
 const SHIELD_EDGE: (f32, f32) = (0.06, 0.12);
 /// Width of the lines along the barrel, which is too narrow for the lines of the rest.
 const BARREL_LINE: f32 = 0.035;
+/// Height of the roof of the turret above its ring.
+const ROOF: f32 = 0.32;
+/// Height of a fixed base, and how far apart the segments of the drum are.
+const BASE_HEIGHT: f32 = 0.26;
+const DRUM_PITCH: f32 = 0.12;
 
 #[derive(Component)]
 struct Hull;
@@ -103,6 +108,28 @@ fn turret_radius(genome: &Genome) -> f32 {
     0.56 - 0.035 * genome.level(Stat::Turret) as f32
 }
 
+/// Height and width of the tracks: the faster the tank, the bigger they are.
+fn track_size(genome: &Genome) -> (f32, f32) {
+    let level = genome.level(Stat::Engine) as f32;
+    (0.34 + 0.035 * level, 0.24 + 0.03 * level)
+}
+
+/// Length of the barrel: the faster the bullet, the longer it is.
+fn barrel_length(genome: &Genome) -> f32 {
+    0.6 + 0.1 * genome.level(Stat::Muzzle) as f32
+}
+
+/// How far in front of the middle of the turret the barrel ends.
+fn barrel_tip(genome: &Genome) -> f32 {
+    turret_radius(genome) - 0.1 + barrel_length(genome)
+}
+
+/// How far behind the middle of the turret the first and the last segment of the drum are.
+fn drum_ends(genome: &Genome) -> (f32, f32) {
+    let first = -turret_radius(genome) - 0.09;
+    (first, first - DRUM_PITCH * (genome.magazine() as f32 - 1.0))
+}
+
 /// Width of the edge of the shield disk that shows around the turret. It grows with the level
 /// and stays thin, so that it doesn't draw the eye away from everything else.
 fn shield_edge(level: u8) -> f32 {
@@ -114,12 +141,11 @@ fn shield_edge(level: u8) -> f32 {
 /// the shield disk and the antennas.
 pub fn hull_drawing(genome: &Genome, color: Color) -> Draft {
     let mut draft = Draft::default();
-    let level = |stat: Stat| genome.level(stat) as f32;
     let dark = theme::DARK_METAL;
     let length = hull_length(genome);
     if genome.level(Stat::Engine) == 0 {
         // Engine: a tank that can't move sits on a fixed base.
-        let (radius, height) = (BASE_RADIUS, 0.26);
+        let (radius, height) = (BASE_RADIUS, BASE_HEIGHT);
         draft.post(Vec3::Y * height / 2.0, radius, height, dark, dark);
         let top = Vec3::Y * (height + LIFT);
         draft.ring(top, (radius - LINE, radius), (1, 1.0), theme::LINE);
@@ -131,10 +157,7 @@ pub fn hull_drawing(genome: &Genome, color: Color) -> Draft {
         );
     } else {
         // Engine: the faster the tank, the bigger its tracks.
-        let (high, wide) = (
-            0.34 + 0.035 * level(Stat::Engine),
-            0.24 + 0.03 * level(Stat::Engine),
-        );
+        let (high, wide) = track_size(genome);
         for side in [-1.0, 1.0] {
             let center = Vec3::new(0.0, high / 2.0, side * (0.52 + wide / 2.0));
             let size = Vec3::new(length + TRACK_OVERHANG, high, wide);
@@ -186,14 +209,12 @@ pub fn hull_drawing(genome: &Genome, color: Color) -> Draft {
 /// its tip, the drum, the vents and the sight. Heights are above the turret ring.
 pub fn turret_drawing(genome: &Genome, color: Color) -> Draft {
     let mut draft = Draft::default();
-    let level = |stat: Stat| genome.level(stat) as f32;
     let (side, accent, dark) = (theme::side(color), accent_color(color), theme::DARK_METAL);
     let radius = turret_radius(genome);
     // Magazine: a drum behind the turret, one segment per round. The segments stand on a
     // plate, whose pale top shows around them and between them.
     let rounds = genome.magazine();
-    let (first, pitch) = (-radius - 0.09, 0.12);
-    let last = first - pitch * (rounds as f32 - 1.0);
+    let ((first, last), pitch) = (drum_ends(genome), DRUM_PITCH);
     let segment = Vec3::new(0.09, 0.24, 0.36);
     draft.solid(
         Vec3::new((first + last) / 2.0, 0.155, 0.0),
@@ -210,8 +231,7 @@ pub fn turret_drawing(genome: &Genome, color: Color) -> Draft {
         draft.solid(Vec3::new(back, 0.16, 0.0), segment, dark, dark);
     }
     // Muzzle: the faster the bullet, the longer the barrel.
-    let barrel = 0.6 + 0.1 * level(Stat::Muzzle);
-    let tip = radius - 0.1 + barrel;
+    let (barrel, tip) = (barrel_length(genome), barrel_tip(genome));
     let middle = Vec3::new(tip - barrel / 2.0, 0.18, 0.0);
     draft.solid(middle, Vec3::new(barrel, 0.16, 0.16), dark, dark);
     draft.frame(
@@ -229,7 +249,7 @@ pub fn turret_drawing(genome: &Genome, color: Color) -> Draft {
     if genome.piercing() > 0 {
         draft.point(Vec3::new(tip - 0.02, 0.18, 0.0), 0.1, 0.32, accent);
     }
-    let roof = 0.32;
+    let roof = ROOF;
     draft.post(Vec3::new(0.0, roof / 2.0, 0.0), radius, roof, color, side);
     draft.ring(
         Vec3::Y * (roof + LIFT),
@@ -252,6 +272,85 @@ pub fn turret_drawing(genome: &Genome, color: Color) -> Draft {
         draft.solid(center, Vec3::new(0.14, 0.11, 0.11), accent, accent);
     }
     draft
+}
+
+/// A part of a tank that tells one of its stats, for a drawing that points at it.
+pub struct Anchor {
+    pub stat: Stat,
+    /// Whether the part is on the turret, and turns with it. It is on the hull otherwise.
+    pub on_turret: bool,
+    /// Where the part is: from the middle of the tank on the ground for a part of the hull,
+    /// from the middle of the turret ring for a part of the turret.
+    pub at: Vec3,
+}
+
+/// The parts that tell the stats of a tank, in the order of the stats. A stat that shows as
+/// a part the tank lacks isn't there: a tank without a shield has no disk to point at.
+pub fn anchors(genome: &Genome) -> Vec<Anchor> {
+    let (length, deck, radius) = (hull_length(genome), TURRET_HEIGHT, turret_radius(genome));
+    let (tip, drum) = (barrel_tip(genome), drum_ends(genome));
+    let has = |stat: Stat| genome.level(stat) > 0;
+    let on_hull = |stat, at| Anchor {
+        stat,
+        on_turret: false,
+        at,
+    };
+    let on_turret = |stat, at| Anchor {
+        stat,
+        on_turret: true,
+        at,
+    };
+    let mut anchors = Vec::with_capacity(Stat::COUNT);
+    // Engine: the top of a track, or the rim of the fixed base.
+    anchors.push(on_hull(
+        Stat::Engine,
+        if has(Stat::Engine) {
+            let (high, wide) = track_size(genome);
+            Vec3::new(length * 0.3, high, 0.52 + wide / 2.0)
+        } else {
+            Vec3::new(BASE_RADIUS * 0.6, BASE_HEIGHT, BASE_RADIUS * 0.6)
+        },
+    ));
+    // Tracks: the hull, whose length they set, by a front corner of its deck.
+    let corner = Vec3::new(length / 2.0 - 0.08, deck, -HULL.y / 2.0 + 0.1);
+    anchors.push(on_hull(Stat::Tracks, corner));
+    // Turret: its roof, near the edge.
+    let edge = Vec3::new(-radius * 0.45, ROOF, -radius * 0.6);
+    anchors.push(on_turret(Stat::Turret, edge));
+    let barrel = Vec3::new(tip - barrel_length(genome) / 2.0, 0.26, 0.0);
+    anchors.push(on_turret(Stat::Muzzle, barrel));
+    let segments = Vec3::new((drum.0 + drum.1) / 2.0, 0.28, 0.0);
+    anchors.push(on_turret(Stat::Magazine, segments));
+    // Loader: the flank of the turret, where its vents are. A slow loader has none.
+    let vents = if has(Stat::Loader) { 0.08 } else { 0.0 };
+    let flank = Vec3::new(-0.25, ROOF + vents, radius * 0.7);
+    anchors.push(on_turret(Stat::Loader, flank));
+    if has(Stat::Ricochet) {
+        anchors.push(on_turret(Stat::Ricochet, Vec3::new(tip - 0.08, 0.33, 0.0)));
+    }
+    if has(Stat::Mines) {
+        let rack = Vec3::new(-length / 2.0 + 0.16, deck + 0.08, 0.0);
+        anchors.push(on_hull(Stat::Mines, rack));
+    }
+    if has(Stat::Shield) {
+        // The edge of the disk, behind the turret and to a side.
+        let reach = radius + shield_edge(genome.level(Stat::Shield)) / 2.0;
+        let rim = Vec3::new(-0.6, 0.0, -0.8) * reach + Vec3::Y * (deck + 0.04);
+        anchors.push(on_hull(Stat::Shield, rim));
+    }
+    if has(Stat::Piercing) {
+        anchors.push(on_turret(Stat::Piercing, Vec3::new(tip + 0.14, 0.18, 0.0)));
+    }
+    if has(Stat::Brain) {
+        // The bead on top of the first antenna.
+        let bead = Vec3::new(-length / 2.0 + 0.1, deck + 0.76, 0.47);
+        anchors.push(on_hull(Stat::Brain, bead));
+    }
+    if has(Stat::Ballistics) {
+        let sight = Vec3::new(radius * 0.45, ROOF + 0.12, 0.0);
+        anchors.push(on_turret(Stat::Ballistics, sight));
+    }
+    anchors
 }
 
 fn build(
@@ -424,6 +523,39 @@ mod tests {
         let (lowest, highest) = moving.bounds();
         let tracks = hull_length(&Genome::empty(10)) + TRACK_OVERHANG;
         assert!(close(highest.x - lowest.x, tracks + 2.0 * LINE));
+    }
+
+    #[test]
+    fn every_part_that_tells_a_stat_is_on_the_drawing() {
+        // A tank with everything, one with nothing, and the player's.
+        let mut full = Genome::empty(128);
+        for stat in Stat::HARDWARE
+            .into_iter()
+            .chain([Stat::Brain, Stat::Ballistics])
+        {
+            full.set(stat, stat.max_level());
+        }
+        for genome in [full, Genome::empty(10), Genome::PLAYER] {
+            let hull = hull_drawing(&genome, theme::PLAYER).bounds();
+            let turret = turret_drawing(&genome, theme::PLAYER).bounds();
+            let anchors = anchors(&genome);
+            for anchor in &anchors {
+                let (lowest, highest) = if anchor.on_turret { turret } else { hull };
+                let margin = Vec3::splat(0.02);
+                assert!(
+                    anchor.at.cmpge(lowest - margin).all()
+                        && anchor.at.cmple(highest + margin).all(),
+                    "{:?} points off the drawing",
+                    anchor.stat
+                );
+            }
+            // A part is there if the tank has it, and the six that every tank has always are.
+            let shown = |stat: Stat| anchors.iter().any(|anchor| anchor.stat == stat);
+            for stat in [Stat::Ricochet, Stat::Mines, Stat::Shield, Stat::Piercing] {
+                assert_eq!(shown(stat), genome.level(stat) > 0, "{stat:?}");
+            }
+            assert!(shown(Stat::Engine) && shown(Stat::Loader) && shown(Stat::Magazine));
+        }
     }
 
     #[test]

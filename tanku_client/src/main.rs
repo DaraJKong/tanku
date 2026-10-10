@@ -5,10 +5,12 @@ mod cli;
 mod dev;
 mod draft;
 mod effects;
+mod exhibit;
 mod hud;
 mod input;
 mod menu;
 mod models;
+mod report;
 mod ruler;
 mod scars;
 mod scene;
@@ -77,10 +79,12 @@ fn main() {
             models::plugin,
             effects::plugin,
             scars::plugin,
+            exhibit::plugin,
             hud::plugin,
             tags::plugin,
             ruler::plugin,
             menu::plugin,
+            report::plugin,
             audio::plugin,
         ));
     if options.playtest {

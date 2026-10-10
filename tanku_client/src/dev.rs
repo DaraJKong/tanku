@@ -3,10 +3,10 @@
 //! `TANKU_DEV_SCRIPT` holds commands separated by semicolons, run one after the other:
 //! `start SEED`, `wait SECONDS`, `warp SECTOR`, `turn QUARTERS`, `peek ENEMY`, `flag SECTOR`,
 //! `look X Y`, `zoom METERS`, `clear`, `reach`, `bubble`, `die`, `pause`, `settings`, `resume`,
-//! `lose`, `blast X Y`, which sets off a mine at a point of the map, `shot PATH` and `quit`,
-//! plus `play DX DY AX AY SECONDS`, which drives the tank in a direction while it fires at a
-//! point relative to itself, `press LABEL`, which presses the button of a menu that bears this
-//! label, in capitals or not, `lineup`, which lays out one bullet of each kind next to the
+//! `lose ENEMY`, `blast X Y`, which sets off a mine at a point of the map, `shot PATH` and
+//! `quit`, plus `play DX DY AX AY SECONDS`, which drives the tank in a direction while it fires
+//! at a point relative to itself, `press LABEL`, which presses the button of a menu that bears
+//! this label, in capitals or not, `lineup`, which lays out one bullet of each kind next to the
 //! tank, `showcase STAT`, which lines up in the start bay one tank for each level of a stat,
 //! and `palette`, which lines up there three tanks of each hue, from a weak one to a strong
 //! one. It is how the game is looked at without anyone at the keyboard.
@@ -30,13 +30,13 @@ use bevy::{
 };
 use tanku_core::{
     sim::{
-        Bullet, Enemy, Flag, Mine, MineState, Motion, Player, Position, PreviousPosition, Run,
-        RunPhase, RunRequest, Shield, ShieldState, SimEvent, Tank, TankCommand, Team,
+        Blow, Bullet, Enemy, Flag, Mine, MineState, Motion, Player, Position, PreviousPosition,
+        Run, RunPhase, RunRequest, Shield, ShieldState, SimEvent, Tank, TankCommand, Team, Weapon,
     },
     stats::{Genome, Stat},
 };
 use tanku_server::{
-    Casualties,
+    Casualties, Maker,
     field::{Field, InSector},
 };
 
@@ -402,14 +402,25 @@ fn run_script(
                         sector: run.sector,
                         state: MineState::Triggered(0.0),
                     },
+                    Maker(Genome::PLAYER),
                     Position(Vec2::new(number(1), number(2))),
                     InSector(run.sector),
                 ));
             }
         }
-        // Ends the run as the loss of the last life does.
+        // Ends the run as the loss of the last life does. With a number, it was lost to the
+        // bullet of the enemy with this number, among those that are loaded or on display.
         "lose" => {
             if let Some(run) = run.as_mut() {
+                let foes = shields.iter().map(|(tank, _)| tank);
+                let mut foes = foes.filter(|tank| tank.team == Team::Enemies);
+                let enemy = word(1).parse::<usize>().ok();
+                let enemy = enemy.and_then(|number| foes.nth(number));
+                run.lost_to = enemy.map(|tank| Blow {
+                    weapon: Weapon::Bullet,
+                    genome: tank.genome,
+                    team: Team::Enemies,
+                });
                 run.lives = 0;
                 run.phase = RunPhase::Over;
                 events.write(SimEvent::RunOver);
