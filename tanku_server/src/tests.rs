@@ -5,19 +5,19 @@ use tanku_core::{
     CorePlugin,
     rng::{Purpose, Stream},
     rules::{
-        BARRIER_GATHER_DISTANCE, PLAYTEST_LAST_SECTOR, RESPAWN_DELAY, SHIELD_DURATION,
+        BARRIER_GATHER_DISTANCE, PLAYTEST_LAST_SECTOR, RESPAWN_DELAY, SHIELD_DURATION, SOLO_LIVES,
         SPAWN_FIRE_DELAY, TICK_RATE,
     },
     sim::{
-        Barrier, Block, Bullet, Enemy, Flag, Gun, Mine, Motion, Player, Playtest, Position,
-        PreviousPosition, Run, RunPhase, RunRequest, Sector, Shield, SimEvent, Tank, TankCommand,
-        Team,
+        Barrier, Block, Blow, Bullet, Enemy, ExplosiveCrate, Flag, Gun, Mine, MineState, Motion,
+        Player, Playtest, Position, PreviousPosition, Run, RunPhase, RunRequest, Sector, Shield,
+        SimEvent, Tank, TankCommand, Team, Weapon,
     },
     stats::{Genome, Stat},
 };
 
 use crate::{
-    Casualties, ServerPlugin,
+    Casualties, Maker, ServerPlugin,
     brain::Brain,
     field::{Field, InSector},
 };
@@ -640,6 +640,162 @@ fn a_mine_blows_when_an_opposing_tank_comes_close_or_a_bullet_hits_it() {
     tick(&mut app, seconds(0.8));
     assert!(!alive(&app, enemy), "the blast reaches a dormant enemy");
     assert_eq!(run(&app).lives, 3);
+}
+
+/// Waits until the player's tank is destroyed, and tells what the run says destroyed it.
+fn wait_for_the_loss(app: &mut App, at_most: f32) -> Option<Blow> {
+    for _ in 0..seconds(at_most) {
+        if run(app).lives < SOLO_LIVES {
+            break;
+        }
+        tick(app, 1);
+    }
+    assert!(run(app).lives < SOLO_LIVES, "the player's tank is intact");
+    run(app).lost_to
+}
+
+/// An enemy bullet that remembers the tank that fired it.
+fn spawn_bullet_of(app: &mut App, maker: Genome, at: Vec2, velocity: Vec2) {
+    let bullet = spawn_bullet(app, Team::Enemies, at, velocity, 0);
+    app.world_mut().entity_mut(bullet).insert(Maker(maker));
+}
+
+/// An explosive crate in the start bay.
+fn spawn_crate(app: &mut App, at: Vec2) {
+    let explosive = (ExplosiveCrate { sector: 0 }, Position(at), InSector(0));
+    app.world_mut().spawn(explosive);
+    app.world_mut().resource_mut::<Field>().stale = true;
+}
+
+#[test]
+fn a_run_tells_whose_bullet_destroyed_the_player() {
+    let mut app = start("TEST");
+    let levels = [(Stat::Turret, 6), (Stat::Muzzle, 4)];
+    let sentry = spawn_veteran(&mut app, Vec2::new(0.0, 13.0), &levels);
+    let genome = app.world().get::<Tank>(sentry).unwrap().genome;
+    assert_eq!(run(&app).lost_to, None);
+    let blow = Blow {
+        weapon: Weapon::Bullet,
+        genome,
+        team: Team::Enemies,
+    };
+    assert_eq!(wait_for_the_loss(&mut app, 6.0), Some(blow));
+    // The run remembers it after the player has come back.
+    tick(&mut app, seconds(RESPAWN_DELAY) + 2);
+    assert!(player(&mut app).is_some());
+    assert_eq!(run(&app).lost_to, Some(blow));
+}
+
+#[test]
+fn a_bullet_tells_who_fired_it_after_that_tank_is_gone() {
+    let mut app = start("TEST");
+    // Its bullets are slow: the first one is still on its way when the tank is destroyed.
+    let sentry = spawn_veteran(&mut app, Vec2::new(0.0, 13.0), &[(Stat::Turret, 6)]);
+    let genome = app.world().get::<Tank>(sentry).unwrap().genome;
+    for _ in 0..seconds(6.0) {
+        if bullets(&mut app) > 0 {
+            break;
+        }
+        tick(&mut app, 1);
+    }
+    assert_eq!(bullets(&mut app), 1);
+    app.world_mut()
+        .resource_mut::<Casualties>()
+        .tanks
+        .push(sentry);
+    tick(&mut app, 1);
+    assert!(!alive(&app, sentry));
+    let blow = Blow {
+        weapon: Weapon::Bullet,
+        genome,
+        team: Team::Enemies,
+    };
+    assert_eq!(wait_for_the_loss(&mut app, 3.0), Some(blow));
+}
+
+#[test]
+fn a_mine_is_the_doing_of_the_tank_that_laid_it() {
+    let mut app = start("TEST");
+    command(
+        &mut app,
+        TankCommand {
+            mine: true,
+            ..default()
+        },
+    );
+    tick(&mut app, 1);
+    command(&mut app, TankCommand::default());
+    // The player stays on its own mine until the fuse runs out.
+    let blow = Blow {
+        weapon: Weapon::Mine,
+        genome: Genome::PLAYER,
+        team: Team::Players,
+    };
+    assert_eq!(wait_for_the_loss(&mut app, 12.0), Some(blow));
+}
+
+#[test]
+fn a_crate_is_the_doing_of_the_tank_that_set_it_off() {
+    let mut app = start("TEST");
+    // A crate next to the player, and an enemy bullet that flies into its far side.
+    let crate_at = START + Vec2::new(2.5, 0.0);
+    spawn_crate(&mut app, crate_at);
+    let mut genome = Genome::empty(40);
+    genome.set(Stat::Muzzle, 3);
+    spawn_bullet_of(
+        &mut app,
+        genome,
+        crate_at + Vec2::new(3.0, 0.0),
+        Vec2::NEG_X * 10.0,
+    );
+    let blow = Blow {
+        weapon: Weapon::Crate,
+        genome,
+        team: Team::Enemies,
+    };
+    assert_eq!(wait_for_the_loss(&mut app, 2.0), Some(blow));
+}
+
+#[test]
+fn a_chain_of_blasts_is_the_doing_of_the_tank_that_started_it() {
+    let mut app = start("TEST");
+    // An enemy mine blows too far from the player to reach it, but close enough to a crate
+    // that stands next to the player.
+    let crate_at = START + Vec2::new(2.5, 0.0);
+    spawn_crate(&mut app, crate_at);
+    let mut genome = Genome::empty(40);
+    genome.set(Stat::Mines, 1);
+    app.world_mut().spawn((
+        Mine {
+            owner: Entity::PLACEHOLDER,
+            team: Team::Enemies,
+            sector: 0,
+            state: MineState::Triggered(0.0),
+        },
+        Maker(genome),
+        Position(crate_at + Vec2::new(3.5, 0.0)),
+        InSector(0),
+    ));
+    let blow = Blow {
+        weapon: Weapon::Crate,
+        genome,
+        team: Team::Enemies,
+    };
+    assert_eq!(wait_for_the_loss(&mut app, 1.0), Some(blow));
+}
+
+#[test]
+fn a_loss_that_is_nobody_s_doing_is_not_blamed_on_the_last_one() {
+    let mut app = start("TEST");
+    let mut genome = Genome::empty(40);
+    genome.set(Stat::Muzzle, 3);
+    spawn_bullet_of(&mut app, genome, START + Vec2::X * 4.0, Vec2::NEG_X * 10.0);
+    assert!(wait_for_the_loss(&mut app, 2.0).is_some());
+    tick(&mut app, seconds(RESPAWN_DELAY) + 2);
+    // The tank is taken away without a blow, as a test does.
+    destroy_player(&mut app);
+    assert_eq!(run(&app).lives, SOLO_LIVES - 2);
+    assert_eq!(run(&app).lost_to, None);
 }
 
 #[test]

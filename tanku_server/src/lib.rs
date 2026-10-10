@@ -14,15 +14,27 @@ mod tanks;
 mod tests;
 
 use bevy::prelude::*;
-use tanku_core::sim::{Playtest, Run, RunPhase};
+use tanku_core::{
+    sim::{Blow, Playtest, Run, RunPhase, Team},
+    stats::Genome,
+};
+
+/// The tank that fired a bullet or laid a mine, as it was built. The tank may be gone when
+/// its weapon strikes, and what it destroys must still be told whose doing it was.
+#[derive(Component, Clone, Copy, Debug)]
+pub struct Maker(pub Genome);
 
 /// What was hit this tick and still has to be removed.
 #[derive(Resource, Default)]
 pub struct Casualties {
     /// Destroyed tanks.
     pub tanks: Vec<Entity>,
+    /// What destroyed some of them, when it is known whose doing it was.
+    pub blows: Vec<(Entity, Blow)>,
     /// Mines and crates that were set off.
     pub detonations: Vec<Entity>,
+    /// The tanks whose bullets set off some of the crates.
+    pub culprits: Vec<(Entity, (Genome, Team))>,
 }
 
 /// The authoritative simulation. Needs `tanku_core::CorePlugin`.

@@ -178,6 +178,25 @@ pub struct Flag {
     pub captured: bool,
 }
 
+/// What destroys a tank.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Weapon {
+    Bullet,
+    /// The blast of a mine.
+    Mine,
+    /// The blast of an explosive crate.
+    Crate,
+}
+
+/// The blow that destroyed a tank: the weapon, and the tank behind it. That is the tank that
+/// fired the bullet, the one that laid the mine, or the one that set the crate off.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Blow {
+    pub weapon: Weapon,
+    pub genome: Genome,
+    pub team: Team,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum RunPhase {
     Playing,
@@ -202,6 +221,9 @@ pub struct Run {
     /// Simulation ticks played.
     pub ticks: u64,
     pub phase: RunPhase,
+    /// What destroyed the player's tank the last time, if the simulation knows whose doing
+    /// it was. When the run is over, this is what ended it.
+    pub lost_to: Option<Blow>,
 }
 
 /// Present when the game was started as a playtest, which lets the player cheat. The runs of

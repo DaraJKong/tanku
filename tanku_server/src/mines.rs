@@ -6,11 +6,13 @@ use bevy::prelude::*;
 use tanku_core::{
     rules::{BLAST_RADIUS, BLOCK_SIZE, MINE_FUSE, MINE_TRIGGER_RADIUS, MINE_WARNING, TICK},
     sim::{
-        Block, Bullet, Enemy, ExplosiveCrate, Mine, MineState, Position, Shield, SimEvent, Tank,
+        Block, Blow, Bullet, Enemy, ExplosiveCrate, Mine, MineState, Position, Shield, SimEvent,
+        Tank, Team, Weapon,
     },
+    stats::Genome,
 };
 
-use crate::{Casualties, field::Field};
+use crate::{Casualties, Maker, field::Field};
 
 /// Arms the mines, burns their fuses and triggers them when an opposing tank comes close.
 pub fn tick(
@@ -49,28 +51,47 @@ pub fn tick(
 
 /// Blows up every mine and crate that was set off this tick, and whatever their blasts set off
 /// in turn.
+///
+/// A blast is the doing of a tank, which a tank it destroys is told. The blast of a mine is
+/// the doing of the tank that laid it, whatever set the mine off. A crate belongs to nobody:
+/// its blast is the doing of the tank whose bullet hit it, or of the tank behind the blast
+/// that reached it.
 pub fn blast(
     mut commands: Commands,
     mut field: ResMut<Field>,
     mut casualties: ResMut<Casualties>,
-    mines: Query<(Entity, &Position), With<Mine>>,
+    mines: Query<(Entity, &Position, &Mine, Option<&Maker>)>,
     crates: Query<(Entity, &Position), With<ExplosiveCrate>>,
     blocks: Query<(Entity, &Position), With<Block>>,
     bullets: Query<(Entity, &Position), With<Bullet>>,
     tanks: Query<(Entity, &Position, &Shield), With<Tank>>,
     mut events: MessageWriter<SimEvent>,
 ) {
-    let mut pending: VecDeque<Entity> = casualties.detonations.drain(..).collect();
+    let culprits = std::mem::take(&mut casualties.culprits);
+    let hand_behind = |explosive: Entity| {
+        let mut hands = culprits.iter().filter(|(set_off, _)| *set_off == explosive);
+        hands.next().map(|(_, culprit)| *culprit)
+    };
+    let mut pending: VecDeque<(Entity, Option<(Genome, Team)>)> = casualties
+        .detonations
+        .drain(..)
+        .map(|explosive| (explosive, hand_behind(explosive)))
+        .collect();
     let mut blown: Vec<Entity> = Vec::new();
     let mut stale = false;
-    while let Some(explosive) = pending.pop_front() {
+    while let Some((explosive, hand)) = pending.pop_front() {
         if blown.contains(&explosive) {
             continue;
         }
-        let Ok((_, center)) = mines.get(explosive).or_else(|_| crates.get(explosive)) else {
+        let (center, weapon, culprit) = if let Ok((_, position, mine, maker)) = mines.get(explosive)
+        {
+            let layer = maker.map(|maker| (maker.0, mine.team));
+            (position.0, Weapon::Mine, layer)
+        } else if let Ok((_, position)) = crates.get(explosive) {
+            (position.0, Weapon::Crate, hand)
+        } else {
             continue;
         };
-        let center = center.0;
         blown.push(explosive);
         commands.entity(explosive).try_despawn();
         events.write(SimEvent::Blast { at: center });
@@ -81,14 +102,14 @@ pub fn blast(
             target.distance(center) <= BLAST_RADIUS + size
                 && !field.blocked(center, target, |solid| solid.stops_blasts())
         };
-        for (entity, position) in mines.iter().chain(&crates) {
-            let size = if crates.contains(entity) {
-                BLOCK_SIZE / 2.0
-            } else {
-                0.0
-            };
-            if reaches(position.0, size) {
-                pending.push_back(entity);
+        for (entity, position, ..) in &mines {
+            if reaches(position.0, 0.0) {
+                pending.push_back((entity, culprit));
+            }
+        }
+        for (entity, position) in &crates {
+            if reaches(position.0, BLOCK_SIZE / 2.0) {
+                pending.push_back((entity, culprit));
             }
         }
         for (entity, position) in &blocks {
@@ -107,6 +128,14 @@ pub fn blast(
         for (entity, position, shield) in &tanks {
             if !shield.is_active() && reaches(position.0, 0.0) {
                 casualties.tanks.push(entity);
+                if let Some((genome, team)) = culprit {
+                    let blow = Blow {
+                        weapon,
+                        genome,
+                        team,
+                    };
+                    casualties.blows.push((entity, blow));
+                }
             }
         }
     }

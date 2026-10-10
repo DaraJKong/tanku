@@ -4,11 +4,11 @@ use bevy::prelude::*;
 use tanku_core::{
     geom,
     rules::{BULLET_RADIUS, MINE_RADIUS, SHIELD_RADIUS, TANK_RADIUS, TICK},
-    sim::{Bullet, Mine, Position, PreviousPosition, Shield, SimEvent, Tank},
+    sim::{Blow, Bullet, Mine, Position, PreviousPosition, Shield, SimEvent, Tank, Weapon},
 };
 
 use crate::{
-    Casualties,
+    Casualties, Maker,
     field::{Field, Solid},
     tanks,
 };
@@ -72,12 +72,18 @@ pub fn fly(
     mut commands: Commands,
     field: Res<Field>,
     mut casualties: ResMut<Casualties>,
-    mut bullets: Query<(Entity, &mut Bullet, &mut Position, &mut PreviousPosition)>,
+    mut bullets: Query<(
+        Entity,
+        &mut Bullet,
+        &mut Position,
+        &mut PreviousPosition,
+        Option<&Maker>,
+    )>,
     tanks: Query<(Entity, &Tank, &Position, &Shield), Without<Bullet>>,
     mines: Query<(Entity, &Position), (With<Mine>, Without<Bullet>)>,
     mut events: MessageWriter<SimEvent>,
 ) {
-    for (entity, mut bullet, mut position, mut previous) in &mut bullets {
+    for (entity, mut bullet, mut position, mut previous, maker) in &mut bullets {
         previous.0 = position.0;
         let start = position.0;
         let before = *bullet;
@@ -130,7 +136,17 @@ pub fn fly(
                 events.write(SimEvent::Ricochet { at: *bounce });
             }
             match target {
-                Target::Tank(tank) => casualties.tanks.push(tank),
+                Target::Tank(tank) => {
+                    casualties.tanks.push(tank);
+                    if let Some(maker) = maker {
+                        let blow = Blow {
+                            weapon: Weapon::Bullet,
+                            genome: maker.0,
+                            team: bullet.team,
+                        };
+                        casualties.blows.push((tank, blow));
+                    }
+                }
                 Target::Shield(center) => {
                     events.write(SimEvent::ShieldBlocked { at: center });
                 }
@@ -147,6 +163,10 @@ pub fn fly(
         if let Flight::Stopped(solid) = report.end {
             if let Solid::Crate(explosive) = solid {
                 casualties.detonations.push(explosive);
+                if let Some(maker) = maker {
+                    let culprit = (maker.0, bullet.team);
+                    casualties.culprits.push((explosive, culprit));
+                }
             }
             events.write(SimEvent::BulletDestroyed { at: position.0 });
             commands.entity(entity).try_despawn();

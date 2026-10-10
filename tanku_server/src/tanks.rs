@@ -16,6 +16,7 @@ use tanku_core::{
 };
 
 use crate::{
+    Maker,
     bullets::{self, Flight},
     field::{Field, InSector},
 };
@@ -201,6 +202,7 @@ pub fn operate(
                 Flight::Flying => {
                     commands.spawn((
                         bullet,
+                        Maker(*genome),
                         Position(at),
                         PreviousPosition(at),
                         InSector(tank.sector),
@@ -222,6 +224,7 @@ pub fn operate(
                     sector: tank.sector,
                     state: MineState::Arming(MINE_ARMING_TIME),
                 },
+                Maker(*genome),
                 Position(position.0),
                 InSector(tank.sector),
             ));

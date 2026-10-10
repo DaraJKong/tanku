@@ -1011,6 +1011,7 @@ mod tests {
             kills: 0,
             ticks: 0,
             phase: RunPhase::Over,
+            lost_to: None,
         };
         let mut records = Records::default();
         assert!(!keep_record(&mut records, true, &run));

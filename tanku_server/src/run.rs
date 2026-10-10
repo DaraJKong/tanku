@@ -111,6 +111,7 @@ pub fn handle_requests(
                     kills: 0,
                     ticks: 0,
                     phase: RunPhase::Playing,
+                    lost_to: None,
                 });
                 events.write(SimEvent::RunStarted);
             }
@@ -171,6 +172,7 @@ pub fn casualties(
     let infinite_lives = playtest.is_some_and(|playtest| playtest.infinite_lives);
     casualties.tanks.sort();
     casualties.tanks.dedup();
+    let blows = std::mem::take(&mut casualties.blows);
     for entity in casualties.tanks.drain(..) {
         let Ok((tank, position, is_player)) = tanks.get(entity) else {
             continue;
@@ -183,6 +185,9 @@ pub fn casualties(
         if !is_player {
             run.kills += 1;
         } else if run.phase == RunPhase::Playing {
+            // The first blow that reached the tank this tick is the one that destroyed it.
+            let mut reached = blows.iter().filter(|(victim, _)| *victim == entity);
+            run.lost_to = reached.next().map(|(_, blow)| *blow);
             if !infinite_lives {
                 run.lives -= 1;
             }
