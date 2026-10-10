@@ -1,6 +1,6 @@
 # Tanku: music specification
 
-Status: steps 1 and 2 of the [steps](#steps) are built. The sketch of step 1 was listened to four times, and its notes are accepted. With step 2 the game plays the music on the desktop, where it follows the place and the fight and has a volume of its own: nobody has played with it yet. Every fight has the same threat until step 3, and the web build has no music until step 5.
+Status: steps 1 and 2 of the [steps](#steps) are built. The sketch of step 1 was listened to four times, and its notes are accepted. With step 2 the game plays the music on the desktop, where it follows the place and the fight and has a volume of its own. A first playtest answered one of its two questions: a shot sounds different from the beat, so one is told from the other. The switch of its experiment stays in the playtest menu until one of the two ways is chosen. Every fight has the same threat until step 3, and the web build has no music until step 5.
 
 The music of Tanku is one piece that never stops. The game makes it while it plays, from two short motifs and six instruments that it computes itself, so no sound file ships. The piece is the same for every seed and on every platform. What changes is its arrangement, which follows the run: where the players are, whether they are fighting, and how smart the enemies in front of them are.
 
