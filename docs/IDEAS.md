@@ -9,6 +9,7 @@ Ideas that aren't in the specification. They are ranked by likely usefulness and
 | Aiming laser | Medium | Tanks with Ballistics 2 or more show their line of fire, bounces included. Makes bank shots readable and fairer. | Playtest against a bank-shot enemy |
 | Daily seed | Medium | A seed derived from the date. Worth more with a leaderboard on the official server. | After the modes exist |
 | Pings | Medium | A key that marks a spot or an enemy for teammates. | Co-op playtest |
+| Chicanes | Low | Both walls take the shallowest slope together, so the corridor jumps 8 m or more sideways within a few meters. The throat between the two walls is less than half as wide as the corridor, so it only fits the widest stretches. | Corridor prototype: force one into a wide sector and drive through it |
 | Camera that turns with the corridor | Low | The view rotates by itself to keep progress pointing one way. Saves key presses, but takes control away and can disorient. | Compare with manual rotation in the corridor prototype |
 | More piercing levels | Low | A piercing bullet pierces one bullet. Each further level would pierce one more. | Playtest against enemies that pierce, once the price of piercing is settled |
 | Hitbox as long as the bullet | Low | Bullets are drawn 0.9 m long but collide as a circle 0.45 m across, so the two ends of the drawing touch nothing. A capsule would match the drawing and make every collision test longer to write. | Playtest: watch for bullets that seem to pass through each other |
