@@ -852,6 +852,70 @@ mod tests {
         assert_eq!((own_seat(&second), own_seat(&third)), (1, 2));
     }
 
+    /// Makes what a game receives come late, unevenly, and sometimes not at all, as on a line
+    /// that takes 120 ms there and back.
+    fn worsen(game: &mut App) {
+        let line = LinkConditionerConfig::default()
+            .with_incoming_latency(Duration::from_millis(60))
+            .with_incoming_jitter(Duration::from_millis(10))
+            .with_fixed_loss(0.02);
+        game.add_systems(First, move |mut links: Query<&mut Link>| {
+            for mut link in &mut links {
+                if link.recv.conditioner.is_none() {
+                    link.recv.conditioner = Some(RecvLinkConditioner::new(line.clone()));
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn a_run_holds_on_a_slow_line_that_loses_packets() {
+        let port = free_port();
+        let mut host = host(port);
+        worsen(&mut host);
+        let mut guest = game();
+        worsen(&mut guest);
+        ask(
+            &mut guest,
+            SessionRequest::Join(format!("127.0.0.1:{port}")),
+        );
+        run_until("the lobby", &mut [&mut host, &mut guest], |games| {
+            screen(games[1]) == Screen::Lobby
+        });
+        ask(&mut host, SessionRequest::Start);
+        run_until("the run", &mut [&mut host, &mut guest], |games| {
+            screen(games[1]) == Screen::Playing && seats(games[1]) == [0, 1]
+        });
+
+        // The guest drives, and sees its tank where the host has it.
+        let start = place(&mut host, 1);
+        run_until("the drive", &mut [&mut host, &mut guest], |games| {
+            let north = TankCommand {
+                drive: Vec2::Y,
+                ..default()
+            };
+            order(games[1], north);
+            place(games[0], 1).y > start.y + 3.0
+        });
+        order(&mut guest, TankCommand::default());
+        run_until("the stop", &mut [&mut host, &mut guest], |games| {
+            let (there, here) = (place(games[0], 1), place(games[1], 1));
+            there.distance(here) < 0.01
+        });
+
+        // The run ends for both, and the guest leaves.
+        wreck_everyone(&mut host);
+        run_until("the end", &mut [&mut host, &mut guest], |games| {
+            over(games[0]) && over(games[1])
+        });
+        ask(&mut guest, SessionRequest::Leave);
+        run_until("the departure", &mut [&mut host, &mut guest], |games| {
+            let world = games[0].world_mut();
+            let guests = world.query::<&Seat>().iter(world).count();
+            guests == 0 && seats(games[1]).is_empty()
+        });
+    }
+
     /// What a guest that was tampered with does: it asks the tank of the host to drive north,
     /// as if that tank were its own.
     fn usurp(mut commands: Commands, mut tanks: Query<(Entity, &Player, &mut TankCommand)>) {
