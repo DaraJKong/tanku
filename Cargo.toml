@@ -1,5 +1,5 @@
 [workspace]
-members = ["tanku_client", "tanku_core", "tanku_server"]
+members = ["tanku_audio", "tanku_client", "tanku_core", "tanku_server"]
 resolver = "3"
 
 [workspace.package]
@@ -34,6 +34,10 @@ opt-level = 1
 
 # Enable a large amount of optimization in the dev profile for dependencies.
 [profile.dev.package."*"]
+opt-level = 3
+
+# The music is computed while it plays, so its crate is optimized like a dependency.
+[profile.dev.package.tanku_audio]
 opt-level = 3
 
 # Enable more optimization in the release profile at the cost of compile time.

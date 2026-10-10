@@ -5065,6 +5065,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "tanku_audio"
+version = "0.3.0"
+
+[[package]]
 name = "tanku_client"
 version = "0.3.0"
 dependencies = [
