@@ -283,13 +283,15 @@ The waveforms of the cues are in `tanku_audio`, next to the instruments, so that
 
 A cue is in mono, at 22,050 samples per second. The client computes each one when it starts and keeps it as a sound file in memory.
 
-Two cues have a pitch that will sound out of tune over music in A:
+A cue that plays a note plays A or E, taken from the table of pitches of the music, so it is in tune with whatever the music plays. Two cues were out of tune with music in A and have moved, and one stays between two notes on purpose:
 
-| Cue | Today | Proposed |
+| Cue | Was | Is |
 |---|---|---|
-| Mine placed | 620 Hz, six semitones from A | 660 Hz (E5) |
-| Shield blocked | 900 Hz and 1350 Hz, four tenths of a semitone above A5 and E6 | 880 Hz and 1320 Hz |
+| Mine placed | 620 Hz, six semitones from A | E5 |
+| Shield blocked | 900 Hz and 1350 Hz, four tenths of a semitone above A5 and E6 | A5 and E6 |
 | Mine triggered | 1500 Hz, a quarter of a semitone above F♯6 | Unchanged: a warning should stand apart from the music |
+
+The four cues that played A and E already had their E a pure fifth above A, at 660 Hz. They now take the E of the music, which is 2 hundredths of a semitone lower: no ear tells the two apart.
 
 ## Same everywhere
 
@@ -354,7 +356,7 @@ It writes one sound file per arrangement, a tour through a made-up run with the 
 ## Tests and benchmarks
 
 - **Stable.** Sixteen bars of each arrangement match a stored value, as the map of a seed does, and so does each cue.
-- **In tune.** Every instrument plays the lowest and the highest note of its range within 3 hundredths of a semitone.
+- **In tune.** Every instrument plays the lowest and the highest note of its range within 3 hundredths of a semitone. The cues that play notes play A and E and nothing else, and the warning of a mine is between two notes.
 - **Never silent.** Every bar of every arrangement makes sound.
 - **Never too loud.** No frame of any arrangement or of any change goes past full scale, and none is NaN.
 - **Seamless.** The third pass of a loop is identical to the second.

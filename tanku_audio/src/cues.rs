@@ -2,10 +2,14 @@
 //! computes each of them once, when it starts, so no sound file ships.
 //!
 //! They are made with the same math as the instruments, so a cue is the same samples on every
-//! platform. Playing them is left to the game, which knows where a sound comes from and how
-//! loud it is.
+//! platform, and those that play notes take them from the table of the music: the tonic of
+//! the piece and its fifth, A and E, which are in tune with whatever the music plays. Playing
+//! the cues is left to the game, which knows where a sound comes from and how loud it is.
 
-use crate::math::{Noise, decay, sine};
+use crate::{
+    math::{Noise, decay, frequency, sine},
+    score::{A3, A4},
+};
 
 /// Samples of a cue per second. A cue is in mono.
 pub const SAMPLE_RATE: u32 = 22_050;
@@ -14,6 +18,11 @@ const RATE: f32 = SAMPLE_RATE as f32;
 const FADE: f32 = 0.01;
 /// Where the noise of every cue starts.
 const SEED: u32 = 12_345;
+
+const E4: u8 = A4 - 5;
+const E5: u8 = A4 + 7;
+const A5: u8 = A4 + 12;
+const E6: u8 = A5 + 7;
 
 /// Something the game tells with a sound.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -117,25 +126,24 @@ impl Cue {
             }
             Cue::Ricochet => 0.35 * glide(1900.0, 2900.0) * decay(t * 24.0),
             Cue::Pop => 0.3 * noise.next() * decay(t * 70.0),
-            Cue::MinePlaced => 0.4 * tone(t, 620.0) * decay(t * 40.0),
-            // Beeps of a twentieth of a second, as far apart.
+            Cue::MinePlaced => 0.4 * tone(t, frequency(E5)) * decay(t * 40.0),
+            // Beeps of a twentieth of a second, as far apart. Their pitch is between two notes
+            // on purpose: a warning stands apart from the music.
             Cue::MineTriggered if t % 0.1 < 0.05 => 0.4 * tone(t, 1500.0),
             Cue::MineTriggered => 0.0,
             Cue::Blast => {
                 0.6 * tone(t, 52.0) * decay(t * 7.0) + 0.5 * noise.next() * decay(t * 9.0)
             }
             Cue::ShieldRaised => 0.35 * glide(400.0, 1800.0) * left,
-            Cue::ShieldBlocked => 0.3 * (tone(t, 900.0) + tone(t, 1350.0)) * decay(t * 20.0),
+            Cue::ShieldBlocked => {
+                0.3 * (tone(t, frequency(A5)) + tone(t, frequency(E6))) * decay(t * 20.0)
+            }
             Cue::ShieldOverloaded => (0.35 * glide(700.0, 120.0) + 0.15 * noise.next()) * left,
-            Cue::Cleared => 0.3 * (note(t, 0.0, 660.0) + note(t, 0.14, 880.0)),
-            Cue::Captured => {
-                0.3 * (note(t, 0.0, 660.0) + note(t, 0.1, 880.0) + note(t, 0.2, 1320.0))
-            }
-            Cue::Unlocked => 0.3 * (note(t, 0.0, 880.0) + note(t, 0.12, 1320.0)),
+            Cue::Cleared => 0.3 * (note(t, 0.0, E5) + note(t, 0.14, A5)),
+            Cue::Captured => 0.3 * (note(t, 0.0, E5) + note(t, 0.1, A5) + note(t, 0.2, E6)),
+            Cue::Unlocked => 0.3 * (note(t, 0.0, A5) + note(t, 0.12, E6)),
             Cue::Respawned => 0.3 * glide(300.0, 900.0) * left,
-            Cue::RunOver => {
-                0.3 * (note(t, 0.0, 440.0) + note(t, 0.25, 330.0) + note(t, 0.5, 220.0))
-            }
+            Cue::RunOver => 0.3 * (note(t, 0.0, A4) + note(t, 0.25, E4) + note(t, 0.5, A3)),
             Cue::Click => 0.3 * tone(t, 1000.0) * decay(t * 80.0),
         }
     }
@@ -156,12 +164,12 @@ fn turn(turns: f32) -> f32 {
     sine(turns - (turns as u32) as f32)
 }
 
-/// A tone that starts at some moment and dies away.
-fn note(t: f32, start: f32, hz: f32) -> f32 {
+/// A note of the music that starts at some moment and dies away.
+fn note(t: f32, start: f32, pitch: u8) -> f32 {
     if t < start {
         0.0
     } else {
-        tone(t, hz) * decay((t - start) * 9.0)
+        tone(t, frequency(pitch)) * decay((t - start) * 9.0)
     }
 }
 
@@ -187,6 +195,53 @@ mod tests {
             // The last sample is next to nothing.
             assert!(samples[samples.len() - 1].abs() < 0.01, "{cue:?}");
         }
+    }
+
+    /// How much of a frequency there is in a cue.
+    fn amount(samples: &[f32], hz: f32) -> f64 {
+        let turn = |index: usize| std::f64::consts::TAU * hz as f64 * index as f64 / RATE as f64;
+        let part = |wave: fn(f64) -> f64| -> f64 {
+            let samples = samples.iter().enumerate();
+            samples
+                .map(|(index, &sample)| sample as f64 * wave(turn(index)))
+                .sum()
+        };
+        part(f64::sin).hypot(part(f64::cos))
+    }
+
+    #[test]
+    fn cues_play_the_tonic_of_the_music_and_its_fifth() {
+        let played: [(Cue, &[u8]); 6] = [
+            (Cue::MinePlaced, &[E5]),
+            (Cue::ShieldBlocked, &[A5, E6]),
+            (Cue::Cleared, &[E5, A5]),
+            (Cue::Captured, &[E5, A5, E6]),
+            (Cue::Unlocked, &[A5, E6]),
+            (Cue::RunOver, &[A3, E4, A4]),
+        ];
+        for (cue, notes) in played {
+            // Of all the notes from two octaves below the A of 440 Hz to two above, the
+            // strongest in the cue are the ones it is meant to play.
+            let samples = cue.samples();
+            let mut heard: Vec<u8> = (A4 - 24..=A4 + 24).collect();
+            let strength = |pitch: &u8| amount(&samples, frequency(*pitch));
+            heard.sort_by(|a, b| strength(b).total_cmp(&strength(a)));
+            heard.truncate(notes.len());
+            heard.sort();
+            assert_eq!(heard, notes, "{cue:?}");
+            // Each is an A or an E.
+            assert!(notes.iter().all(|pitch| [9, 4].contains(&(pitch % 12))));
+        }
+    }
+
+    #[test]
+    fn the_warning_of_a_mine_is_between_two_notes() {
+        let samples = Cue::MineTriggered.samples();
+        // Its neighbors are an F sharp and the G above it.
+        let (below, above) = (frequency(A4 + 21), frequency(A4 + 22));
+        assert!(below < 1500.0 && 1500.0 < above);
+        let own = amount(&samples, 1500.0);
+        assert!(own > 2.0 * amount(&samples, below) && own > 2.0 * amount(&samples, above));
     }
 
     #[test]
