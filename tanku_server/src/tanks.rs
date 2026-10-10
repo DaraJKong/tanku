@@ -58,6 +58,49 @@ pub fn shields(
     }
 }
 
+/// One tick of a tank: its hull turns and drives as it is asked, and its turret turns to where
+/// it is asked to aim. The host does this for every tank, and a guest for the tank of its own
+/// player, ahead of what the host tells.
+pub fn step(
+    field: &Field,
+    tank: &Tank,
+    is_player: bool,
+    command: &TankCommand,
+    position: &mut Vec2,
+    motion: &mut Motion,
+) {
+    let top_speed = tank.genome.top_speed();
+    let drive = command.drive.clamp_length_max(1.0);
+
+    // A tank drives along its hull only, forward or in reverse, whichever turns less.
+    let mut wanted = Vec2::ZERO;
+    if top_speed > 0.0 && drive.length_squared() > 0.01 {
+        let heading = drive.to_angle();
+        let reverse = geom::angle_difference(motion.hull, heading).abs() > FRAC_PI_2;
+        let target = if reverse { heading + PI } else { heading };
+        motion.hull = geom::rotate_toward(motion.hull, target, tank.genome.hull_turn_rate() * TICK);
+        if geom::angle_difference(motion.hull, target).abs() <= PIVOT_ANGLE {
+            let direction = if reverse { -1.0 } else { 1.0 };
+            wanted = Vec2::from_angle(motion.hull) * direction * top_speed * drive.length();
+        }
+    }
+    let acceleration = top_speed / TANK_ACCELERATION_TIME * TICK;
+    let change = wanted - motion.velocity;
+    motion.velocity += change.clamp_length_max(acceleration);
+    *position += motion.velocity * TICK;
+    field.push_out(tank, position, &mut motion.velocity);
+
+    if command.aim.distance_squared(*position) > 0.01 {
+        let rate = if is_player {
+            PLAYER_TURRET_RATE
+        } else {
+            tank.genome.turret_turn_rate()
+        };
+        let target = (command.aim - *position).to_angle();
+        motion.turret = geom::rotate_toward(motion.turret, target, rate * TICK);
+    }
+}
+
 /// Moves the hulls and turns the turrets. A wreck stays as it is.
 pub fn drive(
     field: Res<Field>,
@@ -75,38 +118,32 @@ pub fn drive(
 ) {
     for (tank, mut position, mut previous, mut motion, command, is_player) in &mut tanks {
         previous.0 = position.0;
-        let top_speed = tank.genome.top_speed();
-        let drive = command.drive.clamp_length_max(1.0);
+        step(
+            &field,
+            tank,
+            is_player,
+            command,
+            &mut position.0,
+            &mut motion,
+        );
+    }
+}
 
-        // A tank drives along its hull only, forward or in reverse, whichever turns less.
-        let mut wanted = Vec2::ZERO;
-        if top_speed > 0.0 && drive.length_squared() > 0.01 {
-            let heading = drive.to_angle();
-            let reverse = geom::angle_difference(motion.hull, heading).abs() > FRAC_PI_2;
-            let target = if reverse { heading + PI } else { heading };
-            motion.hull =
-                geom::rotate_toward(motion.hull, target, tank.genome.hull_turn_rate() * TICK);
-            if geom::angle_difference(motion.hull, target).abs() <= PIVOT_ANGLE {
-                let direction = if reverse { -1.0 } else { 1.0 };
-                wanted = Vec2::from_angle(motion.hull) * direction * top_speed * drive.length();
-            }
-        }
-        let acceleration = top_speed / TANK_ACCELERATION_TIME * TICK;
-        let change = wanted - motion.velocity;
-        motion.velocity += change.clamp_length_max(acceleration);
-        position.0 += motion.velocity * TICK;
-        let mut velocity = motion.velocity;
-        field.push_out(tank, &mut position.0, &mut velocity);
-        motion.velocity = velocity;
+/// How far the second of two tanks must go from the first for them not to overlap.
+fn overlap(a: Vec2, b: Vec2) -> Option<Vec2> {
+    let offset = b - a;
+    let distance = offset.length();
+    let overlaps = (1e-5..2.0 * TANK_RADIUS).contains(&distance);
+    overlaps.then(|| offset / distance * (2.0 * TANK_RADIUS - distance))
+}
 
-        if command.aim.distance_squared(position.0) > 0.01 {
-            let rate = if is_player {
-                PLAYER_TURRET_RATE
-            } else {
-                tank.genome.turret_turn_rate()
-            };
-            let target = (command.aim - position.0).to_angle();
-            motion.turret = geom::rotate_toward(motion.turret, target, rate * TICK);
+/// Moves a tank out of the others, which stay where they are. Each is given with whether it
+/// gives way: the tank then only goes half of the way out, as it does when the host moves
+/// both. A guest does this for the tank of its own player.
+pub fn give_way(position: &mut Vec2, others: impl Iterator<Item = (Vec2, bool)>) {
+    for (other, moves) in others {
+        if let Some(push) = overlap(*position, other) {
+            *position -= if moves { push / 2.0 } else { push };
         }
     }
 }
@@ -120,12 +157,9 @@ pub fn separate(
     let mut pairs = tanks.iter_combinations_mut();
     while let Some([(tank_a, mut a, _, wreck_a), (tank_b, mut b, _, wreck_b)]) = pairs.fetch_next()
     {
-        let offset = b.0 - a.0;
-        let distance = offset.length();
-        if distance >= 2.0 * TANK_RADIUS || distance < 1e-5 {
+        let Some(push) = overlap(a.0, b.0) else {
             continue;
-        }
-        let push = offset / distance * (2.0 * TANK_RADIUS - distance);
+        };
         let (a_moves, b_moves) = (
             tank_a.genome.top_speed() > 0.0 && !wreck_a,
             tank_b.genome.top_speed() > 0.0 && !wreck_b,

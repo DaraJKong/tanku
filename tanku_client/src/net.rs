@@ -30,7 +30,10 @@ use tanku_core::{
     seed::VERSION,
     sim::{Player, Run, RunPhase, RunRequest, Sector, SectorIndex, SimEvent, TankCommand},
 };
-use tanku_server::net::{self as server, Hosting, PORT, Seat, protocol_id};
+use tanku_server::{
+    field::Field,
+    net::{self as server, Hosting, PORT, Seat, protocol_id},
+};
 
 use crate::{
     Overlay, Screen,
@@ -306,6 +309,7 @@ fn direct(
                     commands.entity(joined.client).insert(Leaving);
                     commands.remove_resource::<Joined>();
                     commands.remove_resource::<Run>();
+                    commands.remove_resource::<Field>();
                 }
                 commands.remove_resource::<Lookup>();
                 *session = Session::Solo;
@@ -429,6 +433,7 @@ fn watch(
     commands.entity(joined.client).insert(Leaving);
     commands.remove_resource::<Joined>();
     commands.remove_resource::<Run>();
+    commands.remove_resource::<Field>();
     *session = Session::Solo;
     seat.0 = 0;
     // Whoever was still asking to join can ask again where they are.

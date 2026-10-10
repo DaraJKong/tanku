@@ -1203,6 +1203,12 @@ fn trail_bullets(
     }
 }
 
+/// How far from its place something is drawn for a moment. A guest moves its player's tank
+/// ahead of what its host tells, and brings the tank to its place this way when the host
+/// tells otherwise.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub struct Nudge(pub Vec2);
+
 /// Moves everything to where it is between two ticks of the simulation.
 pub fn place(
     fixed: Res<Time<Fixed>>,
@@ -1211,11 +1217,12 @@ pub fn place(
         &PreviousPosition,
         &mut Transform,
         Option<&Bullet>,
+        Option<&Nudge>,
     )>,
 ) {
     let progress = fixed.overstep_fraction();
-    for (position, previous, mut transform, bullet) in &mut moving {
-        let at = previous.0.lerp(position.0, progress);
+    for (position, previous, mut transform, bullet, nudge) in &mut moving {
+        let at = previous.0.lerp(position.0, progress) + nudge.map_or(Vec2::ZERO, |nudge| nudge.0);
         transform.translation = to_world(at, transform.translation.y);
         if let Some(bullet) = bullet {
             transform.rotation = facing(bullet.velocity.to_angle());
