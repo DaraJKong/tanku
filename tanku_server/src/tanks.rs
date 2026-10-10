@@ -183,7 +183,7 @@ pub fn operate(
                 sector: tank.sector,
                 velocity: direction * genome.bullet_speed(),
                 bounces_left: genome.bounces(),
-                piercing: genome.piercing(),
+                pierces_left: genome.piercing(),
                 bounced: false,
             };
             events.write(SimEvent::Shot {

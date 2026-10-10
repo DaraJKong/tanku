@@ -99,7 +99,7 @@ mod tests {
         let genome = generate(crate::seed::seed_value("TANKU"), 20, 0);
         assert_eq!(
             format!("{genome:?}"),
-            "Genome { levels: [1, 3, 6, 7, 1, 1, 1, 0, 0, 1, 0, 0], budget: 45 }"
+            "Genome { levels: [1, 0, 6, 7, 3, 2, 1, 0, 0, 1, 0, 0], budget: 45 }"
         );
     }
 
@@ -118,12 +118,23 @@ mod tests {
 
     #[test]
     fn points_are_spent() {
+        // A tank stops buying when it can afford nothing it is allowed to have.
         for (sector, genome) in sample() {
             let left = genome.budget as u32 - genome.cost();
-            assert!(
-                left <= 3,
-                "sector {sector}: {left} points left in {genome:?}"
-            );
+            for stat in Stat::HARDWARE {
+                let level = genome.level(stat);
+                let allowed = match stat {
+                    Stat::Tracks => genome.level(Stat::Engine) > 0,
+                    Stat::Mines | Stat::Shield => genome.brain() > 0,
+                    _ => true,
+                };
+                assert!(
+                    !allowed
+                        || level == stat.max_level()
+                        || stat.price(level + 1) - stat.price(level) > left,
+                    "sector {sector}: {left} points left for {stat:?} in {genome:?}"
+                );
+            }
         }
     }
 

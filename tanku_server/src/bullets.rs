@@ -107,7 +107,8 @@ pub fn fly(
                 let reach = |radius: f32| {
                     geom::sweep_circle_point(from, delta, tank_position.0, radius + BULLET_RADIUS)
                 };
-                if shield.is_active() && tank_entity != flying.owner {
+                // A tank's own shot leaves its bubble, but doesn't come back through it.
+                if shield.is_active() && (tank_entity != flying.owner || flying.bounced) {
                     consider(reach(SHIELD_RADIUS), Target::Shield(tank_position.0));
                 } else if tanks::hits(&flying, tank_entity, tank.team) {
                     consider(reach(TANK_RADIUS), Target::Tank(tank_entity));
@@ -153,14 +154,16 @@ pub fn fly(
     }
 }
 
-/// Any two bullets that touch destroy each other, unless exactly one of them pierces.
+/// Any two bullets that touch destroy each other. A piercing bullet that meets a normal one
+/// destroys it and flies on, but that uses up its piercing.
 pub fn collide(
     mut commands: Commands,
-    bullets: Query<(Entity, &Bullet, &Position, &PreviousPosition)>,
+    mut bullets: Query<(Entity, &mut Bullet, &Position, &PreviousPosition)>,
     mut events: MessageWriter<SimEvent>,
 ) {
     let mut destroyed: Vec<Entity> = Vec::new();
-    for [a, b] in bullets.iter_combinations() {
+    let mut pairs = bullets.iter_combinations_mut();
+    while let Some([mut a, mut b]) = pairs.fetch_next() {
         if destroyed.contains(&a.0) || destroyed.contains(&b.0) {
             continue;
         }
@@ -168,11 +171,18 @@ pub fn collide(
         if distance > 2.0 * BULLET_RADIUS {
             continue;
         }
-        for (this, other) in [(a, b), (b, a)] {
-            if !this.1.piercing || other.1.piercing {
-                destroyed.push(this.0);
-                events.write(SimEvent::BulletDestroyed { at: this.2.0 });
-            }
+        let (a_pierces, b_pierces) = (a.1.pierces_left > 0, b.1.pierces_left > 0);
+        if a_pierces && !b_pierces {
+            a.1.pierces_left -= 1;
+        } else {
+            destroyed.push(a.0);
+            events.write(SimEvent::BulletDestroyed { at: a.2.0 });
+        }
+        if b_pierces && !a_pierces {
+            b.1.pierces_left -= 1;
+        } else {
+            destroyed.push(b.0);
+            events.write(SimEvent::BulletDestroyed { at: b.2.0 });
         }
     }
     for entity in destroyed {

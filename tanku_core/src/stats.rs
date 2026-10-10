@@ -1,7 +1,7 @@
 //! Tank stats: their levels, what each level is worth and what it costs.
 
 /// Total budget of the player tank.
-pub const PLAYER_BUDGET: u16 = 60;
+pub const PLAYER_BUDGET: u16 = 58;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Stat {
@@ -55,7 +55,7 @@ impl Stat {
             Stat::Ricochet => &[0, 4, 10, 18],
             Stat::Mines => &[0, 4, 6, 8, 10],
             Stat::Shield => &[0, 6, 9, 12, 15, 18],
-            Stat::Piercing => &[0, 8],
+            Stat::Piercing => &[0, 4],
             Stat::Brain | Stat::Ballistics => &[],
         }
     }
@@ -115,10 +115,10 @@ pub struct Genome {
 }
 
 impl Genome {
-    /// The fixed tank of a player: 60 points and no software.
+    /// The fixed tank of a player: 58 points and no software.
     pub const PLAYER: Genome = Genome {
         //       Eng Trk Tur Muz Mag Ldr Ric Min Shd Prc Brn Bal
-        levels: [4, 5, 0, 3, 4, 6, 1, 2, 2, 0, 0, 0],
+        levels: [4, 5, 0, 2, 4, 6, 1, 2, 2, 0, 0, 0],
         budget: PLAYER_BUDGET,
     };
 
@@ -200,7 +200,7 @@ impl Genome {
 
     /// Bullet speed in m/s.
     pub fn bullet_speed(&self) -> f32 {
-        6.0 + 2.0 * self.level(Stat::Muzzle) as f32
+        [6.0, 7.5, 9.0, 12.0, 14.0, 16.0, 18.0, 20.0][self.level(Stat::Muzzle) as usize]
     }
 
     /// Rounds the magazine holds.
@@ -231,8 +231,9 @@ impl Genome {
         }
     }
 
-    pub fn piercing(&self) -> bool {
-        self.level(Stat::Piercing) > 0
+    /// Normal bullets that a bullet of this tank destroys before one destroys it.
+    pub fn piercing(&self) -> u8 {
+        self.level(Stat::Piercing)
     }
 
     pub fn brain(&self) -> u8 {
@@ -259,26 +260,26 @@ mod tests {
     #[test]
     fn player_tank_matches_the_specification() {
         let player = Genome::PLAYER;
-        assert_eq!(player.cost(), 60);
+        assert_eq!(player.cost(), PLAYER_BUDGET as u32);
         assert_eq!(player.top_speed(), 5.0);
         assert_eq!(player.hull_turn_rate().to_degrees().round(), 315.0);
-        assert_eq!(player.bullet_speed(), 12.0);
+        assert_eq!(player.bullet_speed(), 9.0);
         assert_eq!(player.magazine(), 5);
         assert_eq!(player.reload_time(), 1.0);
         assert_eq!(player.bounces(), 1);
         assert_eq!(player.mines(), 2);
         let (stun, cooldown) = player.shield().unwrap();
         assert!((stun - 1.2).abs() < 1e-5 && (cooldown - 9.0).abs() < 1e-5);
-        assert!(!player.piercing());
+        assert_eq!(player.piercing(), 0);
     }
 
     #[test]
-    fn full_hardware_costs_132_points() {
+    fn full_hardware_costs_128_points() {
         let total: u32 = Stat::HARDWARE
             .iter()
             .map(|stat| stat.price(stat.max_level()))
             .sum();
-        assert_eq!(total, 132);
+        assert_eq!(total, 128);
     }
 
     #[test]

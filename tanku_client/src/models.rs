@@ -245,7 +245,7 @@ fn build(
                             turret.part(&shapes.ring, &body, transform);
                         }
                         // Piercing: a pointed tip on the barrel.
-                        if genome.piercing() {
+                        if genome.piercing() > 0 {
                             let transform = Transform {
                                 translation: Vec3::new(tip + 0.14, 0.18, 0.0),
                                 rotation: Quat::from_rotation_z(-FRAC_PI_2),

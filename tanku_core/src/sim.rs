@@ -114,7 +114,8 @@ pub struct Bullet {
     pub sector: u32,
     pub velocity: Vec2,
     pub bounces_left: u8,
-    pub piercing: bool,
+    /// Normal bullets it still destroys without being destroyed.
+    pub pierces_left: u8,
     /// A player's bullet can't hit its owner before it has bounced.
     pub bounced: bool,
 }

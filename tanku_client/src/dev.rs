@@ -2,9 +2,10 @@
 //!
 //! `TANKU_DEV_SCRIPT` holds commands separated by semicolons, run one after the other:
 //! `start SEED`, `wait SECONDS`, `warp SECTOR`, `turn QUARTERS`, `peek ENEMY`, `pause`,
-//! `settings`, `resume`, `lose`, `shot PATH` and `quit`, plus `play DX DY AX AY SECONDS`, which drives
-//! the tank in a direction while it fires at a point relative to itself. It is how the game is
-//! looked at without anyone at the keyboard.
+//! `settings`, `resume`, `lose`, `shot PATH` and `quit`, plus `play DX DY AX AY SECONDS`, which
+//! drives the tank in a direction while it fires at a point relative to itself, and `lineup`,
+//! which lays out one bullet of each kind next to the tank. It is how the game is looked at
+//! without anyone at the keyboard.
 
 use std::collections::VecDeque;
 
@@ -12,8 +13,14 @@ use bevy::{
     prelude::*,
     render::view::screenshot::{Screenshot, save_to_disk},
 };
-use tanku_core::sim::{Enemy, Player, Position, Run, RunPhase, RunRequest, SimEvent, TankCommand};
-use tanku_server::field::Field;
+use tanku_core::{
+    sim::{
+        Bullet, Enemy, Player, Position, PreviousPosition, Run, RunPhase, RunRequest, SimEvent,
+        TankCommand, Team,
+    },
+    stats::Stat,
+};
+use tanku_server::field::{Field, InSector};
 
 use crate::{Overlay, Screen, camera::View, input};
 
@@ -73,6 +80,7 @@ fn run_script(
     mut run: Option<ResMut<Run>>,
     mut field: Option<ResMut<Field>>,
     enemies: Query<&Position, With<Enemy>>,
+    player: Query<(Entity, &Position), With<Player>>,
     mut events: MessageWriter<SimEvent>,
     mut exit: MessageWriter<AppExit>,
 ) {
@@ -124,6 +132,38 @@ fn run_script(
                 run.lives = 0;
                 run.phase = RunPhase::Over;
                 events.write(SimEvent::RunOver);
+            }
+        }
+        // Rows of bullets that hardly move: players' then enemies', normal then piercing, with
+        // no bounce left on the west side and the most on the east side.
+        "lineup" => {
+            let (Ok((owner, position)), Some(run)) = (player.single(), run.as_ref()) else {
+                return;
+            };
+            let kinds = [
+                (Team::Players, 0),
+                (Team::Players, 1),
+                (Team::Enemies, 0),
+                (Team::Enemies, 1),
+            ];
+            for (row, (team, pierces_left)) in kinds.into_iter().enumerate() {
+                for bounces_left in 0..=Stat::Ricochet.max_level() {
+                    let offset = Vec2::new(bounces_left as f32 * 1.6 - 2.4, 2.5 + row as f32 * 1.2);
+                    commands.spawn((
+                        Bullet {
+                            owner,
+                            team,
+                            sector: run.sector,
+                            velocity: Vec2::X * 0.01,
+                            bounces_left,
+                            pierces_left,
+                            bounced: false,
+                        },
+                        Position(position.0 + offset),
+                        PreviousPosition(position.0 + offset),
+                        InSector(run.sector),
+                    ));
+                }
             }
         }
         "pause" => overlay.set(Overlay::Pause),

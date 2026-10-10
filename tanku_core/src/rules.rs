@@ -17,7 +17,7 @@ pub const PLAYER_TURRET_RATE: f32 = 4.0 * PI;
 /// Distance from the center of a tank to the tip of its barrel.
 pub const MUZZLE_DISTANCE: f32 = 1.3;
 
-pub const BULLET_RADIUS: f32 = 0.15;
+pub const BULLET_RADIUS: f32 = 0.225;
 pub const FIRE_COOLDOWN: f32 = 0.25;
 
 pub const MINE_RADIUS: f32 = 0.35;

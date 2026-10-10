@@ -14,6 +14,7 @@ use tanku_core::{
         Barrier, Block, Bullet, ExplosiveCrate, Mine, MineState, Position, PreviousPosition,
         Sector, Team,
     },
+    stats::Stat,
 };
 
 use crate::theme;
@@ -22,6 +23,15 @@ const WALL_HEIGHT: f32 = 1.2;
 const WALL_THICKNESS: f32 = 0.4;
 /// Height at which bullets fly: the height of a barrel.
 const BULLET_HEIGHT: f32 = 0.8;
+/// Half the length of the straight part of a bullet. Its rounded ends come on top.
+const BULLET_BODY: f32 = BULLET_RADIUS;
+/// Length of the pointed tip of a piercing bullet.
+const DART_TIP: f32 = 0.4;
+/// A dark stripe looks thinner than it is on a bright bullet, so the gaps are a little narrower.
+const STRIPE_WIDTH: f32 = 0.12;
+const STRIPE_GAP: f32 = 0.09;
+/// Stripes are dark on a bright bullet. A vertex color multiplies the color of the material.
+const STRIPE_COLOR: [f32; 4] = [0.03, 0.03, 0.04, 1.0];
 
 pub fn to_world(point: Vec2, height: f32) -> Vec3 {
     Vec3::new(point.x, height, -point.y)
@@ -48,6 +58,11 @@ pub struct Shapes {
     pub cone: Handle<Mesh>,
     /// Lying flat, 1 across.
     pub ring: Handle<Mesh>,
+    /// Bullets at their real size, flying along `+x`. The index is the number of bounces left,
+    /// which is the number of stripes.
+    pub bullets: Vec<Handle<Mesh>>,
+    /// The same for bullets that still pierce: they have a pointed tip.
+    pub darts: Vec<Handle<Mesh>>,
 }
 
 #[derive(Resource)]
@@ -76,7 +91,7 @@ pub fn plugin(app: &mut App) {
                 dress_mines,
                 dress_bullets,
             ),
-            (paint_barriers, blink_mines),
+            (paint_barriers, blink_mines, stripe_bullets),
             place,
         )
             .chain(),
@@ -94,6 +109,12 @@ fn setup(
         sphere: meshes.add(Sphere::new(0.5)),
         cone: meshes.add(Cone::new(0.5, 1.0)),
         ring: meshes.add(Torus::new(0.3, 0.5)),
+        bullets: (0..=Stat::Ricochet.max_level())
+            .map(|stripes| meshes.add(bullet_mesh(false, stripes)))
+            .collect(),
+        darts: (0..=Stat::Ricochet.max_level())
+            .map(|stripes| meshes.add(bullet_mesh(true, stripes)))
+            .collect(),
     });
     let mut matte = |color: Color| {
         materials.add(StandardMaterial {
@@ -135,6 +156,95 @@ fn setup(
         enemy_bullet: glowing(theme::ENEMY_BULLET, 1.0),
         mine_on: glowing(theme::DANGER, 1.0),
     });
+}
+
+/// The mesh of a bullet: a shape turned around its line of flight, with its stripes.
+///
+/// Stripes are evenly spaced and centered on the middle of the bullet.
+fn bullet_mesh(pointed: bool, stripes: u8) -> Mesh {
+    const AROUND: usize = 12;
+    const CAP: usize = 4;
+    // The outline from the tail to the tip, as a distance along the axis and a radius.
+    let rounded = |forward: f32| {
+        (0..=CAP).map(move |step| {
+            let angle = step as f32 / CAP as f32 * std::f32::consts::FRAC_PI_2;
+            let (along, radius) = (angle.cos(), angle.sin());
+            (
+                forward * (BULLET_BODY + BULLET_RADIUS * along),
+                BULLET_RADIUS * radius,
+            )
+        })
+    };
+    let mut outline: Vec<(f32, f32)> = rounded(-1.0).collect();
+    if pointed {
+        outline.push((BULLET_BODY, BULLET_RADIUS));
+        outline.push((BULLET_BODY + DART_TIP, 0.0));
+    } else {
+        outline.extend(rounded(1.0).collect::<Vec<_>>().into_iter().rev());
+    }
+
+    let edges: Vec<f32> = (0..stripes)
+        .flat_map(|stripe| {
+            let spacing = STRIPE_WIDTH + STRIPE_GAP;
+            let center = (stripe as f32 - (stripes as f32 - 1.0) / 2.0) * spacing;
+            [center - STRIPE_WIDTH / 2.0, center + STRIPE_WIDTH / 2.0]
+        })
+        .collect();
+    // The outline is cut where a stripe starts or ends, so that each band has one color.
+    let mut rings: Vec<(f32, f32)> = Vec::new();
+    for ends in outline.windows(2) {
+        let (from, to) = (ends[0], ends[1]);
+        rings.push(from);
+        for &edge in &edges {
+            if edge > from.0 && edge < to.0 {
+                let share = (edge - from.0) / (to.0 - from.0);
+                rings.push((edge, from.1 + (to.1 - from.1) * share));
+            }
+        }
+    }
+    rings.push(outline[outline.len() - 1]);
+
+    let (mut positions, mut normals, mut colors) = (Vec::new(), Vec::new(), Vec::new());
+    for ends in rings.windows(2) {
+        let (from, to) = (ends[0], ends[1]);
+        let middle = (from.0 + to.0) / 2.0;
+        let striped = edges
+            .chunks(2)
+            .any(|stripe| middle > stripe[0] && middle < stripe[1]);
+        let color = if striped {
+            STRIPE_COLOR
+        } else {
+            [1.0, 1.0, 1.0, 1.0]
+        };
+        for side in 0..AROUND {
+            let outward = |side: usize| {
+                let angle = side as f32 / AROUND as f32 * std::f32::consts::TAU;
+                Vec3::new(0.0, angle.cos(), angle.sin())
+            };
+            let (here, next) = (outward(side), outward(side + 1));
+            let corner = |ring: (f32, f32), outward: Vec3| Vec3::X * ring.0 + outward * ring.1;
+            // Two triangles, counterclockwise seen from outside. One of them is flat at the tail
+            // and at the tip, where a ring is a single point.
+            let triangles = [
+                (from.1 > 0.0).then_some([(from, here), (from, next), (to, here)]),
+                (to.1 > 0.0).then_some([(from, next), (to, next), (to, here)]),
+            ];
+            for (ring, outward) in triangles.into_iter().flatten().flatten() {
+                positions.push(corner(ring, outward));
+                normals.push(outward);
+                colors.push(color);
+            }
+        }
+    }
+    let count = positions.len();
+    Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    )
+    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, vec![Vec2::ZERO; count])
+    .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, colors)
 }
 
 /// Cuts a simple polygon into triangles by clipping its ears.
@@ -347,6 +457,17 @@ fn blink_mines(
     }
 }
 
+/// The shape of a bullet shows what it can still do: a stripe for each bounce it has left,
+/// and a pointed tip as long as it pierces.
+fn bullet_shape<'a>(shapes: &'a Shapes, bullet: &Bullet) -> &'a Handle<Mesh> {
+    let shapes = if bullet.pierces_left > 0 {
+        &shapes.darts
+    } else {
+        &shapes.bullets
+    };
+    &shapes[(bullet.bounces_left as usize).min(shapes.len() - 1)]
+}
+
 fn dress_bullets(
     mut commands: Commands,
     bullets: Query<(Entity, &Bullet, &Position), Added<Bullet>>,
@@ -358,22 +479,28 @@ fn dress_bullets(
             Team::Players => &paints.player_bullet,
             Team::Enemies => &paints.enemy_bullet,
         };
-        let diameter = 2.0 * BULLET_RADIUS;
-        // A piercing bullet is a dart, the others are balls.
-        let (shape, scale) = if bullet.piercing {
-            (&shapes.cone, Vec3::new(diameter, 3.0 * diameter, diameter))
-        } else {
-            (&shapes.sphere, Vec3::splat(diameter))
-        };
         commands.entity(entity).insert((
-            Mesh3d(shape.clone()),
+            Mesh3d(bullet_shape(&shapes, bullet).clone()),
             MeshMaterial3d(paint.clone()),
             Transform {
                 translation: to_world(position.0, BULLET_HEIGHT),
-                scale,
+                rotation: facing(bullet.velocity.to_angle()),
                 ..default()
             },
         ));
+    }
+}
+
+/// A bullet loses a stripe when it bounces and its tip when it pierces.
+fn stripe_bullets(
+    mut bullets: Query<(&Bullet, &mut Mesh3d), Changed<Bullet>>,
+    shapes: Res<Shapes>,
+) {
+    for (bullet, mut mesh) in &mut bullets {
+        let wanted = bullet_shape(&shapes, bullet);
+        if mesh.0 != *wanted {
+            mesh.0 = wanted.clone();
+        }
     }
 }
 
@@ -392,9 +519,7 @@ pub fn place(
         let at = previous.0.lerp(position.0, progress);
         transform.translation = to_world(at, transform.translation.y);
         if let Some(bullet) = bullet {
-            // The cone of a dart points up in its model: tip it over, then turn it.
-            let tipped = Quat::from_rotation_z(-std::f32::consts::FRAC_PI_2);
-            transform.rotation = facing(bullet.velocity.to_angle()) * tipped;
+            transform.rotation = facing(bullet.velocity.to_angle());
         }
     }
 }

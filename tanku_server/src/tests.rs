@@ -112,7 +112,7 @@ fn bullets(app: &mut App) -> usize {
     world.query::<&Bullet>().iter(world).count()
 }
 
-fn spawn_bullet(app: &mut App, team: Team, at: Vec2, velocity: Vec2, piercing: bool) -> Entity {
+fn spawn_bullet(app: &mut App, team: Team, at: Vec2, velocity: Vec2, pierces: u8) -> Entity {
     app.world_mut()
         .spawn((
             Bullet {
@@ -121,7 +121,7 @@ fn spawn_bullet(app: &mut App, team: Team, at: Vec2, velocity: Vec2, piercing: b
                 sector: 0,
                 velocity,
                 bounces_left: 0,
-                piercing,
+                pierces_left: pierces,
                 bounced: false,
             },
             Position(at),
@@ -247,7 +247,7 @@ fn a_bullet_bounces_as_often_as_its_ricochet_stat_says() {
 fn a_ricochet_can_destroy_the_player_who_fired() {
     let mut app = start("TEST");
     shoot_at(&mut app, START + Vec2::X);
-    tick(&mut app, seconds(1.5));
+    tick(&mut app, seconds(2.0));
     let state = run(&app);
     assert_eq!(state.lives, 2);
     assert!(matches!(state.phase, RunPhase::Respawning(_)));
@@ -308,7 +308,7 @@ fn the_magazine_empties_and_reloads_one_round_at_a_time() {
 
 #[test]
 fn bullets_destroy_each_other_unless_one_pierces() {
-    let head_on = |first: bool, second: bool| {
+    let head_on = |first: u8, second: u8| {
         let mut app = start("TEST");
         let a = spawn_bullet(
             &mut app,
@@ -327,10 +327,40 @@ fn bullets_destroy_each_other_unless_one_pierces() {
         tick(&mut app, seconds(0.5));
         (alive(&app, a), alive(&app, b))
     };
-    assert_eq!(head_on(false, false), (false, false));
-    assert_eq!(head_on(true, false), (true, false));
-    assert_eq!(head_on(false, true), (false, true));
-    assert_eq!(head_on(true, true), (false, false));
+    assert_eq!(head_on(0, 0), (false, false));
+    assert_eq!(head_on(1, 0), (true, false));
+    assert_eq!(head_on(0, 1), (false, true));
+    assert_eq!(head_on(1, 1), (false, false));
+}
+
+#[test]
+fn a_piercing_bullet_pierces_one_bullet_only() {
+    let mut app = start("TEST");
+    let dart = spawn_bullet(
+        &mut app,
+        Team::Enemies,
+        Vec2::new(-5.0, 12.0),
+        Vec2::X * 10.0,
+        1,
+    );
+    let mut answer = |x: f32| {
+        spawn_bullet(
+            &mut app,
+            Team::Players,
+            Vec2::new(x, 12.0),
+            Vec2::NEG_X * 10.0,
+            0,
+        )
+    };
+    let (first, second) = (answer(-1.0), answer(3.0));
+
+    // The first bullet is destroyed and blunts the dart, which flies on as a normal bullet.
+    tick(&mut app, seconds(0.25));
+    assert!(alive(&app, dart) && !alive(&app, first) && alive(&app, second));
+    assert_eq!(app.world().get::<Bullet>(dart).unwrap().pierces_left, 0);
+    // The second one destroys it.
+    tick(&mut app, seconds(0.25));
+    assert!(!alive(&app, dart) && !alive(&app, second));
 }
 
 #[test]
@@ -341,14 +371,14 @@ fn enemy_bullets_destroy_each_other_too() {
         Team::Enemies,
         Vec2::new(-3.0, 12.0),
         Vec2::X * 10.0,
-        false,
+        0,
     );
     let b = spawn_bullet(
         &mut app,
         Team::Enemies,
         Vec2::new(3.0, 12.0),
         Vec2::NEG_X * 10.0,
-        false,
+        0,
     );
     tick(&mut app, seconds(0.5));
     assert!(!alive(&app, a) && !alive(&app, b));
@@ -363,7 +393,7 @@ fn an_enemy_bullet_passes_through_enemies_and_destroys_the_player() {
         Team::Enemies,
         Vec2::new(6.0, 5.0),
         Vec2::NEG_X * 10.0,
-        false,
+        0,
     );
     tick(&mut app, seconds(1.0));
     assert!(alive(&app, enemy));
@@ -389,7 +419,7 @@ fn a_shield_stops_bullets_then_overloads() {
         Team::Enemies,
         START + Vec2::X * 3.0,
         Vec2::NEG_X * 10.0,
-        true,
+        1,
     );
     command(
         &mut app,
@@ -436,6 +466,40 @@ fn a_shield_stops_bullets_then_overloads() {
     assert!(!app.world().get::<Shield>(entity).unwrap().is_active());
     tick(&mut app, seconds(0.7));
     assert!(app.world().get::<Shield>(entity).unwrap().is_active());
+}
+
+#[test]
+fn a_shield_lets_its_own_shots_out_but_not_back_in() {
+    let mut app = start("TEST");
+    let raise = |app: &mut App, aim: Vec2| {
+        command(
+            app,
+            TankCommand {
+                aim,
+                shield: true,
+                ..default()
+            },
+        );
+    };
+    // A shot fired from under the bubble flies off. This one ends in the barrier.
+    raise(&mut app, START + Vec2::Y);
+    tick(&mut app, 2);
+    shoot_at(&mut app, START + Vec2::Y);
+    assert_eq!(bullets(&mut app), 1);
+    tick(&mut app, seconds(10.0));
+    events(&mut app);
+
+    // A shot at the east wall comes back about 1.2 s later, and the bubble stops it.
+    shoot_at(&mut app, START + Vec2::X);
+    tick(&mut app, seconds(0.9));
+    raise(&mut app, START + Vec2::X);
+    tick(&mut app, seconds(0.6));
+    assert_eq!(run(&app).lives, 3);
+    let blocked = count(&events(&mut app), |event| {
+        matches!(event, SimEvent::ShieldBlocked { .. })
+    });
+    assert_eq!(blocked, 1);
+    assert_eq!(bullets(&mut app), 0);
 }
 
 #[test]
@@ -750,7 +814,7 @@ fn shoot_at_enemy(levels: &[(Stat, u8)]) -> (App, Entity) {
         Team::Players,
         Vec2::new(0.0, 15.5),
         Vec2::NEG_Y * 10.0,
-        false,
+        0,
     );
     tick(&mut app, seconds(0.33));
     (app, enemy)
