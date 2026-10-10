@@ -63,6 +63,8 @@ pub struct Shapes {
     pub ring: Handle<Mesh>,
     /// The same, but thin: a line on the ground.
     pub circle: Handle<Mesh>,
+    /// The same again, as a fine line: the edge of a shield bubble.
+    pub hairline: Handle<Mesh>,
     /// Bullets at their real size, flying along `+x`. The index is the number of bounces left,
     /// which is the number of stripes.
     pub bullets: Vec<Handle<Mesh>>,
@@ -122,6 +124,7 @@ fn setup(
         cone: meshes.add(Cone::new(0.5, 1.0)),
         ring: meshes.add(Torus::new(0.3, 0.5)),
         circle: meshes.add(Torus::new(0.46, 0.5)),
+        hairline: meshes.add(Torus::new(0.487, 0.5)),
         bullets: (0..=Stat::Ricochet.max_level())
             .map(|stripes| meshes.add(bullet_mesh(false, stripes)))
             .collect(),

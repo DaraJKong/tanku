@@ -302,9 +302,8 @@ fn build(
                     Visibility::Hidden,
                     NotShadowCaster,
                     children![(
-                        Mesh3d(shapes.circle.clone()),
+                        Mesh3d(shapes.hairline.clone()),
                         MeshMaterial3d(shield.clone()),
-                        Transform::from_scale(Vec3::new(1.0, 0.3, 1.0)),
                         NotShadowCaster,
                     )],
                 ));
