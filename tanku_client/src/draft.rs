@@ -212,10 +212,6 @@ impl Draft {
         }
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.positions.is_empty()
-    }
-
     pub fn build(self) -> Mesh {
         let count = self.positions.len();
         Mesh::new(
@@ -328,9 +324,7 @@ mod tests {
     #[test]
     fn a_drawing_becomes_a_mesh_with_its_colors() {
         let mut draft = Draft::default();
-        assert!(draft.is_empty());
         draft.outlined(Vec3::Y, Vec3::splat(2.0), (TOP, SIDE, INK));
-        assert!(!draft.is_empty());
         let mesh = draft.build();
         let corners = mesh.count_vertices();
         assert!(corners > 0 && corners.is_multiple_of(3));

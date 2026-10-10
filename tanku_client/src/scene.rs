@@ -375,18 +375,27 @@ fn grid_texture() -> Image {
     image
 }
 
-/// The drawing of the walls of a sector: each wall is a band between two lines, along the
-/// outside of the line that bullets bounce off. A third line marks its foot on the floor.
+/// A wall as it is drawn: a band along the outside of the line that bullets bounce off.
+struct Band {
+    /// The two ends of that line.
+    ends: (Vec2, Vec2),
+    /// Where the outer edge of a band 1 m thick would end, seen from each end of the line. The
+    /// two bands of a corner meet on its bisector, and a wall that stops is cut square.
+    reach: (Vec2, Vec2),
+    /// Whether the wall stops at each end, as it does at a gate, with no wall that goes on.
+    stops: (bool, bool),
+}
+
+/// The bands of the walls of a sector. `around` holds the walls of the sectors next to it: a
+/// wall that goes on in another sector is cut to fit the wall it meets there, as at any other
+/// corner. Two walls that were each cut square would cover the same ground where a sector ends
+/// on a corner.
 ///
 /// The outline of a sector runs clockwise, so the outside of a wall is on its left.
-fn wall_drawing(walls: &[(Vec2, Vec2)]) -> Draft {
+fn wall_bands(walls: &[(Vec2, Vec2)], around: &[(Vec2, Vec2)]) -> Vec<Band> {
     let outward = |(from, to): (Vec2, Vec2)| (to - from).perp().normalize();
-    let mut draft = Draft::default();
-    for &wall in walls {
-        let (a, b) = wall;
+    let band = |&wall: &(Vec2, Vec2)| {
         let normal = outward(wall);
-        // Where another wall goes on from an end, the two bands meet on the bisector of the
-        // corner. Where the wall stops, at a gate, its band is cut square.
         let reach = |neighbor: Option<&(Vec2, Vec2)>| {
             let Some(&neighbor) = neighbor else {
                 return normal;
@@ -397,10 +406,24 @@ fn wall_drawing(walls: &[(Vec2, Vec2)]) -> Draft {
             }
             ((normal + outward(neighbor)) / fold).clamp_length_max(3.0)
         };
-        let before = walls.iter().find(|other| other.1 == a);
-        let after = walls.iter().find(|other| other.0 == b);
-        let (reach_a, reach_b) = (reach(before), reach(after));
-        let (a_out, b_out) = (a + reach_a * WALL_THICKNESS, b + reach_b * WALL_THICKNESS);
+        let before = walls.iter().chain(around).find(|other| other.1 == wall.0);
+        let after = walls.iter().chain(around).find(|other| other.0 == wall.1);
+        Band {
+            ends: wall,
+            reach: (reach(before), reach(after)),
+            stops: (before.is_none(), after.is_none()),
+        }
+    };
+    walls.iter().map(band).collect()
+}
+
+/// The drawing of the walls of a sector, next to the walls of its neighbors: each wall is a
+/// band between two lines, and a third line marks its foot on the floor.
+fn wall_drawing(walls: &[(Vec2, Vec2)], around: &[(Vec2, Vec2)]) -> Draft {
+    let mut draft = Draft::default();
+    for Band { ends, reach, stops } in wall_bands(walls, around) {
+        let (a, b) = ends;
+        let (a_out, b_out) = (a + reach.0 * WALL_THICKNESS, b + reach.1 * WALL_THICKNESS);
         let band = |draft: &mut Draft, ends: [Vec2; 4], height: f32, color: Color| {
             draft.face(&ends.map(|point| to_world(point, height)), color);
         };
@@ -419,13 +442,13 @@ fn wall_drawing(walls: &[(Vec2, Vec2)]) -> Draft {
         band(&mut draft, [a, b, b_out, a_out], WALL_HEIGHT, theme::WALL);
         rise(&mut draft, a, b);
         rise(&mut draft, a_out, b_out);
-        if before.is_none() {
+        if stops.0 {
             rise(&mut draft, a, a_out);
         }
-        if after.is_none() {
+        if stops.1 {
             rise(&mut draft, b, b_out);
         }
-        let (inside_a, inside_b) = (reach_a * draft::LINE, reach_b * draft::LINE);
+        let (inside_a, inside_b) = (reach.0 * draft::LINE, reach.1 * draft::LINE);
         let top = WALL_HEIGHT + LIFT;
         band(
             &mut draft,
@@ -734,45 +757,71 @@ pub fn floor_mesh(outline: &[Vec2]) -> Mesh {
     ))
 }
 
+/// The walls of a sector, as the drawing takes them.
+fn walls_of(sector: &Sector) -> Vec<(Vec2, Vec2)> {
+    let walls = sector.layout.plan.walls.iter();
+    walls.map(|&(a, b)| (a.as_vec2(), b.as_vec2())).collect()
+}
+
+/// Gives a new sector its floor and its walls. The walls of a sector are cut to fit those of
+/// the sectors next to it, so all of them are drawn again when a sector comes or goes.
 fn dress_sectors(
     mut commands: Commands,
-    sectors: Query<(Entity, &Sector), Added<Sector>>,
+    sectors: Query<(Entity, &Sector)>,
+    arrivals: Query<(), Added<Sector>>,
+    mut departures: RemovedComponents<Sector>,
+    mut drawn: Query<(&Ground, &mut Mesh3d)>,
     paints: Res<Paints>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
+    let gone = departures.read().count();
+    if arrivals.is_empty() && gone == 0 {
+        return;
+    }
+    let loaded: Vec<(u32, Vec<(Vec2, Vec2)>)> = sectors
+        .iter()
+        .map(|(_, sector)| (sector.layout.plan.index, walls_of(sector)))
+        .collect();
     for (entity, sector) in &sectors {
         let plan = &sector.layout.plan;
-        let outline: Vec<Vec2> = plan.outline.iter().map(|point| point.as_vec2()).collect();
-        let floor = floor_mesh(&outline);
-        let walls: Vec<(Vec2, Vec2)> = plan
-            .walls
+        let index = plan.index;
+        let around: Vec<(Vec2, Vec2)> = loaded
             .iter()
-            .map(|&(a, b)| (a.as_vec2(), b.as_vec2()))
+            .filter(|(other, _)| other.abs_diff(index) == 1)
+            .flat_map(|(_, walls)| walls.iter().copied())
             .collect();
+        let walls = meshes.add(wall_drawing(&walls_of(sector), &around).build());
+        if !arrivals.contains(entity) {
+            let mut drawn = drawn.iter_mut();
+            if let Some((_, mut mesh)) =
+                drawn.find(|(ground, _)| !ground.floor && ground.sector == index)
+            {
+                mesh.0 = walls;
+            }
+            continue;
+        }
+        let outline: Vec<Vec2> = plan.outline.iter().map(|point| point.as_vec2()).collect();
+        let floor = meshes.add(floor_mesh(&outline));
         commands
             .entity(entity)
             .insert((Transform::default(), Visibility::default()))
             .with_children(|parent| {
-                let sector = plan.index;
                 parent.spawn((
                     Ground {
-                        sector,
+                        sector: index,
                         floor: true,
                     },
-                    Mesh3d(meshes.add(floor)),
+                    Mesh3d(floor),
                     MeshMaterial3d(paints.floor_dormant.clone()),
                 ));
-                let walls = wall_drawing(&walls);
-                if !walls.is_empty() {
-                    parent.spawn((
-                        Ground {
-                            sector,
-                            floor: false,
-                        },
-                        Mesh3d(meshes.add(walls.build())),
-                        MeshMaterial3d(paints.ink_dormant.clone()),
-                    ));
-                }
+                parent.spawn((
+                    Ground {
+                        sector: index,
+                        floor: false,
+                    },
+                    Mesh3d(walls),
+                    MeshMaterial3d(paints.ink_dormant.clone()),
+                ));
             });
     }
 }
@@ -1238,7 +1287,7 @@ mod tests {
         // A square room of 10 m, clockwise from its south-west corner.
         let corners = [(0.0, 0.0), (0.0, 10.0), (10.0, 10.0), (10.0, 0.0)].map(Vec2::from);
         let walls: Vec<(Vec2, Vec2)> = (0..4).map(|i| (corners[i], corners[(i + 1) % 4])).collect();
-        let draft = wall_drawing(&walls);
+        let draft = wall_drawing(&walls, &[]);
         // The bands form a square ring around the room, with nothing missing at the corners
         // and nothing twice.
         let outside = 10.0 + 2.0 * WALL_THICKNESS;
@@ -1251,11 +1300,64 @@ mod tests {
 
     #[test]
     fn a_wall_that_stops_is_cut_square() {
-        let draft = wall_drawing(&[(Vec2::ZERO, Vec2::new(0.0, 6.0))]);
+        let draft = wall_drawing(&[(Vec2::ZERO, Vec2::new(0.0, 6.0))], &[]);
         assert!(close(draft.area(theme::WALL), 6.0 * WALL_THICKNESS));
         // Its two faces, and one at each end.
         let faces = 2.0 * 6.0 * WALL_HEIGHT + 2.0 * WALL_THICKNESS * WALL_HEIGHT;
         assert!(close(draft.area(theme::WALL_SIDE), faces));
+    }
+
+    #[test]
+    fn the_walls_of_two_sectors_are_cut_to_fit_each_other() {
+        // A sector ends on a corner: its wall runs east to the end of its barrier, and the
+        // wall of the next sector goes north from there. The outsides are on the left.
+        let first = [(Vec2::new(-6.0, 0.0), Vec2::ZERO)];
+        let second = [(Vec2::ZERO, Vec2::new(0.0, 6.0))];
+        for (walls, around) in [(first, second), (second, first)] {
+            let draft = wall_drawing(&walls, &around);
+            // Each band gives up half of the square that both would cover.
+            let band = 6.0 * WALL_THICKNESS - WALL_THICKNESS * WALL_THICKNESS / 2.0;
+            assert!(close(draft.area(theme::WALL), band));
+            // Its inner face, its shorter outer one, and one face at the end where it stops.
+            let faces = (6.0 + (6.0 - WALL_THICKNESS) + WALL_THICKNESS) * WALL_HEIGHT;
+            assert!(close(draft.area(theme::WALL_SIDE), faces));
+        }
+    }
+
+    #[test]
+    fn generated_walls_meet_their_neighbors_on_one_cut() {
+        let walls_of = |corridor: &mut Corridor, index: u32| -> Vec<(Vec2, Vec2)> {
+            let walls = corridor.plan(index).walls.iter();
+            walls.map(|&(a, b)| (a.as_vec2(), b.as_vec2())).collect()
+        };
+        let (seeds, sectors) = (40, 30);
+        let (mut joints, mut corners) = (0, 0);
+        for seed in 0..seeds {
+            let mut corridor = Corridor::new(seed);
+            let walls: Vec<_> = (0..sectors)
+                .map(|index| walls_of(&mut corridor, index))
+                .collect();
+            for pair in walls.windows(2) {
+                let near = wall_bands(&pair[0], &pair[1]);
+                let far = wall_bands(&pair[1], &pair[0]);
+                // On each side of a barrier, a wall of one sector ends where a wall of the
+                // other one starts.
+                let pairs = near.iter().flat_map(|a| far.iter().map(move |b| (a, b)));
+                for (from, to) in pairs.flat_map(|(a, b)| [(a, b), (b, a)]) {
+                    if from.ends.1 != to.ends.0 {
+                        continue;
+                    }
+                    joints += 1;
+                    let square = (from.ends.1 - from.ends.0).perp().normalize();
+                    corners += u32::from(from.reach.1.distance(square) > 1e-5);
+                    assert!(!from.stops.1 && !to.stops.0);
+                    assert!(from.reach.1.distance(to.reach.0) < 1e-5);
+                }
+            }
+        }
+        // Every barrier has two ends, and some sectors end on a corner.
+        assert_eq!(joints, seeds as u32 * (sectors - 1) * 2);
+        assert!(corners > 0, "no sector ends on a corner");
     }
 
     #[test]
