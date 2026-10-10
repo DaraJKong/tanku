@@ -327,7 +327,9 @@ music.render(&mut frames);
 | Development builds | The crate is compiled with full optimization, like the dependencies, because it runs in real time |
 | Start | Nothing is computed ahead, so the music adds nothing to the time the game takes to start or to restart |
 
-In the client, the music is an asset that implements Bevy's `Decodable`, which Bevy mixes with the cues. It is played once and has no end. A system writes the context every frame from `Screen`, `Overlay`, `Run`, the `Sector` the run has reached and the enemies that are awake, and from step 3 on from their genomes. Another keeps the music as loud as the settings say, because Bevy counts the volume of the game into a sound only when the sound starts. Nothing changes in the server or in the simulation. A scripted run and the headless server have no music.
+In the client, the music is an asset that implements Bevy's `Decodable`, which Bevy mixes with the cues. It is played once and has no end. A system writes the context every frame from `Screen`, `Overlay`, `Run`, the `Sector` the run has reached and the enemies that are awake, and from step 3 on from their genomes. Another keeps the music as loud as the settings say, because Bevy counts the volume of the game into a sound only when the sound starts. Nothing changes in the server or in the simulation, and the headless server has no music.
+
+A scripted run plays no music either, but it can keep what it would have played: from its command `tape` on, it computes the music frame by frame and writes it to a sound file when it quits, next to the list of what the music was told and when. It is how the music is checked against a real run without anyone listening.
 
 The web build has no music until step 5. There, the browser lets no sound play before the first click or key, so the music will start with it. The web build also mixes its sound on the main thread, 46 ms at a time: a frame that takes longer than about 50 ms leaves a gap in the music. The cues have the same limit today, but a gap in a held note is heard far more than one in a short cue.
 

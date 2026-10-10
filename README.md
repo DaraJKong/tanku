@@ -135,6 +135,12 @@ A scripted run opens no window and needs no display: it draws into an image of 1
 TANKU_DEV_SCRIPT="start TANKU; wait 1; warp 12; wait 1; peek 0; wait 1; shot sector12.png; quit" cargo run -p tanku_client
 ```
 
+The command `tape` keeps the music that the run would have played from there on. When the script quits, the music goes to a sound file, and the list of what the game told the music, with the time of each change, to a text file of the same name:
+
+```bash
+TANKU_DEV_SCRIPT="tape run.wav; wait 4; start TANKU; wait 4; play 0 1 0 0 4; wait 8; clear; wait 8; quit" cargo run -p tanku_client
+```
+
 ## Listening to the music
 
 The music is specified in [docs/MUSIC.md](docs/MUSIC.md). The game plays it on the desktop, and the settings have a volume for it. A tool also writes it to sound files, to hear an arrangement without playing up to it:

@@ -10,13 +10,16 @@
 //! tank, `pierce`, which sends a piercing bullet at a bullet of the players there,
 //! `showcase STAT`, which lines up in the start bay one tank for each level of a stat,
 //! `palette`, which lines up there three tanks of each hue, from a weak one to a strong one,
-//! and `doze`, which puts the tanks that are lined up to sleep. It is how the game is looked
-//! at without anyone at the keyboard.
+//! `doze`, which puts the tanks that are lined up to sleep, and `tape PATH`, which keeps the
+//! music from there on. It is how the game is looked at, and listened to, without anyone at
+//! the keyboard.
 //!
 //! A scripted run opens no window: it draws into an image, which `shot` saves. It makes no
-//! sound, starts from the default settings and leaves the player's files alone.
+//! sound, starts from the default settings and leaves the player's files alone. The music
+//! that it would play goes to a sound file when the script quits, if `tape` asked for it,
+//! next to a text file that lists what the music was told and when.
 
-use std::{collections::VecDeque, time::Duration};
+use std::{collections::VecDeque, fmt::Write, path::PathBuf, time::Duration};
 
 use bevy::{
     app::ScheduleRunnerPlugin,
@@ -46,7 +49,9 @@ use crate::{
     Overlay, Screen,
     audio::Muted,
     camera::{MainCamera, View},
-    input, storage,
+    input,
+    music::Baton,
+    storage,
 };
 
 /// Size of the image that a scripted run draws into.
@@ -65,6 +70,38 @@ struct Script {
 /// The image that stands in for the window.
 #[derive(Resource)]
 struct Canvas(Handle<Image>);
+
+/// The music that a scripted run would play, kept from the command `tape` on.
+#[derive(Resource)]
+struct Tape {
+    path: PathBuf,
+    music: tanku_audio::Music,
+    samples: Vec<f32>,
+    /// When the tape started, in seconds of the clock of the machine.
+    started: f64,
+    /// What the music was told, and how many seconds into the tape.
+    told: Vec<(f64, tanku_audio::Context)>,
+}
+
+impl Tape {
+    /// Writes the sound file, and the list of what the music was told next to it.
+    fn save(&self) {
+        let mut list = String::new();
+        for (at, context) in &self.told {
+            let _ = writeln!(
+                list,
+                "{:02}:{:04.1}  {context:?}",
+                *at as u32 / 60,
+                at % 60.0
+            );
+        }
+        let written = tanku_audio::wav::write(&self.path, &self.samples)
+            .and_then(|()| std::fs::write(self.path.with_extension("txt"), list));
+        if let Err(error) = written {
+            warn!("the tape was not saved: {error}");
+        }
+    }
+}
 
 /// A tank that `showcase` put on display.
 #[derive(Component)]
@@ -167,6 +204,7 @@ pub fn plugin(app: &mut App) {
     })
     .add_systems(PostStartup, draw_into_an_image)
     .add_systems(Update, run_script)
+    .add_systems(Last, roll_the_tape)
     .add_systems(
         PreUpdate,
         (
@@ -192,6 +230,26 @@ fn draw_into_an_image(
         .entity(*camera)
         .insert((RenderTarget::from(canvas.clone()), IsDefaultUiCamera));
     commands.insert_resource(Canvas(canvas));
+}
+
+/// Computes the music that the frame would have played, since nothing plays it.
+fn roll_the_tape(time: Res<Time<Real>>, baton: Res<Baton>, tape: Option<ResMut<Tape>>) {
+    let Some(mut tape) = tape else {
+        return;
+    };
+    let tape = &mut *tape;
+    let now = time.elapsed_secs_f64() - tape.started;
+    let context = baton.0.context();
+    if tape.told.last().is_none_or(|(_, last)| *last != context) {
+        tape.told.push((now, context));
+    }
+    let frames = (now * tanku_audio::SAMPLE_RATE as f64) as usize;
+    let recorded = tape.samples.len();
+    let due = frames * tanku_audio::CHANNELS as usize;
+    if due > recorded {
+        tape.samples.resize(due, 0.0);
+        tape.music.render(&mut tape.samples[recorded..]);
+    }
 }
 
 /// Takes the controls of the player's tank while the script plays.
@@ -292,6 +350,7 @@ fn run_script(
         Query<(&Tank, &mut Shield)>,
     ),
     canvas: Res<Canvas>,
+    (baton, tape): (Res<Baton>, Option<Res<Tape>>),
     mut events: MessageWriter<SimEvent>,
     mut exit: MessageWriter<AppExit>,
 ) {
@@ -503,7 +562,18 @@ fn run_script(
                 .observe(save_to_disk(std::path::PathBuf::from(word(1))));
             script.wait = 0.5;
         }
+        // Keeps the music from here on. The piece starts with the tape.
+        "tape" => commands.insert_resource(Tape {
+            path: PathBuf::from(word(1)),
+            music: baton.0.music(),
+            samples: Vec::new(),
+            started: time.elapsed_secs_f64(),
+            told: Vec::new(),
+        }),
         "quit" => {
+            if let Some(tape) = &tape {
+                tape.save();
+            }
             exit.write(AppExit::Success);
         }
         other => warn!("unknown development command: {other}"),
