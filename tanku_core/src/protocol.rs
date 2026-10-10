@@ -21,6 +21,11 @@ use crate::{
     },
 };
 
+/// Counts the changes to what the server and its clients tell each other since the version of
+/// the game was last raised. Two builds that don't count the same don't speak the same, so
+/// they don't join each other: raise this with every such change.
+pub const REVISION: u32 = 2;
+
 /// Who sits in a seat of a game that several players share.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Member {

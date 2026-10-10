@@ -28,7 +28,7 @@ use lightyear::{
     },
 };
 use tanku_core::{
-    protocol::{Lobby, Member, Reliable, RunState, Told},
+    protocol::{Lobby, Member, REVISION, Reliable, RunState, Told},
     rules::{MAX_PLAYERS, TICK_RATE},
     seed::VERSION,
     sim::{
@@ -88,9 +88,11 @@ impl ConnectionRequestHandler for Doorkeeper {
     }
 }
 
-/// What tells one version of the game from another on the network: players must run the same.
+/// What tells one build of the game from another on the network: players must run the same
+/// version, and builds that speak the same.
 pub fn protocol_id() -> u64 {
-    VERSION.bytes().fold(0xCBF2_9CE4_8422_2325, |hash, byte| {
+    let told_apart_by = VERSION.bytes().chain(REVISION.to_le_bytes());
+    told_apart_by.fold(0xCBF2_9CE4_8422_2325, |hash, byte| {
         (hash ^ byte as u64).wrapping_mul(0x0000_0100_0000_01B3)
     })
 }
