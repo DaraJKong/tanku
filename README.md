@@ -40,7 +40,7 @@ Up to four players share a run. One of them hosts the game, and the others join 
 2. Each of the others picks "Join a game" and types that address.
 3. The host starts the run once everyone is in the lobby. Nobody joins a run in progress.
 
-All players need the same version of the game. The game listens on UDP port 28405. To play over the internet, that port of the host's router must lead to the host's machine, and the others type the host's public address.
+All players need the same version of the game. The game listens on UDP port 28405, which the firewall of the host's machine must let in. To play over the internet, that port of the host's router must lead to the host's machine, and the others type the host's public address.
 
 Two games on one machine can play together, which is the quickest way to try it: the second one joins `127.0.0.1`.
 
@@ -165,6 +165,14 @@ TANKU_DEV_SCRIPT="host 28999; wait 6; press Start; wait 5; shot host.png; quit" 
 ```bash
 TANKU_DEV_SCRIPT="wait 2; join 127.0.0.1:28999; wait 9; shot guest.png; quit" cargo run -p tanku_client
 ```
+
+Two games on one machine talk over the loopback, where every address is the machine's own and nothing is late or lost. That hides what goes wrong between two machines. A script runs the two games as two machines on a private network, a host at `10.77.0.1` and a guest at `10.77.0.2`, and can worsen the line between them. A change to the network is checked with it:
+
+```bash
+tanku_client/dev/two_machines.sh "host; wait 6; press Start; wait 5; shot host.png; quit" "wait 2; join 10.77.0.1; wait 9; shot guest.png; quit" "delay 50ms 10ms loss 2%"
+```
+
+It takes Linux with user namespaces and needs no privileges. The third argument is optional: here it makes a round trip of 100 ms that loses one packet in fifty each way.
 
 The command `tape` keeps the music that the run would have played from there on. When the script quits, the music goes to a sound file, and the list of what the game told the music, with the time of each change, to a text file of the same name:
 
