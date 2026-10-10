@@ -5,7 +5,7 @@ use tanku_audio::{CHANNELS, Conductor, Context, Music, Place, SAMPLE_RATE, music
 /// Frames in a bar, which lasts two seconds.
 const BAR: usize = 2 * SAMPLE_RATE as usize;
 /// Frames in a bar of the bridge, which is slower.
-const BRIDGE_BAR: usize = 117_600;
+const BRIDGE_BAR: usize = 100_800;
 
 fn at(place: Place) -> Context {
     Context {
@@ -103,7 +103,7 @@ fn the_music_is_stable() {
         0x8B59_7837_D1A8_D34B,
         0xDB76_65F3_DD0C_8733,
         0x2BA7_3B84_D898_B3BD,
-        0x63B1_023F_6EE8_0947,
+        0xF687_5E7B_4823_6191,
         0x62F5_550B_A741_2DB3,
         0xF424_7194_4520_A5D2,
         0xF29D_D23F_4D42_2478,

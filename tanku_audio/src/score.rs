@@ -15,8 +15,8 @@ pub const BARS: usize = 8;
 /// How long a step lasts, in half frames of the music. At 120 beats per minute a step is 5512
 /// frames and a half.
 pub const STEP: u32 = 11_025;
-/// The bridge is slower, at 90 beats per minute: its steps are 7350 frames long.
-pub const BRIDGE_STEP: u32 = 14_700;
+/// The bridge is slower, at 105 beats per minute: its steps are 6300 frames long.
+pub const BRIDGE_STEP: u32 = 12_600;
 
 /// The A of 440 Hz. Pitches count semitones, and this one is the tonic of the lead.
 pub const A4: u8 = 69;
@@ -168,16 +168,29 @@ pub const BRIDGE: [Line; BARS] = [
     MOTIF_C,
     line("---- 5.4. ---- ----"),
 ];
-/// What the bass plays in every bar of the bridge: two short notes in a row on the degree that
-/// the bridge never leaves.
-pub const BRIDGE_BASS: Line = line("---- ---- 5-5- ----");
+/// What the lead answers to each call of the bridge.
+pub const BRIDGE_ANSWERS: [Line; BARS] = answers(BRIDGE);
+/// The tick of the bridge: under its call, the pluck rocks on every half beat between the
+/// degree that the bridge never leaves and the fifth above it.
+pub const TICK: Line = line("5.9. 5.9. 5.9. 5.9.");
+/// What the bass plays in every bar of the bridge: two notes in a row on the degree that the
+/// bridge never leaves, the second held under the answer of the lead.
+pub const BRIDGE_BASS: Line = line("---- ---- 5-5. ....");
 pub const PEDAL: u8 = 5;
 /// The kick of the bridge: the two beats of a heart. A bar of the bridge is these two hits,
-/// the call of the pluck, the two notes of the bass, and a beat of silence.
+/// the call of the pluck, the two notes of the bass and the answer of the lead, one beat each,
+/// over the tick.
 pub const KICK_HEART: Pattern = pattern("x.o. .... .... ....");
-/// The degrees of the bridge. They are the same notes in every mode, so the bridge has no
-/// mode: it is neither major nor minor.
+/// The degrees of the bridge. They are the same notes in both modes, and the third degree is
+/// not among them, so the bridge has no mode: it is neither major nor minor.
 pub const NEUTRAL: [u8; 5] = [1, 2, 4, 5, 7];
+
+/// The fall, which leads from a fight into the bridge: in two beats, the tune comes down from
+/// the tonic to the degree that the bridge never leaves.
+pub const FALL: Line = line("8.7. 6.5. ---- ----");
+/// Steps that the fall lasts. They get longer one after the other, from the tempo of the
+/// fight to the tempo of what follows.
+pub const FALL_STEPS: u8 = 8;
 
 pub const KICK_FIGHT: Pattern = pattern("x... x... x... x...");
 pub const HAT_CORRIDOR: Pattern = pattern("..x. ..x. ..x. ..x.");
@@ -250,6 +263,43 @@ pub const fn ornaments(line: Line) -> Line {
         step += 1;
     }
     out
+}
+
+/// The answer to a call: its two notes in the other order, two beats later, and short.
+pub const fn answer(call: Line) -> Line {
+    let mut notes = [REST; 2];
+    let mut steps = [0; 2];
+    let mut found = 0;
+    let mut step = 0;
+    while step < STEPS {
+        if call[step].degree != 0 {
+            notes[found] = call[step];
+            steps[found] = step;
+            found += 1;
+        }
+        step += 1;
+    }
+    assert!(found == 2, "a call has two notes");
+    let mut out = [REST; STEPS];
+    out[steps[0] + STEPS / 2] = Cell {
+        degree: notes[1].degree,
+        steps: 1,
+    };
+    out[steps[1] + STEPS / 2] = Cell {
+        degree: notes[0].degree,
+        steps: 1,
+    };
+    out
+}
+
+/// The answer to every call of the bridge.
+pub const fn answers(mut calls: [Line; BARS]) -> [Line; BARS] {
+    let mut bar = 0;
+    while bar < BARS {
+        calls[bar] = answer(calls[bar]);
+        bar += 1;
+    }
+    calls
 }
 
 /// The skeleton of every bar of a melody.
@@ -343,10 +393,10 @@ mod tests {
         // Four steps to a beat, and a minute of music in half frames.
         let minute = 60 * 2 * crate::SAMPLE_RATE;
         assert_eq!(4 * 120 * STEP, minute);
-        assert_eq!(4 * 90 * BRIDGE_STEP, minute);
-        // A bar lasts two seconds, and 2.67 s in the bridge.
+        assert_eq!(4 * 105 * BRIDGE_STEP, minute);
+        // A bar lasts two seconds, and 2.29 s in the bridge.
         assert_eq!(STEPS as u32 * STEP / 2, 88_200);
-        assert_eq!(STEPS as u32 * BRIDGE_STEP / 2, 117_600);
+        assert_eq!(STEPS as u32 * BRIDGE_STEP / 2, 100_800);
     }
 
     #[test]
@@ -374,7 +424,7 @@ mod tests {
         // A dash ends the note before it.
         assert_eq!(starts(&MOTIF_C), [4, 6]);
         assert_eq!(MOTIF_C[6], cell(8, 2));
-        assert_eq!(BRIDGE_BASS[10], cell(5, 1));
+        assert_eq!(BRIDGE_BASS[10], cell(5, 6));
     }
 
     #[test]
@@ -458,13 +508,14 @@ mod tests {
     #[test]
     fn the_bridge_has_no_mode() {
         let notes = || {
-            let cells = BRIDGE.iter().chain([&BRIDGE_BASS]).flatten();
+            let lines = BRIDGE.iter().chain(&BRIDGE_ANSWERS);
+            let cells = lines.chain([&TICK, &BRIDGE_BASS]).flatten();
             cells.map(|cell| cell.degree).filter(|&degree| degree != 0)
         };
-        assert_eq!(notes().count(), 2 * BARS + 2);
+        assert_eq!(notes().count(), 4 * BARS + 8 + 2);
         for degree in notes() {
             assert!(NEUTRAL.contains(&((degree - 1) % 7 + 1)), "degree {degree}");
-            // The same note whatever the mode, and never a semitone above the pedal.
+            // The same note in both modes, and never a semitone above the pedal.
             let [dorian, aeolian] = MODES.map(|mode| mode.semitones(degree));
             assert_eq!(dorian, aeolian, "degree {degree}");
             assert_ne!((dorian + 12 - Mode::Dorian.semitones(PEDAL)) % 12, 1);
@@ -473,6 +524,27 @@ mod tests {
         let calls: Vec<u8> = BRIDGE.iter().map(|line| line[6].degree).collect();
         assert!(BRIDGE.iter().all(|line| line[4].degree == PEDAL));
         assert_eq!(calls, [8, 7, 8, 9, 8, 7, 8, 4]);
+    }
+
+    #[test]
+    fn the_lead_answers_each_call_backwards() {
+        // Two beats after the call, its second note and then its first, one step each.
+        assert_eq!(starts(&BRIDGE_ANSWERS[0]), [12, 14]);
+        for (call, answer) in BRIDGE.iter().zip(&BRIDGE_ANSWERS) {
+            assert_eq!(answer[12].degree, call[6].degree);
+            assert_eq!(answer[14].degree, call[4].degree);
+            assert_eq!((answer[12].steps, answer[14].steps), (1, 1));
+        }
+    }
+
+    #[test]
+    fn the_fall_comes_down_to_the_degree_of_the_bridge() {
+        let degrees: Vec<u8> = FALL.iter().map(|cell| cell.degree).collect();
+        assert_eq!(degrees[..FALL_STEPS as usize], [8, 0, 7, 0, 6, 0, 5, 0]);
+        assert_eq!(FALL[6].degree, PEDAL);
+        // In the mode of the piece it has F sharp: A, G, F sharp, E.
+        let notes = [8, 7, 6, 5].map(|degree| name(A4 + Mode::Dorian.semitones(degree)));
+        assert_eq!(notes, ["A", "G", "F#", "E"]);
     }
 
     #[test]
@@ -518,5 +590,7 @@ mod tests {
         assert!(A4 + Mode::Dorian.semitones(highest(&VERSE)) <= a5);
         assert!(A3 + Mode::Dorian.semitones(highest(&BRIDGE)) <= a5);
         assert_eq!(A1 + Mode::Dorian.semitones(PEDAL), e2);
+        // The tick of the bridge is the lowest thing the pluck plays: E3.
+        assert_eq!(A2 + Mode::Dorian.semitones(TICK[0].degree), 52);
     }
 }

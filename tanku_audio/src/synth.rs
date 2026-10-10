@@ -13,7 +13,7 @@ use std::f32::consts::TAU;
 
 use crate::{
     SAMPLE_RATE,
-    director::{Hush, Step, Tone},
+    director::{Step, Tone},
 };
 
 const RATE: f32 = SAMPLE_RATE as f32;
@@ -37,8 +37,8 @@ const BASS_CLOSE: f32 = fall(0.05);
 
 /// Plucked strings that can ring at once.
 const PLUCKS: usize = 4;
-/// Longest string, in frames. The lowest note of the pluck, A3, needs 199.
-const STRING: usize = 256;
+/// Longest string, in frames. The lowest note of the pluck, E3, needs 266.
+const STRING: usize = 300;
 /// Seconds a string takes to fall by 60 dB.
 const RING: f32 = 1.0;
 /// What a string that is stopped keeps at each turn.
@@ -466,14 +466,14 @@ impl Lead {
         self.envelope.release();
     }
 
-    fn frame(&mut self, held: bool) -> f32 {
+    fn frame(&mut self) -> f32 {
         if !self.envelope.sounding {
             match self.waiting.take() {
                 Some(note) => self.begin(note),
                 None => return 0.0,
             }
         }
-        let level = self.envelope.next(held) * self.note.loud;
+        let level = self.envelope.next(false) * self.note.loud;
         let depth = VIBRATO_DEPTH * (self.age / VIBRATO_AFTER - 1.0).clamp(0.0, 1.0);
         let step = self.note.step * (1.0 + depth * sine(self.wobble));
         self.wobble = wrap(self.wobble + VIBRATO_RATE / RATE);
@@ -612,7 +612,7 @@ pub struct Synth {
     /// What the pluck played three steps ago.
     echo: Box<[f32]>,
     echo_at: usize,
-    hush: Hush,
+    hush: bool,
     muffled: bool,
     /// How muffled the music is, from 0 to 1, and its muffled version on each side.
     muffle: f32,
@@ -642,7 +642,7 @@ impl Default for Synth {
             },
             echo: vec![0.0; ECHO_FRAMES].into(),
             echo_at: 0,
-            hush: Hush::None,
+            hush: false,
             muffled: false,
             muffle: 0.0,
             dull: [[0.0; 2]; 2],
@@ -666,7 +666,7 @@ impl Synth {
                 lead.release();
             }
         }
-        if step.hush == Hush::BassOnly && self.hush != Hush::BassOnly {
+        if step.hush && !self.hush {
             for lead in &mut self.leads {
                 lead.release();
             }
@@ -705,9 +705,8 @@ impl Synth {
 
     /// The next frame of the music: its left and its right.
     pub fn frame(&mut self) -> [f32; 2] {
-        // While the music is hushed the bass holds its note, and so does the lead if the
-        // hush is the end of a fight.
-        let bass = self.bass.frame(self.hush != Hush::None);
+        // While the music is hushed, the bass holds its note.
+        let bass = self.bass.frame(self.hush);
         let (mut pluck, mut echoed) = (0.0, 0.0);
         for string in &mut self.plucks {
             let frame = string.frame();
@@ -718,7 +717,7 @@ impl Synth {
         }
         let mut lead = 0.0;
         for voice in &mut self.leads {
-            lead += voice.frame(self.hush == Hush::Held);
+            lead += voice.frame();
         }
         let (kick, hat, snare) = (self.kick.frame(), self.hat.frame(), self.snare.frame());
 

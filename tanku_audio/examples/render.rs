@@ -18,7 +18,7 @@ use tanku_audio::{CHANNELS, Context, Music, Place, SAMPLE_RATE, music, music_fro
 
 /// Seconds in a bar, and in a bar of the bridge, which is slower.
 const BAR: f32 = 2.0;
-const BRIDGE_BAR: f32 = 8.0 / 3.0;
+const BRIDGE_BAR: f32 = 16.0 / 7.0;
 
 /// The made-up run of the tour: when each thing happens, in seconds, and the context from
 /// then on. The times are off the beat on purpose, as they are in a game.
