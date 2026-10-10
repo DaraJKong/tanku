@@ -8,7 +8,6 @@ Ideas that aren't in the specification. They are ranked by likely usefulness and
 | Pits | Medium | Holes that stop tanks but not bullets, as in Tanks!. Adds work to map generation and pathfinding. | Corridor prototype |
 | Aiming laser | Medium | Tanks with Ballistics 2 or more show their line of fire, bounces included. Makes bank shots readable and fairer. | Playtest against a bank-shot enemy |
 | Daily seed | Medium | A seed derived from the date. Worth more with a leaderboard on the official server. | After the modes exist |
-| Seed on the command line | Medium | `--seed TEXT` starts every run of the session on that seed. With a playtest, a seed and a sector from a bug report are reproduced in seconds. The chosen-seed option covers it for players once it exists. | Use it on the next report that names a seed |
 | Pings | Medium | A key that marks a spot or an enemy for teammates. | Co-op playtest |
 | Chicanes | Low | Both walls take the shallowest slope together, so the corridor jumps 8 m or more sideways within a few meters. The throat between the two walls is less than half as wide as the corridor, so it only fits the widest stretches. | Corridor prototype: force one into a wide sector and drive through it |
 | Camera that turns with the corridor | Low | The view rotates by itself to keep progress pointing one way. Saves key presses, but takes control away and can disorient. | Compare with manual rotation in the corridor prototype |
