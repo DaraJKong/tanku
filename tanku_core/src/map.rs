@@ -33,6 +33,8 @@ const SIDE_DRIFT: i32 = 6;
 const APRON: i32 = 4;
 /// An arena is deep enough for a group to start far from the entry and clear of the barrier.
 const ARENA_MIN_LENGTH: i32 = 32;
+/// A flag stands this far inside the barrier of its sector.
+const FLAG_DEPTH: i32 = 4;
 
 /// Squared distances below are in half meters, so that the centers of blocks stay integers.
 /// 1.8 m: a lattice path with this clearance is more than 3 m wide everywhere.
@@ -129,6 +131,8 @@ pub struct SectorPlan {
     pub entry_point: IVec2,
     /// A point just inside the barrier.
     pub gate_point: IVec2,
+    /// Where the flag stands, if the sector has one: in front of the middle of the barrier.
+    pub flag_point: IVec2,
     pub min: IVec2,
     pub max: IVec2,
     next_frame: Frame,
@@ -191,15 +195,17 @@ enum Change {
     None,
     /// A wall across the corridor, then straight.
     Step(i32),
-    /// A slanted wall. The flag is set for the shallowest slope, 2 m sideways per meter forward.
-    Slant(i32, bool),
+    /// A shallow wall, 2 m sideways per meter forward, then straight.
+    Ramp(i32),
+    /// A wall that slants over the whole step, at 45 degrees or steeper.
+    Slant(i32),
 }
 
 impl Change {
     fn shift(self) -> i32 {
         match self {
             Change::None => 0,
-            Change::Step(du) | Change::Slant(du, _) => du,
+            Change::Step(du) | Change::Ramp(du) | Change::Slant(du) => du,
         }
     }
 }
@@ -231,39 +237,70 @@ impl<'a> Walk<'a> {
             return Change::None;
         }
         let sign = if self.rng.chance(50) { 1 } else { -1 };
-        if self.rng.chance(self.angled) {
-            let (du, shallow) = self
-                .rng
-                .pick(&[(dv / 2, false), (dv, false), (2 * dv, true)]);
-            Change::Slant(sign * du, shallow)
-        } else {
-            Change::Step(sign * self.rng.range(2, 4))
+        if !self.rng.chance(self.angled) {
+            return Change::Step(sign * self.rng.range(2, 4));
+        }
+        // The three slopes of the lattice. At the shallowest one, a wall that slanted over a
+        // whole step would shift by 8 m or more, which is more than the width of a corridor
+        // may vary. A ramp therefore stops after 1 to 3 m.
+        match self.rng.below(3) {
+            0 => Change::Slant(sign * dv / 2),
+            1 => Change::Slant(sign * dv),
+            _ => Change::Ramp(sign * 2 * self.rng.range(1, 3)),
         }
     }
 
-    fn fits(&self, left: Change, right: Change) -> bool {
+    fn fits(&self, left: Change, right: Change, dv: i32) -> bool {
         let (l, r) = (self.l + left.shift(), self.r + right.shift());
-        // A step moves its wall at once and a slant little by little, so the width is checked
-        // where the changes start as well as where they end.
+        // A step moves its wall at once, a ramp within 3 m and a slant little by little, so the
+        // width is checked where the changes start as well as where they end.
         let stepped = |u: i32, change: Change| match change {
-            Change::Step(du) => u + du,
+            Change::Step(du) | Change::Ramp(du) => u + du,
             _ => u,
         };
         let (l_start, r_start) = (stepped(self.l, left), stepped(self.r, right));
         let fitting = |l: i32, r: i32| (self.width.0..=self.width.1).contains(&(r - l));
-        // The corner of a step also faces the other wall as it was just before the step.
+        // The corner of a step or a ramp also faces the other wall as it was just before.
         let open = |l: i32, r: i32| r - l >= self.width.0;
-        // Two walls on the shallowest slope would leave a passage narrower than it measures.
-        let shallow = |change| matches!(change, Change::Slant(_, true));
-        let pinched =
-            (shallow(left) && right != Change::None) || (shallow(right) && left != Change::None);
         open(l_start, self.r)
             && open(self.l, r_start)
             && fitting(l_start, r_start)
             && fitting(l, r)
             && l >= self.reach.0
             && r <= self.reach.1
-            && !pinched
+            && self.apart(
+                &Self::corners(self.l, self.v, dv, left),
+                &Self::corners(self.r, self.v, dv, right),
+            )
+    }
+
+    /// Whether the two walls stay apart once these corners are added to them.
+    ///
+    /// Widths are measured straight across, but a wall that has moved away leaves a corner
+    /// behind, and the other wall may come in beside it a few meters further on. The walls
+    /// keep the distance of two walls at 45 degrees in the narrowest corridor of the sector.
+    fn apart(&self, new_left: &[(i32, i32)], new_right: &[(i32, i32)]) -> bool {
+        // In half meters, so that the squared distance stays an integer.
+        let gap_2 = 2 * (self.width.0 as i64).pow(2);
+        let wall = |old: &[(i32, i32)], new: &[(i32, i32)]| -> Vec<IVec2> {
+            let corners = old.iter().chain(new);
+            corners.map(|&(u, v)| IVec2::new(u, v) * 2).collect()
+        };
+        let sides = [
+            (wall(&self.left, new_left), self.left.len()),
+            (wall(&self.right, new_right), self.right.len()),
+        ];
+        // The closest points of two walls include a corner of one of them. What was there
+        // before this step was checked when it was added.
+        [(0, 1), (1, 0)].into_iter().all(|(a, b)| {
+            let ((wall, old_wall), (corners, old_corners)) = (&sides[a], &sides[b]);
+            wall.windows(2).enumerate().all(|(i, ends)| {
+                corners.iter().enumerate().all(|(j, &corner)| {
+                    (i + 1 < *old_wall && j < *old_corners)
+                        || far_from_segment(corner, ends[0], ends[1], gap_2)
+                })
+            })
+        })
     }
 
     /// Moves forward by `dv`, with a random change on each wall that may move.
@@ -272,22 +309,38 @@ impl<'a> Walk<'a> {
         for _ in 0..4 {
             let left = self.draw_change(self.moves.0, dv);
             let right = self.draw_change(self.moves.1, dv);
-            if self.fits(left, right) {
+            if self.fits(left, right, dv) {
                 changes = (left, right);
                 break;
             }
         }
-        Self::apply(&mut self.left, &mut self.l, self.v, dv, changes.0);
-        Self::apply(&mut self.right, &mut self.r, self.v, dv, changes.1);
+        self.take(changes.0, changes.1, dv);
+    }
+
+    /// Moves forward by `dv` with these changes.
+    fn take(&mut self, left: Change, right: Change, dv: i32) {
+        self.left.extend(Self::corners(self.l, self.v, dv, left));
+        self.right.extend(Self::corners(self.r, self.v, dv, right));
+        self.l += left.shift();
+        self.r += right.shift();
         self.v += dv;
     }
 
-    fn apply(wall: &mut Vec<(i32, i32)>, u: &mut i32, v: i32, dv: i32, change: Change) {
-        *u += change.shift();
-        if let Change::Step(_) = change {
-            wall.push((*u, v));
+    /// The corners that a change adds to a wall that is at `u` where the step starts, at `v`.
+    fn corners(u: i32, v: i32, dv: i32, change: Change) -> Vec<(i32, i32)> {
+        let end = u + change.shift();
+        let mut corners = Vec::with_capacity(2);
+        match change {
+            Change::Step(_) => corners.push((end, v)),
+            Change::Ramp(du) => {
+                let run = du.abs() / 2;
+                debug_assert!(run < dv, "a ramp ends before its step does");
+                corners.push((end, v + run));
+            }
+            Change::None | Change::Slant(_) => {}
         }
-        wall.push((*u, v + dv));
+        corners.push((end, v + dv));
+        corners
     }
 
     /// Advances to `end` in steps of 4 to 8 m.
@@ -435,22 +488,16 @@ fn plan_sector(seed: u64, index: u32, frame: Frame, entry: i32, spec: &Spec) -> 
     let (left_end, right_end) = (shape.left.last().unwrap().0, shape.right.last().unwrap().0);
 
     // Local ends of the barrier, the left end of the next entry first.
-    let (gate_from, gate_to, gate_point) = match spec.exit {
-        Exit::Ahead => (
-            (left_end, length),
-            (right_end, length),
-            ((left_end + right_end) / 2, length - 2),
-        ),
-        Exit::Right => (
-            (right_end, length),
-            (right_end, length - gate),
-            (right_end - 2, length - gate / 2),
-        ),
-        Exit::Left => (
-            (left_end, length - gate),
-            (left_end, length),
-            (left_end + 2, length - gate / 2),
-        ),
+    let (gate_from, gate_to) = match spec.exit {
+        Exit::Ahead => ((left_end, length), (right_end, length)),
+        Exit::Right => ((right_end, length), (right_end, length - gate)),
+        Exit::Left => ((left_end, length - gate), (left_end, length)),
+    };
+    // A point in front of the middle of the barrier, this far inside the sector.
+    let inside = |depth: i32| match spec.exit {
+        Exit::Ahead => ((left_end + right_end) / 2, length - depth),
+        Exit::Right => (right_end - depth, length - gate / 2),
+        Exit::Left => (left_end + depth, length - gate / 2),
     };
 
     let world = |&(u, v): &(i32, i32)| frame.at(u, v);
@@ -486,7 +533,8 @@ fn plan_sector(seed: u64, index: u32, frame: Frame, entry: i32, spec: &Spec) -> 
         entry: entry_ends,
         gate: gate_ends,
         entry_point: frame.at(entry / 2, 2),
-        gate_point: world(&gate_point),
+        gate_point: world(&inside(2)),
+        flag_point: world(&inside(FLAG_DEPTH)),
         min,
         max,
         next_frame: Frame {
@@ -931,7 +979,7 @@ mod tests {
         let combined = (0..30).fold(0u64, |hash, i| {
             hash.rotate_left(7) ^ corridor.layout(i).fingerprint()
         });
-        assert_eq!(combined, 3_536_754_374_413_674_072);
+        assert_eq!(combined, 12_171_179_429_706_845_317);
     }
 
     #[test]
@@ -993,6 +1041,33 @@ mod tests {
     }
 
     #[test]
+    fn corridors_use_every_slope() {
+        // Slanted walls by their slope in the frame of their sector: sideways, then forward.
+        let (mut steep, mut diagonal, mut shallow) = (0, 0, 0);
+        for corridor in corridors() {
+            for plan in &corridor.plans {
+                if plan.kind != SectorKind::Corridor {
+                    continue;
+                }
+                for &(a, b) in &plan.walls {
+                    let across = (b - a).dot(plan.heading.right()).abs();
+                    let along = (b - a).dot(plan.heading.forward()).abs();
+                    steep += (across > 0 && 2 * across == along) as u32;
+                    diagonal += (across > 0 && across == along) as u32;
+                    shallow += (along > 0 && across == 2 * along) as u32;
+                }
+            }
+        }
+        let slanted = steep + diagonal + shallow;
+        for (count, slope) in [(steep, "1:2"), (diagonal, "1:1"), (shallow, "2:1")] {
+            assert!(
+                count * 10 >= slanted,
+                "{count} walls of {slanted} at {slope}"
+            );
+        }
+    }
+
+    #[test]
     fn walls_follow_the_lattice_slopes() {
         for corridor in corridors() {
             for plan in &corridor.plans {
@@ -1022,6 +1097,65 @@ mod tests {
                     "sector {}",
                     plan.index
                 );
+            }
+        }
+    }
+
+    /// Whether the walls before the barrier of a sector, along its outline, and the walls after
+    /// it stay 5.66 m apart. The path check needs a little less: a lattice path that keeps
+    /// 1.8 m from both sides exists wherever they are 5 m apart.
+    fn sides_stay_apart(plan: &SectorPlan) -> bool {
+        let corner = |wanted: IVec2| plan.outline.iter().position(|&point| point == wanted);
+        let (before, after) = (corner(plan.gate.0).unwrap(), corner(plan.gate.1).unwrap());
+        assert_eq!(before + 1, after, "sector {}", plan.index);
+        let sides = [&plan.outline[..=before], &plan.outline[after..]];
+        [(0, 1), (1, 0)].into_iter().all(|(a, b)| {
+            sides[a].windows(2).all(|ends| {
+                sides[b]
+                    .iter()
+                    .all(|&corner| far_from_segment(corner * 2, ends[0] * 2, ends[1] * 2, 128))
+            })
+        })
+    }
+
+    #[test]
+    fn flags_stand_in_the_open_in_front_of_their_barrier() {
+        for corridor in corridors() {
+            for plan in &corridor.plans[1..] {
+                let at = format!("sector {}", plan.index);
+                let flag = plan.flag_point;
+                assert!(plan.contains_half(flag * 2), "{at}");
+                let (from, to) = (plan.gate.0.as_vec2(), plan.gate.1.as_vec2());
+                let to_barrier = crate::geom::distance_to_segment(flag.as_vec2(), from, to);
+                assert_eq!(to_barrier, FLAG_DEPTH as f32, "{at}");
+                for &(a, b) in &plan.walls {
+                    let to_wall =
+                        crate::geom::distance_to_segment(flag.as_vec2(), a.as_vec2(), b.as_vec2());
+                    assert!(to_wall >= 3.5, "{at}: {to_wall} m from a wall");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_two_sides_of_a_sector_stay_apart() {
+        for corridor in corridors() {
+            for plan in &corridor.plans {
+                assert!(sides_stay_apart(plan), "sector {}", plan.index);
+            }
+        }
+    }
+
+    /// The same over six thousand seeds, which takes ten seconds. It runs with the other wide
+    /// check: `cargo test -p tanku_core many_seeds -- --ignored`.
+    #[test]
+    #[ignore]
+    fn sides_stay_apart_for_many_seeds() {
+        for seed in 2000..8000 {
+            let mut corridor = Corridor::new(seed);
+            corridor.plan(SECTORS);
+            for plan in &corridor.plans {
+                assert!(sides_stay_apart(plan), "seed {seed}, sector {}", plan.index);
             }
         }
     }
@@ -1116,10 +1250,28 @@ mod tests {
         // starts to slant away leaves 6 m where the step is, whatever the width further on.
         let mut rng = Stream::new(0, Purpose::Shape, 0, 0);
         let walk = Walk::new(&mut rng, 10, 57, &Spec::corridor(Exit::Ahead, DRIFT));
-        assert!(walk.fits(Change::None, Change::Slant(4, false)));
-        assert!(walk.fits(Change::Step(2), Change::Slant(4, false)));
-        assert!(!walk.fits(Change::Step(4), Change::Slant(4, false)));
-        assert!(!walk.fits(Change::Slant(-4, false), Change::Step(-4)));
+        assert!(walk.fits(Change::None, Change::Slant(4), 4));
+        assert!(walk.fits(Change::Step(2), Change::Slant(4), 4));
+        assert!(!walk.fits(Change::Step(4), Change::Slant(4), 4));
+        assert!(!walk.fits(Change::Slant(-4), Change::Step(-4), 4));
+        // A ramp is as sudden as a step.
+        assert!(walk.fits(Change::Ramp(2), Change::Slant(4), 4));
+        assert!(!walk.fits(Change::Ramp(4), Change::Slant(4), 4));
+        assert!(!walk.fits(Change::Ramp(4), Change::None, 4));
+        assert!(walk.fits(Change::Ramp(-4), Change::None, 4));
+    }
+
+    #[test]
+    fn a_wall_keeps_clear_of_the_corner_the_other_one_left_behind() {
+        // In a corridor 8 m wide, the left wall falls back by 6 m and leaves its old corner
+        // where it was. Four meters further on, the right wall is 12 m from the left one and
+        // could come in by 4 m, but that would bring it within 4.5 m of the corner.
+        let mut rng = Stream::new(0, Purpose::Shape, 0, 0);
+        let mut walk = Walk::new(&mut rng, 8, 57, &Spec::corridor(Exit::Ahead, DRIFT));
+        assert!(walk.fits(Change::Ramp(-6), Change::Slant(-2), 4));
+        walk.take(Change::Ramp(-6), Change::Slant(-2), 4);
+        assert!(walk.fits(Change::None, Change::Step(-2), 4));
+        assert!(!walk.fits(Change::None, Change::Step(-4), 4));
     }
 
     #[test]

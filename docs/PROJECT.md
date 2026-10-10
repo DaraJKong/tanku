@@ -46,7 +46,8 @@ Tanku has no player-versus-player mode, no loot, no upgrades during a run, no st
 | North | The direction of progress along the corridor |
 | Sector | One stretch of corridor holding one group of enemies |
 | Barrier | The energy wall that closes the end of a sector |
-| Checkpoint | A barrier where a solo player respawns |
+| Flag | Stands near the end of some sectors. A solo player captures it and respawns there. |
+| Checkpoint | The last flag captured |
 | Wreck | A destroyed player tank, which a teammate can repair |
 | Budget | The number of points a tank has to spend on stats |
 | Sector budget | The most points an enemy of a given sector can have |
@@ -73,18 +74,20 @@ These rules let the players study the next group, pick the moment to engage and 
 
 ### Solo
 
-The solo player has three lives, and lives are never refilled. When the tank is destroyed, the player loses a life and respawns 1.5 s later at the last checkpoint, just before its barrier. Every sector beyond it is regenerated from the seed, so its enemies and obstacles are back. Before the first checkpoint, the player respawns in the start bay. Losing the third life ends the run.
+The solo player has three lives, and lives are never refilled. When the tank is destroyed, the player loses a life and respawns 1.5 s later at the last checkpoint, between its flag and the barrier. Every sector beyond it is regenerated from the seed, so its enemies and obstacles are back. Before the first checkpoint, the player respawns in the start bay. Losing the third life ends the run.
 
-Checkpoints become sparser with distance:
+Checkpoints are flags. A flag stands 4 m in front of the middle of its sector's barrier, inside a circle 2 m in radius drawn on the ground, and it is gray at first. Once every enemy of the sector is destroyed, the player captures the flag by driving into the circle: it turns green and becomes the checkpoint. A flag that the player drives past stays gray and is lost, because nobody crosses a barrier backward.
 
-| Sectors | Checkpoints |
+Flags become sparser with distance:
+
+| Sectors | Flags |
 |---|---|
-| 1–8 | Every barrier |
-| 9–16 | Every 2nd barrier |
-| 17–24 | Every 3rd barrier |
-| 25 and beyond | Every 4th barrier |
+| 1–8 | Every sector |
+| 9–16 | Every 2nd sector |
+| 17–24 | Every 3rd sector |
+| 25 and beyond | Every 4th sector |
 
-The count starts over in each row. After sector 8, the checkpoints are therefore the barriers of sectors 10, 12, 14, 16, 19, 22, 28, 32 and every fourth one from there. A barrier becomes the last checkpoint as soon as its sector is cleared.
+The count starts over in each row. After sector 8, the flags are therefore in sectors 10, 12, 14, 16, 19, 22, 28, 32 and every fourth one from there.
 
 ### Multiplayer
 
@@ -103,6 +106,17 @@ Enemy groups grow with the number of players (see [Progression](#progression)). 
 | Impossible mode | Later. Enemies adapt to the players during the run (see [Impossible mode](#impossible-mode)). | Reaching sector 20 in hard mode |
 
 Normal, hard and impossible are the three difficulties. Chosen seed and free mode are options that combine with any of them.
+
+### Playtest
+
+A playtest is a way to test the game faster, not a mode for players. It starts with the `--playtest` option on the command line and lets the solo player cheat from the menu in two ways:
+
+- **Infinite lives.** The tank comes back as often as it is destroyed. This is on at the start and can be turned off.
+- **Skipping to a sector.** The player picks any sector and comes back at the end of the one before it, as after capturing a flag there.
+
+A playtest can also choose its seed without unlocking that option: `--seed` followed by a seed starts every run on it, which brings back a situation that a player reported.
+
+A playtest says on screen that it is one. It sets no record and earns no achievement.
 
 ## Controls
 
@@ -131,7 +145,7 @@ Any hit destroys any tank. There are no hit points and no armor: an active shiel
 
 A bullet flies in a straight line at the speed set by its tank's Muzzle stat. It reflects off walls and blocks as many times as the Ricochet stat allows, and the next impact destroys it. A bullet has no range limit. It starts at the turret and travels down the barrel, so a tank pressed against a wall can't shoot through it: the bullet hits the wall at once.
 
-Firing takes one round from the magazine. Rounds reload one at a time, automatically, each taking the Loader time, and firing doesn't interrupt reloading. Every gun also needs 0.25 s between two shots. This cooldown is the same for all tanks and isn't a stat.
+Firing takes one round from the magazine. Rounds reload one at a time, automatically, each taking the Loader time, and firing doesn't interrupt reloading. Every gun also needs 0.25 s between two shots. This cooldown is the same for all tanks and isn't a stat. A player's tank can't shoot during the first 0.5 s after it appears, at the start of a run or after a respawn, so that the click that started the run fires nothing.
 
 ### What hits what
 
@@ -172,11 +186,13 @@ A player repairs a wrecked teammate by holding the repair key within 3 m of the 
 | Tank | 2.0 m long, 1.6 m wide, circular collider of radius 0.9 m, the same for all tanks |
 | Bullet radius | 0.225 m |
 | Fire cooldown | 0.25 s |
+| Time without shooting after a player's tank appears | 0.5 s |
 | Mine arming time and fuse | 1 s and 10 s |
 | Time between two mines of a tank | 0.5 s |
 | Mine trigger | Opposing tank within 2 m, then 0.6 s |
 | Blast radius of mines and crates | 3 m |
 | Shield duration | 0.5 s |
+| Flag | 4 m in front of the barrier, captured within 2 m |
 | Repair | 4 s within 3 m |
 
 ## Tanks
@@ -290,12 +306,14 @@ An enemy's model is assembled from its genome, so players can read a tank before
 | Loader | Vents on the turret sides, more with level |
 | Ricochet | Rings around the muzzle, one per bounce |
 | Mines | Mine rack at the rear, one mine per slot |
-| Shield | Emitter dome on the hull, larger with level |
+| Shield | White disk under the turret, of which only the edge shows. The edge is a little wider with level. |
 | Piercing | Pointed tip on the barrel. Its bullets have a pointed tip too, until they have pierced. |
 | Brain | Antennas, one per tier |
 | Ballistics | Sight on the turret, one lens per tier |
 | Total budget | Color intensity. Weak tanks are pale, strong ones saturated. |
 | Largest spending group | Hue: one for mobility, one for firepower, one for mines and shield, one for software |
+
+The lenses of the sight and the pointed tip of the barrel glow in a pale tint of the tank's own hue.
 
 Player tanks have fixed models in reserved colors that no enemy uses. All tanks have the same size.
 
@@ -309,7 +327,7 @@ Brains are hand-written, one set of behavior per tier. In normal and hard mode t
 
 ## Progression
 
-Difficulty depends only on the sector number $n$, the mode and the number of players $P$. Five things grow with $n$: the enemies' budget, their number, their software tiers, their experience and the harshness of the terrain. In solo, checkpoints also become sparser.
+Difficulty depends only on the sector number $n$, the mode and the number of players $P$. Five things grow with $n$: the enemies' budget, their number, their software tiers, their experience and the harshness of the terrain. In solo, flags also become sparser.
 
 The sector budget is the most points an enemy of sector $n$ can have:
 
@@ -431,6 +449,8 @@ The interface is dark and flat, in the spirit of Material Design, with one accen
 | Game over | Sectors cleared, time, kills, seed and version, retry, new run |
 | Settings | Controls, video, audio, accessibility |
 
+The game opens in full screen the first time. After that, it opens the way the player left it.
+
 ### Audio
 
 Sound carries information the eyes can miss: a shot fired off screen, a ricochet, a mine about to blow, a shield overloading. A basic set of such cues arrives with the solo loop (M4), in time for the first real playtest. Music and the full sound pass come later.
@@ -467,7 +487,7 @@ Each milestone is playable and answers a question. From M1 on, the game runs as 
 | M1, Toy | One fixed room, a player tank, bullets, ricochets, piercing, mines, shield, one hand-written enemy | Do the speeds, the one-hit kills and the shield feel right? Is piercing fair to face? |
 | M2, Corridor | Seeded sectors, barriers, loading and unloading, view rotation, generation tests | Is an endless corridor interesting to drive through? Which way do players turn the view? |
 | M3, Genome | Stats, budgets, enemy generation, generated models, brain tiers 0 to 2 | Can players read a tank at a glance? Does equal budget mean equal danger? |
-| M4, Solo loop | Lives, checkpoints, progression curves, heads-up display, main menu, settings, game over, records, basic sound cues, first web build | Is a 20-minute run fun? This is the first real playtest. |
+| M4, Solo loop | Lives, flags, progression curves, heads-up display, main menu, settings, game over, records, basic sound cues, first web build | Is a 20-minute run fun? This is the first real playtest. |
 | M5, Co-op | Lobby, hosting, joining, local discovery, repair, enemy scaling, joining from a browser | Is it fun with friends at 100 ms of latency? |
 | M6, Modes | Achievements, chosen seed, free mode, hard mode, brain tiers 3 and 4 | Do the unlocks give reasons to come back? |
 | M7, Impossible mode | An experiment: enemies bred from the tanks that did best against the players | Do players feel the enemies adapting to them, and is it fun? |

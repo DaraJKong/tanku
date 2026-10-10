@@ -2,9 +2,9 @@
 
 use bevy::prelude::*;
 use tanku_core::{
-    geom, progression,
-    rules::{BARRIER_GATHER_DISTANCE, TANK_RADIUS},
-    sim::{Barrier, Enemy, Player, Position, Run, SimEvent, Tank},
+    geom,
+    rules::{BARRIER_GATHER_DISTANCE, FLAG_CAPTURE_RADIUS, TANK_RADIUS},
+    sim::{Barrier, Enemy, Flag, Player, Position, Run, SimEvent, Tank},
 };
 
 use crate::field::Field;
@@ -16,21 +16,28 @@ pub fn advance(
     mut player: Query<(&mut Tank, &Position), With<Player>>,
     mut enemies: Query<(&Tank, &mut Enemy), Without<Player>>,
     mut barriers: Query<&mut Barrier>,
+    mut flags: Query<(&mut Flag, &Position), Without<Player>>,
     mut events: MessageWriter<SimEvent>,
 ) {
     let sector = run.sector;
     let fought = enemies.iter().any(|(tank, _)| tank.sector == sector);
     if !fought && field.cleared.insert(sector) {
         run.cleared = run.cleared.max(sector);
-        if progression::is_checkpoint(sector) {
-            run.checkpoint = sector;
-        }
         events.write(SimEvent::SectorCleared { sector });
     }
 
     let Ok((mut tank, position)) = player.single_mut() else {
         return;
     };
+    // A flag is captured by driving up to it, once the enemies of its sector are destroyed.
+    for (mut flag, at) in &mut flags {
+        let reached = position.0.distance(at.0) <= FLAG_CAPTURE_RADIUS;
+        if !flag.captured && reached && field.cleared.contains(&flag.sector) {
+            flag.captured = true;
+            run.checkpoint = run.checkpoint.max(flag.sector);
+            events.write(SimEvent::FlagCaptured { at: at.0 });
+        }
+    }
     let Some(mut barrier) = barriers.iter_mut().find(|barrier| barrier.sector == sector) else {
         return;
     };
@@ -55,7 +62,7 @@ pub fn advance(
             }
         }
         // The sector just left stays in view, and the next one waits behind its barrier.
-        field.load(&mut commands, entered + 1);
+        field.load(&mut commands, entered + 1, false);
         field.loaded.retain(|&loaded| loaded + 1 >= entered);
         events.write(SimEvent::SectorEntered { sector: entered });
     }

@@ -45,7 +45,7 @@ pub fn experience(sector: u32) -> f32 {
     1.0 - (-(sector.max(1) as f32 - 1.0) / 20.0).exp()
 }
 
-/// Whether the barrier that ends this sector is a checkpoint in solo.
+/// Whether this sector has a flag, which is a checkpoint in solo once it is captured.
 pub fn is_checkpoint(sector: u32) -> bool {
     match sector {
         0 => false,

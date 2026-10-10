@@ -4,10 +4,14 @@ use bevy::{ecs::message::Messages, prelude::*};
 use tanku_core::{
     CorePlugin,
     rng::{Purpose, Stream},
-    rules::{BARRIER_GATHER_DISTANCE, RESPAWN_DELAY, SHIELD_DURATION, TICK_RATE},
+    rules::{
+        BARRIER_GATHER_DISTANCE, PLAYTEST_LAST_SECTOR, RESPAWN_DELAY, SHIELD_DURATION,
+        SPAWN_FIRE_DELAY, TICK_RATE,
+    },
     sim::{
-        Barrier, Block, Bullet, Enemy, Gun, Mine, Motion, Player, Position, PreviousPosition, Run,
-        RunPhase, RunRequest, Sector, Shield, SimEvent, Tank, TankCommand, Team,
+        Barrier, Block, Bullet, Enemy, Flag, Gun, Mine, Motion, Player, Playtest, Position,
+        PreviousPosition, Run, RunPhase, RunRequest, Sector, Shield, SimEvent, Tank, TankCommand,
+        Team,
     },
     stats::{Genome, Stat},
 };
@@ -31,13 +35,21 @@ fn tick(app: &mut App, ticks: u32) {
     }
 }
 
-fn start(seed: &str) -> App {
+/// Starts a run. The tank has just appeared and can't shoot yet.
+fn begin(seed: &str) -> App {
     let mut app = App::new();
     app.add_plugins((MinimalPlugins, CorePlugin, ServerPlugin));
     app.world_mut()
         .write_message(RunRequest::Start { seed: seed.into() });
     tick(&mut app, 1);
     events(&mut app);
+    app
+}
+
+/// Starts a run and waits until the tank may shoot.
+fn start(seed: &str) -> App {
+    let mut app = begin(seed);
+    tick(&mut app, seconds(SPAWN_FIRE_DELAY));
     app
 }
 
@@ -183,9 +195,29 @@ fn cross_barrier(app: &mut App) {
         .unwrap();
     let middle = (barrier.from + barrier.to) / 2.0;
     let entity = player(app).unwrap();
-    teleport(app, entity, middle - barrier.outward * 2.0);
+    // Close to the barrier, and out of reach of a flag.
+    teleport(app, entity, middle - barrier.outward);
     tick(app, 1);
     teleport(app, entity, middle + barrier.outward * 2.0);
+    tick(app, 1);
+}
+
+/// Where the flag of a sector stands, if it is loaded and has one.
+fn flag(app: &mut App, sector: u32) -> Option<(Flag, Vec2)> {
+    let world = app.world_mut();
+    world
+        .query::<(&Flag, &Position)>()
+        .iter(world)
+        .find(|(flag, _)| flag.sector == sector)
+        .map(|(flag, position)| (*flag, position.0))
+}
+
+/// Drives the player onto the flag of the sector it is in.
+fn touch_flag(app: &mut App) {
+    let sector = run(app).sector;
+    let (_, at) = flag(app, sector).unwrap();
+    let entity = player(app).unwrap();
+    teleport(app, entity, at + Vec2::X);
     tick(app, 1);
 }
 
@@ -692,13 +724,13 @@ fn an_enemy_never_crosses_a_barrier() {
 }
 
 #[test]
-fn clearing_a_sector_scores_and_sets_the_checkpoint() {
+fn clearing_a_sector_scores_and_the_corridor_follows_the_player() {
     let mut app = start("TEST");
     cross_barrier(&mut app);
     assert_eq!(run(&app).sector, 1);
     clear_sector(&mut app, 1);
     let state = run(&app);
-    assert_eq!((state.cleared, state.checkpoint, state.kills), (1, 1, 1));
+    assert_eq!((state.cleared, state.kills), (1, 1));
 
     cross_barrier(&mut app);
     assert_eq!(run(&app).sector, 2);
@@ -714,22 +746,63 @@ fn clearing_a_sector_scores_and_sets_the_checkpoint() {
 }
 
 #[test]
-fn the_player_comes_back_at_the_last_checkpoint_three_times_at_most() {
+fn a_flag_is_captured_by_driving_up_to_it_once_its_sector_is_cleared() {
+    let mut app = start("TEST");
+    assert!(flag(&mut app, 0).is_none(), "the start bay has no flag");
+    cross_barrier(&mut app);
+    let (state, at) = flag(&mut app, 1).unwrap();
+    assert!(!state.captured);
+    let barrier = {
+        let world = app.world_mut();
+        *world
+            .query::<&Barrier>()
+            .iter(world)
+            .find(|barrier| barrier.sector == 1)
+            .unwrap()
+    };
+    let to_barrier = tanku_core::geom::distance_to_segment(at, barrier.from, barrier.to);
+    assert_eq!(to_barrier, 4.0);
+
+    // With an enemy left in the sector, the flag stays as it is.
+    touch_flag(&mut app);
+    assert!(!flag(&mut app, 1).unwrap().0.captured);
+    assert_eq!(run(&app).checkpoint, 0);
+
+    // Clearing the sector is not enough either: the player has to come to the flag.
+    let entity = player(&mut app).unwrap();
+    teleport(&mut app, entity, at - barrier.outward * 10.0);
+    clear_sector(&mut app, 1);
+    assert_eq!(run(&app).checkpoint, 0);
+    events(&mut app);
+    touch_flag(&mut app);
+    assert!(flag(&mut app, 1).unwrap().0.captured);
+    assert_eq!(run(&app).checkpoint, 1);
+    let captured = count(&events(&mut app), |event| {
+        matches!(event, SimEvent::FlagCaptured { .. })
+    });
+    assert_eq!(captured, 1);
+}
+
+/// Destroys the player's tank.
+fn destroy_player(app: &mut App) {
+    let entity = player(app).unwrap();
+    app.world_mut()
+        .resource_mut::<Casualties>()
+        .tanks
+        .push(entity);
+    tick(app, 1);
+}
+
+#[test]
+fn the_player_comes_back_at_the_last_flag_captured_three_times_at_most() {
     let mut app = start("TEST");
     cross_barrier(&mut app);
     clear_sector(&mut app, 1);
+    touch_flag(&mut app);
     cross_barrier(&mut app);
     let before = enemies(&mut app, 2).len();
     assert!(before > 0);
 
-    let destroy_player = |app: &mut App| {
-        let entity = player(app).unwrap();
-        app.world_mut()
-            .resource_mut::<Casualties>()
-            .tanks
-            .push(entity);
-        tick(app, 1);
-    };
     destroy_player(&mut app);
     assert_eq!(run(&app).lives, 2);
     tick(&mut app, seconds(RESPAWN_DELAY) + 1);
@@ -740,8 +813,12 @@ fn the_player_comes_back_at_the_last_checkpoint_three_times_at_most() {
     );
     assert!(
         enemies(&mut app, 1).is_empty(),
-        "the checkpoint sector stays cleared"
+        "the sector of the flag stays cleared"
     );
+    let (state, at) = flag(&mut app, 1).unwrap();
+    assert!(state.captured, "the flag is still captured");
+    let entity = player(&mut app).unwrap();
+    assert!(position(&mut app, entity).distance(at) < 3.0);
     let regenerated = enemies(&mut app, 2);
     assert_eq!(regenerated.len(), before);
     assert!(
@@ -766,6 +843,207 @@ fn the_player_comes_back_at_the_last_checkpoint_three_times_at_most() {
     let ticks = state.ticks;
     tick(&mut app, 10);
     assert_eq!(run(&app).ticks, ticks);
+}
+
+#[test]
+fn a_flag_left_behind_is_no_checkpoint() {
+    let mut app = start("TEST");
+    cross_barrier(&mut app);
+    clear_sector(&mut app, 1);
+    cross_barrier(&mut app);
+    assert_eq!(run(&app).sector, 2);
+
+    destroy_player(&mut app);
+    tick(&mut app, seconds(RESPAWN_DELAY) + 1);
+    let state = run(&app);
+    assert_eq!((state.sector, state.checkpoint), (0, 0));
+    let entity = player(&mut app).unwrap();
+    assert_eq!(position(&mut app, entity), START);
+    assert_eq!(enemies(&mut app, 1).len(), 1, "sector 1 is to fight again");
+}
+
+/// Asks to skip to a sector, as the menu of a playtest does.
+fn skip_to(app: &mut App, sector: u32) {
+    app.world_mut().write_message(RunRequest::SkipTo { sector });
+    tick(app, 1);
+}
+
+fn players(app: &mut App) -> usize {
+    let world = app.world_mut();
+    world
+        .query_filtered::<(), With<Player>>()
+        .iter(world)
+        .count()
+}
+
+fn loaded(app: &App) -> Vec<u32> {
+    let field = app.world().resource::<Field>();
+    field.loaded.iter().copied().collect()
+}
+
+#[test]
+fn a_playtest_skips_to_a_sector_and_comes_back() {
+    let mut app = start("TEST");
+    app.insert_resource(Playtest {
+        infinite_lives: false,
+    });
+    skip_to(&mut app, 7);
+    let state = run(&app);
+    assert_eq!(
+        (state.sector, state.checkpoint, state.cleared, state.phase),
+        (6, 6, 6, RunPhase::Playing)
+    );
+    assert_eq!((players(&mut app), loaded(&app)), (1, vec![6, 7]));
+    // The tank stands between the flag and the barrier of the sector before, which is cleared.
+    let (state, at) = flag(&mut app, 6).unwrap();
+    assert!(state.captured);
+    let entity = player(&mut app).unwrap();
+    assert!(position(&mut app, entity).distance(at) < 3.0);
+    assert!(enemies(&mut app, 6).is_empty());
+    let ahead = enemies(&mut app, 7);
+    assert!(!ahead.is_empty());
+    assert!(
+        ahead
+            .iter()
+            .all(|&enemy| !app.world().get::<Enemy>(enemy).unwrap().awake)
+    );
+    // Its lives are those it had.
+    assert_eq!(run(&app).lives, 3);
+    cross_barrier(&mut app);
+    assert_eq!(run(&app).sector, 7);
+
+    // A sector without a flag is skipped to as well: sector 9 has none.
+    skip_to(&mut app, 10);
+    assert_eq!((run(&app).sector, loaded(&app)), (9, vec![9, 10]));
+    assert!(flag(&mut app, 9).is_none());
+    cross_barrier(&mut app);
+    assert_eq!(run(&app).sector, 10);
+
+    // Backward, down to the start bay. The score keeps the furthest sector.
+    skip_to(&mut app, 1);
+    let state = run(&app);
+    assert_eq!((state.sector, state.checkpoint, state.cleared), (0, 0, 9));
+    let entity = player(&mut app).unwrap();
+    assert_eq!(position(&mut app, entity), START);
+    assert_eq!(enemies(&mut app, 1).len(), 1);
+    assert_eq!((players(&mut app), loaded(&app)), (1, vec![0, 1]));
+
+    // The tank comes back there when it is destroyed.
+    skip_to(&mut app, 4);
+    destroy_player(&mut app);
+    tick(&mut app, seconds(RESPAWN_DELAY) + 1);
+    let state = run(&app);
+    assert_eq!((state.sector, state.lives), (3, 2));
+}
+
+#[test]
+fn a_skip_goes_no_further_than_the_last_sector_and_the_last_one_asked_wins() {
+    let mut app = start("TEST");
+    app.insert_resource(Playtest {
+        infinite_lives: true,
+    });
+    skip_to(&mut app, u32::MAX);
+    assert_eq!(run(&app).sector, PLAYTEST_LAST_SECTOR - 1);
+    skip_to(&mut app, 0);
+    assert_eq!(run(&app).sector, 0);
+
+    app.world_mut()
+        .write_message(RunRequest::SkipTo { sector: 3 });
+    skip_to(&mut app, 12);
+    assert_eq!((run(&app).sector, loaded(&app)), (11, vec![11, 12]));
+    assert_eq!(players(&mut app), 1);
+
+    // A skip asked while the tank is gone brings it back at once.
+    destroy_player(&mut app);
+    assert!(player(&mut app).is_none());
+    skip_to(&mut app, 5);
+    assert_eq!((run(&app).sector, run(&app).phase), (4, RunPhase::Playing));
+    assert_eq!(players(&mut app), 1);
+}
+
+#[test]
+fn a_skip_asked_with_the_start_of_a_run_applies_to_that_run() {
+    let mut app = App::new();
+    app.add_plugins((MinimalPlugins, CorePlugin, ServerPlugin))
+        .insert_resource(Playtest {
+            infinite_lives: true,
+        });
+    app.world_mut().write_message(RunRequest::Start {
+        seed: "TEST".into(),
+    });
+    skip_to(&mut app, 5);
+    assert_eq!((run(&app).sector, loaded(&app)), (4, vec![4, 5]));
+    assert_eq!(players(&mut app), 1);
+}
+
+#[test]
+fn only_a_playtest_skips_sectors() {
+    let mut app = start("TEST");
+    skip_to(&mut app, 7);
+    tick(&mut app, 3);
+    let state = run(&app);
+    assert_eq!((state.sector, state.checkpoint, state.cleared), (0, 0, 0));
+    let entity = player(&mut app).unwrap();
+    assert_eq!(position(&mut app, entity), START);
+}
+
+#[test]
+fn infinite_lives_keep_a_playtest_going() {
+    let mut app = start("TEST");
+    app.insert_resource(Playtest {
+        infinite_lives: true,
+    });
+    for _ in 0..5 {
+        destroy_player(&mut app);
+        let state = run(&app);
+        assert_eq!(state.lives, 3);
+        assert!(matches!(state.phase, RunPhase::Respawning(_)));
+        tick(&mut app, seconds(RESPAWN_DELAY) + 1);
+        assert_eq!(run(&app).phase, RunPhase::Playing);
+    }
+    let events = events(&mut app);
+    assert_eq!(count(&events, |event| *event == SimEvent::RunOver), 0);
+    assert_eq!(
+        count(&events, |event| matches!(
+            event,
+            SimEvent::PlayerRespawned { .. }
+        )),
+        5
+    );
+
+    // Turned off, the lives count again.
+    app.insert_resource(Playtest {
+        infinite_lives: false,
+    });
+    destroy_player(&mut app);
+    assert_eq!(run(&app).lives, 2);
+}
+
+#[test]
+fn a_tank_that_has_just_appeared_holds_its_fire() {
+    let mut app = begin("TEST");
+    let fire = TankCommand {
+        aim: START + Vec2::Y,
+        fire: true,
+        ..default()
+    };
+    // The button that started the run is still down.
+    command(&mut app, fire);
+    tick(&mut app, seconds(SPAWN_FIRE_DELAY) - 2);
+    assert_eq!(bullets(&mut app), 0);
+    tick(&mut app, 4);
+    assert_eq!(bullets(&mut app), 1);
+
+    // The same after the tank comes back.
+    destroy_player(&mut app);
+    tick(&mut app, seconds(RESPAWN_DELAY) + 1);
+    events(&mut app);
+    command(&mut app, fire);
+    tick(&mut app, seconds(SPAWN_FIRE_DELAY) - 2);
+    let shots = |app: &mut App| count(&events(app), |event| matches!(event, SimEvent::Shot { .. }));
+    assert_eq!(shots(&mut app), 0);
+    tick(&mut app, 4);
+    assert_eq!(shots(&mut app), 1);
 }
 
 #[test]
@@ -909,6 +1187,9 @@ fn play(seed: &str, sectors: u32) -> App {
             let sector = run(&app).sector;
             clear_sector(&mut app, sector);
             // A stray bullet may destroy the bot on the very tick that clears the sector.
+            if player(&mut app).is_some() && flag(&mut app, sector).is_some() {
+                touch_flag(&mut app);
+            }
             if player(&mut app).is_some() {
                 cross_barrier(&mut app);
             }

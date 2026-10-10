@@ -23,6 +23,10 @@ pub const TEXT_DIM: Color = Color::srgb(0.55, 0.58, 0.64);
 pub const ACCENT: Color = PLAYER;
 pub const DANGER: Color = Color::srgb(0.95, 0.3, 0.25);
 pub const GOOD: Color = Color::srgb(0.3, 0.85, 0.5);
+/// Shields: the disk under the turret of a tank that has one, and the bubble when it is up.
+pub const SHIELD: Color = Color::WHITE;
+/// A flag that nobody has captured.
+pub const FLAG: Color = Color::srgb(0.66, 0.68, 0.72);
 
 pub fn text(content: impl Into<String>, size: f32, color: Color) -> impl Bundle {
     (

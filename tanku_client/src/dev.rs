@@ -1,28 +1,53 @@
 //! Development tools, left out of release builds.
 //!
 //! `TANKU_DEV_SCRIPT` holds commands separated by semicolons, run one after the other:
-//! `start SEED`, `wait SECONDS`, `warp SECTOR`, `turn QUARTERS`, `peek ENEMY`, `pause`,
-//! `settings`, `resume`, `lose`, `shot PATH` and `quit`, plus `play DX DY AX AY SECONDS`, which
-//! drives the tank in a direction while it fires at a point relative to itself, and `lineup`,
-//! which lays out one bullet of each kind next to the tank. It is how the game is looked at
-//! without anyone at the keyboard.
+//! `start SEED`, `wait SECONDS`, `warp SECTOR`, `turn QUARTERS`, `peek ENEMY`, `flag SECTOR`,
+//! `look X Y`, `zoom METERS`, `clear`, `reach`, `bubble`, `die`, `pause`, `settings`, `resume`,
+//! `lose`, `shot PATH` and `quit`, plus `play DX DY AX AY SECONDS`, which drives the tank in a
+//! direction while it fires at a point relative to itself, `press LABEL`, which presses the
+//! button of a menu that bears this label, `lineup`, which lays out one bullet of each kind
+//! next to the tank, `showcase STAT`, which lines up in the start bay one tank for each level
+//! of a stat, and `palette`, which lines up there three tanks of each hue, from a weak one to a
+//! strong one. It is how the game is looked at without anyone at the keyboard.
+//!
+//! A scripted run opens no window: it draws into an image, which `shot` saves. It makes no
+//! sound, starts from the default settings and leaves the player's files alone.
 
-use std::collections::VecDeque;
+use std::{collections::VecDeque, time::Duration};
 
 use bevy::{
+    app::ScheduleRunnerPlugin,
+    camera::RenderTarget,
     prelude::*,
-    render::view::screenshot::{Screenshot, save_to_disk},
+    render::{
+        render_resource::TextureFormat,
+        view::screenshot::{Screenshot, save_to_disk},
+    },
+    ui::UiSystems,
+    window::ExitCondition,
+    winit::WinitPlugin,
 };
 use tanku_core::{
     sim::{
-        Bullet, Enemy, Player, Position, PreviousPosition, Run, RunPhase, RunRequest, SimEvent,
-        TankCommand, Team,
+        Bullet, Enemy, Flag, Motion, Player, Position, PreviousPosition, Run, RunPhase, RunRequest,
+        Shield, ShieldState, SimEvent, Tank, TankCommand, Team,
     },
-    stats::Stat,
+    stats::{Genome, Stat},
 };
-use tanku_server::field::{Field, InSector};
+use tanku_server::{
+    Casualties,
+    field::{Field, InSector},
+};
 
-use crate::{Overlay, Screen, camera::View, input};
+use crate::{
+    Overlay, Screen,
+    audio::Muted,
+    camera::{MainCamera, View},
+    input, storage,
+};
+
+/// Size of the image that a scripted run draws into.
+const CANVAS: (u32, u32) = (1920, 1080);
 
 #[derive(Resource)]
 struct Script {
@@ -30,6 +55,98 @@ struct Script {
     wait: f32,
     /// What the script makes the player's tank do, and for how long.
     play: Option<(Vec2, Vec2, f32)>,
+    /// The label of the button that the script presses.
+    press: Option<String>,
+}
+
+/// The image that stands in for the window.
+#[derive(Resource)]
+struct Canvas(Handle<Image>);
+
+/// A tank that `showcase` put on display.
+#[derive(Component)]
+struct Exhibit;
+
+/// The stats by the names that `showcase` takes.
+const STATS: [(&str, Stat); 12] = [
+    ("engine", Stat::Engine),
+    ("tracks", Stat::Tracks),
+    ("turret", Stat::Turret),
+    ("muzzle", Stat::Muzzle),
+    ("magazine", Stat::Magazine),
+    ("loader", Stat::Loader),
+    ("ricochet", Stat::Ricochet),
+    ("mines", Stat::Mines),
+    ("shield", Stat::Shield),
+    ("piercing", Stat::Piercing),
+    ("brain", Stat::Brain),
+    ("ballistics", Stat::Ballistics),
+];
+
+/// A middling tank, on which the levels of one stat are shown.
+const SHOWN_ON: [(Stat, u8); 9] = [
+    (Stat::Engine, 3),
+    (Stat::Tracks, 2),
+    (Stat::Turret, 2),
+    (Stat::Muzzle, 3),
+    (Stat::Magazine, 2),
+    (Stat::Loader, 3),
+    (Stat::Ricochet, 1),
+    (Stat::Mines, 2),
+    (Stat::Brain, 2),
+];
+
+/// What `palette` gives its tanks so that each hue shows: most of the points go to mobility,
+/// to firepower, to mines and shield, then to software.
+const HUES: [&[(Stat, u8)]; 4] = [
+    &[(Stat::Engine, 6), (Stat::Tracks, 4)],
+    &[
+        (Stat::Engine, 2),
+        (Stat::Muzzle, 5),
+        (Stat::Magazine, 3),
+        (Stat::Loader, 4),
+    ],
+    &[(Stat::Engine, 2), (Stat::Mines, 4), (Stat::Shield, 5)],
+    &[(Stat::Engine, 1), (Stat::Brain, 4)],
+];
+
+/// The budgets of the tanks of `palette`, from a pale tank to a saturated one.
+const STRENGTHS: [u16; 3] = [15, 55, 100];
+
+/// Three tanks of each hue, each with a sight and a pointed tip.
+fn palette() -> impl Iterator<Item = Genome> {
+    HUES.into_iter().flat_map(|levels| {
+        STRENGTHS.map(|budget| {
+            let mut genome = Genome::empty(budget);
+            for &(stat, level) in levels {
+                genome.set(stat, level);
+            }
+            genome.set(Stat::Piercing, 1);
+            genome.set(Stat::Ballistics, 3);
+            genome
+        })
+    })
+}
+
+/// Whether a script runs the game.
+pub fn scripted() -> bool {
+    std::env::var_os("TANKU_DEV_SCRIPT").is_some()
+}
+
+/// Adds the engine for a scripted run: no window, and frames at a steady pace.
+pub fn add_engine(app: &mut App) {
+    storage::keep_nothing();
+    app.add_plugins((
+        DefaultPlugins
+            .set(WindowPlugin {
+                primary_window: None,
+                exit_condition: ExitCondition::DontExit,
+                ..default()
+            })
+            .disable::<WinitPlugin>(),
+        ScheduleRunnerPlugin::run_loop(Duration::from_secs_f64(1.0 / 60.0)),
+    ))
+    .insert_resource(Muted);
 }
 
 pub fn plugin(app: &mut App) {
@@ -43,9 +160,35 @@ pub fn plugin(app: &mut App) {
             .collect(),
         wait: 0.0,
         play: None,
+        press: None,
     })
+    .add_systems(PostStartup, draw_into_an_image)
     .add_systems(Update, run_script)
-    .add_systems(PreUpdate, play.after(input::command_player));
+    .add_systems(
+        PreUpdate,
+        (
+            play.after(input::command_player),
+            press.after(UiSystems::Focus),
+        ),
+    );
+}
+
+/// Points the camera at an image, and the interface with it.
+fn draw_into_an_image(
+    mut commands: Commands,
+    mut images: ResMut<Assets<Image>>,
+    camera: Single<Entity, With<MainCamera>>,
+) {
+    let canvas = images.add(Image::new_target_texture(
+        CANVAS.0,
+        CANVAS.1,
+        TextureFormat::Rgba8UnormSrgb,
+        None,
+    ));
+    commands
+        .entity(*camera)
+        .insert((RenderTarget::from(canvas.clone()), IsDefaultUiCamera));
+    commands.insert_resource(Canvas(canvas));
 }
 
 /// Takes the controls of the player's tank while the script plays.
@@ -69,6 +212,64 @@ fn play(
     }
 }
 
+/// Puts tanks on display in rows of six from the north of the start bay, in place of those
+/// that were there. The tanks do nothing.
+fn display(
+    commands: &mut Commands,
+    exhibits: &Query<Entity, With<Exhibit>>,
+    genomes: impl Iterator<Item = Genome>,
+) {
+    for exhibit in exhibits {
+        commands.entity(exhibit).despawn();
+    }
+    for (place, genome) in genomes.enumerate() {
+        let (row, column) = (place / 6, place % 6);
+        let at = Vec2::new(column as f32 * 2.2 - 5.5, 12.5 - row as f32 * 2.8);
+        let facing = std::f32::consts::FRAC_PI_2;
+        commands.spawn((
+            Exhibit,
+            Tank {
+                genome,
+                team: Team::Enemies,
+                sector: 0,
+            },
+            Position(at),
+            PreviousPosition(at),
+            Motion {
+                hull: facing,
+                turret: facing + 0.5,
+                ..default()
+            },
+            // Aiming where the turret already points keeps it still.
+            TankCommand {
+                aim: at + Vec2::from_angle(facing + 0.5) * 10.0,
+                ..default()
+            },
+            InSector(0),
+        ));
+    }
+}
+
+/// Presses the button that the script asked for, as a click does. It comes after the interface
+/// has looked for the cursor, which would let go of the button, and before the menus react.
+fn press(
+    mut script: ResMut<Script>,
+    mut buttons: Query<(&mut Interaction, &Children), With<Button>>,
+    labels: Query<&Text>,
+) {
+    let Some(label) = script.press.take() else {
+        return;
+    };
+    let bears = |children: &Children| {
+        let mut texts = children.iter().filter_map(|child| labels.get(child).ok());
+        texts.any(|text| text.0 == label)
+    };
+    match buttons.iter_mut().find(|(_, children)| bears(children)) {
+        Some((mut interaction, _)) => *interaction = Interaction::Pressed,
+        None => warn!("no button bears the label: {label}"),
+    }
+}
+
 fn run_script(
     mut commands: Commands,
     time: Res<Time<Real>>,
@@ -79,8 +280,15 @@ fn run_script(
     mut view: ResMut<View>,
     mut run: Option<ResMut<Run>>,
     mut field: Option<ResMut<Field>>,
-    enemies: Query<&Position, With<Enemy>>,
-    player: Query<(Entity, &Position), With<Player>>,
+    mut casualties: ResMut<Casualties>,
+    (enemies, mut player, flags, exhibits, mut shields): (
+        Query<(Entity, &Tank, &Position), With<Enemy>>,
+        Query<(Entity, &mut Position), (With<Player>, Without<Enemy>)>,
+        Query<(&Flag, &Position), Without<Player>>,
+        Query<Entity, With<Exhibit>>,
+        Query<(&Tank, &mut Shield)>,
+    ),
+    canvas: Res<Canvas>,
     mut events: MessageWriter<SimEvent>,
     mut exit: MessageWriter<AppExit>,
 ) {
@@ -115,8 +323,65 @@ fn run_script(
         "turn" => view.turns = number(1) as i32,
         // Looks at the enemy with this number for a few seconds.
         "peek" => {
-            if let Some(position) = enemies.iter().nth(number(1) as usize) {
+            if let Some((_, _, position)) = enemies.iter().nth(number(1) as usize) {
                 view.look_at(position.0, 3.0);
+            }
+        }
+        // Looks at the flag of a loaded sector for a few seconds.
+        "flag" => {
+            let sector = number(1) as u32;
+            if let Some((_, position)) = flags.iter().find(|(flag, _)| flag.sector == sector) {
+                view.look_at(position.0, 3.0);
+            }
+        }
+        // Looks at a point of the map until the script ends.
+        "look" => view.look_at(Vec2::new(number(1), number(2)), f32::MAX),
+        // Shows this many meters of ground from the bottom to the top of the screen. The
+        // game shows 30.
+        "zoom" => view.span = Some(number(1)).filter(|span| *span > 0.0),
+        // Lines up one tank for each level of a stat.
+        "showcase" => {
+            let Some(&(_, stat)) = STATS.iter().find(|(name, _)| *name == word(1)) else {
+                warn!("unknown stat: {}", word(1));
+                return;
+            };
+            let levels = (0..=stat.max_level()).map(|level| {
+                let mut genome = Genome::empty(70);
+                for (other, shown) in SHOWN_ON {
+                    genome.set(other, shown);
+                }
+                genome.set(stat, level);
+                genome
+            });
+            display(&mut commands, &exhibits, levels);
+        }
+        // Lines up three tanks of each hue, from a weak one to a strong one.
+        "palette" => display(&mut commands, &exhibits, palette()),
+        // Raises the shield of every tank that has one, for ten seconds.
+        "bubble" => {
+            for (tank, mut shield) in &mut shields {
+                if tank.genome.shield().is_some() {
+                    shield.state = ShieldState::Active(10.0);
+                }
+            }
+        }
+        "press" => script.press = Some(words[1..].join(" ")),
+        // Destroys the player's tank.
+        "die" => casualties
+            .tanks
+            .extend(player.iter().map(|(entity, _)| entity)),
+        // Destroys the enemies of the sector the player is in.
+        "clear" => {
+            let sector = run.as_ref().map_or(0, |run| run.sector);
+            let doomed = enemies.iter().filter(|(_, tank, _)| tank.sector == sector);
+            casualties.tanks.extend(doomed.map(|(entity, ..)| entity));
+        }
+        // Puts the tank next to the flag of its sector.
+        "reach" => {
+            let sector = run.as_ref().map_or(0, |run| run.sector);
+            let flag = flags.iter().find(|(flag, _)| flag.sector == sector);
+            if let (Some((_, flag)), Ok((_, mut position))) = (flag, player.single_mut()) {
+                position.0 = flag.0 + Vec2::X;
             }
         }
         "play" => {
@@ -140,6 +405,7 @@ fn run_script(
             let (Ok((owner, position)), Some(run)) = (player.single(), run.as_ref()) else {
                 return;
             };
+            let position = *position;
             let kinds = [
                 (Team::Players, 0),
                 (Team::Players, 1),
@@ -171,7 +437,7 @@ fn run_script(
         "resume" => overlay.set(Overlay::None),
         "shot" => {
             commands
-                .spawn(Screenshot::primary_window())
+                .spawn(Screenshot::image(canvas.0.clone()))
                 .observe(save_to_disk(std::path::PathBuf::from(word(1))));
             script.wait = 0.5;
         }

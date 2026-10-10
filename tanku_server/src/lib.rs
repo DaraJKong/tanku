@@ -14,7 +14,7 @@ mod tanks;
 mod tests;
 
 use bevy::prelude::*;
-use tanku_core::sim::{Run, RunPhase};
+use tanku_core::sim::{Playtest, Run, RunPhase};
 
 /// What was hit this tick and still has to be removed.
 #[derive(Resource, Default)]
@@ -37,6 +37,7 @@ impl Plugin for ServerPlugin {
             (
                 run::handle_requests,
                 (
+                    run::skip.run_if(resource_exists::<Playtest>),
                     field::rebuild_colliders,
                     tanks::idle,
                     brain::think,

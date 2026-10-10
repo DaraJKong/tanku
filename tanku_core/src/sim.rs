@@ -170,6 +170,14 @@ pub struct Barrier {
     pub unlocked: bool,
 }
 
+/// The flag of a sector, near its barrier. A solo player who captures it comes back there.
+#[derive(Component, Clone, Copy, Debug)]
+#[require(Position)]
+pub struct Flag {
+    pub sector: u32,
+    pub captured: bool,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum RunPhase {
     Playing,
@@ -187,7 +195,7 @@ pub struct Run {
     pub sector: u32,
     /// The score: the furthest sector cleared.
     pub cleared: u32,
-    /// The sector whose barrier is the last checkpoint reached, or 0 for the start bay.
+    /// The sector of the last flag captured, or 0 for the start bay.
     pub checkpoint: u32,
     pub lives: u32,
     pub kills: u32,
@@ -196,11 +204,27 @@ pub struct Run {
     pub phase: RunPhase,
 }
 
+/// Present when the game was started as a playtest, which lets the player cheat. The runs of
+/// a playtest set no record. Whoever starts the game inserts it and sets its options, and the
+/// server follows them.
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Playtest {
+    /// A destroyed player comes back without losing a life.
+    pub infinite_lives: bool,
+}
+
 /// What the client asks of the server.
 #[derive(Message, Clone, Debug)]
 pub enum RunRequest {
-    Start { seed: String },
+    Start {
+        seed: String,
+    },
     Abandon,
+    /// In a playtest: puts the player in front of a sector, as if every sector before it was
+    /// cleared and the flag of the last one captured.
+    SkipTo {
+        sector: u32,
+    },
 }
 
 /// Things that happened in the simulation, for effects, sounds and the interface.
@@ -221,6 +245,7 @@ pub enum SimEvent {
     TankDestroyed { at: Vec2, team: Team },
     PlayerRespawned { at: Vec2 },
     SectorCleared { sector: u32 },
+    FlagCaptured { at: Vec2 },
     BarrierUnlocked { sector: u32 },
     SectorEntered { sector: u32 },
 }

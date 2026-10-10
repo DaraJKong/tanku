@@ -2,13 +2,14 @@
 
 use bevy::prelude::*;
 use tanku_core::{
-    rules::TICK_RATE,
+    rules::{PLAYTEST_LAST_SECTOR, TICK_RATE},
     seed::{self, VERSION},
-    sim::{Run, RunRequest, SimEvent},
+    sim::{Playtest, Run, RunRequest, SimEvent},
 };
 
 use crate::{
     Overlay, Screen,
+    cli::Options,
     settings::{Action, Binding, Records, Settings},
     theme,
 };
@@ -36,10 +37,23 @@ enum Press {
     Scale(f32),
     Rebind(Action, usize),
     ResetBindings,
+    /// In a playtest: turns the infinite lives on or off.
+    InfiniteLives,
+    /// In a playtest: moves the sector to skip to by this many.
+    Destination(i32),
+    /// In a playtest: skips to that sector.
+    Skip,
 }
 
 #[derive(Component)]
+struct PauseRoot;
+
+#[derive(Component)]
 struct SettingsRoot;
+
+/// The sector a playtest offers to skip to.
+#[derive(Resource)]
+struct Destination(u32);
 
 /// The binding the settings are waiting a key for.
 #[derive(Resource, Default)]
@@ -61,14 +75,24 @@ struct Outcome {
 pub fn plugin(app: &mut App) {
     app.init_resource::<Capture>()
         .init_resource::<Outcome>()
+        .insert_resource(Destination(1))
         .add_systems(OnEnter(Screen::Menu), main_menu)
         .add_systems(OnEnter(Screen::GameOver), game_over)
+        .add_systems(
+            OnTransition {
+                exited: Overlay::None,
+                entered: Overlay::Pause,
+            },
+            offer_the_next_sector.run_if(resource_exists::<Playtest>),
+        )
         .add_systems(OnEnter(Overlay::Pause), pause_menu)
         .add_systems(OnEnter(Overlay::Settings), settings_menu)
         .add_systems(
             Update,
             (
                 (capture_binding, press, escape).chain(),
+                refresh_pause
+                    .run_if(in_state(Overlay::Pause).and_then(resource_exists::<Playtest>)),
                 refresh_settings.run_if(in_state(Overlay::Settings)),
                 hover,
                 pause_time,
@@ -161,6 +185,49 @@ fn placeholder(parent: &mut ChildSpawnerCommands, content: &str) {
     ));
 }
 
+/// A label followed by its controls.
+fn row(
+    parent: &mut ChildSpawnerCommands,
+    label: &str,
+    controls: impl FnOnce(&mut ChildSpawnerCommands),
+) {
+    parent
+        .spawn(Node {
+            column_gap: px(6),
+            align_items: AlignItems::Center,
+            ..default()
+        })
+        .with_children(|row| {
+            // The label sits in a box of fixed width, so that the controls line up.
+            row.spawn((
+                Node {
+                    width: px(200),
+                    ..default()
+                },
+                children![theme::text(label, 16.0, theme::TEXT)],
+            ));
+            controls(row);
+        });
+}
+
+/// A small button, for the controls of a row.
+fn small(parent: &mut ChildSpawnerCommands, content: impl Into<String>, width: f32, press: Press) {
+    parent.spawn((
+        Button,
+        press,
+        Node {
+            padding: UiRect::axes(px(6), px(5)),
+            ..button_node(px(width))
+        },
+        BackgroundColor(theme::SURFACE_RAISED),
+        children![theme::text(content, 15.0, theme::TEXT)],
+    ));
+}
+
+fn on_off(on: bool) -> &'static str {
+    if on { "On" } else { "Off" }
+}
+
 fn record_line(records: &Records) -> String {
     match records.best(MODE, 1) {
         Some(record) => format!(
@@ -171,7 +238,12 @@ fn record_line(records: &Records) -> String {
     }
 }
 
-fn main_menu(mut commands: Commands, records: Res<Records>) {
+fn main_menu(
+    mut commands: Commands,
+    records: Res<Records>,
+    playtest: Option<Res<Playtest>>,
+    options: Res<Options>,
+) {
     panel(
         &mut commands,
         DespawnOnExit(Screen::Menu),
@@ -189,20 +261,61 @@ fn main_menu(mut commands: Commands, records: Res<Records>) {
             }
             line(parent, record_line(&records), theme::TEXT_DIM);
             line(parent, format!("Version {VERSION}"), theme::TEXT_DIM);
+            if playtest.is_some() {
+                line(
+                    parent,
+                    "Playtest: cheats are in the pause menu",
+                    theme::ACCENT,
+                );
+                line(parent, "A playtest sets no record", theme::TEXT_DIM);
+                if let Some(seed) = &options.seed {
+                    line(
+                        parent,
+                        format!("Every run is on seed {seed}"),
+                        theme::TEXT_DIM,
+                    );
+                }
+            }
         },
     );
 }
 
-fn pause_menu(mut commands: Commands, run: Option<Res<Run>>) {
+/// A playtest offers to skip the sector the player is in.
+fn offer_the_next_sector(run: Option<Res<Run>>, mut destination: ResMut<Destination>) {
+    if let Some(run) = run {
+        destination.0 = (run.sector + 1).min(PLAYTEST_LAST_SECTOR);
+    }
+}
+
+fn pause_menu(
+    mut commands: Commands,
+    run: Option<Res<Run>>,
+    playtest: Option<Res<Playtest>>,
+    destination: Res<Destination>,
+) {
     panel(
         &mut commands,
-        DespawnOnExit(Overlay::Pause),
+        (PauseRoot, DespawnOnExit(Overlay::Pause)),
         theme::SCRIM,
         |parent| {
             heading(parent, "Paused");
             button(parent, "Resume", Press::Resume);
             button(parent, "Settings", Press::OpenSettings);
             button(parent, "Quit to the menu", Press::Abandon);
+            if let Some(playtest) = playtest {
+                line(parent, "PLAYTEST", theme::TEXT_DIM);
+                row(parent, "Infinite lives", |row| {
+                    let state = on_off(playtest.infinite_lives);
+                    small(row, state, 70.0, Press::InfiniteLives);
+                });
+                row(parent, "Sector to skip to", |row| {
+                    for change in [-10, -1, 1, 10] {
+                        small(row, format!("{change:+}"), 48.0, Press::Destination(change));
+                    }
+                });
+                let skip = format!("Skip to sector {}", destination.0);
+                button(parent, skip, Press::Skip);
+            }
             if let Some(run) = run {
                 line(
                     parent,
@@ -214,11 +327,41 @@ fn pause_menu(mut commands: Commands, run: Option<Res<Run>>) {
     );
 }
 
+/// Draws the pause menu again when a playtest changed one of its options.
+fn refresh_pause(
+    mut commands: Commands,
+    run: Option<Res<Run>>,
+    playtest: Res<Playtest>,
+    destination: Res<Destination>,
+    root: Query<Entity, With<PauseRoot>>,
+) {
+    if !playtest.is_changed() && !destination.is_changed() {
+        return;
+    }
+    for entity in &root {
+        commands.entity(entity).despawn();
+    }
+    pause_menu(commands, run, Some(playtest), destination);
+}
+
+/// The seed of a new run: the one that the command line gave to a playtest, or else a random
+/// one.
+fn new_seed(options: &Options, entropy: u64) -> String {
+    let chosen = options.seed.clone();
+    chosen.unwrap_or_else(|| seed::random_seed_text(entropy))
+}
+
+/// Keeps the record of a run, unless it was a playtest. Returns whether the record is new.
+fn keep_record(records: &mut Records, playtest: bool, run: &Run) -> bool {
+    !playtest && records.submit(MODE, 1, run.cleared, &run.seed_text)
+}
+
 fn game_over(
     mut commands: Commands,
     run: Option<Res<Run>>,
     records: Res<Records>,
     outcome: Res<Outcome>,
+    playtest: Option<Res<Playtest>>,
 ) {
     panel(
         &mut commands,
@@ -250,7 +393,9 @@ fn game_over(
                     theme::TEXT_DIM,
                 );
             }
-            if outcome.new_record {
+            if playtest.is_some() {
+                line(parent, "Playtest: no record kept", theme::TEXT_DIM);
+            } else if outcome.new_record {
                 line(parent, "New record", theme::GOOD);
             } else {
                 line(parent, record_line(&records), theme::TEXT_DIM);
@@ -263,7 +408,6 @@ fn game_over(
 }
 
 fn settings_menu(mut commands: Commands, settings: Res<Settings>, capture: Res<Capture>) {
-    let on_off = |on: bool| if on { "On" } else { "Off" };
     panel(
         &mut commands,
         (SettingsRoot, DespawnOnExit(Overlay::Settings)),
@@ -281,48 +425,10 @@ fn settings_menu(mut commands: Commands, settings: Res<Settings>, capture: Res<C
                         row_gap: px(7),
                         ..default()
                     };
-                    let row =
-                        |parent: &mut ChildSpawnerCommands,
-                         label: &str,
-                         controls: &dyn Fn(&mut ChildSpawnerCommands)| {
-                            parent
-                                .spawn(Node {
-                                    column_gap: px(6),
-                                    align_items: AlignItems::Center,
-                                    ..default()
-                                })
-                                .with_children(|row| {
-                                    // The label sits in a box of fixed width, so that the controls line up.
-                                    row.spawn((
-                                        Node {
-                                            width: px(200),
-                                            ..default()
-                                        },
-                                        children![theme::text(label, 16.0, theme::TEXT)],
-                                    ));
-                                    controls(row);
-                                });
-                        };
-                    let small = |parent: &mut ChildSpawnerCommands,
-                                 content: String,
-                                 width: f32,
-                                 press: Press| {
-                        parent.spawn((
-                            Button,
-                            press,
-                            Node {
-                                padding: UiRect::axes(px(6), px(5)),
-                                ..button_node(px(width))
-                            },
-                            BackgroundColor(theme::SURFACE_RAISED),
-                            children![theme::text(content, 15.0, theme::TEXT)],
-                        ));
-                    };
-
                     columns.spawn(column.clone()).with_children(|controls| {
                         line(controls, "CONTROLS", theme::TEXT_DIM);
                         for action in Action::ALL {
-                            row(controls, action.label(), &|row| {
+                            row(controls, action.label(), |row| {
                                 for (slot, binding) in
                                     settings.bindings(action).into_iter().enumerate()
                                 {
@@ -335,7 +441,7 @@ fn settings_menu(mut commands: Commands, settings: Res<Settings>, capture: Res<C
                                 }
                             });
                         }
-                        row(controls, "Menu", &|row| {
+                        row(controls, "Menu", |row| {
                             row.spawn(theme::text("Esc", 16.0, theme::TEXT_DIM));
                         });
                         button(controls, "Reset the controls", Press::ResetBindings);
@@ -343,44 +449,34 @@ fn settings_menu(mut commands: Commands, settings: Res<Settings>, capture: Res<C
 
                     columns.spawn(column).with_children(|options| {
                         line(options, "VIDEO", theme::TEXT_DIM);
-                        row(options, "Fullscreen", &|row| {
-                            small(
-                                row,
-                                on_off(settings.fullscreen).into(),
-                                70.0,
-                                Press::Fullscreen,
-                            );
+                        row(options, "Fullscreen", |row| {
+                            small(row, on_off(settings.fullscreen), 70.0, Press::Fullscreen);
                         });
-                        row(options, "Vertical sync", &|row| {
-                            small(row, on_off(settings.vsync).into(), 70.0, Press::Vsync);
+                        row(options, "Vertical sync", |row| {
+                            small(row, on_off(settings.vsync), 70.0, Press::Vsync);
                         });
                         line(options, "AUDIO", theme::TEXT_DIM);
-                        row(options, "Volume", &|row| {
-                            small(row, "-".into(), 34.0, Press::Volume(-0.1));
+                        row(options, "Volume", |row| {
+                            small(row, "-", 34.0, Press::Volume(-0.1));
                             row.spawn(theme::text(
                                 format!("{:.0}%", settings.volume * 100.0),
                                 16.0,
                                 theme::TEXT,
                             ));
-                            small(row, "+".into(), 34.0, Press::Volume(0.1));
+                            small(row, "+", 34.0, Press::Volume(0.1));
                         });
                         line(options, "ACCESSIBILITY", theme::TEXT_DIM);
-                        row(options, "Camera shake", &|row| {
-                            small(
-                                row,
-                                on_off(settings.camera_shake).into(),
-                                70.0,
-                                Press::Shake,
-                            );
+                        row(options, "Camera shake", |row| {
+                            small(row, on_off(settings.camera_shake), 70.0, Press::Shake);
                         });
-                        row(options, "Interface size", &|row| {
-                            small(row, "-".into(), 34.0, Press::Scale(-0.25));
+                        row(options, "Interface size", |row| {
+                            small(row, "-", 34.0, Press::Scale(-0.25));
                             row.spawn(theme::text(
                                 format!("{:.0}%", settings.ui_scale * 100.0),
                                 16.0,
                                 theme::TEXT,
                             ));
-                            small(row, "+".into(), 34.0, Press::Scale(0.25));
+                            small(row, "+", 34.0, Press::Scale(0.25));
                         });
                     });
                 });
@@ -434,6 +530,9 @@ fn press(
     mut settings: ResMut<Settings>,
     mut capture: ResMut<Capture>,
     mut records: ResMut<Records>,
+    mut playtest: Option<ResMut<Playtest>>,
+    mut destination: ResMut<Destination>,
+    options: Res<Options>,
     run: Option<Res<Run>>,
     time: Res<Time<Real>>,
     mut requests: MessageWriter<RunRequest>,
@@ -452,7 +551,7 @@ fn press(
                 let seed = match (*press, &run) {
                     (Press::Retry, Some(run)) => run.seed_text.clone(),
                     // The moment of the click is all the entropy a seed needs.
-                    _ => seed::random_seed_text(time.elapsed().as_nanos() as u64),
+                    _ => new_seed(&options, time.elapsed().as_nanos() as u64),
                 };
                 requests.write(RunRequest::Start { seed });
                 next_screen.set(Screen::Playing);
@@ -470,7 +569,7 @@ fn press(
             }
             Press::Abandon => {
                 if let Some(run) = &run {
-                    records.submit(MODE, 1, run.cleared, &run.seed_text);
+                    keep_record(&mut records, playtest.is_some(), run);
                 }
                 requests.write(RunRequest::Abandon);
                 next_screen.set(Screen::Menu);
@@ -494,6 +593,22 @@ fn press(
                 capture.armed = false;
             }
             Press::ResetBindings => settings.reset_bindings(),
+            Press::InfiniteLives => {
+                if let Some(playtest) = &mut playtest {
+                    playtest.infinite_lives = !playtest.infinite_lives;
+                }
+            }
+            Press::Destination(change) => {
+                let sector = destination.0.saturating_add_signed(change);
+                destination.0 = sector.clamp(1, PLAYTEST_LAST_SECTOR);
+            }
+            // The game goes on at once, in front of that sector.
+            Press::Skip => {
+                requests.write(RunRequest::SkipTo {
+                    sector: destination.0,
+                });
+                next_overlay.set(Overlay::None);
+            }
         }
     }
 }
@@ -551,6 +666,7 @@ fn watch_run(
     mut events: MessageReader<SimEvent>,
     mut outcome: ResMut<Outcome>,
     mut records: ResMut<Records>,
+    playtest: Option<Res<Playtest>>,
     run: Option<Res<Run>>,
     screen: Res<State<Screen>>,
     mut next_screen: ResMut<NextState<Screen>>,
@@ -568,8 +684,45 @@ fn watch_run(
     }
     outcome.countdown = None;
     if let (Some(run), Screen::Playing) = (run, *screen.get()) {
-        outcome.new_record = records.submit(MODE, 1, run.cleared, &run.seed_text);
+        outcome.new_record = keep_record(&mut records, playtest.is_some(), &run);
         next_screen.set(Screen::GameOver);
         next_overlay.set(Overlay::None);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tanku_core::sim::RunPhase;
+
+    use super::*;
+
+    #[test]
+    fn a_seed_from_the_command_line_serves_every_run() {
+        let chosen = Options {
+            playtest: true,
+            seed: Some("85GVTHQA".into()),
+        };
+        assert_eq!(new_seed(&chosen, 1), "85GVTHQA");
+        assert_eq!(new_seed(&chosen, 2), "85GVTHQA");
+        let random = Options::default();
+        assert_ne!(new_seed(&random, 1), new_seed(&random, 2));
+    }
+
+    #[test]
+    fn a_playtest_sets_no_record() {
+        let run = Run {
+            seed_text: "TEST".into(),
+            seed: 1,
+            sector: 41,
+            cleared: 40,
+            checkpoint: 40,
+            lives: 3,
+            kills: 0,
+            ticks: 0,
+            phase: RunPhase::Over,
+        };
+        let mut records = Records::default();
+        assert!(!keep_record(&mut records, true, &run));
+        assert_eq!(records, Records::default());
     }
 }

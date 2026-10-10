@@ -9,7 +9,7 @@ use bevy::{
 };
 use tanku_core::seed::VERSION;
 
-use crate::storage;
+use crate::{audio::Muted, storage};
 
 const SETTINGS_FILE: &str = "settings.txt";
 const RECORDS_FILE: &str = "records.txt";
@@ -263,13 +263,35 @@ impl Default for Settings {
             volume: 0.7,
             camera_shake: true,
             ui_scale: 1.0,
-            fullscreen: false,
+            // A browser only goes full screen when the player asks for it.
+            fullscreen: !cfg!(target_arch = "wasm32"),
             vsync: true,
         }
     }
 }
 
 impl Settings {
+    /// The settings as the player left them, or the defaults on the first launch.
+    pub fn load() -> Self {
+        Self::from_pairs(&storage::load(SETTINGS_FILE))
+    }
+
+    pub fn window_mode(&self) -> WindowMode {
+        if self.fullscreen {
+            WindowMode::BorderlessFullscreen(MonitorSelection::Current)
+        } else {
+            WindowMode::Windowed
+        }
+    }
+
+    pub fn present_mode(&self) -> PresentMode {
+        if self.vsync {
+            PresentMode::AutoVsync
+        } else {
+            PresentMode::AutoNoVsync
+        }
+    }
+
     pub fn bindings(&self, action: Action) -> [Option<Binding>; 2] {
         self.bindings
             .iter()
@@ -430,7 +452,7 @@ impl Records {
 }
 
 pub fn plugin(app: &mut App) {
-    app.insert_resource(Settings::from_pairs(&storage::load(SETTINGS_FILE)))
+    app.insert_resource(Settings::load())
         .insert_resource(Records::from_pairs(&storage::load(RECORDS_FILE)))
         .add_systems(Update, apply.run_if(resource_changed::<Settings>));
 }
@@ -440,21 +462,22 @@ fn apply(
     settings: Res<Settings>,
     mut ui_scale: ResMut<UiScale>,
     mut volume: ResMut<GlobalVolume>,
-    mut window: Single<&mut Window, With<PrimaryWindow>>,
+    muted: Option<Res<Muted>>,
+    window: Option<Single<&mut Window, With<PrimaryWindow>>>,
     mut loaded: Local<bool>,
 ) {
     ui_scale.0 = settings.ui_scale;
-    *volume = GlobalVolume::new(Volume::Linear(settings.volume));
-    window.mode = if settings.fullscreen {
-        WindowMode::BorderlessFullscreen(MonitorSelection::Current)
+    let loudness = if muted.is_some() {
+        0.0
     } else {
-        WindowMode::Windowed
+        settings.volume
     };
-    window.present_mode = if settings.vsync {
-        PresentMode::AutoVsync
-    } else {
-        PresentMode::AutoNoVsync
-    };
+    *volume = GlobalVolume::new(Volume::Linear(loudness));
+    // A scripted run has no window.
+    if let Some(mut window) = window {
+        window.mode = settings.window_mode();
+        window.present_mode = settings.present_mode();
+    }
     if *loaded {
         storage::save(SETTINGS_FILE, &settings.to_pairs());
     }
@@ -464,6 +487,27 @@ fn apply(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_first_launch_is_full_screen_and_the_saved_choice_wins_afterward() {
+        let saved = |text: &str| {
+            let pairs = text
+                .split_once('=')
+                .map(|(key, value)| (key.into(), value.into()));
+            Settings::from_pairs(&pairs.into_iter().collect())
+        };
+        assert!(saved("").fullscreen);
+        assert!(!saved("fullscreen=false").fullscreen);
+        assert!(saved("fullscreen=true").fullscreen);
+        assert_eq!(
+            saved("").window_mode(),
+            WindowMode::BorderlessFullscreen(MonitorSelection::Current)
+        );
+        assert_eq!(
+            saved("fullscreen=false").window_mode(),
+            WindowMode::Windowed
+        );
+    }
 
     #[test]
     fn settings_survive_a_save_and_a_load() {

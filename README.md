@@ -30,6 +30,28 @@ cargo run -p tanku_client
 
 Settings and records are kept in the user's configuration directory, under `tanku`.
 
+### Playtest
+
+A playtest lets the player cheat, to test the game faster:
+
+```bash
+cargo run -p tanku_client -- --playtest
+```
+
+| Cheat | How |
+|---|---|
+| Infinite lives | On from the start. The pause menu turns them off and on. |
+| Skip to a sector | The pause menu picks any sector up to 999. The tank comes back at the end of the sector before it, in front of its open barrier, as it does after capturing a flag there. |
+| Choose the seed | `--seed TEXT` after `--playtest` starts every run on that seed instead of a random one. |
+
+With both, a seed and a sector from a report are a few clicks away:
+
+```bash
+cargo run -p tanku_client -- --playtest --seed 85GVTHQA
+```
+
+A playtest sets no record. The web build has none, because a page has no command line.
+
 ## Building
 
 The toolchain is pinned to a nightly in `rust-toolchain.toml`, because development builds use the Cranelift backend and `-Zshare-generics` to compile faster. `rustup` installs it on first use. On Linux, linking needs `clang` and `mold`, and sound needs the ALSA development files.
@@ -104,7 +126,9 @@ cargo bench -p tanku_core -p tanku_server
 
 ## Looking at the game without playing
 
-Development builds read a script from `TANKU_DEV_SCRIPT`: commands separated by semicolons that start a run, jump to a sector, drive the tank and save screenshots. The commands are listed at the top of `tanku_client/src/dev.rs`.
+Development builds read a script from `TANKU_DEV_SCRIPT`: commands separated by semicolons that start a run, jump to a sector, drive the tank, press the buttons of the menus and save screenshots. The commands are listed at the top of `tanku_client/src/dev.rs`.
+
+A scripted run opens no window and needs no display: it draws into an image of 1920 by 1080 pixels, which the `shot` command saves. It makes no sound, starts from the default settings, and neither reads nor writes the saved settings and records.
 
 ```bash
 TANKU_DEV_SCRIPT="start TANKU; wait 1; warp 12; wait 1; peek 0; wait 1; shot sector12.png; quit" cargo run -p tanku_client
