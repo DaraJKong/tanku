@@ -4,7 +4,6 @@ Ideas that aren't in the specification. They are ranked by likely usefulness and
 
 | Idea | Rank | Notes | How to validate |
 |---|---|---|---|
-| Elite tank in arenas | Medium | One tank at 1.5 times the sector's budget cap. A boss moment without a new system, and something that can keep growing past the difficulty cap. | Playtest once the solo loop exists |
 | Pits | Medium | Holes that stop tanks but not bullets, as in Tanks!. Adds work to map generation and pathfinding. | Corridor prototype |
 | Aiming laser | Medium | Tanks with Ballistics 2 or more show their line of fire, bounces included. Makes bank shots readable and fairer. | Playtest against a bank-shot enemy |
 | Daily seed | Medium | A seed derived from the date. Worth more with a leaderboard on the official server. | After the modes exist |
@@ -12,6 +11,7 @@ Ideas that aren't in the specification. They are ranked by likely usefulness and
 | Cause of each loss | Medium | The game over screen shows the tank that ended the run, but nothing tells a solo player what destroyed their tank while lives remain. A line during the respawn delay could name the build and say whether it was a bullet, a mine or a crate. The simulation already reports it. | Solo playtest: ask players what destroyed them after each loss |
 | Arena ahead in the music | Medium | While the view runs ahead of a tank at the barrier of an arena, the music announces the fight before the crossing. The bridge has no mode to darken, so it needs a sign of its own, such as a soft snare with the second beat of its heart. It costs the surprise of the change at the crossing. | A switch in the playtest menu, once the music follows the game |
 | Whose weapon it was | Medium | Among several players, the game over screen says that a player's tank ended the run, not whose. The simulation would have to keep the seat of the tank behind each bullet, mine and crate, and the screen would name that player by their number. | Co-op playtest: listen for players asking who shot whom |
+| Marks of a wave at the screen edge | Medium | A wave of an arena marks the places where its tanks will appear, and a mark can lie outside the view of a player who stays near the entry. A marker at the screen edge could point to each mark, as markers point to the last enemies of a sector. | Arena playtest: watch whether tanks seem to come from nowhere |
 | Chicanes | Low | Both walls take the shallowest slope together, so the corridor jumps 8 m or more sideways within a few meters. The throat between the two walls is less than half as wide as the corridor, so it only fits the widest stretches. | Corridor prototype: force one into a wide sector and drive through it |
 | Camera that turns with the corridor | Low | The view rotates by itself to keep progress pointing one way. Saves key presses, but takes control away and can disorient. | Compare with manual rotation in the corridor prototype |
 | Wider view at a barrier | Low | While the view runs ahead of a tank at a barrier, it could also show 45 m of ground instead of 30. That puts 66% of the next group on screen instead of 31%, and draws everything a third smaller. Tried in the prototype of the view past a barrier and not kept. | None planned |
@@ -44,8 +44,10 @@ Ideas that aren't in the specification. They are ranked by likely usefulness and
 | Glow around bullets | Low | Bloom on bullets and lights. Bullets are bright and flat for now, which already reads well. Costs frame time on the web. | Compare screenshots with and without it |
 | Smaller web build | Low | The web build is 38 MB, 9 MB compressed. `wasm-opt` would shrink it. | Measure the loading time first |
 | Reflecting shield | Low | The shield sends bullets back. Fun, but hard to balance with friendly fire. | Variant of the shield prototype |
-| Life refill | Low | A checkpoint gives one life back, up to three. A tuning lever if solo is too harsh. | Solo playtests |
 | Repair kits | Low | A limited, shared number of repairs. A tuning lever if co-op is too easy. | Co-op playtests |
+| Something for a team that clears an arena | Low | An arena leaves a life for a single player and nothing for several, who have no lives. It could leave a team something of one use, such as a repair that takes no time. | Co-op playtests: ask whether an arena feels worth its fight |
+| A life only for a fast arena | Low | An arena leaves its life only when it is cleared within a set time. It rewards the players who need the life least, and a clock in a fight pushes against reading the enemies. Set aside when the life became something to pick up. | None planned |
+| A moment of grace for a tank's own bullet | Low | A player's bullet can't destroy the tank that fired it during its first half second, bounced or not. A bullet now ends on what blocks the barrel, but one that leaves the barrel and bounces straight back off a wall a step away still destroys its tank. Grace would forgive that too, and would let a player fire point-blank at a wall without thinking. | Playtest: count the tanks lost to their own bullet within a second of the shot |
 | Friendly-fire option | Low | A lobby switch. Splits records and achievements in two. | Co-op playtests |
 | Armor | Low | Tanks that survive several hits. Contradicts the one-hit pillar. | None planned |
 | Stealth | Low | A stat that makes a tank fade out, as the white tank of Tanks! does. Contradicts readable danger. | None planned |
