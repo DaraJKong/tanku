@@ -37,11 +37,7 @@ use tanku_server::{
     tanks::{self, Bubble},
 };
 
-use crate::{
-    crew::Own,
-    scene::{Nudge, Tail},
-    session::Session,
-};
+use crate::{crew::Own, scene::Nudge, session::Session};
 
 /// How far in the past the other tanks are shown, in ticks: enough for the next telling to be
 /// there in time, most of the time.
@@ -729,7 +725,7 @@ fn foresee(
                                 stopped: None,
                             };
                             let place = (Position(at), PreviousPosition(flew.way[0]));
-                            let look = (Tail(flew.straight), hidden(flew.spent));
+                            let look = hidden(flew.spent);
                             Some(commands.spawn((Foreseen, bullet, place, state, look)).id())
                         }
                     }
@@ -765,8 +761,6 @@ struct Flew {
     way: Vec<Vec2>,
     /// Whether it flew into something that ends it.
     spent: bool,
-    /// How far it has flown in a straight line: from the start, or since its last bounce.
-    straight: f32,
 }
 
 /// Flies a bullet for some ticks, past what stands still.
@@ -774,16 +768,11 @@ fn flown(field: &Field, position: &mut Vec2, bullet: &mut Bullet, ticks: u32) ->
     let mut flew = Flew {
         way: vec![*position],
         spent: false,
-        straight: 0.0,
     };
     for _ in 0..ticks {
         let from = *position;
         let distance = bullet.velocity.length() * TICK;
         let flight = bullets::fly_past_walls(field, position, bullet, distance);
-        flew.straight = match flight.bounces.last() {
-            Some(bounce) => bounce.distance(*position),
-            None => flew.straight + from.distance(*position),
-        };
         flew.way.clear();
         flew.way.push(from);
         flew.way.extend(&flight.bounces);
@@ -883,8 +872,7 @@ fn fly(
             };
             meet(&mut state, &flew, &bullet);
             let place = (Position(place), PreviousPosition(flew.way[0]));
-            // The line behind it is as long as its flight since the host told of it.
-            let look = (Tail(flew.straight), hidden(state.gone()));
+            let look = hidden(state.gone());
             commands.entity(entity).insert((bullet, place, state, look));
             continue;
         };

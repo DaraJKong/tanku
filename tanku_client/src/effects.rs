@@ -1,16 +1,13 @@
 //! Short-lived effects: blasts, sparks and flashes.
 //!
 //! Most are a circle that is drawn in the air, grows to its full size and closes again. A
-//! bullet that is destroyed leaves a burst of short strokes in its color instead: they shoot
+//! bullet that is destroyed leaves a burst of short white strokes instead: they shoot
 //! out from where it was, then shorten until nothing is left.
 
 use std::f32::consts::TAU;
 
 use bevy::prelude::*;
-use tanku_core::{
-    rules::BLAST_RADIUS,
-    sim::{SimEvent, Team},
-};
+use tanku_core::{rules::BLAST_RADIUS, sim::SimEvent};
 
 use crate::{camera::View, draft::Draft, scene, theme};
 
@@ -63,7 +60,7 @@ struct Glows {
     /// The strokes of a destroyed bullet, from the first drawing to the last.
     strokes: Vec<Handle<Mesh>>,
     /// What they are drawn with: the color of the players' bullets, and of the enemies'.
-    stroke_paints: (Handle<StandardMaterial>, Handle<StandardMaterial>),
+    stroke_paint: Handle<StandardMaterial>,
 }
 
 pub fn plugin(app: &mut App) {
@@ -115,12 +112,12 @@ fn setup(
         fill: paint(color.with_alpha(FILL)),
     };
     let (fire, spark, cold, good) = (
-        glow(theme::ENEMY_BULLET),
+        glow(theme::FIRE),
         glow(Color::WHITE),
-        glow(theme::PLAYER_BULLET),
+        glow(theme::PLAYER),
         glow(theme::GOOD),
     );
-    let stroke_paints = (paint(theme::PLAYER_BULLET), paint(theme::ENEMY_BULLET));
+    let stroke_paint = paint(theme::BULLET);
     // Each drawing stands for the middle of its share of the life of the strokes.
     let frames = (0..STROKE_FRAMES).map(|frame| (frame as f32 + 0.5) / STROKE_FRAMES as f32);
     let strokes = frames
@@ -143,7 +140,7 @@ fn setup(
         cold,
         good,
         strokes,
-        stroke_paints,
+        stroke_paint,
     });
 }
 
@@ -154,15 +151,11 @@ fn spawn(
     glows: Res<Glows>,
 ) {
     for event in events.read() {
-        if let SimEvent::BulletDestroyed { at, team } = *event {
-            let paint = match team {
-                Team::Players => &glows.stroke_paints.0,
-                Team::Enemies => &glows.stroke_paints.1,
-            };
+        if let SimEvent::BulletDestroyed { at, .. } = *event {
             commands.spawn((
                 Strokes { age: 0.0 },
                 Mesh3d(glows.strokes[0].clone()),
-                MeshMaterial3d(paint.clone()),
+                MeshMaterial3d(glows.stroke_paint.clone()),
                 Transform::from_translation(scene::to_world(at, STROKE_HEIGHT)),
             ));
             continue;
@@ -171,13 +164,7 @@ fn spawn(
             SimEvent::Blast { at } => (at, 0.6, 2.0 * BLAST_RADIUS, 0.45, &glows.fire),
             SimEvent::TankDestroyed { at, .. } => (at, 0.6, 3.2, 0.5, &glows.fire),
             SimEvent::BlockDestroyed { at } => (at, 0.5, 2.4, 0.3, &glows.spark),
-            SimEvent::Shot { at, team } => {
-                let glow = match team {
-                    Team::Players => &glows.cold,
-                    Team::Enemies => &glows.fire,
-                };
-                (at, 0.8, 0.7, 0.1, glow)
-            }
+            SimEvent::Shot { at, .. } => (at, 0.8, 0.7, 0.1, &glows.spark),
             SimEvent::Ricochet { at } => (at, 0.8, 0.6, 0.12, &glows.spark),
             SimEvent::ShieldBlocked { at } => (at, 0.6, 3.4, 0.2, &glows.spark),
             SimEvent::PlayerRespawned { at } | SimEvent::TankRepaired { at } => {
@@ -262,6 +249,8 @@ fn fly_apart(
 
 #[cfg(test)]
 mod tests {
+    use tanku_core::sim::Team;
+
     use super::*;
 
     fn close(found: f32, wanted: f32) -> bool {
@@ -316,7 +305,7 @@ mod tests {
     }
 
     #[test]
-    fn a_destroyed_bullet_leaves_strokes_in_its_color() {
+    fn a_destroyed_bullet_leaves_white_strokes_whoever_fired_it() {
         let mut app = world_of_effects();
         app.update();
         for team in [Team::Players, Team::Enemies] {
@@ -328,11 +317,8 @@ mod tests {
             let mut marks = world.query::<(Entity, &Strokes, &MeshMaterial3d<StandardMaterial>)>();
             let (mark, _, paint) = marks.single(world).unwrap();
             let color = world.resource::<Assets<StandardMaterial>>().get(&paint.0);
-            let wanted = match team {
-                Team::Players => theme::PLAYER_BULLET,
-                Team::Enemies => theme::ENEMY_BULLET,
-            };
-            assert_eq!(color.unwrap().base_color, wanted);
+            // Whoever fired it, a bullet is white, and so is what it leaves.
+            assert_eq!(color.unwrap().base_color, theme::BULLET);
             // They are where the bullet was, and no circle is drawn there.
             let place = world.get::<Transform>(mark).unwrap().translation;
             assert_eq!(scene::to_ground(place), at);

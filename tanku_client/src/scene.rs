@@ -20,7 +20,7 @@ use tanku_core::{
     },
     sim::{
         Barrier, Block, Bullet, ExplosiveCrate, Flag, Mine, MineState, Position, PreviousPosition,
-        Run, Sector, Team,
+        Run, Sector,
     },
     stats::Stat,
 };
@@ -55,9 +55,6 @@ const STRIPE_WIDTH: f32 = 0.12;
 const STRIPE_GAP: f32 = 0.09;
 /// Stripes are dark on a bright bullet. A vertex color multiplies the color of the material.
 const STRIPE_COLOR: [f32; 4] = [0.03, 0.03, 0.04, 1.0];
-/// The line that a bullet leaves behind: how long it gets and how wide it is.
-const TRAIL_LENGTH: f32 = 1.8;
-const TRAIL_WIDTH: f32 = 0.08;
 /// The patch of light under a bullet, which shows where it is above the ground.
 const POOL_SIZE: f32 = 0.9;
 const FLAG_HEIGHT: f32 = 2.4;
@@ -93,8 +90,6 @@ pub struct Shapes {
     pub hairline: Handle<Mesh>,
     /// A disc lying flat, 1 across.
     disc: Handle<Mesh>,
-    /// A strip lying flat, which reaches 1 behind its origin and is 1 wide.
-    trail: Handle<Mesh>,
     block: Handle<Mesh>,
     explosive: Handle<Mesh>,
     mine: Handle<Mesh>,
@@ -123,12 +118,9 @@ pub struct Paints {
     curtain_unlocked: Handle<StandardMaterial>,
     barrier_locked: Handle<StandardMaterial>,
     barrier_unlocked: Handle<StandardMaterial>,
-    player_bullet: Handle<StandardMaterial>,
-    enemy_bullet: Handle<StandardMaterial>,
-    player_trail: Handle<StandardMaterial>,
-    enemy_trail: Handle<StandardMaterial>,
-    player_pool: Handle<StandardMaterial>,
-    enemy_pool: Handle<StandardMaterial>,
+    bullet: Handle<StandardMaterial>,
+    /// The patch of light under a bullet.
+    pool: Handle<StandardMaterial>,
     mine_light: Handle<StandardMaterial>,
     trigger: Handle<StandardMaterial>,
     blast: Handle<StandardMaterial>,
@@ -177,14 +169,6 @@ enum FlagPart {
     Fill,
 }
 
-/// The line behind a bullet.
-#[derive(Component, Default)]
-struct Trail {
-    length: f32,
-    /// The way the bullet flew when the line started.
-    heading: Vec2,
-}
-
 pub fn plugin(app: &mut App) {
     app.add_systems(PreStartup, setup).add_systems(
         Update,
@@ -202,7 +186,6 @@ pub fn plugin(app: &mut App) {
                 paint_barriers,
                 blink_mines,
                 stripe_bullets,
-                trail_bullets,
                 paint_flags,
             ),
             place,
@@ -255,14 +238,11 @@ pub fn setup(
     );
     let mut disc = Draft::default();
     disc.disc(Vec3::ZERO, 0.5, Color::WHITE);
-    let mut trail = Draft::default();
-    trail.line(Vec3::NEG_X, Vec3::ZERO, 1.0, Color::WHITE);
     commands.insert_resource(Shapes {
         cube: meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
         sphere: meshes.add(Sphere::new(0.5)),
         hairline: meshes.add(Torus::new(0.487, 0.5)),
         disc: meshes.add(disc.build()),
-        trail: meshes.add(trail.build()),
         block: meshes.add(block_drawing().build()),
         explosive: meshes.add(crate_drawing().build()),
         mine: meshes.add(mine_drawing().build()),
@@ -297,12 +277,8 @@ pub fn setup(
         curtain_unlocked: paint(materials, theme::GOOD.with_alpha(0.12)),
         barrier_locked: paint(materials, theme::DANGER),
         barrier_unlocked: paint(materials, theme::GOOD),
-        player_bullet: paint(materials, theme::PLAYER_BULLET),
-        enemy_bullet: paint(materials, theme::ENEMY_BULLET),
-        player_trail: paint(materials, theme::PLAYER_BULLET.with_alpha(0.45)),
-        enemy_trail: paint(materials, theme::ENEMY_BULLET.with_alpha(0.45)),
-        player_pool: paint(materials, theme::PLAYER_BULLET.with_alpha(0.13)),
-        enemy_pool: paint(materials, theme::ENEMY_BULLET.with_alpha(0.13)),
+        bullet: paint(materials, theme::BULLET),
+        pool: paint(materials, theme::BULLET.with_alpha(0.13)),
         mine_light: paint(materials, theme::DANGER),
         trigger: paint(materials, theme::DANGER.with_alpha(0.6)),
         blast: paint(materials, theme::DANGER),
@@ -1118,57 +1094,30 @@ fn bullet_shape<'a>(shapes: &'a Shapes, bullet: &Bullet) -> &'a Handle<Mesh> {
     &shapes[(bullet.bounces_left as usize).min(shapes.len() - 1)]
 }
 
-/// How long the line behind a bullet is when the bullet first shows. A guest shows a bullet
-/// where it is by now, which is further than where its host told of it.
-#[derive(Component, Clone, Copy, Debug)]
-pub struct Tail(pub f32);
-
+/// Every bullet looks the same, whoever fired it: white, the brightest thing on the sheet,
+/// with a patch of light on the floor under it.
 fn dress_bullets(
     mut commands: Commands,
-    bullets: Query<(Entity, &Bullet, &Position, Option<&Tail>), Added<Bullet>>,
+    bullets: Query<(Entity, &Bullet, &Position), Added<Bullet>>,
     shapes: Res<Shapes>,
     paints: Res<Paints>,
 ) {
-    for (entity, bullet, position, tail) in &bullets {
-        let tail = tail.map_or(0.0, |tail| tail.0.min(TRAIL_LENGTH));
-        let (paint, trail, pool) = match bullet.team {
-            Team::Players => (
-                &paints.player_bullet,
-                &paints.player_trail,
-                &paints.player_pool,
-            ),
-            Team::Enemies => (
-                &paints.enemy_bullet,
-                &paints.enemy_trail,
-                &paints.enemy_pool,
-            ),
-        };
+    for (entity, bullet, position) in &bullets {
         commands.entity(entity).insert((
             Mesh3d(bullet_shape(&shapes, bullet).clone()),
-            MeshMaterial3d(paint.clone()),
+            MeshMaterial3d(paints.bullet.clone()),
             Transform {
                 translation: to_world(position.0, BULLET_HEIGHT),
                 rotation: facing(bullet.velocity.to_angle()),
                 ..default()
             },
-            children![
-                (
-                    Trail {
-                        length: tail,
-                        heading: bullet.velocity.normalize_or_zero(),
-                    },
-                    Mesh3d(shapes.trail.clone()),
-                    MeshMaterial3d(trail.clone()),
-                    Transform::from_scale(Vec3::new(tail, 1.0, TRAIL_WIDTH)),
-                ),
-                // On the floor, under the bullet.
-                (
-                    Mesh3d(shapes.disc.clone()),
-                    MeshMaterial3d(pool.clone()),
-                    Transform::from_xyz(0.0, 4.0 * LIFT - BULLET_HEIGHT, 0.0)
-                        .with_scale(Vec3::new(POOL_SIZE, 1.0, POOL_SIZE)),
-                ),
-            ],
+            // On the floor, under the bullet.
+            children![(
+                Mesh3d(shapes.disc.clone()),
+                MeshMaterial3d(paints.pool.clone()),
+                Transform::from_xyz(0.0, 4.0 * LIFT - BULLET_HEIGHT, 0.0)
+                    .with_scale(Vec3::new(POOL_SIZE, 1.0, POOL_SIZE)),
+            )],
         ));
     }
 }
@@ -1182,32 +1131,6 @@ fn stripe_bullets(
         let wanted = bullet_shape(&shapes, bullet);
         if mesh.0 != *wanted {
             mesh.0 = wanted.clone();
-        }
-    }
-}
-
-/// How long the line behind a bullet is after this much more flight. The line starts over when
-/// the bullet turns, which it only does by bouncing: a line never crosses a wall.
-fn trail_after(trail: &mut Trail, velocity: Vec2, seconds: f32) -> f32 {
-    let heading = velocity.normalize_or_zero();
-    if heading.dot(trail.heading) < 0.999 {
-        trail.length = 0.0;
-        trail.heading = heading;
-    }
-    trail.length = (trail.length + velocity.length() * seconds).min(TRAIL_LENGTH);
-    trail.length
-}
-
-fn trail_bullets(
-    time: Res<Time>,
-    bullets: Query<(&Bullet, &Children)>,
-    mut trails: Query<(&mut Trail, &mut Transform)>,
-) {
-    for (bullet, children) in &bullets {
-        for child in children.iter() {
-            if let Ok((mut trail, mut transform)) = trails.get_mut(child) {
-                transform.scale.x = trail_after(&mut trail, bullet.velocity, time.delta_secs());
-            }
         }
     }
 }
@@ -1541,19 +1464,6 @@ mod tests {
         assert!(!is_dormant(4, Some(&run(5))));
         // Without a run, nothing waits for anybody.
         assert!(!is_dormant(5, None));
-    }
-
-    #[test]
-    fn a_trail_grows_as_the_bullet_flies_and_starts_over_at_a_bounce() {
-        let mut trail = Trail::default();
-        let east = Vec2::X * 9.0;
-        assert!(close(trail_after(&mut trail, east, 0.1), 0.9));
-        assert!(close(trail_after(&mut trail, east, 0.05), 1.35));
-        // It stops growing at its full length.
-        assert!(close(trail_after(&mut trail, east, 1.0), TRAIL_LENGTH));
-        // A bounce turns the bullet: the line behind it is on the other side of the wall.
-        let north_east = Vec2::new(9.0, 9.0).normalize() * 9.0;
-        assert!(close(trail_after(&mut trail, north_east, 0.1), 0.9));
     }
 
     /// The triangles of a bullet, and whether each is part of a stripe.

@@ -38,8 +38,10 @@ pub const SCAR: Color = hex(0x8FA6C4);
 pub const PLAYER: Color = hex(0x2980F2);
 /// The colors of the players, by seat. No enemy uses their hues either.
 pub const PLAYERS: [Color; 4] = [PLAYER, hex(0xF2409B), hex(0x9BE03A), hex(0x33D6E0)];
-pub const PLAYER_BULLET: Color = hex(0x73F2FF);
-pub const ENEMY_BULLET: Color = hex(0xFF8C26);
+/// Every bullet is white, whoever fired it: every bullet destroys a player's tank.
+pub const BULLET: Color = hex(0xFFFFFF);
+/// The fire of a blast and of a tank that is destroyed.
+pub const FIRE: Color = hex(0xFF8C26);
 
 /// The background of a panel, through which the game shows a little.
 pub const SURFACE: Color = Color::srgba(0.039, 0.059, 0.086, 0.86);
