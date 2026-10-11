@@ -583,14 +583,14 @@ The interface is the margin of the drawing: ruled panels with square corners, la
 | Screen | Content |
 |---|---|
 | Main menu | Solo, host, join, achievements, settings, quit |
-| Solo | Difficulty, seed, free mode with its garage, what unlocks each of them while it is locked, start |
+| Solo | Difficulty, seed, free mode with its garage, what unlocks each of them while it is locked, a note when the run will earn no achievement, start |
 | Host | The name of the game, its password, open |
 | Join | The games of the local network with their names and which of them have a password, the address of the host, the password of a game that has one, join. In a browser: how to join by the link of a host, and that link again once it was followed. |
-| Lobby | The name of the game, the players with who is ready, the difficulty, the seed and free mode, which the host sets, the garage in free mode, ready and the countdown to the run, the address to join at or the link for browsers with a button that copies it (host) |
+| Lobby | The name of the game, the players with who is ready, the difficulty, the seed and free mode, which the host sets, the garage in free mode, a note when the run will earn no achievement, ready and the countdown to the run, the address to join at or the link for browsers with a button that copies it (host) |
 | Garage | Every stat of the player's tank with its level, what it gives and its price, the points that are left, the tank as it will look, back to the standard tank |
-| Heads-up display | Rounds and reload progress, mines left, shield state, sector number, lives (solo), seed and version, a scale and a north arrow, a ruler along the edge of the screen that gives the distance to the barrier, the number of each wave of an arena as it is announced, a caption over a life on the floor (solo), a numbered square for each teammate's state, a tag with the number of each player over their tank, a marker at the screen edge for each teammate out of view and what to do about a wreck (multiplayer). Rounds, reload and mines are also on an arc under the player's own tank. |
+| Heads-up display | Rounds and reload progress, mines left, shield state, sector number, lives (solo), seed and version, a note on a run that earns no achievement, a scale and a north arrow, a ruler along the edge of the screen that gives the distance to the barrier, the number of each wave of an arena as it is announced, a caption over a life on the floor (solo), a numbered square for each teammate's state, a tag with the number of each player over their tank, a marker at the screen edge for each teammate out of view and what to do about a wreck (multiplayer). Rounds, reload and mines are also on an arc under the player's own tank. |
 | Menu | Resume, settings, quit, and the seed with its version. In multiplayer, the host goes back to the lobby or closes the game, and the others leave it. |
-| Game over | Sectors cleared, time, kills, seed and version, the tank that ended the run with its class and the list of its parts, retry, new run. In multiplayer, the choice is the host's. |
+| Game over | Sectors cleared, time, kills, seed and version, the tank that ended the run with its class and the list of its parts, a note on a run that earned no achievement, retry with a note that it will earn none, new run. In multiplayer, the choice is the host's. |
 | Settings | Controls, video, audio, accessibility |
 
 The game opens in full screen the first time. After that, it opens the way the player left it.
@@ -609,10 +609,10 @@ Color is never the only carrier of information. Camera shake can be turned off, 
 
 Achievements unlock modes and options for solo, and their conditions are listed under [Modes](#modes). A game of several players needs none of them: its host has every difficulty and every option from the start. An unlocked mode is another way to play, not an advantage: nothing a player unlocks makes the next achievement easier to earn. Two kinds of run therefore earn none:
 
-- A run on a chosen seed, so that a seed can't be practiced to unlock them.
+- A run on a seed that the game didn't just draw for it: a chosen seed, or the seed of an earlier run that is played again. A seed can't be practiced to unlock them.
 - A run in free mode, so that a tank can't be built to unlock them.
 
-Every other run earns them, alone or as a team, and an achievement earned by a team is awarded to each member. A difficulty that is unlocked unlocks the ones below it: a team can reach sector 20 in hard mode before any of its members has unlocked hard mode.
+Every other run earns them, alone or as a team, and an achievement earned by a team is awarded to each member. A run that earns none says so on screen: before it starts, while it lasts and when it is over. The game over screen says it of a retry before the player picks one. A difficulty that is unlocked unlocks the ones below it: a team can reach sector 20 in hard mode before any of its members has unlocked hard mode.
 
 The game stores settings, bindings, unlocks, records and the tank of the garage on the player's machine, or in the browser's storage on the web. It also keeps what a solo player and a host chose last: the difficulty, free mode and the name of the game, and never the password. Records keep the best sector reached for each difficulty and number of players, with the seed and the version, and apart for the runs in free mode. The number of players is the one at the start of the run, and each player keeps the record on their own machine.
 
