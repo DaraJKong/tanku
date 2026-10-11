@@ -40,6 +40,8 @@ Up to four players share a run. One of them hosts the game, and the others join 
 2. Each of the others picks "Join a game" and types that address.
 3. The host starts the run once everyone is in the lobby. Nobody joins a run in progress.
 
+A tank that is destroyed stays as a wreck, in a circle in dashes. A teammate repairs it by driving into the circle and holding the repair key for four seconds: the circle is inked in meanwhile, and starts over if the key is let go. The run is over when every tank is a wreck.
+
 All players need the same version of the game. The game listens on UDP port 28405, which the firewall of the host's machine must let in. To play over the internet, that port of the host's router must lead to the host's machine, and the others type the host's public address.
 
 Two games on one machine can play together, which is the quickest way to try it: the second one joins `127.0.0.1`.
