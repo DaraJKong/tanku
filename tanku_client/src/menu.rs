@@ -1781,7 +1781,384 @@ fn keep_records(run: Option<Res<Run>>, mut records: ResMut<Records>, mut last: L
 
 #[cfg(test)]
 mod tests {
+    use bevy::{ecs::system::RunSystemOnce, platform::collections::HashMap};
+    use tanku_core::{
+        sim::{Blow, Team, Weapon},
+        stats::Stat,
+    };
+
     use super::*;
+    use crate::{crew, hud::SHEET_EDGE, session, sheet};
+
+    /// A notice as long as they get: three lines of a menu.
+    const LONG_NOTICE: &str = "No game answers at 192.168.100.200:28405. Its host must run \
+                               version 0.4.0 too, and the link must be the one that its lobby \
+                               shows now.";
+    /// The longest address that a machine has on a network.
+    const LONG_ADDRESS: &str = "192.168.100.200";
+    /// A name as long as the join screen takes, which fills two lines of its field.
+    const LONG_NAME: &str = "a-machine-with-the-longest-name-of-its-network.example.org:28405";
+
+    /// A run that was lost in a far sector by a team of this size, to the tank that has
+    /// the most parts to list.
+    fn lost_run(team: u32) -> Run {
+        let mut genome = Genome::empty(135);
+        for stat in Stat::HARDWARE
+            .into_iter()
+            .chain([Stat::Brain, Stat::Ballistics])
+        {
+            genome.set(stat, stat.max_level());
+        }
+        Run {
+            seed_text: "85GVTHQA".into(),
+            seed: 1,
+            players: team,
+            team,
+            solo: team == 1,
+            sector: 128,
+            cleared: 127,
+            checkpoint: 124,
+            lives: 0,
+            kills: 1234,
+            ticks: 3 * 3600 * TICK_RATE as u64,
+            phase: RunPhase::Over,
+            lost_to: Some(Blow {
+                weapon: Weapon::Crate,
+                genome,
+                team: Team::Enemies,
+            }),
+            playtest: false,
+        }
+    }
+
+    /// Sits this many players in the lobby of a game, the host first.
+    fn gather(app: &mut App, players: usize) {
+        let mut lobby = Lobby {
+            seed: "85GVTHQA".into(),
+            ..default()
+        };
+        for (seat, place) in lobby.seats.iter_mut().take(players).enumerate() {
+            *place = Some(match seat {
+                0 => Member::Host,
+                seat => Member::Guest(seat as u64),
+            });
+        }
+        app.world_mut().spawn(lobby);
+    }
+
+    /// What a host hands out, on a machine with the longest address, to players at a
+    /// desktop and to those in a browser.
+    fn invitation() -> Invitation {
+        Invitation {
+            address: Some(LONG_ADDRESS.into()),
+            port: 28405,
+            web: Some(format!(
+                "{LONG_ADDRESS}:28406/{}",
+                "0123456789abcdef".repeat(4)
+            )),
+            web_port: Some(28406),
+        }
+    }
+
+    fn build<Marker>(app: &mut App, menu: impl IntoSystem<(), (), Marker>) {
+        app.world_mut().run_system_once(menu).unwrap();
+    }
+
+    /// Every screen of the menus, each with as much on it as it ever holds.
+    fn screens() -> Vec<(&'static str, fn(&mut App))> {
+        vec![
+            ("the main menu", |app| {
+                app.insert_resource(Records::of_every_team(MODE, 128, "85GVTHQA"))
+                    .insert_resource(Notice(Some(LONG_NOTICE.into())));
+                build(app, main_menu);
+            }),
+            // A notice on top of this one would cross the fine line around the sheet by a
+            // few pixels in the smallest windows. A playtest is a tool of the game's makers.
+            ("the main menu of a playtest", |app| {
+                app.insert_resource(Records::of_every_team(MODE, 128, "85GVTHQA"))
+                    .insert_resource(Playtest {
+                        infinite_lives: true,
+                    })
+                    .insert_resource(Options {
+                        playtest: true,
+                        seed: Some("85GVTHQA".into()),
+                    });
+                build(app, main_menu);
+            }),
+            ("the join screen", |app| {
+                let game = |id: u64, standing: Standing| Game {
+                    id,
+                    machine: std::net::Ipv4Addr::new(192, 168, 100, 200),
+                    address: format!("{LONG_ADDRESS}:2840{id}"),
+                    players: 4,
+                    standing,
+                };
+                let found = vec![
+                    game(1, Standing::Open),
+                    game(2, Standing::Full),
+                    game(3, Standing::Running),
+                    game(4, Standing::Other),
+                    game(5, Standing::Open),
+                ];
+                assert_eq!(LONG_NAME.len(), ADDRESS_LENGTH);
+                app.insert_resource(Found(found))
+                    .insert_resource(Address(LONG_NAME.into()))
+                    .insert_resource(Notice(Some(LONG_NOTICE.into())));
+                build(app, join_screen);
+            }),
+            ("the lobby of a host", |app| {
+                gather(app, 4);
+                // Nothing else on the machine has taken the port for browsers, or something
+                // has: the lobby then says so.
+                app.insert_resource(Session::Host)
+                    .insert_resource(Invitation {
+                        web: None,
+                        ..invitation()
+                    });
+                build(app, lobby_screen);
+            }),
+            ("the lobby of a host, for browsers", |app| {
+                gather(app, 1);
+                // The button that copies the link has just failed, which takes the most
+                // words to say.
+                app.insert_resource(Session::Host)
+                    .insert_resource(invitation())
+                    .insert_resource(Way::Browser)
+                    .insert_resource(Copied(Some((false, COPY_SHOWN))));
+                build(app, lobby_screen);
+            }),
+            ("the lobby of a host without a network", |app| {
+                gather(app, 1);
+                app.insert_resource(Session::Host)
+                    .insert_resource(Invitation {
+                        address: None,
+                        ..invitation()
+                    });
+                build(app, lobby_screen);
+            }),
+            ("the lobby of a guest", |app| {
+                gather(app, 4);
+                app.insert_resource(Session::Guest)
+                    .insert_resource(crew::LocalSeat(3));
+                build(app, lobby_screen);
+            }),
+            ("the report of a run", |app| {
+                app.insert_resource(lost_run(1))
+                    .insert_resource(Records::of_every_team(MODE, 128, "85GVTHQA"));
+                build(app, game_over);
+            }),
+            ("the report of a run, for its host", |app| {
+                app.insert_resource(lost_run(4))
+                    .insert_resource(Session::Host);
+                build(app, game_over);
+            }),
+            ("the report of a run, for a guest", |app| {
+                app.insert_resource(lost_run(4))
+                    .insert_resource(Session::Guest);
+                build(app, game_over);
+            }),
+            ("the settings", |app| {
+                app.insert_resource(Capture {
+                    waiting: Some((Action::Repair, 1)),
+                    ..default()
+                });
+                build(app, settings_menu);
+            }),
+            ("the menu of a host during a playtest", |app| {
+                app.insert_resource(lost_run(4))
+                    .insert_resource(Session::Host)
+                    .insert_resource(Playtest {
+                        infinite_lives: true,
+                    });
+                build(app, pause_menu);
+            }),
+        ]
+    }
+
+    /// A piece of the interface, as the engine laid it out.
+    struct Piece {
+        entity: Entity,
+        /// What it holds, for whoever reads why a test failed.
+        name: String,
+        /// Where it lies, in the pixels of the window.
+        lies: Rect,
+        /// Whether it is a text or a button: something that must show whole, with nothing
+        /// else on it.
+        marks: bool,
+        /// Whether it has an edge that the engine laid out as no line at all.
+        lost_an_edge: bool,
+        /// The pieces that it is inside of, from the nearest one to the screen itself.
+        inside: Vec<Entity>,
+    }
+
+    /// Lays out a screen of the menus as a window of this many pixels shows it.
+    fn lay_out(screen: fn(&mut App), pixels: UVec2) -> Vec<Piece> {
+        let mut app = sheet::tests::window(pixels, 1.0);
+        app.init_state::<Screen>().init_state::<Overlay>();
+        theme::plugin(&mut app);
+        session::plugin(&mut app);
+        crew::plugin(&mut app);
+        app.init_resource::<Records>()
+            .init_resource::<Options>()
+            .init_resource::<Address>()
+            .init_resource::<Way>()
+            .init_resource::<Copied>()
+            .init_resource::<Capture>()
+            .init_resource::<Outcome>()
+            .insert_resource(Destination(1));
+        // The fonts are there from the second frame on.
+        app.update();
+        screen(&mut app);
+        // What the menus fill in afterward: the games that were found, the address that was
+        // typed and the notice.
+        build(&mut app, list_games);
+        build(&mut app, show_address);
+        build(&mut app, tell_how_it_goes);
+        app.update();
+        app.update();
+
+        let world = app.world_mut();
+        let mut nodes = world.query::<(
+            Entity,
+            (&Node, &ComputedNode, &UiGlobalTransform),
+            Option<&Text>,
+            Has<Button>,
+            Option<&ChildOf>,
+        )>();
+        let parents: HashMap<Entity, Entity> = nodes
+            .iter(world)
+            .filter_map(|(entity, .., parent)| Some((entity, parent?.parent())))
+            .collect();
+        let inside = |entity: Entity| -> Vec<Entity> {
+            std::iter::successors(parents.get(&entity).copied(), |parent| {
+                parents.get(parent).copied()
+            })
+            .collect()
+        };
+        let texts: Vec<(Entity, String)> = nodes
+            .iter(world)
+            .filter_map(|(entity, .., text, _, _)| Some((entity, text?.0.clone())))
+            .filter(|(_, text)| !text.is_empty())
+            .collect();
+        nodes
+            .iter(world)
+            .map(|(entity, (node, computed, transform), text, button, _)| {
+                // A piece goes by its own words, or by the first words inside it.
+                let words = texts
+                    .iter()
+                    .find(|(holder, _)| *holder == entity || inside(*holder).contains(&entity));
+                Piece {
+                    entity,
+                    name: words.map_or("an empty box".to_string(), |(_, text)| format!("{text:?}")),
+                    lies: Rect::from_center_size(transform.translation, computed.size),
+                    marks: button || text.is_some_and(|text| !text.0.is_empty()),
+                    lost_an_edge: [
+                        (node.border.left, computed.border.min_inset.x),
+                        (node.border.right, computed.border.max_inset.x),
+                        (node.border.top, computed.border.min_inset.y),
+                        (node.border.bottom, computed.border.max_inset.y),
+                    ]
+                    .into_iter()
+                    .any(|(drawn, laid_out)| drawn != Val::ZERO && laid_out < 1.0),
+                    inside: inside(entity),
+                }
+            })
+            .collect()
+    }
+
+    /// The windows that the menus are laid out in: the smallest that the game is meant
+    /// for, then one for each size that a window gives the interface up to its full size,
+    /// and a large one.
+    const WINDOWS: [UVec2; 6] = [
+        UVec2::new(1280, 720),
+        UVec2::new(1366, 768),
+        UVec2::new(1440, 900),
+        UVec2::new(1536, 864),
+        UVec2::new(1600, 900),
+        UVec2::new(1920, 1080),
+    ];
+
+    /// The texts and the buttons of a screen, which must show whole with nothing on them,
+    /// and the lowest point that any of them reaches.
+    fn marks(pieces: &[Piece]) -> (Vec<&Piece>, f32) {
+        let marks: Vec<&Piece> = pieces.iter().filter(|piece| piece.marks).collect();
+        let lowest = marks.iter().map(|piece| piece.lies.max.y);
+        let lowest = lowest.fold(0.0, f32::max);
+        (marks, lowest)
+    }
+
+    /// Prints how far down each menu goes in each window, in the pixels of that window, under
+    /// how far down the fine line around the sheet is there:
+    /// `cargo test -p tanku_client room_the_menus_take -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn print_the_room_the_menus_take() {
+        let row = |name: &str, cells: [f32; 6]| {
+            let cells = cells.map(|cell| format!("{cell:5.0}"));
+            println!("{name:>40}  {}", cells.join(" "));
+        };
+        row(
+            "In a window this high",
+            WINDOWS.map(|pixels| pixels.y as f32),
+        );
+        let line = |pixels: UVec2| pixels.y as f32 - SHEET_EDGE * sheet::fit(pixels.as_vec2());
+        row("the fine line is at", WINDOWS.map(line));
+        for (name, screen) in screens() {
+            row(
+                name,
+                WINDOWS.map(|pixels| marks(&lay_out(screen, pixels)).1),
+            );
+        }
+    }
+
+    #[test]
+    fn every_menu_fits_the_window_whole() {
+        let mut faults = Vec::new();
+        for (name, screen) in screens() {
+            for pixels in WINDOWS {
+                let pieces = lay_out(screen, pixels);
+                let (marks, _) = marks(&pieces);
+                assert!(!marks.is_empty(), "{name} shows nothing");
+                // Nothing of a menu crosses the fine line around the sheet, which is as far
+                // from the edge of the window as the interface is large. A pixel of slack:
+                // the engine lays every piece out on whole pixels.
+                let edge = SHEET_EDGE * sheet::fit(pixels.as_vec2());
+                let window = Rect::from_corners(Vec2::ZERO, pixels.as_vec2());
+                let allowed = window.inflate(1.0 - edge);
+                for piece in &marks {
+                    let lies = piece.lies;
+                    if lies.is_empty() {
+                        faults.push(format!("{name}, {pixels}: {} takes no room", piece.name));
+                    } else if !(allowed.contains(lies.min) && allowed.contains(lies.max)) {
+                        faults.push(format!(
+                            "{name}, {pixels}: {} lies from {} to {}, and must stay between \
+                             {} and {}",
+                            piece.name, lies.min, lies.max, allowed.min, allowed.max
+                        ));
+                    }
+                }
+                // No box has lost a side, and no table a rule.
+                for piece in pieces.iter().filter(|piece| piece.lost_an_edge) {
+                    faults.push(format!("{name}, {pixels}: {} lost an edge", piece.name));
+                }
+                // No text or button lies on another, unless one holds the other.
+                for (index, piece) in marks.iter().enumerate() {
+                    for other in &marks[index + 1..] {
+                        let apart = piece.inside.contains(&other.entity)
+                            || other.inside.contains(&piece.entity)
+                            || piece.lies.inflate(-1.0).intersect(other.lies).is_empty();
+                        if !apart {
+                            faults.push(format!(
+                                "{name}, {pixels}: {} lies on {}",
+                                piece.name, other.name
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        assert!(faults.is_empty(), "{}", faults.join("\n"));
+    }
 
     #[test]
     fn a_seed_from_the_command_line_serves_every_run() {

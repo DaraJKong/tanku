@@ -32,6 +32,8 @@ cargo run -p tanku_client
 
 Settings and records are kept in the user's configuration directory, under `tanku`.
 
+The interface is drawn for a window of 1600 by 900 pixels or more. A smaller window shows all of it smaller, so that every menu is whole from 1280 by 720 pixels on. The size that the settings give the interface comes on top of that.
+
 ### With friends
 
 Up to four players share a run. One of them hosts the game, and the others join it:
@@ -155,6 +157,12 @@ The tests check the map generator over a dozen seeds. A wider check over a thous
 cargo test -p tanku_core many_seeds -- --ignored
 ```
 
+The tests also lay every menu out, without a screen, in windows from 1280 by 720 pixels up. They fail if a button or a text crosses the fine line around the sheet, if something lies on it, or if a box lost one of its lines. After a change to a menu, this prints how far down each menu reaches in each of those windows, and where that line is:
+
+```bash
+cargo test -p tanku_client room_the_menus_take -- --ignored --nocapture
+```
+
 Benchmarks measure generation, the simulation and the music, and take under a minute:
 
 ```bash
@@ -166,6 +174,8 @@ cargo bench -p tanku_core -p tanku_server -p tanku_audio
 Development builds read a script from `TANKU_DEV_SCRIPT`: commands separated by semicolons that start a run, jump to a sector, drive the tank, press the buttons of the menus and save screenshots. The commands are listed at the top of `tanku_client/src/dev.rs`.
 
 A scripted run opens no window and needs no display: it draws into an image of 1920 by 1080 pixels, which the `shot` command saves. It makes no sound, starts from the default settings, and neither reads nor writes the saved settings and records.
+
+The command `canvas` gives the image another size, to see what a smaller window shows: `canvas 1280 720` draws as a window of 1280 by 720 pixels does. A third number is the scale of the screen: `canvas 1920 1080 1.5` draws as a screen of 1920 by 1080 pixels does when its system enlarges everything by half, which leaves the game 1280 by 720 pixels of its own.
 
 ```bash
 TANKU_DEV_SCRIPT="start TANKU; wait 1; warp 12; wait 1; peek 0; wait 1; shot sector12.png; quit" cargo run -p tanku_client

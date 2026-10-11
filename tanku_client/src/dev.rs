@@ -21,20 +21,23 @@
 //! tank, `pierce`, which sends a piercing bullet at a bullet of the players there,
 //! `showcase STAT`, which lines up in the start bay one tank for each level of a stat,
 //! `palette`, which lines up there three tanks of each class, from a weak one to a strong one,
-//! `doze`, which puts the tanks that are lined up to sleep, and `tape PATH`, which keeps the
+//! `doze`, which puts the tanks that are lined up to sleep, `canvas WIDTH HEIGHT SCALE`,
+//! which draws from there on as a window of that many pixels shows the game, on a screen
+//! that enlarges everything by that scale if one is given, and `tape PATH`, which keeps the
 //! music from there on. It is how the game is looked at, and listened to, without anyone at
 //! the keyboard.
 //!
-//! A scripted run opens no window: it draws into an image, which `shot` saves. It makes no
-//! sound, starts from the default settings and leaves the player's files alone. The music
-//! that it would play goes to a sound file when the script quits, if `tape` asked for it,
-//! next to a text file that lists what the music was told and when.
+//! A scripted run opens no window: it draws into an image, which `shot` saves. The image is
+//! 1920 by 1080 pixels until `canvas` gives it another size. The run makes no sound, starts
+//! from the default settings and leaves the player's files alone. The music that it would
+//! play goes to a sound file when the script quits, if `tape` asked for it, next to a text
+//! file that lists what the music was told and when.
 
 use std::{collections::VecDeque, fmt::Write, path::PathBuf, time::Duration};
 
 use bevy::{
     app::ScheduleRunnerPlugin,
-    camera::RenderTarget,
+    camera::{ImageRenderTarget, RenderTarget},
     input::{
         ButtonState,
         keyboard::{Key, KeyboardInput, NativeKeyCode},
@@ -72,8 +75,8 @@ use crate::{
     storage,
 };
 
-/// Size of the image that a scripted run draws into.
-const CANVAS: (u32, u32) = (1920, 1080);
+/// Size of the image that a scripted run draws into, until the script gives it another.
+const CANVAS: UVec2 = UVec2::new(1920, 1080);
 
 #[derive(Resource)]
 struct Script {
@@ -89,10 +92,6 @@ struct Script {
     /// The label of the button that the script presses.
     press: Option<String>,
 }
-
-/// The image that stands in for the window.
-#[derive(Resource)]
-struct Canvas(Handle<Image>);
 
 /// The music that a scripted run would play, kept from the command `tape` on.
 #[derive(Resource)]
@@ -227,22 +226,21 @@ pub fn plugin(app: &mut App) {
     );
 }
 
-/// Points the camera at an image, and the interface with it.
+/// An image of this size for the game to draw into.
+fn blank(size: UVec2) -> Image {
+    Image::new_target_texture(size.x, size.y, TextureFormat::Rgba8UnormSrgb, None)
+}
+
+/// Points the camera at an image, which stands in for the window, and the interface with it.
 fn draw_into_an_image(
     mut commands: Commands,
     mut images: ResMut<Assets<Image>>,
     camera: Single<Entity, With<MainCamera>>,
 ) {
-    let canvas = images.add(Image::new_target_texture(
-        CANVAS.0,
-        CANVAS.1,
-        TextureFormat::Rgba8UnormSrgb,
-        None,
-    ));
+    let canvas = images.add(blank(CANVAS));
     commands
         .entity(*camera)
-        .insert((RenderTarget::from(canvas.clone()), IsDefaultUiCamera));
-    commands.insert_resource(Canvas(canvas));
+        .insert((RenderTarget::from(canvas), IsDefaultUiCamera));
 }
 
 /// Computes the music that the frame would have played, since nothing plays it.
@@ -373,7 +371,10 @@ fn run_script(
         Query<(&Tank, &mut Shield)>,
         Query<&Barrier>,
     ),
-    canvas: Res<Canvas>,
+    (mut images, mut camera): (
+        ResMut<Assets<Image>>,
+        Single<(Entity, &RenderTarget, &mut Projection), With<MainCamera>>,
+    ),
     (baton, tape, mut seat): (Res<Baton>, Option<Res<Tape>>, ResMut<LocalSeat>),
     (mut session_requests, mut keys, mut port, mut web): (
         MessageWriter<SessionRequest>,
@@ -636,9 +637,35 @@ fn run_script(
         "pause" => overlay.set(Overlay::Pause),
         "settings" => overlay.set(Overlay::Settings),
         "resume" => overlay.set(Overlay::None),
+        // Draws as a window of this size would, from here on. With a third number, the
+        // window is on a screen of that scale: `canvas 1920 1080 1.5` is a screen of 1920 by
+        // 1080 pixels whose system shows everything half as large again.
+        "canvas" => {
+            let size = UVec2::new(number(1) as u32, number(2) as u32).max(UVec2::ONE);
+            let scale_factor = Some(number(3)).filter(|scale| *scale > 0.0);
+            let (camera, target, projection) = &mut *camera;
+            let Some(canvas) = target.as_image() else {
+                return;
+            };
+            if let Some(mut image) = images.get_mut(canvas) {
+                *image = blank(size);
+            }
+            commands
+                .entity(*camera)
+                .insert(RenderTarget::Image(ImageRenderTarget {
+                    handle: canvas.clone(),
+                    scale_factor: scale_factor.unwrap_or(1.0),
+                }));
+            // The engine only looks at the size of an image a frame after it changed. A
+            // projection that changed makes it look at once, so that no frame is drawn for
+            // the old size into the new image.
+            projection.set_changed();
+        }
+        // The image is the camera's with its scale: one that is named without it is another
+        // image to the engine, which nothing draws into.
         "shot" => {
             commands
-                .spawn(Screenshot::image(canvas.0.clone()))
+                .spawn(Screenshot(camera.1.clone()))
                 .observe(save_to_disk(std::path::PathBuf::from(word(1))));
             script.wait = 0.5;
         }
