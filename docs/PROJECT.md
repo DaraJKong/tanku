@@ -477,7 +477,7 @@ The interface is the margin of the drawing: ruled panels with square corners, la
 |---|---|
 | Main menu | Solo, host, join, achievements, settings, quit |
 | Join | The games of the local network, the address of the host, join. In a browser: how to join by the link of a host, and that link again once it was followed. |
-| Lobby | Players, mode, seed, the address to join at or the link for browsers (host), start (host) |
+| Lobby | Players, mode, seed, the address to join at or the link for browsers with a button that copies it (host), start (host) |
 | Heads-up display | Rounds and reload progress, mines left, shield state, sector number, lives (solo), seed and version, a scale and a north arrow, a ruler along the edge of the screen that gives the distance to the barrier, teammates' state and what to do about a wreck (multiplayer). Rounds, reload and mines are also on an arc under the player's own tank. |
 | Menu | Resume, settings, quit, and the seed with its version. In multiplayer, the host goes back to the lobby or closes the game, and the others leave it. |
 | Game over | Sectors cleared, time, kills, seed and version, the tank that ended the run with the list of its parts, retry, new run. In multiplayer, the choice is the host's. |
