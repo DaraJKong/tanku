@@ -469,22 +469,40 @@ impl Records {
     }
 }
 
+#[cfg(test)]
+impl Records {
+    /// The records of a player who got this far alone and in a team of every size. A test
+    /// shows them, and nothing is saved.
+    pub fn of_every_team(mode: &str, sector: u32, seed: &str) -> Self {
+        let record = Record {
+            sector,
+            seed: seed.to_string(),
+            version: VERSION.to_string(),
+        };
+        let teams = 1..=tanku_core::rules::MAX_PLAYERS;
+        Self(
+            teams
+                .map(|players| (Self::key(mode, players), record.clone()))
+                .collect(),
+        )
+    }
+}
+
 pub fn plugin(app: &mut App) {
     app.insert_resource(Settings::load())
         .insert_resource(Records::from_pairs(&storage::load(RECORDS_FILE)))
         .add_systems(Update, apply.run_if(resource_changed::<Settings>));
 }
 
-/// Applies the settings when they change, and saves them unless they were just loaded.
+/// Applies the settings when they change, and saves them unless they were just loaded. The
+/// size of the interface is applied in `sheet`, with what the window allows.
 fn apply(
     settings: Res<Settings>,
-    mut ui_scale: ResMut<UiScale>,
     mut volume: ResMut<GlobalVolume>,
     muted: Option<Res<Muted>>,
     window: Option<Single<&mut Window, With<PrimaryWindow>>>,
     mut loaded: Local<bool>,
 ) {
-    ui_scale.0 = settings.ui_scale;
     let loudness = if muted.is_some() {
         0.0
     } else {

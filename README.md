@@ -32,6 +32,8 @@ cargo run -p tanku_client
 
 Settings and records are kept in the user's configuration directory, under `tanku`.
 
+The interface is drawn for a window of 1600 by 900 pixels or more. A smaller window shows all of it smaller, so that every menu is whole from 1280 by 720 pixels on. The size that the settings give the interface comes on top of that.
+
 ### With friends
 
 Up to four players share a run. One of them hosts the game, and the others join it:
@@ -153,6 +155,12 @@ The tests check the map generator over a dozen seeds. A wider check over a thous
 
 ```bash
 cargo test -p tanku_core many_seeds -- --ignored
+```
+
+The tests also lay every menu out, without a screen, in windows from 1280 by 720 pixels up. They fail if a button or a text crosses the fine line around the sheet, if something lies on it, or if a box lost one of its lines. After a change to a menu, this prints how far down each menu reaches in each of those windows, and where that line is:
+
+```bash
+cargo test -p tanku_client room_the_menus_take -- --ignored --nocapture
 ```
 
 Benchmarks measure generation, the simulation and the music, and take under a minute:
