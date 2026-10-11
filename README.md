@@ -50,8 +50,8 @@ Two games on one machine can play together, which is the quickest way to try it:
 
 The web build joins games too, and hosts none. A browser can't look around a network, and it only speaks to a game that shows it a certificate. A hosted game makes its own certificate, which a browser takes by its print alone. So a browser joins by a link that the host hands out:
 
-1. The host picks "For a browser" in the lobby. The lobby then shows what the link ends with: a `#`, where the game takes browsers, and the print of its certificate. The game also writes it to its log, where it can be copied.
-2. The player opens the page of the game with that at the end of its address, as in `http://localhost:8000/#192.168.1.20:28406/3f0c…`. The page joins the game at once. A link that is pasted into a page that is already open is followed too.
+1. The host picks "For a browser" in the lobby. The lobby then shows what the link ends with: a `#`, where the game takes browsers, and the print of its certificate. "Copy" puts it on the clipboard, and the button says whether it got there. The game also writes it to its log.
+2. The player opens the page of the game with that at the end of its address, as in `http://localhost:8000/#192.168.1.20:28406/3f0c…`. The page joins the game at once. What the host copied can also be pasted into a page that is already open, with or without the address of the page in front of it.
 
 What a host hands out stays the same from one game to the next, until the host quits the program. A player who left, or whose connection was lost, joins again from "Join a game".
 
