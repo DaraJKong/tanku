@@ -1387,9 +1387,11 @@ fn press(
                 next_screen.set(Screen::Join);
             }
             Press::Join => ask_to_join(&address, &mut settings, &mut session_requests),
-            // A game that was found is joined as if its address had been typed.
+            // A game that was found is joined as if its address had been typed. While a
+            // game is being joined, the address stays the one of that game.
             Press::JoinFound(id) => {
-                if let Some(game) = found.0.iter().find(|game| game.id == id) {
+                let found = found.0.iter().find(|game| game.id == id);
+                if let Some(game) = found.filter(|_| *session == Session::Solo) {
                     address.0 = game.address.clone();
                     ask_to_join(&address, &mut settings, &mut session_requests);
                 }
