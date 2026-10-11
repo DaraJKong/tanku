@@ -192,12 +192,12 @@ pub struct Barrier {
     pub unlocked: bool,
 }
 
-/// The flag of a sector, near its barrier. A solo player who captures it comes back there.
+/// A life that an arena left on its floor when it was cleared. A single player who is short
+/// of one takes it by driving over it.
 #[derive(Component, Clone, Copy, Debug, Serialize, Deserialize)]
 #[require(Position)]
-pub struct Flag {
+pub struct Life {
     pub sector: u32,
-    pub captured: bool,
 }
 
 /// What destroys a tank.
@@ -243,7 +243,8 @@ pub struct Run {
     pub sector: u32,
     /// The score: the furthest sector cleared.
     pub cleared: u32,
-    /// The sector of the last flag captured, or 0 for the start bay.
+    /// The last sector cleared, or 0 for the start bay: a single player whose tank is
+    /// destroyed comes back in front of its barrier.
     pub checkpoint: u32,
     pub lives: u32,
     pub kills: u32,
@@ -280,7 +281,7 @@ pub enum RunRequest {
         seat: u8,
     },
     /// In a playtest: puts the player in front of a sector, as if every sector before it was
-    /// cleared and the flag of the last one captured.
+    /// cleared.
     SkipTo {
         sector: u32,
     },
@@ -291,21 +292,76 @@ pub enum RunRequest {
 pub enum SimEvent {
     RunStarted,
     RunOver,
-    Shot { at: Vec2, team: Team },
-    Ricochet { at: Vec2 },
-    BulletDestroyed { at: Vec2, team: Team },
-    MinePlaced { at: Vec2 },
-    MineTriggered { at: Vec2 },
-    Blast { at: Vec2 },
-    BlockDestroyed { at: Vec2 },
-    ShieldRaised { at: Vec2 },
-    ShieldBlocked { at: Vec2 },
-    ShieldDropped { at: Vec2 },
-    TankDestroyed { at: Vec2, team: Team },
-    TankRepaired { at: Vec2 },
-    PlayerRespawned { at: Vec2 },
-    SectorCleared { sector: u32 },
-    FlagCaptured { at: Vec2 },
-    BarrierUnlocked { sector: u32 },
-    SectorEntered { sector: u32 },
+    Shot {
+        at: Vec2,
+        team: Team,
+    },
+    Ricochet {
+        at: Vec2,
+    },
+    BulletDestroyed {
+        at: Vec2,
+        team: Team,
+    },
+    MinePlaced {
+        at: Vec2,
+    },
+    MineTriggered {
+        at: Vec2,
+    },
+    Blast {
+        at: Vec2,
+    },
+    BlockDestroyed {
+        at: Vec2,
+    },
+    ShieldRaised {
+        at: Vec2,
+    },
+    ShieldBlocked {
+        at: Vec2,
+    },
+    ShieldDropped {
+        at: Vec2,
+    },
+    TankDestroyed {
+        at: Vec2,
+        team: Team,
+    },
+    TankRepaired {
+        at: Vec2,
+    },
+    PlayerRespawned {
+        at: Vec2,
+    },
+    SectorCleared {
+        sector: u32,
+    },
+    /// An arena that was cleared left a life on its floor.
+    LifeDropped {
+        at: Vec2,
+    },
+    /// A single player took a life from the floor.
+    LifeTaken {
+        at: Vec2,
+    },
+    BarrierUnlocked {
+        sector: u32,
+    },
+    SectorEntered {
+        sector: u32,
+    },
+    /// A wave of an arena is on its way: which one, of how many.
+    WaveIncoming {
+        wave: u32,
+        of: u32,
+    },
+    /// The place where a tank of an arena is about to appear is marked.
+    TankIncoming {
+        at: Vec2,
+    },
+    /// A tank of an arena appeared where its place was marked.
+    TankAppeared {
+        at: Vec2,
+    },
 }

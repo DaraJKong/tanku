@@ -3,6 +3,7 @@
 //! The client embeds this library for solo and hosted games, and the `tanku_server` binary runs
 //! it headless.
 
+mod arena;
 pub mod brain;
 pub mod bullets;
 pub mod field;
@@ -75,6 +76,7 @@ impl Plugin for ServerPlugin {
                         mines::blast,
                         run::casualties,
                         sectors::advance,
+                        arena::waves,
                         field::unload,
                         run::clock,
                     )

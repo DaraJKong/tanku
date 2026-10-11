@@ -20,7 +20,7 @@ use crate::{
     rules::MAX_PLAYERS,
     seed::VERSION,
     sim::{
-        Barrier, Block, Bullet, Enemy, ExplosiveCrate, Flag, Gun, Mine, Motion, Player, Position,
+        Barrier, Block, Bullet, Enemy, ExplosiveCrate, Gun, Mine, Motion, Player, Position,
         Protected, Run, SectorIndex, Shield, SimEvent, Tank, TankCommand, Wreck,
     },
 };
@@ -128,7 +128,6 @@ impl Plugin for ProtocolPlugin {
         app.component::<Block>().replicate();
         app.component::<ExplosiveCrate>().replicate();
         app.component::<Barrier>().replicate();
-        app.component::<Flag>().replicate();
     }
 }
 

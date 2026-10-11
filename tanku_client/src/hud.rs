@@ -6,7 +6,7 @@
 
 use bevy::prelude::*;
 use tanku_core::{
-    progression,
+    rules::SOLO_LIVES,
     seed::VERSION,
     sim::{
         Enemy, Gun, Player, Playtest, Position, Run, Shield, ShieldState, SimEvent, Tank,
@@ -819,22 +819,28 @@ fn toasts(
 ) {
     let (toast, text, color) = &mut *toast;
     let infinite_lives = playtest.is_some_and(|playtest| playtest.infinite_lives);
-    // Several things can happen at once, such as capturing a flag and unlocking its barrier.
+    // Several things can happen at once, such as clearing a sector and unlocking its barrier.
     // The message that matters most is shown.
     let mut news: Option<(u8, String)> = None;
     for event in events.read() {
         let (weight, message) = match *event {
             SimEvent::SectorCleared { sector } if sector > 0 => {
-                if progression::is_checkpoint(sector) {
-                    (1, format!("Sector {sector} cleared - capture the flag"))
-                } else {
-                    (1, format!("Sector {sector} cleared"))
-                }
+                (1, format!("Sector {sector} cleared"))
             }
+            // An arena leaves a life, which is of use only to a player who lost one.
+            SimEvent::LifeDropped { .. } => {
+                let short = run.as_ref().is_some_and(|run| run.lives < SOLO_LIVES);
+                let message = if short {
+                    "Arena cleared - take the life at the barrier"
+                } else {
+                    "Arena cleared - you have every life"
+                };
+                (2, message.to_string())
+            }
+            SimEvent::LifeTaken { .. } => (2, "Life gained".to_string()),
             SimEvent::BarrierUnlocked { sector } if sector > 0 => {
                 (1, "Barrier unlocked".to_string())
             }
-            SimEvent::FlagCaptured { .. } => (2, "Flag captured".to_string()),
             SimEvent::TankDestroyed {
                 team: Team::Players,
                 ..
@@ -856,6 +862,8 @@ fn toasts(
                 (3, message)
             }
             SimEvent::TankRepaired { .. } => (2, "Tank repaired".to_string()),
+            // The waves of an arena are counted, so that the players know when it ends.
+            SimEvent::WaveIncoming { wave, of } => (2, format!("Wave {wave} of {of}")),
             _ => continue,
         };
         if news.as_ref().is_none_or(|(shown, _)| weight >= *shown) {

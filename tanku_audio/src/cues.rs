@@ -46,8 +46,8 @@ pub enum Cue {
     ShieldDropped,
     /// The last enemy of a sector is destroyed.
     Cleared,
-    /// A flag is captured.
-    Captured,
+    /// A single player takes a life from the floor.
+    LifeTaken,
     /// A barrier unlocks.
     Unlocked,
     /// A player's tank is back.
@@ -55,11 +55,15 @@ pub enum Cue {
     RunOver,
     /// A button of a menu is pressed.
     Click,
+    /// A wave of an arena is on its way.
+    Wave,
+    /// The tanks of a wave are there.
+    Appeared,
 }
 
 impl Cue {
     /// Every cue, in the order of their numbers.
-    pub const ALL: [Cue; 16] = [
+    pub const ALL: [Cue; 18] = [
         Cue::Shot,
         Cue::EnemyShot,
         Cue::Ricochet,
@@ -71,11 +75,13 @@ impl Cue {
         Cue::ShieldBlocked,
         Cue::ShieldDropped,
         Cue::Cleared,
-        Cue::Captured,
+        Cue::LifeTaken,
         Cue::Unlocked,
         Cue::Respawned,
         Cue::RunOver,
         Cue::Click,
+        Cue::Wave,
+        Cue::Appeared,
     ];
 
     /// How long the cue lasts.
@@ -92,11 +98,13 @@ impl Cue {
             Cue::ShieldBlocked => 0.16,
             Cue::ShieldDropped => 0.45,
             Cue::Cleared => 0.5,
-            Cue::Captured => 0.6,
+            Cue::LifeTaken => 0.6,
             Cue::Unlocked => 0.45,
             Cue::Respawned => 0.4,
             Cue::RunOver => 1.0,
             Cue::Click => 0.04,
+            Cue::Wave => 0.9,
+            Cue::Appeared => 0.3,
         }
     }
 
@@ -141,11 +149,16 @@ impl Cue {
             }
             Cue::ShieldDropped => (0.35 * glide(700.0, 120.0) + 0.15 * noise.next()) * left,
             Cue::Cleared => 0.3 * (note(t, 0.0, E5) + note(t, 0.14, A5)),
-            Cue::Captured => 0.3 * (note(t, 0.0, E5) + note(t, 0.1, A5) + note(t, 0.2, E6)),
+            Cue::LifeTaken => 0.3 * (note(t, 0.0, E5) + note(t, 0.1, A5) + note(t, 0.2, E6)),
             Cue::Unlocked => 0.3 * (note(t, 0.0, A5) + note(t, 0.12, E6)),
             Cue::Respawned => 0.3 * glide(300.0, 900.0) * left,
             Cue::RunOver => 0.3 * (note(t, 0.0, A4) + note(t, 0.25, E4) + note(t, 0.5, A3)),
             Cue::Click => 0.3 * tone(t, 1000.0) * decay(t * 80.0),
+            // A siren that climbs three times, between two notes like the warning of a mine.
+            Cue::Wave => 0.3 * sweep(t % 0.3, 330.0, 760.0, 0.3) * (1.0 - (t % 0.3) / 0.6),
+            Cue::Appeared => {
+                0.45 * glide(240.0, 70.0) * decay(t * 12.0) + 0.25 * noise.next() * decay(t * 30.0)
+            }
         }
     }
 }
@@ -216,7 +229,7 @@ mod tests {
             (Cue::MinePlaced, &[E5]),
             (Cue::ShieldBlocked, &[A5, E6]),
             (Cue::Cleared, &[E5, A5]),
-            (Cue::Captured, &[E5, A5, E6]),
+            (Cue::LifeTaken, &[E5, A5, E6]),
             (Cue::Unlocked, &[A5, E6]),
             (Cue::RunOver, &[A3, E4, A4]),
         ];

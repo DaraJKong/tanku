@@ -2,19 +2,22 @@
 //! and its end.
 
 use bevy::prelude::*;
+use std::collections::BTreeMap;
+
 use tanku_core::{
     rules::{MAX_PLAYERS, PLAYTEST_LAST_SECTOR, RESPAWN_DELAY, SOLO_LIVES, SPAWN_FIRE_DELAY, TICK},
     seed,
     sim::{
-        Gun, Motion, Player, Playtest, Position, PreviousPosition, Protected, Run, RunPhase,
-        RunRequest, Shield, SimEvent, Tank, Team, Wreck,
+        Bullet, Enemy, Gun, Mine, Motion, Player, Playtest, Position, PreviousPosition, Protected,
+        Run, RunPhase, RunRequest, Shield, SimEvent, Tank, TankCommand, Team, Wreck,
     },
     stats::Genome,
 };
 
 use crate::{
     Casualties,
-    field::{self, Field, InSector},
+    brain::Brain,
+    field::{self, Field, Fuse, Home, InSector, Recruit},
 };
 
 /// How far apart the tanks of several players stand, side by side and row behind row.
@@ -46,13 +49,17 @@ fn clear(
 /// Loads the corridor around a sector and puts the players in it. Returns where they stand.
 fn enter(commands: &mut Commands, field: &mut Field, sector: u32) -> Vec2 {
     field.loaded.clear();
+    field.arenas.clear();
     field.load_entry_barrier(commands, sector);
-    // A player comes back in the sector of the last flag captured.
-    field.load(commands, sector, true);
-    field.load(commands, sector + 1, false);
+    field.load(commands, sector);
+    field.load(commands, sector + 1);
+    place_players(commands, field, sector)
+}
 
+/// Puts the tanks of the players in a sector that is loaded: in front of its barrier, or
+/// where a run starts in the start bay. Returns where they stand.
+fn place_players(commands: &mut Commands, field: &mut Field, sector: u32) -> Vec2 {
     let plan = field.corridor.plan(sector);
-    // The tanks appear between that flag and the barrier.
     let middle = if sector == 0 {
         field::entry_position(plan)
     } else {
@@ -86,9 +93,10 @@ fn enter(commands: &mut Commands, field: &mut Field, sector: u32) -> Vec2 {
     middle
 }
 
-/// Brings the players back at the checkpoint. Every sector beyond it is regenerated from the
-/// seed.
-fn respawn(
+/// Puts the players in front of the barrier of the checkpoint, with the corridor loaded
+/// afresh around them: every sector beyond the checkpoint is as the seed makes it. This is
+/// how a playtest skips to a sector.
+fn restart(
     commands: &mut Commands,
     run: &mut Run,
     field: &mut Field,
@@ -172,13 +180,12 @@ pub fn skip(
     let Some(sector) = asked.last() else {
         return;
     };
-    // The players come back at the end of the sector before it, as after capturing a flag
-    // there.
+    // The players come back at the end of the sector before it, as after clearing it.
     let checkpoint = sector.clamp(1, PLAYTEST_LAST_SECTOR) - 1;
     run.checkpoint = checkpoint;
     run.cleared = run.cleared.max(checkpoint);
     field.cleared.extend(0..=checkpoint);
-    respawn(
+    restart(
         &mut commands,
         &mut run,
         &mut field,
@@ -301,12 +308,38 @@ pub fn casualties(
     }
 }
 
-/// Counts the time played and brings a destroyed single player back at the last checkpoint.
+/// An enemy as its sector takes it back when a single player who fell returns.
+type Returning<'a> = (
+    Entity,
+    &'a Tank,
+    &'a Home,
+    &'a mut Position,
+    &'a mut PreviousPosition,
+    &'a mut Motion,
+    &'a mut Gun,
+    &'a mut Shield,
+    &'a mut Enemy,
+    &'a mut Brain,
+    &'a mut TankCommand,
+);
+
+/// Counts the time played and brings a destroyed single player back in front of the barrier
+/// of the last sector cleared, which is where the sector that they fell in begins.
+///
+/// A sector keeps what was done to it: the enemies that were destroyed stay destroyed, and so
+/// do the blocks and the crates. The enemies that are left go back to where they started, as
+/// they were, and sleep until the player crosses the barrier again. An arena holds the rest
+/// of the wave that was on back, to send it again. Nothing is left flying or lying in wait.
 pub fn clock(
     mut commands: Commands,
     mut run: ResMut<Run>,
     mut field: ResMut<Field>,
     entities: Query<Entity, Or<(With<InSector>, With<Player>)>>,
+    (players, weapons, mut enemies): (
+        Query<(), With<Player>>,
+        Query<Entity, Or<(With<Bullet>, With<Mine>)>>,
+        Query<Returning, Without<Player>>,
+    ),
     mut casualties: ResMut<Casualties>,
     mut events: MessageWriter<SimEvent>,
 ) {
@@ -318,12 +351,62 @@ pub fn clock(
         run.phase = RunPhase::Respawning(left - TICK);
         return;
     }
-    respawn(
-        &mut commands,
-        &mut run,
-        &mut field,
-        &entities,
-        &mut casualties,
-        &mut events,
-    );
+    let checkpoint = run.checkpoint;
+    // A tank that still stands, or a checkpoint that isn't loaded, is the doing of a playtest
+    // or of a test: the corridor is loaded afresh.
+    if !players.is_empty() || !field.loaded.contains(&checkpoint) {
+        restart(
+            &mut commands,
+            &mut run,
+            &mut field,
+            &entities,
+            &mut casualties,
+            &mut events,
+        );
+        return;
+    }
+    for weapon in &weapons {
+        commands.entity(weapon).try_despawn();
+    }
+    *casualties = Casualties::default();
+    let mut held: BTreeMap<u32, Vec<Recruit>> = BTreeMap::new();
+    for returning in &mut enemies {
+        let (entity, tank, home, mut position, mut previous, mut motion, mut gun, ..) = returning;
+        let (.., mut shield, mut enemy, mut brain, mut command) = returning;
+        // What is left of the wave of an arena is held back again, to appear as it did.
+        if field.arenas.contains_key(&tank.sector) {
+            let recruit = Recruit {
+                number: home.number,
+                genome: tank.genome,
+                at: home.at,
+            };
+            held.entry(tank.sector).or_default().push(recruit);
+            commands.entity(entity).try_despawn();
+            continue;
+        }
+        (position.0, previous.0) = (home.at, home.at);
+        *motion = Motion {
+            hull: home.hull,
+            turret: home.turret,
+            ..default()
+        };
+        *gun = Gun::loaded(&tank.genome);
+        *shield = Shield::default();
+        enemy.awake = false;
+        *brain = field.brain(tank.sector, home.number).0;
+        *command = TankCommand::default();
+    }
+    for (sector, arena) in field.arenas.iter_mut() {
+        let mut wave = held.remove(sector).unwrap_or_default();
+        wave.extend(arena.incoming.drain(..).map(|(recruit, _)| recruit));
+        wave.sort_by_key(|recruit| recruit.number);
+        if !wave.is_empty() {
+            arena.waiting.push_front(wave);
+        }
+        arena.fuse = Fuse::Unlit;
+    }
+    let at = place_players(&mut commands, &mut field, checkpoint);
+    run.sector = checkpoint;
+    run.phase = RunPhase::Playing;
+    events.write(SimEvent::PlayerRespawned { at });
 }

@@ -8,7 +8,7 @@ use std::f32::consts::TAU;
 
 use bevy::prelude::*;
 use tanku_core::{
-    rules::BLAST_RADIUS,
+    rules::{APPEAR_TIME, BLAST_RADIUS, TANK_RADIUS},
     sim::{SimEvent, Team},
 };
 
@@ -30,6 +30,8 @@ const STROKE_FRAMES: usize = 12;
 /// Height at which the strokes are drawn: just over the bullets, so that the one that flies
 /// on through a bullet it has pierced doesn't hide them.
 const STROKE_HEIGHT: f32 = 1.05;
+/// Height at which the mark of a tank that is about to appear is drawn: on the floor.
+const MARK_HEIGHT: f32 = 0.08;
 
 /// A circle that grows to its full size, then shrinks to nothing.
 #[derive(Component)]
@@ -44,6 +46,17 @@ struct Burst {
 struct Strokes {
     age: f32,
 }
+
+/// The mark of a tank of an arena that is about to appear: a circle on the floor that closes
+/// in on the place where the tank will stand, for as long as the warning lasts.
+#[derive(Component)]
+struct Mark {
+    age: f32,
+}
+
+/// How wide the mark of a tank that is about to appear starts, across, and how wide it ends:
+/// around the tank.
+const MARK_SIZE: (f32, f32) = (7.0, 2.0 * TANK_RADIUS);
 
 /// The color of a burst: its line, and the faint fill inside it.
 struct Glow {
@@ -60,6 +73,8 @@ struct Glows {
     spark: Glow,
     cold: Glow,
     good: Glow,
+    /// The warning of a tank that is about to appear.
+    alarm: Glow,
     /// The strokes of a destroyed bullet, from the first drawing to the last.
     strokes: Vec<Handle<Mesh>>,
     /// What they are drawn with: the color of the players' bullets, and of the enemies'.
@@ -68,7 +83,7 @@ struct Glows {
 
 pub fn plugin(app: &mut App) {
     app.add_systems(Startup, setup)
-        .add_systems(Update, (spawn, (animate, fly_apart)).chain());
+        .add_systems(Update, (spawn, (animate, fly_apart, close_in)).chain());
 }
 
 /// Where the strokes of a destroyed bullet start and end at this share of their life. They
@@ -114,11 +129,12 @@ fn setup(
         line: paint(color.with_alpha(0.9)),
         fill: paint(color.with_alpha(FILL)),
     };
-    let (fire, spark, cold, good) = (
+    let (fire, spark, cold, good, alarm) = (
         glow(theme::ENEMY_BULLET),
         glow(Color::WHITE),
         glow(theme::PLAYER_BULLET),
         glow(theme::GOOD),
+        glow(theme::DANGER),
     );
     let stroke_paints = (paint(theme::PLAYER_BULLET), paint(theme::ENEMY_BULLET));
     // Each drawing stands for the middle of its share of the life of the strokes.
@@ -142,6 +158,7 @@ fn setup(
         spark,
         cold,
         good,
+        alarm,
         strokes,
         stroke_paints,
     });
@@ -167,8 +184,28 @@ fn spawn(
             ));
             continue;
         }
+        if let SimEvent::TankIncoming { at } = *event {
+            commands.spawn((
+                Mark { age: 0.0 },
+                Transform::from_translation(scene::to_world(at, MARK_HEIGHT))
+                    .with_scale(Vec3::splat(MARK_SIZE.0)),
+                Visibility::default(),
+                children![
+                    (
+                        Mesh3d(glows.circle.clone()),
+                        MeshMaterial3d(glows.alarm.line.clone())
+                    ),
+                    (
+                        Mesh3d(glows.disc.clone()),
+                        MeshMaterial3d(glows.alarm.fill.clone())
+                    ),
+                ],
+            ));
+            continue;
+        }
         let (at, height, size, life, glow) = match *event {
             SimEvent::Blast { at } => (at, 0.6, 2.0 * BLAST_RADIUS, 0.45, &glows.fire),
+            SimEvent::TankAppeared { at } => (at, 0.6, 3.6, 0.35, &glows.alarm),
             SimEvent::TankDestroyed { at, .. } => (at, 0.6, 3.2, 0.5, &glows.fire),
             SimEvent::BlockDestroyed { at } => (at, 0.5, 2.4, 0.3, &glows.spark),
             SimEvent::Shot { at, team } => {
@@ -183,7 +220,7 @@ fn spawn(
             SimEvent::PlayerRespawned { at } | SimEvent::TankRepaired { at } => {
                 (at, 0.6, 4.0, 0.5, &glows.cold)
             }
-            SimEvent::FlagCaptured { at } => (at, 0.6, 5.0, 0.5, &glows.good),
+            SimEvent::LifeTaken { at } => (at, 0.6, 5.0, 0.5, &glows.good),
             _ => continue,
         };
         // Blasts shake the camera, the more the closer they are.
@@ -239,6 +276,29 @@ fn animate(
             continue;
         }
         transform.scale = Vec3::splat(burst.size * swell(progress));
+    }
+}
+
+/// How wide the mark of a tank that is about to appear is, this long into the warning.
+fn mark_size(age: f32) -> f32 {
+    let progress = (age / APPEAR_TIME).clamp(0.0, 1.0);
+    MARK_SIZE.0 + (MARK_SIZE.1 - MARK_SIZE.0) * progress
+}
+
+/// The mark of a tank that is about to appear closes in on its place, and is gone when the
+/// tank is there.
+fn close_in(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut marks: Query<(Entity, &mut Mark, &mut Transform)>,
+) {
+    for (entity, mut mark, mut transform) in &mut marks {
+        mark.age += time.delta_secs();
+        if mark.age >= APPEAR_TIME {
+            commands.entity(entity).despawn();
+            continue;
+        }
+        transform.scale = Vec3::splat(mark_size(mark.age));
     }
 }
 
@@ -311,8 +371,39 @@ mod tests {
             .init_resource::<Time>()
             .add_message::<SimEvent>()
             .add_systems(Startup, setup)
-            .add_systems(Update, (spawn, (animate, fly_apart)).chain());
+            .add_systems(Update, (spawn, (animate, fly_apart, close_in)).chain());
         app
+    }
+
+    #[test]
+    fn the_mark_of_a_tank_that_is_about_to_appear_closes_in_on_its_place() {
+        assert_eq!(mark_size(0.0), MARK_SIZE.0);
+        assert!(close(mark_size(APPEAR_TIME), 2.0 * TANK_RADIUS));
+        assert!(mark_size(0.5) > mark_size(1.0));
+
+        let mut app = world_of_effects();
+        app.update();
+        let at = Vec2::new(3.0, 4.0);
+        app.world_mut().write_message(SimEvent::TankIncoming { at });
+        app.update();
+        let world = app.world_mut();
+        let mut marks = world.query::<(&Mark, &Transform)>();
+        let (_, place) = marks.single(world).unwrap();
+        // It lies on the floor, where the tank will stand.
+        assert_eq!(scene::to_ground(place.translation), at);
+        assert!(place.translation.y < 0.2);
+        // It is gone when the tank is there, which shows with a flash.
+        let whole = std::time::Duration::from_secs_f32(APPEAR_TIME + 0.1);
+        app.world_mut().resource_mut::<Time>().advance_by(whole);
+        app.update();
+        let world = app.world_mut();
+        assert_eq!(world.query::<&Mark>().iter(world).count(), 0);
+        let moment = std::time::Duration::from_secs_f32(0.01);
+        world.resource_mut::<Time>().advance_by(moment);
+        world.write_message(SimEvent::TankAppeared { at });
+        app.update();
+        let world = app.world_mut();
+        assert_eq!(world.query::<&Burst>().iter(world).count(), 1);
     }
 
     #[test]

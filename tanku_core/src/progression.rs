@@ -3,6 +3,8 @@
 //! Everything that feeds generation is an integer formula or a lookup table, so that a seed
 //! gives the same enemies on every platform.
 
+use crate::rules::ARENA_WAVES;
+
 /// `round(100 - 90 * exp(-(n - 1) / 15))` for sectors 1 to 79. It stays at 100 afterward.
 const SECTOR_BUDGETS: [u8; 79] = [
     10, 16, 21, 26, 31, 36, 40, 44, 47, 51, 54, 57, 60, 62, 65, 67, 69, 71, 73, 75, 76, 78, 79, 81,
@@ -28,6 +30,16 @@ pub fn enemy_count(sector: u32, players: u32, arena: bool) -> u32 {
     if arena { (team * 3).div_ceil(2) } else { team }
 }
 
+/// How many tanks each wave of an arena has, for a group of this size: as many waves as an
+/// arena has, each as large as the others or one tank larger, the larger ones first. A group
+/// that is smaller than the number of waves comes one tank at a time.
+pub fn wave_sizes(count: u32) -> Vec<u32> {
+    let waves = ARENA_WAVES.min(count);
+    (0..waves)
+        .map(|wave| count / waves + (wave < count % waves) as u32)
+        .collect()
+}
+
 /// Highest brain tier an enemy of this sector can have.
 pub fn brain_cap(sector: u32) -> u8 {
     (1 + (sector.max(1) - 1) / 5).min(4) as u8
@@ -49,17 +61,6 @@ pub fn muzzle_cap(sector: u32) -> u8 {
 /// Experience drives behavior only, never generation, so floating point is fine here.
 pub fn experience(sector: u32) -> f32 {
     1.0 - (-(sector.max(1) as f32 - 1.0) / 20.0).exp()
-}
-
-/// Whether this sector has a flag, which is a checkpoint in solo once it is captured.
-pub fn is_checkpoint(sector: u32) -> bool {
-    match sector {
-        0 => false,
-        1..=8 => true,
-        9..=16 => sector.is_multiple_of(2),
-        17..=24 => (sector - 16).is_multiple_of(3),
-        _ => (sector - 24).is_multiple_of(4),
-    }
 }
 
 /// A value that goes from `easy` in sector 1 to `harsh` in sector 30 and stays there.
@@ -92,6 +93,21 @@ pub fn angled_wall_chance(sector: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_group_of_an_arena_comes_in_waves_of_about_the_same_size() {
+        assert_eq!(wave_sizes(9), [3, 3, 3]);
+        assert_eq!(wave_sizes(8), [3, 3, 2]);
+        assert_eq!(wave_sizes(5), [2, 2, 1]);
+        assert_eq!(wave_sizes(23), [8, 8, 7]);
+        // Fewer tanks than waves come one at a time, and nobody comes to an empty arena.
+        assert_eq!(wave_sizes(2), [1, 1]);
+        assert_eq!(wave_sizes(1), [1]);
+        assert!(wave_sizes(0).is_empty());
+        for count in 0..40 {
+            assert_eq!(wave_sizes(count).iter().sum::<u32>(), count);
+        }
+    }
 
     #[test]
     fn budget_table_follows_the_formula() {
@@ -150,15 +166,6 @@ mod tests {
         assert_eq!(enemy_count(1, 2, false), 2);
         assert_eq!(enemy_count(15, 1, true), 9);
         assert_eq!(enemy_count(3, 1, true), 3);
-    }
-
-    #[test]
-    fn checkpoints_get_sparser() {
-        let checkpoints: Vec<u32> = (0..=32).filter(|&sector| is_checkpoint(sector)).collect();
-        assert_eq!(
-            checkpoints,
-            [1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 14, 16, 19, 22, 28, 32]
-        );
     }
 
     #[test]

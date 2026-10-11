@@ -89,7 +89,7 @@ Every line is written in degrees and not in notes, so it exists in both modes wi
 
 The bridge is apart. It uses degrees 1, 2, 4, 5 and 7: A, B, D, E and G. It has neither the third degree, which tells major from minor, nor the sixth, which tells Dorian from Aeolian, so it has no mode of its own and sounds the same wherever it plays.
 
-The tonic is A because of the cues. Those that play notes already play A and E: sector cleared (E5, A5), flag captured (E5, A5, E6), barrier unlocked (A5, E6) and run over (A4, E4, A3). A and E are degrees 1 and 5 of both modes, so these cues are in tune with the music whatever it plays. The key never changes, for the same reason.
+The tonic is A because of the cues. Those that play notes already play A and E: sector cleared (E5, A5), life taken (E5, A5, E6), barrier unlocked (A5, E6) and run over (A4, E4, A3). A and E are degrees 1 and 5 of both modes, so these cues are in tune with the music whatever it plays. The key never changes, for the same reason.
 
 ## Material
 

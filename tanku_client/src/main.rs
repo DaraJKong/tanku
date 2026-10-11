@@ -13,6 +13,7 @@ mod exhibit;
 mod host;
 mod hud;
 mod input;
+mod life;
 mod menu;
 mod mirror;
 mod models;
@@ -84,7 +85,7 @@ fn main() {
     app.add_plugins((CorePlugin, ServerPlugin))
         .init_state::<Screen>()
         .init_state::<Overlay>()
-        .add_plugins((crew::plugin, session::plugin))
+        .add_plugins((crew::plugin, session::plugin, life::plugin))
         .add_plugins((
             theme::plugin,
             settings::plugin,

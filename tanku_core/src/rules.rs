@@ -39,8 +39,8 @@ pub const BLOCK_SIZE: f32 = 2.0;
 /// A barrier unlocks when every living player is this close to it.
 pub const BARRIER_GATHER_DISTANCE: f32 = 8.0;
 
-/// A flag is captured by a player who comes this close to it.
-pub const FLAG_CAPTURE_RADIUS: f32 = 2.0;
+/// A life on the floor is taken by a tank that comes this close to it.
+pub const LIFE_REACH: f32 = 1.5;
 
 /// The most players a run can have.
 pub const MAX_PLAYERS: u32 = 4;
@@ -50,6 +50,17 @@ pub const REPAIR_TIME: f32 = 4.0;
 /// Time during which nothing destroys a tank that was just repaired.
 pub const REPAIR_PROTECTION: f32 = 1.0;
 
+/// The enemies of an arena come in this many waves at most, each when the one before it is
+/// destroyed.
+pub const ARENA_WAVES: u32 = 3;
+/// Time between the entry of the first player into an arena and the warning of its first wave.
+pub const ARENA_DELAY: f32 = 2.0;
+/// How long the place of a tank of an arena is marked before the tank appears there.
+pub const APPEAR_TIME: f32 = 1.5;
+/// The mark of a tank of an arena waits while the tank of a player is this close to its place.
+pub const APPEAR_ROOM: f32 = 4.0;
+
+/// The lives of a single player, which are also the most they can have.
 pub const SOLO_LIVES: u32 = 3;
 /// Delay between the destruction of the solo player and the respawn.
 pub const RESPAWN_DELAY: f32 = 1.5;

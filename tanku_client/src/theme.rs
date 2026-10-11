@@ -59,8 +59,6 @@ pub const DANGER: Color = hex(0xF24D40);
 pub const GOOD: Color = hex(0x4DD980);
 /// Shields: the disk under the turret of a tank that has one, and the bubble when it is up.
 pub const SHIELD: Color = Color::WHITE;
-/// A flag that nobody has captured.
-pub const FLAG: Color = hex(0xA8ADB8);
 
 /// How much of its light a sector keeps until a player enters it.
 pub const DORMANT: f32 = 0.45;

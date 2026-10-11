@@ -56,6 +56,7 @@ fn play(
     time: Res<Time<Real>>,
     mut ducked: ResMut<DuckedUntil>,
 ) {
+    let mut appeared = false;
     for event in events.read() {
         let (cue, at) = match *event {
             SimEvent::Shot {
@@ -75,13 +76,19 @@ fn play(
             SimEvent::ShieldBlocked { at } => (Cue::ShieldBlocked, Some(at)),
             SimEvent::ShieldDropped { at } => (Cue::ShieldDropped, Some(at)),
             SimEvent::SectorCleared { sector } if sector > 0 => (Cue::Cleared, None),
-            SimEvent::FlagCaptured { .. } => (Cue::Captured, None),
+            SimEvent::LifeTaken { .. } => (Cue::LifeTaken, None),
             SimEvent::BarrierUnlocked { sector } if sector > 0 => (Cue::Unlocked, None),
             // A tank that comes back sounds the same, whatever brought it back.
             SimEvent::PlayerRespawned { .. } | SimEvent::TankRepaired { .. } => {
                 (Cue::Respawned, None)
             }
             SimEvent::RunOver => (Cue::RunOver, None),
+            SimEvent::WaveIncoming { .. } => (Cue::Wave, None),
+            // The tanks of a wave appear together, and sound as one.
+            SimEvent::TankAppeared { at } if !appeared => {
+                appeared = true;
+                (Cue::Appeared, Some(at))
+            }
             _ => continue,
         };
         // What happens far from the middle of the screen is quieter, but never silent: sound
@@ -218,7 +225,7 @@ mod tests {
         // What happens to the run is as loud wherever the players are.
         let told = [
             (SimEvent::SectorCleared { sector: 3 }, Cue::Cleared),
-            (SimEvent::FlagCaptured { at: far }, Cue::Captured),
+            (SimEvent::LifeTaken { at: far }, Cue::LifeTaken),
             (SimEvent::BarrierUnlocked { sector: 3 }, Cue::Unlocked),
             (SimEvent::PlayerRespawned { at: far }, Cue::Respawned),
             (SimEvent::TankRepaired { at: far }, Cue::Respawned),

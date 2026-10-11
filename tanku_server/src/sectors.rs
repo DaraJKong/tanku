@@ -3,12 +3,13 @@
 use bevy::prelude::*;
 use tanku_core::{
     geom,
-    rules::{BARRIER_GATHER_DISTANCE, FLAG_CAPTURE_RADIUS, TANK_RADIUS},
-    sim::{Barrier, Enemy, Flag, Player, Position, PreviousPosition, Run, SimEvent, Tank, Wreck},
+    map::SectorKind,
+    rules::{ARENA_DELAY, BARRIER_GATHER_DISTANCE, LIFE_REACH, SOLO_LIVES, TANK_RADIUS},
+    sim::{Barrier, Enemy, Life, Player, Position, PreviousPosition, Run, SimEvent, Tank, Wreck},
 };
 
 use crate::{
-    field::{self, Field},
+    field::{self, Arena, Field, Fuse, InSector},
     run::formation,
 };
 
@@ -25,14 +26,25 @@ pub fn advance(
     )>,
     mut enemies: Query<(&Tank, &mut Enemy), Without<Player>>,
     mut barriers: Query<&mut Barrier>,
-    mut flags: Query<(&mut Flag, &Position), Without<Player>>,
+    lives: Query<(Entity, &Position), (With<Life>, Without<Player>)>,
     mut events: MessageWriter<SimEvent>,
 ) {
     let front = run.sector;
-    let fought = enemies.iter().any(|(tank, _)| tank.sector == front);
+    // An arena is fought for as long as it holds enemies back.
+    let fought = enemies.iter().any(|(tank, _)| tank.sector == front)
+        || field.arenas.get(&front).is_some_and(Arena::holds_more);
     if !fought && field.cleared.insert(front) {
         run.cleared = run.cleared.max(front);
+        // A single player whose tank is destroyed comes back at the last sector cleared.
+        run.checkpoint = front;
         events.write(SimEvent::SectorCleared { sector: front });
+        // An arena that a single player clears leaves a life in front of its barrier.
+        let plan = field.corridor.plan(front);
+        if run.solo && plan.kind == SectorKind::Arena {
+            let at = plan.life_point.as_vec2();
+            commands.spawn((Life { sector: front }, Position(at), InSector(front)));
+            events.write(SimEvent::LifeDropped { at });
+        }
     }
 
     // What follows is the doing of the tanks that still run.
@@ -44,13 +56,14 @@ pub fn advance(
     if living.is_empty() {
         return;
     }
-    // A flag is captured by driving up to it, once the enemies of its sector are destroyed.
-    for (mut flag, at) in &mut flags {
-        let reached = |position: &Vec2| position.distance(at.0) <= FLAG_CAPTURE_RADIUS;
-        if !flag.captured && living.iter().any(reached) && field.cleared.contains(&flag.sector) {
-            flag.captured = true;
-            run.checkpoint = run.checkpoint.max(flag.sector);
-            events.write(SimEvent::FlagCaptured { at: at.0 });
+    // A single player who is short of a life takes one from the floor by driving over it.
+    // Nobody has more lives than a run starts with.
+    for (life, at) in &lives {
+        let reached = |position: &Vec2| position.distance(at.0) <= LIFE_REACH;
+        if run.solo && run.lives < SOLO_LIVES && living.iter().any(reached) {
+            run.lives += 1;
+            commands.entity(life).try_despawn();
+            events.write(SimEvent::LifeTaken { at: at.0 });
         }
     }
     // The barrier of the sector that the players have reached unlocks once its enemies are
@@ -93,8 +106,12 @@ pub fn advance(
                     enemy.awake = true;
                 }
             }
+            // An arena lets the players in before its first wave is announced.
+            if let Some(arena) = field.arenas.get_mut(&entered) {
+                arena.fuse = Fuse::Burning(ARENA_DELAY);
+            }
             // The next sector waits behind its barrier.
-            field.load(&mut commands, entered + 1, false);
+            field.load(&mut commands, entered + 1);
             events.write(SimEvent::SectorEntered { sector: entered });
         }
     }

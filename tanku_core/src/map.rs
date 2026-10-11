@@ -33,8 +33,8 @@ const SIDE_DRIFT: i32 = 6;
 const APRON: i32 = 4;
 /// An arena is deep enough for a group to start far from the entry and clear of the barrier.
 const ARENA_MIN_LENGTH: i32 = 32;
-/// A flag stands this far inside the barrier of its sector.
-const FLAG_DEPTH: i32 = 4;
+/// An arena that is cleared leaves a life this far inside its barrier.
+const LIFE_DEPTH: i32 = 4;
 
 /// Squared distances below are in half meters, so that the centers of blocks stay integers.
 /// 1.8 m: a lattice path with this clearance is more than 3 m wide everywhere.
@@ -131,8 +131,9 @@ pub struct SectorPlan {
     pub entry_point: IVec2,
     /// A point just inside the barrier.
     pub gate_point: IVec2,
-    /// Where the flag stands, if the sector has one: in front of the middle of the barrier.
-    pub flag_point: IVec2,
+    /// Where a life lies once the sector is cleared, if it is an arena: in front of the middle
+    /// of the barrier.
+    pub life_point: IVec2,
     pub min: IVec2,
     pub max: IVec2,
     next_frame: Frame,
@@ -534,7 +535,7 @@ fn plan_sector(seed: u64, index: u32, frame: Frame, entry: i32, spec: &Spec) -> 
         gate: gate_ends,
         entry_point: frame.at(entry / 2, 2),
         gate_point: world(&inside(2)),
-        flag_point: world(&inside(FLAG_DEPTH)),
+        life_point: world(&inside(LIFE_DEPTH)),
         min,
         max,
         next_frame: Frame {
@@ -1119,18 +1120,18 @@ mod tests {
     }
 
     #[test]
-    fn flags_stand_in_the_open_in_front_of_their_barrier() {
+    fn a_life_lies_in_the_open_in_front_of_its_barrier() {
         for corridor in corridors() {
             for plan in &corridor.plans[1..] {
                 let at = format!("sector {}", plan.index);
-                let flag = plan.flag_point;
-                assert!(plan.contains_half(flag * 2), "{at}");
+                let life = plan.life_point;
+                assert!(plan.contains_half(life * 2), "{at}");
                 let (from, to) = (plan.gate.0.as_vec2(), plan.gate.1.as_vec2());
-                let to_barrier = crate::geom::distance_to_segment(flag.as_vec2(), from, to);
-                assert_eq!(to_barrier, FLAG_DEPTH as f32, "{at}");
+                let to_barrier = crate::geom::distance_to_segment(life.as_vec2(), from, to);
+                assert_eq!(to_barrier, LIFE_DEPTH as f32, "{at}");
                 for &(a, b) in &plan.walls {
                     let to_wall =
-                        crate::geom::distance_to_segment(flag.as_vec2(), a.as_vec2(), b.as_vec2());
+                        crate::geom::distance_to_segment(life.as_vec2(), a.as_vec2(), b.as_vec2());
                     assert!(to_wall >= 3.5, "{at}: {to_wall} m from a wall");
                 }
             }
