@@ -23,9 +23,7 @@ use lightyear::prelude::*;
 use tanku_core::{
     geom,
     protocol::Told,
-    rules::{
-        BULLET_RADIUS, MINE_ARMING_TIME, REPAIR_RADIUS, SHIELD_RADIUS, TANK_RADIUS, TICK, TICK_RATE,
-    },
+    rules::{BULLET_RADIUS, MINE_ARMING_TIME, SHIELD_RADIUS, TANK_RADIUS, TICK, TICK_RATE},
     sim::{
         Barrier, Block, Bullet, ExplosiveCrate, Gun, Mine, MineState, Motion, Position,
         PreviousPosition, Run, Sector, Shield, SimEvent, Tank, TankCommand, Wreck,
@@ -555,7 +553,7 @@ fn foresee(
         ),
         With<Own>,
     >,
-    others: Query<(&Position, &Told<Position>, &Tank, Has<Wreck>), Without<Own>>,
+    others: Query<(&Position, &Tank, Has<Wreck>), Without<Own>>,
     mut bullets: Query<
         (
             &mut Bullet,
@@ -595,28 +593,23 @@ fn foresee(
             continue;
         }
 
-        // The wrecks within reach, which a tank that repairs has its hands full with.
-        let wrecks = others.iter().filter(|(.., wreck)| *wreck);
-        let wrecks: Vec<Vec2> = wrecks.map(|(_, told, ..)| told.0.0).collect();
         let step = |helm: &mut Helm, asked: &TankCommand, tick: u32, did: &mut Vec<(u32, Deed)>| {
-            let within = |wreck: &Vec2| wreck.distance(helm.place) <= REPAIR_RADIUS;
-            let free = !(asked.repair && wrecks.iter().any(within));
             if let Some(cooldown) = tank.genome.shield_cooldown() {
                 let at = helm.place;
-                match tanks::step_shield(&mut helm.shield, cooldown, asked.shield && free) {
+                match tanks::step_shield(&mut helm.shield, cooldown, asked.shield) {
                     Some(Bubble::Raised) => did.push((tick, Deed::Raised { at })),
                     Some(Bubble::Dropped) => did.push((tick, Deed::Dropped { at })),
                     None => {}
                 }
             }
             tanks::step(&field, tank, true, asked, &mut helm.place, &mut helm.moving);
-            let others = others.iter().map(|(other, _, tank, wreck)| {
+            let others = others.iter().map(|(other, tank, wreck)| {
                 let gives_way = tank.genome.top_speed() > 0.0 && !wreck;
                 (other.0, gives_way)
             });
             tanks::give_way(&mut helm.place, others);
             field.push_out(tank, &mut helm.place, &mut helm.moving.velocity);
-            let worked = tanks::step_gun(&mut helm.gun, &tank.genome, asked, free);
+            let worked = tanks::step_gun(&mut helm.gun, &tank.genome, asked);
             if worked.fired {
                 let (from, turret) = (helm.place, helm.moving.turret);
                 did.push((tick, Deed::Shot { from, turret }));
@@ -1772,7 +1765,7 @@ mod tests {
     }
 
     #[test]
-    fn a_guest_that_repairs_has_its_hands_full() {
+    fn a_guest_that_repairs_keeps_its_hands_free() {
         let (mut host, mut guest, aim) = aiming_east(60);
         // The tank of the host's player is destroyed, next to the guest's.
         let world = host.world_mut();
@@ -1791,8 +1784,8 @@ mod tests {
             wrecks(games[1]) == 1
         });
 
-        // While its player holds the repair key, the guest's tank neither fires, nor lays a
-        // mine, nor shields: on its own screen as on the host's.
+        // While its player holds the repair key, the guest's tank fires, lays a mine and
+        // shields as it always does: on its own screen at once, and on the host's.
         let busy = TankCommand {
             fire: true,
             mine: true,
@@ -1800,38 +1793,39 @@ mod tests {
             repair: true,
             ..aim
         };
+        let deeds = |game: &App| {
+            [
+                news(game, |event| matches!(event, SimEvent::Shot { .. })),
+                news(game, |event| matches!(event, SimEvent::MinePlaced { .. })),
+                news(game, |event| matches!(event, SimEvent::ShieldRaised { .. })),
+            ]
+        };
+        let before = (deeds(&host), deeds(&guest));
+        run_until("the deeds", &mut [&mut host, &mut guest], |games| {
+            order(games[1], busy);
+            let now = deeds(games[1]);
+            (0..3).all(|kind| now[kind] > before.1[kind])
+        });
+        assert_eq!(deeds(&host), before.0);
         let since = tick(&guest);
         run_until("the repair", &mut [&mut host, &mut guest], |games| {
             order(games[1], busy);
             past(games[0], since) > 60
         });
-        let deeds = |game: &App| {
-            news(game, |event| {
-                matches!(
-                    event,
-                    SimEvent::Shot { .. }
-                        | SimEvent::MinePlaced { .. }
-                        | SimEvent::ShieldRaised { .. }
-                )
-            })
-        };
-        assert_eq!((deeds(&host), deeds(&guest)), (0, 0));
+        // The repair went on all the while.
         let world = host.world_mut();
         let repair = world.query::<&Wreck>().single(world).unwrap().repair;
         assert!(repair > 0.5, "{repair} s of repair");
-
-        // Once the key is let go, the tank does all three at once.
-        order(
-            &mut guest,
-            TankCommand {
-                repair: false,
-                ..busy
-            },
-        );
-        run_until("a free hand", &mut [&mut host, &mut guest], |games| {
-            deeds(games[1]) == 3
+        // Once the host has heard everything, it has the same shots, the same mines and the
+        // same bubble as the guest showed.
+        let since = tick(&guest);
+        run_until("the host's turn", &mut [&mut host, &mut guest], |games| {
+            order(games[1], aim);
+            past(games[0], since) > 30
         });
-        assert_eq!(deeds(&host), 0);
+        let (there, here) = (deeds(&host), deeds(&guest));
+        assert!(there[0] > before.0[0] + 1, "{there:?}");
+        assert_eq!(there, here);
     }
 
     fn fix(tick: u32, x: f32) -> Fix {

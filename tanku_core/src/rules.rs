@@ -46,7 +46,7 @@ pub const LIFE_REACH: f32 = 1.5;
 pub const MAX_PLAYERS: u32 = 4;
 /// A player repairs the wreck of a teammate from this close, in this long.
 pub const REPAIR_RADIUS: f32 = 3.0;
-pub const REPAIR_TIME: f32 = 4.0;
+pub const REPAIR_TIME: f32 = 2.0;
 /// Time during which nothing destroys a tank that was just repaired.
 pub const REPAIR_PROTECTION: f32 = 1.0;
 

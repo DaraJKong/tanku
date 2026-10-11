@@ -6,34 +6,23 @@ use tanku_core::{
     sim::{Gun, Player, Position, Protected, Shield, SimEvent, Tank, TankCommand, Wreck},
 };
 
-/// The tanks that are repairing a wreck this tick. They can't shoot, place mines or shield.
-#[derive(Resource, Default)]
-pub struct Repairers(pub Vec<Entity>);
-
 /// Repairs the wrecks that a teammate works on from close by, and lets the protection of the
 /// tanks that were just repaired run out.
 ///
 /// A repair that is interrupted starts over. A repaired tank comes back with a full magazine
-/// and a moment during which nothing destroys it.
+/// and a moment during which nothing destroys it. The tank that repairs does everything else
+/// as usual meanwhile: it drives, shoots, lays mines and shields.
 pub fn repair(
     mut commands: Commands,
-    mut repairers: ResMut<Repairers>,
     mut wrecks: Query<(Entity, &Tank, &Position, &mut Wreck, &mut Gun, &mut Shield)>,
-    crews: Query<(Entity, &Position, &TankCommand), (With<Player>, Without<Wreck>)>,
+    crews: Query<(&Position, &TankCommand), (With<Player>, Without<Wreck>)>,
     mut protected: Query<(Entity, &mut Protected)>,
     mut events: MessageWriter<SimEvent>,
 ) {
-    repairers.0.clear();
     for (entity, tank, position, mut wreck, mut gun, mut shield) in &mut wrecks {
-        let mut at_work = false;
-        for (crew, crew_position, command) in &crews {
-            if command.repair && crew_position.0.distance(position.0) <= REPAIR_RADIUS {
-                at_work = true;
-                if !repairers.0.contains(&crew) {
-                    repairers.0.push(crew);
-                }
-            }
-        }
+        let at_work = crews
+            .iter()
+            .any(|(crew, command)| command.repair && crew.0.distance(position.0) <= REPAIR_RADIUS);
         if !at_work {
             if wreck.repair != 0.0 {
                 wreck.repair = 0.0;

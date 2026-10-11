@@ -2107,7 +2107,7 @@ fn a_destroyed_tank_of_several_players_becomes_a_wreck() {
 }
 
 #[test]
-fn a_teammate_repairs_a_wreck_in_four_seconds() {
+fn a_teammate_repairs_a_wreck_in_two_seconds() {
     let mut app = team("TEST", 2);
     let (first, second) = (seat(&mut app, 0), seat(&mut app, 1));
     destroy(&mut app, second);
@@ -2136,35 +2136,16 @@ fn a_teammate_repairs_a_wreck_in_four_seconds() {
         first,
         wreck_at + Vec2::NEG_X * (REPAIR_RADIUS - 0.5),
     );
-    tick(&mut app, seconds(2.0));
-    assert!((progress(&app).unwrap() - 2.0).abs() < 0.05);
+    tick(&mut app, seconds(1.0));
+    assert!((progress(&app).unwrap() - 1.0).abs() < 0.05);
     order(&mut app, first, TankCommand::default());
     tick(&mut app, 1);
     assert_eq!(progress(&app), Some(0.0));
 
-    // The tank that repairs can't shoot, place mines or shield.
-    let busy = TankCommand {
-        aim: wreck_at + Vec2::Y * 9.0,
-        fire: true,
-        mine: true,
-        shield: true,
-        repair: true,
-        ..default()
-    };
-    order(&mut app, first, busy);
+    // After two seconds the tank is back, with a full magazine.
+    order(&mut app, first, hold);
     tick(&mut app, seconds(REPAIR_TIME) - 2);
     assert!(is_wreck(&app, second));
-    let told = events(&mut app);
-    let idle = |event: &SimEvent| {
-        matches!(
-            event,
-            SimEvent::Shot { .. } | SimEvent::MinePlaced { .. } | SimEvent::ShieldRaised { .. }
-        )
-    };
-    assert_eq!(count(&told, idle), 0);
-
-    // After four seconds the tank is back, with a full magazine.
-    order(&mut app, first, hold);
     tick(&mut app, 3);
     assert!(!is_wreck(&app, second));
     let rounds = app.world().get::<Gun>(second).unwrap().rounds;
@@ -2189,6 +2170,50 @@ fn a_teammate_repairs_a_wreck_in_four_seconds() {
     assert!(app.world().get::<Protected>(second).is_none());
     destroy(&mut app, second);
     assert!(is_wreck(&app, second));
+}
+
+#[test]
+fn a_tank_that_repairs_keeps_its_hands_free() {
+    let mut app = team("TEST", 2);
+    let (first, second) = (seat(&mut app, 0), seat(&mut app, 1));
+    destroy(&mut app, second);
+    let wreck_at = position(&mut app, second);
+    let from = wreck_at + Vec2::NEG_X * 2.5;
+    teleport(&mut app, first, from);
+    events(&mut app);
+
+    // While it repairs, the tank drives, shoots, lays a mine and shields as it always does.
+    let busy = TankCommand {
+        drive: Vec2::Y,
+        aim: wreck_at + Vec2::Y * 9.0,
+        fire: true,
+        mine: true,
+        shield: true,
+        repair: true,
+    };
+    order(&mut app, first, busy);
+    tick(&mut app, seconds(0.3));
+    assert!(position(&mut app, first).distance(from) > 0.5);
+    order(
+        &mut app,
+        first,
+        TankCommand {
+            drive: Vec2::ZERO,
+            ..busy
+        },
+    );
+    tick(&mut app, seconds(0.7));
+    let told = events(&mut app);
+    let shots = count(&told, |event| matches!(event, SimEvent::Shot { .. }));
+    let mines = count(&told, |event| matches!(event, SimEvent::MinePlaced { .. }));
+    let bubbles = count(&told, |event| {
+        matches!(event, SimEvent::ShieldRaised { .. })
+    });
+    assert!(shots >= 3, "{shots} shots");
+    assert_eq!((mines, bubbles), (2, 1));
+    // The repair went on all the while.
+    let repair = app.world().get::<Wreck>(second).unwrap().repair;
+    assert!((repair - 1.0).abs() < 0.05, "{repair} s of repair");
 }
 
 #[test]

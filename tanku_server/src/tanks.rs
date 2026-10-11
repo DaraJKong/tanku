@@ -21,7 +21,6 @@ use crate::{
     Casualties, Maker,
     bullets::{self, Flight},
     field::{Field, InSector},
-    repair::Repairers,
 };
 
 /// What a shield did in a tick.
@@ -57,18 +56,15 @@ pub fn step_shield(shield: &mut Shield, cooldown: f32, asked: bool) -> Option<Bu
 
 /// Runs the shields.
 pub fn shields(
-    repairers: Res<Repairers>,
-    mut tanks: Query<(Entity, &Tank, &Position, &TankCommand, &mut Shield), Without<Wreck>>,
+    mut tanks: Query<(&Tank, &Position, &TankCommand, &mut Shield), Without<Wreck>>,
     mut events: MessageWriter<SimEvent>,
 ) {
-    for (entity, tank, position, command, mut shield) in &mut tanks {
+    for (tank, position, command, mut shield) in &mut tanks {
         let Some(cooldown) = tank.genome.shield_cooldown() else {
             continue;
         };
-        // A tank that repairs a wreck has its hands full.
-        let asked = command.shield && !repairers.0.contains(&entity);
         let mut next = *shield;
-        let did = step_shield(&mut next, cooldown, asked);
+        let did = step_shield(&mut next, cooldown, command.shield);
         // What doesn't change is left alone: guests are told of what was touched.
         shield.set_if_neq(next);
         match did {
@@ -214,9 +210,9 @@ pub struct Worked {
 }
 
 /// One tick of a gun: it cools down and reloads, then fires and lays a mine if its tank asks
-/// for it, is free to, and can. The host does this for every tank, and a guest for the tank of
-/// its own player.
-pub fn step_gun(gun: &mut Gun, genome: &Genome, command: &TankCommand, free: bool) -> Worked {
+/// for it and can. The host does this for every tank, and a guest for the tank of its own
+/// player.
+pub fn step_gun(gun: &mut Gun, genome: &Genome, command: &TankCommand) -> Worked {
     gun.cooldown = (gun.cooldown - TICK).max(0.0);
     gun.mine_cooldown = (gun.mine_cooldown - TICK).max(0.0);
     if gun.rounds < genome.magazine() {
@@ -225,9 +221,6 @@ pub fn step_gun(gun: &mut Gun, genome: &Genome, command: &TankCommand, free: boo
             gun.reload = 0.0;
             gun.rounds += 1;
         }
-    }
-    if !free {
-        return Worked::default();
     }
     let fired = command.fire && gun.rounds > 0 && gun.cooldown == 0.0;
     if fired {
@@ -288,7 +281,6 @@ pub fn operate(
     mut commands: Commands,
     field: Res<Field>,
     mut casualties: ResMut<Casualties>,
-    repairers: Res<Repairers>,
     mut tanks: Query<(Entity, &Tank, &Position, &Motion, &TankCommand, &mut Gun), Without<Wreck>>,
     mines: Query<&Mine>,
     mut events: MessageWriter<SimEvent>,
@@ -297,9 +289,7 @@ pub fn operate(
         let (genome, team) = (&tank.genome, tank.team);
         let mut next = *gun;
         next.mines = mines.iter().filter(|mine| mine.owner == entity).count() as u8;
-        // A tank that repairs a wreck has its hands full.
-        let free = !repairers.0.contains(&entity);
-        let worked = step_gun(&mut next, genome, command, free);
+        let worked = step_gun(&mut next, genome, command);
         // What doesn't change is left alone: guests are told of what was touched.
         gun.set_if_neq(next);
 

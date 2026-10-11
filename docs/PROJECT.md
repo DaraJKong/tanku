@@ -108,7 +108,7 @@ An arena that is cleared leaves a life on its floor, 4 m in front of the middle 
 
 ### Multiplayer
 
-Multiplayer has no lives and no checkpoints, and an arena leaves nothing on its floor. A destroyed player tank becomes a wreck, and its player watches a living teammate until repaired. The run ends when all players are wrecked at the same time. Repairs are unlimited but slow, which makes them safe between fights and risky during one (see [Repair](#repair)). A wreck is drawn as the outline of its tank in dashes.
+Multiplayer has no lives and no checkpoints, and an arena leaves nothing on its floor. A destroyed player tank becomes a wreck, and its player watches a living teammate until repaired. The run ends when all players are wrecked at the same time. Repairs are unlimited and take 2 s next to the wreck, which makes them safe between fights and risky during one (see [Repair](#repair)). A wreck is drawn as the outline of its tank in dashes.
 
 Enemy groups grow with the number of players (see [Progression](#progression)). The map doesn't change.
 
@@ -196,7 +196,7 @@ The cooldown is the only drawback. A shield saves a tank from one threat, and fo
 
 ### Repair
 
-A player repairs a wrecked teammate by holding the repair key within 3 m of the wreck for 4 s. The repairer can drive within that reach, but can't shoot, place mines or shield while repairing, and all progress is lost if the repair is interrupted. The repaired tank returns with a full magazine and 1 s of protection, during which bullets end on it and blasts leave it alone.
+A player repairs a wrecked teammate by holding the repair key within 3 m of the wreck for 2 s. The repairer keeps every other verb: the tank drives within that reach, shoots, places mines and shields as usual. All progress is lost if the repair is interrupted: when the key is let go, when the tank leaves the reach, or when it is destroyed. The repaired tank returns with a full magazine and 1 s of protection, during which bullets end on it and blasts leave it alone.
 
 Nothing destroys a wreck again: it absorbs bullets, sets off no mine and stays through any blast.
 
@@ -221,7 +221,7 @@ A wreck lies in a circle in dashes and keeps the number of its player over it: a
 | Life of an arena | 4 m in front of the barrier, taken within 1.5 m |
 | Waves of an arena | 3, the first announced 2 s after the first player has crossed |
 | Mark of a tank that is about to appear | 1 s, once no player's tank is within 4 m of the place |
-| Repair | 4 s within 3 m |
+| Repair | 2 s within 3 m |
 
 ## Tanks
 

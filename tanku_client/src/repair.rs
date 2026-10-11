@@ -283,9 +283,8 @@ mod tests {
         app.world_mut().entity_mut(tank).remove::<Wreck>();
         app.update();
         assert_eq!(drawn(&mut app), (0, 0));
-        app.world_mut()
-            .entity_mut(tank)
-            .insert(Wreck { repair: 1.0 });
+        let repair = REPAIR_TIME / 4.0;
+        app.world_mut().entity_mut(tank).insert(Wreck { repair });
         app.update();
         assert_eq!(drawn(&mut app), (1, STEPS / 4));
     }
@@ -322,13 +321,13 @@ mod tests {
             Some(Word::Within)
         );
         assert_eq!(
-            word((here, None, true), &[(near, 1.5)]),
-            Some(Word::Repairing(REPAIR_TIME - 1.5))
+            word((here, None, true), &[(near, 0.5)]),
+            Some(Word::Repairing(REPAIR_TIME - 0.5))
         );
         // Of two wrecks within reach, the one that is done first counts.
         assert_eq!(
-            word((here, None, true), &[(near, 1.0), (-near, 3.0), (far, 3.5)]),
-            Some(Word::Repairing(REPAIR_TIME - 3.0))
+            word((here, None, true), &[(near, 0.5), (-near, 1.5), (far, 1.8)]),
+            Some(Word::Repairing(REPAIR_TIME - 1.5))
         );
         // The player whose tank is the wreck waits, and sees when someone is at it.
         assert_eq!(
@@ -348,8 +347,8 @@ mod tests {
             "Hold Left Shift to repair"
         );
         assert_eq!(
-            Word::Repairing(4.0).sentence("R"),
-            "Repairing - 4 s - keep holding R"
+            Word::Repairing(2.0).sentence("R"),
+            "Repairing - 2 s - keep holding R"
         );
         // A second that has started is still to go.
         assert_eq!(

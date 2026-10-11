@@ -53,38 +53,36 @@ impl Plugin for ServerPlugin {
     fn build(&self, app: &mut App) {
         let in_progress =
             |run: Option<Res<Run>>| run.is_some_and(|run| run.phase != RunPhase::Over);
-        app.init_resource::<Casualties>()
-            .init_resource::<repair::Repairers>()
-            .add_systems(
-                FixedUpdate,
+        app.init_resource::<Casualties>().add_systems(
+            FixedUpdate,
+            (
+                run::handle_requests,
                 (
-                    run::handle_requests,
-                    (
-                        run::skip.run_if(resource_exists::<Playtest>),
-                        run::leave,
-                        field::rebuild_colliders,
-                        tanks::idle,
-                        brain::think,
-                        repair::repair,
-                        tanks::shields,
-                        tanks::drive,
-                        tanks::separate,
-                        tanks::operate,
-                        bullets::fly,
-                        bullets::collide,
-                        mines::tick,
-                        mines::blast,
-                        run::casualties,
-                        sectors::advance,
-                        arena::waves,
-                        field::unload,
-                        run::clock,
-                    )
-                        .chain()
-                        .run_if(in_progress),
+                    run::skip.run_if(resource_exists::<Playtest>),
+                    run::leave,
+                    field::rebuild_colliders,
+                    tanks::idle,
+                    brain::think,
+                    repair::repair,
+                    tanks::shields,
+                    tanks::drive,
+                    tanks::separate,
+                    tanks::operate,
+                    bullets::fly,
+                    bullets::collide,
+                    mines::tick,
+                    mines::blast,
+                    run::casualties,
+                    sectors::advance,
+                    arena::waves,
+                    field::unload,
+                    run::clock,
                 )
                     .chain()
-                    .in_set(Simulation),
-            );
+                    .run_if(in_progress),
+            )
+                .chain()
+                .in_set(Simulation),
+        );
     }
 }

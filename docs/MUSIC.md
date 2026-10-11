@@ -63,7 +63,7 @@ The tempo of a fight is the game's own. At 120 beats per minute, the timings of 
 | Mark of a tank that is about to appear in an arena | 1 s | Two beats |
 | Respawn | 1.5 s | Three beats |
 | Wait before the first wave of an arena | 2 s | One bar |
-| Repair | 4 s | Two bars |
+| Repair | 2 s | One bar |
 | Fuse of a mine | 10 s | Five bars |
 
 A player who holds the trigger therefore fires at the pace of the music, two shots per beat. The shots don't land on its steps, because the game never moves a shot to fit the music. This only holds at 120, which is why a fight never has another tempo. The bridge can be slower because nobody shoots back while it plays.
