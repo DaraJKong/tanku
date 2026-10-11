@@ -13,6 +13,9 @@ license = "MIT OR Apache-2.0"
 bevy = { version = "0.19", default-features = false }
 # The network of co-op. Each crate picks the sides and the transports it needs.
 lightyear = { version = "0.30", default-features = false }
+# Announces a hosted game on the local network and finds those of others, by multicast DNS.
+# Its logs show with `RUST_LOG=mdns_sd=debug`.
+mdns-sd = { version = "0.21", default-features = false, features = ["logging"] }
 # What goes over the network is written and read with it.
 serde = { version = "1", features = ["derive"] }
 tanku_audio = { path = "tanku_audio" }

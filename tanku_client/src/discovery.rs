@@ -2,10 +2,10 @@
 //! screen. What is found shows there, and a click joins it: nobody has to type an address
 //! that a machine of the same network could tell by itself.
 
-use std::net::{IpAddr, Ipv4Addr, UdpSocket};
+use std::net::Ipv4Addr;
 
 use bevy::prelude::*;
-use tanku_core::discovery::{self, Announcement, Heard, Reach};
+use tanku_core::discovery::{Announcement, Browser, Reach, Sighting, local_address, nearest};
 
 use crate::{
     Screen,
@@ -13,23 +13,15 @@ use crate::{
     session::{Found, Game},
 };
 
-/// Seconds between two times that every machine is asked.
-const ASK: f32 = 1.0;
-/// A game that wasn't heard of for this many seconds is gone, or its run has started and its
-/// machine was turned off. A host tells of its game every second.
-const FORGOTTEN: f64 = 3.5;
-/// How many packets are read in a frame, and how many games are shown.
-const READ: usize = 64;
+/// How many games are shown.
 const SHOWN: usize = 5;
 
 /// The search for games, while it goes on.
 #[derive(Resource)]
 struct Search {
-    socket: UdpSocket,
-    /// Seconds until every machine is asked again.
-    wait: f32,
-    /// When each game was last heard of, by its number.
-    heard: Vec<(u64, f64)>,
+    browser: Browser,
+    /// The name that each game goes by on the network, with its number.
+    names: Vec<(String, u64)>,
 }
 
 pub fn plugin(app: &mut App) {
@@ -40,12 +32,11 @@ pub fn plugin(app: &mut App) {
 
 fn start(mut commands: Commands, reach: Res<Reach>, mut found: ResMut<Found>) {
     found.0.clear();
-    // Without a socket, the player types the address as before.
-    if let Ok(socket) = reach.socket() {
+    // Without a search, the player types the address as before.
+    if let Some(browser) = Browser::new(*reach) {
         commands.insert_resource(Search {
-            socket,
-            wait: 0.0,
-            heard: Vec::new(),
+            browser,
+            names: Vec::new(),
         });
     }
 }
@@ -55,65 +46,51 @@ fn stop(mut commands: Commands, mut found: ResMut<Found>) {
     found.0.clear();
 }
 
-/// Takes in what a host said of its game, from the machine that the word came from.
-///
-/// A game on this machine is heard of twice, as every machine hears it and as this machine
-/// alone does. It is one game, and it keeps the address by which the other machines know it,
-/// which is the one that its host's lobby shows.
+/// Takes in what a host says of its game, with the address at which this machine reaches it.
+/// A game that is told of again is the same game, by its number.
 fn hear(games: &mut Vec<Game>, told: &Announcement, machine: Ipv4Addr) {
-    let (players, standing) = (told.players, told.standing());
-    let address = written(machine, told.port);
-    if let Some(game) = games.iter_mut().find(|game| game.id == told.game) {
-        if game.machine.is_loopback() && !machine.is_loopback() {
-            (game.machine, game.address) = (machine, address);
-        }
-        (game.players, game.standing) = (players, standing);
+    let game = Game {
+        id: told.game,
+        machine,
+        address: written(machine, told.port),
+        players: told.players,
+        standing: told.standing(),
+    };
+    if let Some(known) = games.iter_mut().find(|known| known.id == told.game) {
+        *known = game;
     } else if games.len() < SHOWN {
-        games.push(Game {
-            id: told.game,
-            machine,
-            address,
-            players,
-            standing,
-        });
+        games.push(game);
     }
 }
 
-/// Asks every machine for its game now and then, and keeps the list of those that answer.
-fn look(
-    time: Res<Time<Real>>,
-    reach: Res<Reach>,
-    mut search: ResMut<Search>,
-    mut found: ResMut<Found>,
-) {
-    let now = time.elapsed_secs_f64();
-    search.wait -= time.delta_secs();
-    if search.wait <= 0.0 {
-        search.wait = ASK;
-        for everyone in reach.addresses() {
-            let _ = search.socket.send_to(&discovery::question(), everyone);
+/// Keeps the list of the games that the network tells of.
+fn look(time: Res<Time<Real>>, mut search: ResMut<Search>, mut found: ResMut<Found>) {
+    let seen = search.browser.hear(time.delta_secs());
+    if seen.is_empty() {
+        return;
+    }
+    let (mut games, own) = (found.0.clone(), local_address());
+    for sighting in seen {
+        match sighting {
+            Sighting::Game {
+                name,
+                told,
+                machines,
+            } => {
+                let Some(machine) = nearest(&machines, own) else {
+                    continue;
+                };
+                hear(&mut games, &told, machine);
+                search.names.retain(|(known, _)| *known != name);
+                search.names.push((name, told.game));
+            }
+            Sighting::Gone { name } => {
+                search.names.retain(|(known, _)| *known != name);
+                // A game goes with the last name that it went by.
+                games.retain(|game| search.names.iter().any(|(_, id)| *id == game.id));
+            }
         }
     }
-    let mut games = found.0.clone();
-    // A packet that fills this is longer than any that says something.
-    let mut packet = [0; discovery::LIMIT + 1];
-    for _ in 0..READ {
-        let Ok((length, from)) = search.socket.recv_from(&mut packet) else {
-            break;
-        };
-        let (Some(Heard::Answer(told)), IpAddr::V4(machine)) =
-            (discovery::read(&packet[..length]), from.ip())
-        else {
-            continue;
-        };
-        hear(&mut games, &told, machine);
-        if games.iter().any(|game| game.id == told.game) {
-            search.heard.retain(|(game, _)| *game != told.game);
-            search.heard.push((told.game, now));
-        }
-    }
-    search.heard.retain(|(_, at)| now - at <= FORGOTTEN);
-    games.retain(|game| search.heard.iter().any(|(heard, _)| *heard == game.id));
     // In an order that holds from one frame to the next.
     games.sort_by(|a, b| (&a.address, a.id).cmp(&(&b.address, b.id)));
     if found.0 != games {
@@ -123,7 +100,7 @@ fn look(
 
 #[cfg(test)]
 mod tests {
-    use tanku_core::{discovery::Standing, protocol::REVISION};
+    use tanku_core::discovery::Standing;
 
     use super::*;
     use crate::{
@@ -134,18 +111,16 @@ mod tests {
         session::SessionRequest,
     };
 
-    /// Where the games of a test are looked for: on its own machine, on a port that is free.
+    /// Where the games of a test are announced and looked for: on its own machine, on a port
+    /// that nothing else listens on.
     fn here() -> Reach {
-        Reach {
-            port: free_port(),
-            to: Some(vec![Ipv4Addr::LOCALHOST]),
-        }
+        Reach::Here(free_port())
     }
 
     /// A game that looks for games there, from the join screen.
-    fn looking(reach: &Reach) -> App {
+    fn looking(reach: Reach) -> App {
         let mut game = game();
-        game.insert_resource(reach.clone());
+        game.insert_resource(reach);
         let mut next = game.world_mut().resource_mut::<NextState<Screen>>();
         next.set(Screen::Join);
         run_until("the join screen", &mut [&mut game], |games| {
@@ -155,10 +130,9 @@ mod tests {
     }
 
     /// A game that hosts one, announced there.
-    fn hosting(reach: &Reach, port: u16) -> App {
+    fn hosting(reach: Reach, port: u16) -> App {
         let mut game = game();
-        game.insert_resource(reach.clone())
-            .insert_resource(HostPort(port));
+        game.insert_resource(reach).insert_resource(HostPort(port));
         ask(&mut game, SessionRequest::Host);
         run_until("a lobby", &mut [&mut game], |games| {
             screen(games[0]) == Screen::Lobby
@@ -170,20 +144,11 @@ mod tests {
         game.world().resource::<Found>().0.clone()
     }
 
-    /// The port that a game looks for games from.
-    fn asks_from(game: &App) -> u16 {
-        let search = game.world().resource::<Search>();
-        search.socket.local_addr().unwrap().port()
-    }
-
     #[test]
     fn a_player_on_the_join_screen_finds_a_game_and_joins_it() {
         let (reach, port) = (here(), free_port());
-        let mut host = hosting(&reach, port);
-        let mut guest = looking(&reach);
-        // The host has the port of the games, so the guest asks from a port of its own, and
-        // is answered there.
-        assert_ne!(asks_from(&guest), reach.port);
+        let mut host = hosting(reach, port);
+        let mut guest = looking(reach);
         run_until("a game", &mut [&mut host, &mut guest], |games| {
             !found(games[1]).is_empty()
         });
@@ -204,7 +169,7 @@ mod tests {
 
         // Someone else who looks sees two players there, then that the run has started,
         // then nothing once the host has closed the game.
-        let mut other = looking(&reach);
+        let mut other = looking(reach);
         let all = &mut [&mut host, &mut guest, &mut other];
         run_until("two players", all, |games| {
             found(games[2]).first().map(|game| game.players) == Some(2)
@@ -218,23 +183,22 @@ mod tests {
         let closed_at = std::time::Instant::now();
         let all = &mut [&mut host, &mut guest, &mut other];
         run_until("an empty list", all, |games| found(games[2]).is_empty());
+        // The host said goodbye: nobody had to wait for it to be missed.
         let waited = closed_at.elapsed().as_secs_f64();
-        assert!(
-            (2.0..FORGOTTEN + 1.0).contains(&waited),
-            "the game was listed for {waited} s more"
-        );
+        assert!(waited < 3.0, "the game was listed for {waited} s more");
     }
 
     #[test]
-    fn a_game_that_opens_after_the_search_started_on_its_machine_is_found_too() {
+    fn a_game_that_opens_while_a_player_looks_is_found_too() {
         let reach = here();
-        // The game that looks came first and has the port of the games. The host that
-        // comes second can't hear the question: what it tells every machine by itself is
-        // what gets through.
-        let mut guest = looking(&reach);
-        assert_eq!(asks_from(&guest), reach.port);
+        let mut guest = looking(reach);
+        let since = std::time::Instant::now();
+        run_until("a while", &mut [&mut guest], |_| {
+            since.elapsed().as_secs_f64() > 1.5
+        });
+        assert!(found(&guest).is_empty());
         let port = free_port();
-        let mut host = hosting(&reach, port);
+        let mut host = hosting(reach, port);
         run_until("a game", &mut [&mut host, &mut guest], |games| {
             !found(games[1]).is_empty()
         });
@@ -242,35 +206,7 @@ mod tests {
     }
 
     #[test]
-    fn a_game_of_another_version_shows_as_one_and_what_says_nothing_is_left_out() {
-        let reach = here();
-        let mut guest = looking(&reach);
-        let to = (Ipv4Addr::LOCALHOST, asks_from(&guest));
-        let teller = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
-        let other = Announcement {
-            revision: REVISION + 1,
-            ..Announcement::of(9, 28405, 2, true)
-        };
-        let mut long = Announcement::of(10, 28405, 1, true).packet();
-        long.resize(discovery::LIMIT + 40, b' ');
-        for packet in [&b"TANKU! what"[..], &long, &other.packet()] {
-            teller.send_to(packet, to).unwrap();
-        }
-        run_until("a game", &mut [&mut guest], |games| {
-            !found(games[0]).is_empty()
-        });
-        let games = found(&guest);
-        assert_eq!(games.len(), 1);
-        assert_eq!(games[0].address, "127.0.0.1");
-        assert_eq!(games[0].standing, Standing::Other);
-        // It is forgotten once nothing is heard of it.
-        run_until("an empty list", &mut [&mut guest], |games| {
-            found(games[0]).is_empty()
-        });
-    }
-
-    #[test]
-    fn a_game_that_is_heard_of_by_two_ways_is_one_game() {
+    fn a_game_that_is_told_of_again_is_the_same_game() {
         let here = Ipv4Addr::LOCALHOST;
         let there = Ipv4Addr::new(192, 168, 0, 21);
         let told = Announcement::of(7, 28405, 1, true);
@@ -278,18 +214,15 @@ mod tests {
         hear(&mut games, &told, here);
         assert_eq!(games.len(), 1);
         assert_eq!(games[0].address, "127.0.0.1");
-        // The address by which other machines know it takes over, and stays.
-        hear(&mut games, &told, there);
-        hear(&mut games, &told, here);
-        assert_eq!(games.len(), 1);
-        assert_eq!(games[0].address, "192.168.0.21");
-        // What it says of itself is kept up.
+        // What it says of itself is kept up, and so is where it is reached.
         let later = Announcement {
             players: 3,
             open: false,
             ..told
         };
         hear(&mut games, &later, there);
+        assert_eq!(games.len(), 1);
+        assert_eq!(games[0].address, "192.168.0.21");
         assert_eq!(
             (games[0].players, games[0].standing),
             (3, Standing::Running)

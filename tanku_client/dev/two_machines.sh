@@ -9,7 +9,7 @@
 # Nothing leaves this machine and nothing here needs privileges. It takes Linux with user
 # namespaces, and the tools `unshare`, `nsenter`, `ip` and `tc`.
 #
-# Usage: two_machines.sh HOST_SCRIPT GUEST_SCRIPT [LINE]
+# Usage: [WALL=mdns|shut] two_machines.sh HOST_SCRIPT GUEST_SCRIPT [LINE]
 #
 # The scripts are development scripts, as `TANKU_DEV_SCRIPT` takes them. LINE worsens the cable
 # in both directions, in the words of `tc netem`: "delay 50ms 10ms loss 2%" makes a round trip
@@ -19,6 +19,12 @@
 #       "host; wait 6; press Start; wait 5; shot host.png; quit" \
 #       "wait 2; join 10.77.0.1; wait 9; shot guest.png; quit" \
 #       "delay 50ms 10ms loss 2%"
+#
+# WALL puts a firewall on both machines, which takes the tool `nft`. Each lets in the answers
+# to what its machine asked and nothing else, and the host has opened the port of the game.
+# With `mdns`, multicast DNS comes in too, as it does through the firewalls that systems ship
+# with: a guest must still find the game. With `shut`, it is kept out: the address must still
+# join.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
@@ -27,7 +33,7 @@ mkdir -p "$logs"
 # Built once here, so that the two games don't wait for each other's build.
 cargo build -q -p tanku_client
 
-export HOST_SCRIPT="$1" GUEST_SCRIPT="$2" LINE="${3:-}" LOGS="$logs"
+export HOST_SCRIPT="$1" GUEST_SCRIPT="$2" LINE="${3:-}" LOGS="$logs" WALL="${WALL:-}"
 unshare --user --map-root-user --net bash -euo pipefail -c '
     ip link set lo up
     ip link add host type veth peer name guest
@@ -50,6 +56,20 @@ unshare --user --map-root-user --net bash -euo pipefail -c '
     there ip addr add 10.77.0.2/24 dev guest
     there ip link set guest up
     there ip route add default via 10.77.0.1
+    if [ -n "$WALL" ]; then
+        wall() {
+            "$@" nft add table inet wall
+            "$@" nft add chain inet wall incoming "{ type filter hook input priority 0; policy drop; }"
+            "$@" nft add rule inet wall incoming iif lo accept
+            "$@" nft add rule inet wall incoming ct state established,related accept
+            if [ "$WALL" = mdns ]; then
+                "$@" nft add rule inet wall incoming ip daddr 224.0.0.251 udp dport 5353 accept
+            fi
+        }
+        wall
+        nft add rule inet wall incoming udp dport 28405 accept
+        wall there
+    fi
     if [ -n "$LINE" ]; then
         tc qdisc add dev host root netem $LINE
         there tc qdisc add dev guest root netem $LINE

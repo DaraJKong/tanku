@@ -565,9 +565,9 @@ pub(crate) mod tests {
             .init_state::<Overlay>()
             .add_plugins((crew::plugin, session::plugin, NetPlugin))
             // Tests don't wait long for a game that isn't there, and keep to themselves:
-            // nothing is asked of the machines around, and nothing is told to them.
+            // nothing is announced to the machines around, and nothing is asked of them.
             .insert_resource(Patience(1))
-            .insert_resource(Reach::nobody());
+            .insert_resource(Reach::Nowhere);
         // What `App::run` does before the first frame: the network library sets itself up there.
         app.finish();
         app.cleanup();

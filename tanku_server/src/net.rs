@@ -2,7 +2,7 @@
 //!
 //! The server listens for clients and gives each one a seat while its lobby is open. It sends
 //! them the lobby, the run and the simulation as they change, and takes what their players ask
-//! of their tanks. It also tells the local network of its game, for those who look for one.
+//! of their tanks. It also announces its game on the local network, for those who look for one.
 //! It needs the server plugins of the network library and the protocol of `tanku_core`, added
 //! in that order.
 
@@ -30,7 +30,7 @@ use lightyear::{
     },
 };
 use tanku_core::{
-    discovery::{self, Announcement, Heard, Reach},
+    discovery::{Announcement, Announcer, Reach},
     protocol::{Lobby, Member, REVISION, Reliable, RunState, Told},
     rules::{MAX_PLAYERS, TICK_RATE},
     seed::VERSION,
@@ -44,15 +44,6 @@ use crate::field::InSector;
 
 /// The port a game listens on unless it is told otherwise.
 pub const PORT: u16 = 28405;
-/// Seconds between two times that a game tells every machine of the local network of itself.
-const CALL: f32 = 1.0;
-/// How many of those who ask for a game are answered between two calls. A machine that asks
-/// does so once a second, so this is plenty, and it keeps the game from being made to send
-/// much to an address that never asked.
-const ANSWERS: u32 = 20;
-/// How many packets from those who look for a game are read in a frame.
-const READ: usize = 64;
-
 /// The seat of the player behind a connection. The host has the first seat, and the guests
 /// the ones that follow.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
@@ -71,17 +62,15 @@ pub struct Hosting {
     open: Arc<AtomicBool>,
 }
 
-/// How a hosted game is found on the local network: it answers those who look for a game, and
-/// tells every machine of itself now and then.
+/// How a hosted game is found on the local network: what announces it, and what it last
+/// said of the game.
 #[derive(Resource)]
 struct Beacon {
-    socket: UdpSocket,
-    /// The number by which a game that is heard of by two ways is known as one.
+    announcer: Announcer,
+    /// The number by which the game is told from every other.
     game: u64,
-    /// Seconds until the next call to every machine.
-    wait: f32,
-    /// How many more of those who ask are answered until then.
-    answers: u32,
+    /// How many players the game had and whether it took more, when that was last said.
+    said: Option<(u8, bool)>,
 }
 
 impl Hosting {
@@ -167,19 +156,19 @@ pub fn open(commands: &mut Commands, port: u16, reach: &Reach) -> io::Result<()>
         open,
     });
     // A game that can't be announced is joined by its address all the same.
-    if let Ok(socket) = reach.socket() {
+    let game = RandomState::new().build_hasher().finish();
+    if let Some(announcer) = Announcer::new(*reach, game) {
         commands.insert_resource(Beacon {
-            socket,
-            game: RandomState::new().build_hasher().finish(),
-            wait: 0.0,
-            answers: ANSWERS,
+            announcer,
+            game,
+            said: None,
         });
     }
     Ok(())
 }
 
-/// Closes the game that this machine hosts. Its guests are told, and the port is free again
-/// at the end of the frame.
+/// Closes the game that this machine hosts. Its guests are told, the local network is told
+/// that the game is gone, and the port is free again at the end of the frame.
 pub fn close(commands: &mut Commands, hosting: &Hosting) {
     commands.trigger(Stop {
         entity: hosting.server,
@@ -419,42 +408,15 @@ fn take_commands(mut tanks: Query<(&ActionState<TankCommand>, &mut TankCommand),
     }
 }
 
-/// Answers those who look for a game on the local network, and tells every machine of this
-/// one now and then: a question can get lost, and so can its answer.
-fn call_out(
-    time: Res<Time<Real>>,
-    hosting: Res<Hosting>,
-    reach: Res<Reach>,
-    lobbies: Query<&Lobby>,
-    mut beacon: ResMut<Beacon>,
-) {
-    // What the game says of itself, when there is someone to say it to.
-    let told = || {
-        let players = lobbies.get(hosting.game).map_or(1, Lobby::players) as u8;
-        Announcement::of(beacon.game, hosting.port, players, hosting.is_open()).packet()
-    };
-    let mut answers = beacon.answers;
-    // A packet that fills this is longer than any that says something.
-    let mut packet = [0; discovery::LIMIT + 1];
-    for _ in 0..READ {
-        let Ok((length, from)) = beacon.socket.recv_from(&mut packet) else {
-            break;
-        };
-        let asked = discovery::read(&packet[..length]) == Some(Heard::Question);
-        if asked && answers > 0 {
-            answers -= 1;
-            let _ = beacon.socket.send_to(&told(), from);
-        }
-    }
-    let wait = beacon.wait - time.delta_secs();
-    if wait <= 0.0 {
-        let told = told();
-        for everyone in reach.addresses() {
-            let _ = beacon.socket.send_to(&told, everyone);
-        }
-        (beacon.wait, beacon.answers) = (CALL, ANSWERS);
-    } else {
-        (beacon.wait, beacon.answers) = (wait, answers);
+/// Keeps the local network told of the game: how many players it has, and whether it takes
+/// more. Those who look for a game see both.
+fn call_out(hosting: Res<Hosting>, lobbies: Query<&Lobby>, mut beacon: ResMut<Beacon>) {
+    let players = lobbies.get(hosting.game).map_or(1, Lobby::players) as u8;
+    let news = Some((players, hosting.is_open()));
+    if beacon.said != news {
+        beacon.said = news;
+        let told = Announcement::of(beacon.game, hosting.port, players, hosting.is_open());
+        beacon.announcer.tell(&told);
     }
 }
 
