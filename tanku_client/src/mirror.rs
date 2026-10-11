@@ -1590,7 +1590,10 @@ mod tests {
             .find(|(player, _)| player.seat == 1)
             .unwrap();
         gun.cooldown = (ahead + 1.5) * TICK;
+        // The order is given before either game moves on: it is the order of the guest's
+        // next tick, whenever the frames of this test fall.
         let since = tick(&guest);
+        order(&mut guest, TankCommand { fire: true, ..aim });
         run_until("the flight", &mut [&mut host, &mut guest], |games| {
             let held = past(games[1], since) < 6;
             order(games[1], TankCommand { fire: held, ..aim });
