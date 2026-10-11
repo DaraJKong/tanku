@@ -21,7 +21,7 @@ All numbers in this document are starting values to tune in playtests.
 ### Pillars
 
 1. **Skill over stats.** One hit destroys any tank, and player tanks never get stronger during a run. Players get further by playing better.
-2. **Readable danger.** Everything an enemy can do is visible on its model before the fight starts, and every bullet can be dodged.
+2. **Readable danger.** Everything an enemy can do is visible on its model, and every bullet can be dodged. A group is read through its barrier before the fight starts. An arena is the one exception: its enemies show only when they appear, each after a warning.
 3. **Same seed, same challenge.** A seed always produces the same map and the same enemies, so it can be learned, shared and raced like a level.
 4. **Co-op first, solo complete.** Every rule works for one to four players.
 5. **Instant retry.** Getting from game over back to driving takes a few seconds.
@@ -46,11 +46,16 @@ Tanku has no player-versus-player mode, no loot, no upgrades during a run, no st
 | North | The direction of progress along the corridor |
 | Sector | One stretch of corridor holding one group of enemies |
 | Barrier | The energy wall that closes the end of a sector |
-| Flag | Stands near the end of some sectors. A solo player captures it and respawns there. |
-| Checkpoint | The last flag captured |
+| Arena | A wide sector whose enemies come in waves |
+| Wave | One part of the group of an arena. It appears when the part before it is destroyed. |
+| Checkpoint | The last sector cleared. A solo player respawns in front of its barrier. |
+| Life | What a solo player loses with their tank. A cleared arena leaves one to pick up. |
 | Wreck | A destroyed player tank, which a teammate can repair |
 | Budget | The number of points a tank has to spend on stats |
-| Sector budget | The most points an enemy of a given sector can have |
+| Sector budget | The measure of an enemy's budget in a given sector. No tank has more, except the leader of its group. |
+| Group | The enemies of one sector, which share one budget unevenly |
+| Leader | The tank with the largest share of its group's budget: up to 1.5 times the sector budget |
+| Class | What an enemy favors when it spends its points. Its hue tells it. |
 | Genome | A tank's full list of stat levels |
 | Hardware | The stats of the tank itself, paid in points |
 | Software | The stats of an enemy's controller (brain and ballistics), paid as a share of its budget |
@@ -68,30 +73,42 @@ The corridor is a chain of sectors. Each sector holds one group of enemies and e
 1. Bullets and blasts never pass a barrier, and enemies never cross one.
 2. A barrier unlocks when every enemy in its sector is destroyed and every living player is within 8 m of it. It then stays unlocked.
 3. Players cross an unlocked barrier forward only.
-4. The enemies of a sector are dormant until the first player crosses into it. Dormant enemies are visible through the barrier. Until then, the sector is drawn darker than the rest of the corridor, and its enemies are outlines in dashes.
+4. The enemies of a sector are dormant until the first player crosses into it. Dormant enemies are visible through the barrier. Until then, the sector is drawn darker than the rest of the corridor, and its enemies are outlines in dashes. An arena is the exception (see [Arenas](#arenas)).
 
-These rules let the players study the next group, pick the moment to engage and enter together. They also rule out both driving past enemies and fighting from a doorway. When the last living player has crossed, any wreck left behind is towed across and the sectors further back are unloaded. When two or fewer enemies remain in a sector, markers at the screen edge point to them. Each end of a barrier bears a tag with the numbers of the two sectors it parts, and a caption says whether the barrier is locked or open.
+These rules let the players study the next group, pick the moment to engage and enter together. They also rule out both driving past enemies and fighting from a doorway. When the last living player has crossed, any wreck left behind is towed across and the sectors further back are unloaded. When two or fewer enemies remain in a sector, markers at the screen edge point to them. Each end of a barrier bears a tag with the numbers of the two sectors it parts. A caption says whether the barrier is locked or open, and whether an arena lies behind it.
+
+### Arenas
+
+An arena is a wide and short sector that holds 1.5 times the enemies of a corridor (see [Map](#map)). All of them at once in so little room are more than the players can read, so an arena sends its group in waves and shows none of it beforehand.
+
+Seen through its barrier, an arena is empty. Two circles in dashes on its floor and the caption of the barrier tell what it is. Its group comes in three waves of the same size, give or take one tank:
+
+1. The first wave is announced 2 s after the first player has crossed, and each of the others when the last tank of the wave before it is destroyed. The announcement is a message with the number of the wave, and a sound.
+2. The place of each tank of the wave is then marked on the floor for 1.5 s, by a circle that closes in on it. A mark waits for as long as a player's tank is within 4 m of the place.
+3. The tank appears on its mark, awake.
+
+The barrier of an arena unlocks like any other, once the last tank of its last wave is destroyed. In an arena, the markers at the screen edge point to the last two tanks of the wave that is there.
+
+The danger of an arena can't be read before the fight: that is its point, and the one exception to the second pillar. What the players can't study, they are warned of, one wave at a time.
 
 ### Solo
 
-The solo player has three lives, and lives are never refilled. When the tank is destroyed, the player loses a life and respawns 1.5 s later at the last checkpoint, between its flag and the barrier. Every sector beyond it is regenerated from the seed, so its enemies and obstacles are back. Before the first checkpoint, the player respawns in the start bay. Losing the third life ends the run.
+The solo player has three lives. When the tank is destroyed, the player loses a life and respawns 1.5 s later at the checkpoint: in front of the barrier of the last sector cleared, or in the start bay before any sector is cleared. Losing the last life ends the run.
 
-Checkpoints are flags. A flag stands 4 m in front of the middle of its sector's barrier, inside a circle 2 m in radius drawn on the ground, and it is gray at first. Once every enemy of the sector is destroyed, the player captures the flag by driving into the circle: it turns green and becomes the checkpoint. A flag that the player drives past stays gray and is lost, because nobody crosses a barrier backward.
+Every sector that is cleared is a checkpoint, and the sector ahead of it keeps what the player did there:
 
-Flags become sparser with distance:
+- The enemies that were destroyed stay destroyed, and the kills stay counted.
+- The enemies that are left go back to where they started, dormant, with full magazines.
+- Every bullet and every mine is removed.
+- The blocks that were destroyed and the crates that went off stay gone.
 
-| Sectors | Flags |
-|---|---|
-| 1–8 | Every sector |
-| 9–16 | Every 2nd sector |
-| 17–24 | Every 3rd sector |
-| 25 and beyond | Every 4th sector |
+The player then crosses the barrier again and fights what is left of the group. An arena sends again what was left of the wave that was on, after its 2 s and its marks, and then the waves that had not come.
 
-The count starts over in each row. After sector 8, the flags are therefore in sectors 10, 12, 14, 16, 19, 22, 28, 32 and every fourth one from there.
+An arena that is cleared leaves a life on its floor, 4 m in front of the middle of its barrier. A player who has lost a life takes it by driving within 1.5 m of it. Nobody has more than three lives: a player who has all three can't take it, and sees it in dashes. A life that is left on the floor is lost when the player crosses the barrier, because nobody crosses a barrier backward.
 
 ### Multiplayer
 
-Multiplayer has no lives and no checkpoints. A destroyed player tank becomes a wreck, and its player watches a living teammate until repaired. The run ends when all players are wrecked at the same time. Repairs are unlimited but slow, which makes them safe between fights and risky during one (see [Repair](#repair)). A wreck is drawn as the outline of its tank in dashes.
+Multiplayer has no lives and no checkpoints, and an arena leaves nothing on its floor. A destroyed player tank becomes a wreck, and its player watches a living teammate until repaired. The run ends when all players are wrecked at the same time. Repairs are unlimited but slow, which makes them safe between fights and risky during one (see [Repair](#repair)). A wreck is drawn as the outline of its tank in dashes.
 
 Enemy groups grow with the number of players (see [Progression](#progression)). The map doesn't change.
 
@@ -112,7 +129,7 @@ Normal, hard and impossible are the three difficulties. Chosen seed and free mod
 A playtest is a way to test the game faster, not a mode for players. It starts with the `--playtest` option on the command line and lets the solo player cheat from the menu in two ways:
 
 - **Infinite lives.** The tank comes back as often as it is destroyed. This is on at the start and can be turned off.
-- **Skipping to a sector.** The player picks any sector and comes back at the end of the one before it, as after capturing a flag there.
+- **Skipping to a sector.** The player picks any sector and comes back in front of the barrier of the one before it, as if that sector had just been cleared.
 
 A playtest can also choose its seed without unlocking that option: `--seed` followed by a seed starts every run on it, which brings back a situation that a player reported.
 
@@ -145,7 +162,7 @@ The game tells a player what destroyed their tank: the tank that fired the bulle
 
 ### Bullets
 
-A bullet flies in a straight line at the speed set by its tank's Muzzle stat. It reflects off walls and blocks as many times as the Ricochet stat allows, and the next impact destroys it. A bullet has no range limit. It starts at the turret and travels down the barrel, so a tank pressed against a wall can't shoot through it: the bullet hits the wall at once.
+A bullet flies in a straight line at the speed set by its tank's Muzzle stat. It reflects off walls and blocks as many times as the Ricochet stat allows, and the next impact destroys it. A bullet has no range limit. It starts at the turret and travels down the barrel, so a tank pressed against a wall can't shoot through it. A bullet doesn't bounce inside the barrel: it ends on the wall, the block or the barrier that it meets there, and a crate that it meets there goes off. A bounce so close would bring the bullet back before the tank could move out of its way. The round is spent either way.
 
 Firing takes one round from the magazine. Rounds reload one at a time, automatically, each taking the Loader time, and firing doesn't interrupt reloading. Every gun also needs 0.25 s between two shots. This cooldown is the same for all tanks and isn't a stat. A player's tank can't shoot during the first 0.5 s after it appears, at the start of a run or after a respawn, so that the click that started the run fires nothing.
 
@@ -183,13 +200,14 @@ A player repairs a wrecked teammate by holding the repair key within 3 m of the 
 
 Nothing destroys a wreck again: it absorbs bullets, sets off no mine and stays through any blast.
 
-A wreck lies in a circle in dashes, in the color of its player: a tank whose center is inside the circle can repair it. The circle is inked in from the top as the repair goes on, and starts over when the repair is interrupted. While a teammate's tank is a wreck, a player is told on screen which key to hold, and how long the repair still takes. The player whose tank is the wreck is told when a teammate is at it.
+A wreck lies in a circle in dashes and keeps the number of its player over it: a tank whose center is inside the circle can repair it. The circle is inked in from the top as the repair goes on, and starts over when the repair is interrupted. While a teammate's tank is a wreck, a player is told on screen which key to hold, and how long the repair still takes. The player whose tank is the wreck is told when a teammate is at it.
 
 ### Constants
 
 | Constant | Value |
 |---|---|
 | Tank | 2.0 m long, 1.6 m wide, circular collider of radius 0.9 m, the same for all tanks |
+| Barrel | Its tip is 1.3 m from the center of the tank |
 | Bullet radius | 0.225 m |
 | Fire cooldown | 0.25 s |
 | Time without shooting after a player's tank appears | 0.5 s |
@@ -199,12 +217,15 @@ A wreck lies in a circle in dashes, in the color of its player: a tank whose cen
 | Mine warning | 0.6 s before the blast, after a tank sets the mine off and at the end of its fuse |
 | Blast radius of mines and crates | 3 m |
 | Shield duration | 0.5 s |
-| Flag | 4 m in front of the barrier, captured within 2 m |
+| Lives of a solo player | 3 at the start, and never more |
+| Life of an arena | 4 m in front of the barrier, taken within 1.5 m |
+| Waves of an arena | 3, the first announced 2 s after the first player has crossed |
+| Mark of a tank that is about to appear | 1.5 s, once no player's tank is within 4 m of the place |
 | Repair | 4 s within 3 m |
 
 ## Tanks
 
-Every tank, player or enemy, is described by a genome: one level per stat. Levels are bought with the tank's budget of points. Players and enemies follow the same rules with three differences. Player tanks have a fixed appearance, a fixed genome outside free mode, and no software stats, because the player is the brain.
+Every tank, player or enemy, is described by a genome: one level per stat. Levels are bought with the tank's budget of points. Players and enemies follow the same rules with four differences. Player tanks have a fixed appearance, a fixed genome outside free mode, no software stats, because the player is the brain, and no class.
 
 ### Hardware stats
 
@@ -223,7 +244,7 @@ Level 0 of each stat is free. Costs are cumulative: each number is the total pri
 | Shield | Cooldown in s | none, 10, 9, 8, 7, 6 | 0, 6, 9, 12, 15, 18 |
 | Piercing | Bullets that each of its bullets pierces | 0, 1 | 0, 4 |
 
-Every stat stops at its highest level. These limits keep the game sound: a bullet, for instance, never gets fast enough to pass through a wall. Buying every hardware stat at its highest level costs 135 points. An enemy's Muzzle level is also limited by its sector (see [Progression](#progression)).
+Every stat stops at its highest level. These limits keep the game sound: a bullet, for instance, never gets fast enough to pass through a wall. Buying every hardware stat at its highest level costs 135 points. An enemy's Muzzle level is also limited by its sector (see [Progression](#progression)), and its Piercing and Ricochet levels by its class (see [Classes](#classes)).
 
 ### Software stats
 
@@ -241,6 +262,8 @@ Software is the enemy's controller. Its price is a share of the tank's total bud
 | Ballistics | 2 | 10% | Finds single-bounce shots. |
 | Ballistics | 3 | 15% | Finds double-bounce shots, and shoots mines and crates near players. |
 
+Ballistics 3 is kept for the two classes whose bullets bounce twice (see [Classes](#classes)).
+
 ### Why prices differ
 
 A price should reflect how much more dangerous a level makes a tank, and not every stat grows the same way.
@@ -252,7 +275,8 @@ A price should reflect how much more dangerous a level makes a tank, and not eve
 | Entry fee | Mines, Shield, Piercing | The first level buys a new ability. Later levels, where there are any, only improve it. |
 | Share of budget | Brain, Ballistics | Software multiplies the value of the hardware it drives: the same brain is worth more in a better tank. |
 | Prerequisite | Tracks, Mines, Shield, Ballistics 2 and 3 | The stat is worthless alone, so the generator never buys it alone. |
-| Cap by sector | Muzzle | About a quarter of the enemies favor their gun and take the fastest one they can pay. The cap decides how fast that is in each sector, and the price decides what else such a tank can afford. |
+| Cap by sector | Muzzle | A sniper puts its points into its gun, and one enemy in eight is a sniper. The cap decides how fast that gun is in each sector, and the price decides what else such a tank can afford. |
+| Kept for a class | Piercing, Ricochet above level 1, Ballistics 3 | Bullets that pierce and bullets that bounce twice are the hardest to read. They stay rare, and the hue of the tank announces them. |
 
 The prerequisites are: Tracks need Engine 1. On enemies, Mines and Shield need Brain 1. Ballistics 2 needs Ricochet 1, and Ballistics 3 needs Ricochet 2.
 
@@ -274,35 +298,67 @@ The player tank spends 59 points. Free mode lets each player redistribute them o
 | Shield | 2 | 9 s cooldown | 9 |
 | **Total** | | | **59** |
 
+### Classes
+
+An enemy has a class: the stats that it favors when it spends its points. The class gives the tank its hue, so that it is read from afar, before the parts of the model are.
+
+| Class | Favors | Hue |
+|---|---|---|
+| All-rounder | Nothing: a bit of everything | Gray |
+| Sniper | Muzzle and Turret | Teal |
+| Scout | Engine and Tracks | Yellow |
+| Tactician | Brain and Ballistics | Green |
+| Trickster | Ricochet | Purple |
+| Lancer | Piercing | Orange |
+| Sapper | Mines and Shield | Pink |
+| Gunner | Magazine and Loader | Red |
+
+Blue is the players'. Some stats are kept for the classes that are about them:
+
+- Only a lancer has Piercing.
+- Only a trickster and a tactician have Ricochet above level 1, and Ballistics 3, which needs it.
+- A tactician has the highest Brain and Ballistics tiers that its sector allows.
+- A sapper has Brain 1 at least, without which it could use neither its mines nor its shield.
+
 ### Enemy generation
 
-Each enemy is generated from the seed, its sector and its index in the group:
+The enemies of a sector are generated together, from the seed, the sector and the number of tanks in the group. The group has one budget, which its tanks share unevenly, so that weak tanks stand next to strong ones:
 
-1. Draw the tank's budget, uniformly between 60% and 100% of the sector budget.
-2. Draw its software tiers within the sector's tier caps, and pay their shares.
-3. Draw a specialization: two or three favorite hardware stats that will receive most of the points.
-4. Spend the remaining points one level at a time, at random with the favorites weighted up, respecting prerequisites and the sector's cap on Muzzle, until nothing affordable is left.
+1. Draw the group's budget: between 70% and 90% of the sector budget for each of its tanks.
+2. Give every tank 30% of the sector budget. Each tank then draws a weight of 1, 1, 2, 2, 3 or 8, and the rest of the group's budget is shared by weight.
+3. The heaviest tank is the leader, which can have up to 1.5 times the sector budget. No other tank has more than the sector budget. What a tank can't take goes to the others.
 
-Specialization matters more than balance. A tank with a few strong stats has a recognizable shape and asks the players a clear question.
+A tank that is alone in its sector has the whole budget of its group, which is less than the sector budget. In a group of six, the strongest tank has about 2.6 times the points of the weakest.
+
+Each tank then spends its budget, from the seed, its sector and its index in the group:
+
+1. Draw its class, each of the eight with the same chance.
+2. Draw its software tiers within the sector's tier caps and what its class allows, and pay their shares. A Ballistics tier whose bounces the tank can't pay for drops until it can.
+3. Buy one level of each stat that its class favors.
+4. Spend the remaining points one level at a time, at random, respecting prerequisites, the sector's cap on Muzzle and what its class allows, until nothing affordable is left. The favorite stats weigh 20 together, and every other stat weighs 1.
+
+Specialization matters more than balance. A tank with a few strong stats has a recognizable shape and asks the players a clear question. In a group of six, four or five classes stand side by side.
 
 ### Reference builds
 
-The price list can express the enemy roster of Tanks!, in roughly the order in which that game introduces it. This is a sanity check of the prices, not a list of tanks to ship. The guns of the Sniper and of the Banker are the fastest that their sectors allow. The roster is taken from the [StrategyWiki page on Tanks!](https://strategywiki.org/wiki/Wii_Play/Tanks!).
+The price list can express the enemy roster of Tanks!, in roughly the order in which that game introduces it. This is a sanity check of the prices, not a list of tanks to ship. The guns of the Sniper and of the Banker are the fastest that their sectors allow. The names and the colors are those of Tanks!, not those of the classes. The roster is taken from the [StrategyWiki page on Tanks!](https://strategywiki.org/wiki/Wii_Play/Tanks!).
 
 | Build | Key stats | Budget | Possible from sector |
 |---|---|---|---|
-| Sentry (brown) | Stationary, 9 m/s bullets with 1 bounce, no brain | 10 | 1 |
-| Rover (gray) | 2 m/s, same gun, brain 1 | 15 | 2 |
+| Sentry (brown) | Stationary, 9 m/s bullets with 1 bounce, no brain | 10 | 2 |
+| Rover (gray) | 2 m/s, same gun, brain 1 | 15 | 3 |
 | Sniper (teal) | 2 m/s, 11 m/s bullets without bounce, brain 2, ballistics 1 | 19 | 6 |
 | Burster (pink) | 4 m/s, 3 rounds, brain 2 | 34 | 6 |
-| Miner (yellow) | 6 m/s, 4 mines, brain 1 | 39 | 7 |
+| Miner (yellow) | 6 m/s, 4 mines, brain 1 | 39 | 5 |
 | Banker (green) | Stationary, 13 m/s bullets with 2 bounces, ballistics 3 | 42 | 13 |
-| Raider (purple) | 6 m/s, 5 rounds, 2 mines, brain 3 | 72 | 19 |
-| Hunter (black) | 8 m/s, 17 m/s bullets, 2 mines, brain 4 | 96 | 46 |
+| Raider (purple) | 6 m/s, 5 rounds, 2 mines, brain 3 | 72 | 11 |
+| Hunter (black) | 8 m/s, 17 m/s bullets, 2 mines, brain 4 | 96 | 19 |
+
+A build is possible in a sector whose caps allow its tiers and its gun, and where a tank of a solo group in a corridor can have as many points. The Miner, the Raider and the Hunter first come as the leader of their group: no other tank can have their budget before sectors 7, 19 and 46. The Banker is a trickster or a tactician, the two classes whose bullets bounce twice.
 
 ### Appearance
 
-An enemy's model is assembled from its genome, so players can read a tank before fighting it. Every stat has its own visual channel, and none relies on color alone.
+An enemy's model is assembled from its genome, so players can read a tank before fighting it. Every stat has its own visual channel, and none relies on color alone. The hue tells nothing that the parts don't: a class is the stats that it favors.
 
 | Stat | Visual channel |
 |---|---|
@@ -318,12 +374,12 @@ An enemy's model is assembled from its genome, so players can read a tank before
 | Piercing | Pointed tip on the barrel. Its bullets have a pointed tip too, until they have pierced. |
 | Brain | Antennas, one per tier |
 | Ballistics | Sight on the turret, one lens per tier |
-| Total budget | Color intensity. Weak tanks are pale, strong ones saturated. |
-| Largest spending group | Hue: one for mobility, one for firepower, one for mines and shield, one for software |
+| Total budget | Color intensity. Weak tanks are pale, strong ones saturated, and even the weakest shows its hue. |
+| Class | Hue: one for each class, and gray for an all-rounder (see [Classes](#classes)) |
 
 The lenses of the sight and the pointed tip of the barrel are a pale tint of the tank's own hue.
 
-Player tanks have fixed models in reserved colors that no enemy uses. All tanks have the same size.
+Player tanks have one fixed model in one blue, which no enemy uses. Among several players, a tag over each of their tanks bears the number of its player, from P1 to P4. All tanks have the same size.
 
 ## Enemy brains
 
@@ -335,15 +391,15 @@ Brains are hand-written, one set of behavior per tier. In normal and hard mode t
 
 ## Progression
 
-Difficulty depends only on the sector number $n$, the mode and the number of players $P$. Six things grow with $n$: the enemies' budget, their number, their software tiers, the speed of their fastest bullets, their experience and the harshness of the terrain. In solo, flags also become sparser.
+Difficulty depends only on the sector number $n$, the mode and the number of players $P$. Six things grow with $n$: the enemies' budget, their number, their software tiers, the speed of their fastest bullets, their experience and the harshness of the terrain.
 
-The sector budget is the most points an enemy of sector $n$ can have:
+The sector budget is the measure of an enemy's budget in sector $n$. No tank has more, except the leader of its group, which can have up to 1.5 times as much (see [Enemy generation](#enemy-generation)):
 
 $$B(n) = B_{\max} - (B_{\max} - B_0)\, e^{-(n-1)/15}$$
 
-with $B_0 = 10$ and $B_{\max} = 100$ in normal mode. It rises fast at first and flattens toward the cap. The cap stays below the 135 points of a fully equipped tank, so even late enemies must specialize. Every stat also stops at its own highest level.
+with $B_0 = 10$ and $B_{\max} = 100$ in normal mode. It rises fast at first and flattens toward the cap. The cap stays below the 135 points of a fully equipped tank, so even late enemies must specialize. Only a leader can have more than the cap, and some leaders then have more points than they can spend (see [Open questions](#open-questions)). Every stat also stops at its own highest level.
 
-The number of enemies in a sector is $N(n) = \min(6,\ 1 + \lfloor n/3 \rfloor)$ in solo and $\lceil N(n)\,(1 + 0.5\,(P - 1)) \rceil$ with $P$ players. Arenas hold 1.5 times as many. The group of a sector is set when the sector is loaded, one sector ahead of the players. A sector that is too small for its whole group holds as many enemies as fit. That happens in the smallest arenas: to about one in a thousand with four players, and almost never with fewer.
+The number of enemies in a sector is $N(n) = \min(6,\ 1 + \lfloor n/3 \rfloor)$ in solo and $\lceil N(n)\,(1 + 0.5\,(P - 1)) \rceil$ with $P$ players. Arenas hold 1.5 times as many, in three waves (see [Arenas](#arenas)). The group of a sector is set when the sector is loaded, one sector ahead of the players. A sector that is too small for its whole group holds as many enemies as fit. That happens in the smallest arenas: to about one in a thousand with four players, and almost never with fewer.
 
 Experience is $E(n) = 1 - e^{-(n-1)/20}$, where 0 is a novice and 1 a flawless brain. It keeps closing in on flawless play without ever reaching it. The highest brain tier allowed is $\min(4,\ 1 + \lfloor (n-1)/5 \rfloor)$ and the highest ballistics tier is $\min(3,\ \lfloor (n+2)/5 \rfloor)$.
 
@@ -351,16 +407,18 @@ The highest Muzzle level an enemy can have is $\min(7,\ 2 + \lfloor (n+1)/5 \rfl
 
 The cap follows what a player can dodge. A player's tank that keeps moving needs about 0.55 s to react to a shot and move out of its way, which a bullet covers in 5 m at 9 m/s, 7.2 m at 13 m/s and 8.3 m at 15 m/s. Enemies with a brain keep 8 to 14 m away. Until sector 13, a player who keeps moving can therefore dodge every bullet at that distance. From sector 14, the fastest guns beat reaction at close range, and the players need distance, cover or the shield.
 
-| Sector | Sector budget | Enemies in solo | Highest brain tier | Highest ballistics tier | Highest Muzzle level | Experience |
-|---|---|---|---|---|---|---|
-| 1 | 10 | 1 | 1 | 0 | 2 | 0.00 |
-| 3 | 21 | 2 | 1 | 1 | 2 | 0.10 |
-| 5 | 31 | 2 | 1 | 1 | 3 | 0.18 |
-| 10 | 51 | 4 | 2 | 2 | 4 | 0.36 |
-| 15 | 65 | 6 | 3 | 3 | 5 | 0.50 |
-| 20 | 75 | 6 | 4 | 3 | 6 | 0.61 |
-| 30 | 87 | 6 | 4 | 3 | 7 | 0.77 |
-| 50 | 97 | 6 | 4 | 3 | 7 | 0.91 |
+| Sector | Sector budget | Most points of a tank in solo | Enemies in solo | Highest brain tier | Highest ballistics tier | Highest Muzzle level | Experience |
+|---|---|---|---|---|---|---|---|
+| 1 | 10 | 9 | 1 | 1 | 0 | 2 | 0.00 |
+| 3 | 21 | 29 | 2 | 1 | 1 | 2 | 0.10 |
+| 5 | 31 | 42 | 2 | 1 | 1 | 3 | 0.18 |
+| 10 | 51 | 76 | 4 | 2 | 2 | 4 | 0.36 |
+| 15 | 65 | 97 | 6 | 3 | 3 | 5 | 0.50 |
+| 20 | 75 | 112 | 6 | 4 | 3 | 6 | 0.61 |
+| 30 | 87 | 130 | 6 | 4 | 3 | 7 | 0.77 |
+| 50 | 97 | 145 | 6 | 4 | 3 | 7 | 0.91 |
+
+The most points of a tank are those of the leader of a group in a corridor. The tank of sector 1 is alone and has no group to lead.
 
 Every lever has a limit, so difficulty flattens after about sector 50. From there, a run is a test of endurance at full difficulty.
 
@@ -389,7 +447,7 @@ The map is an endless corridor that winds its way north. It usually heads north,
 |---|---|---|---|
 | Corridor | Most sectors | 40–80 m long, 8–20 m wide | Straight or bending |
 | Switchback | Rare | Same as a corridor | Runs south, for one sector at most |
-| Arena | Every 5 to 8 sectors | 32–36 m long, up to 36 m wide | Holds 1.5 times the enemies |
+| Arena | Every 5 to 8 sectors | 32–36 m long, up to 36 m wide | Holds 1.5 times the enemies, in three waves |
 
 | Element | Tanks | Bullets | Blasts |
 |---|---|---|---|
@@ -402,7 +460,7 @@ The generator guarantees five things:
 1. **A way through.** Every sector has a path from its entry to its barrier that is at least 3 m wide, without destroying anything.
 2. **No overlap.** Parts of the corridor that aren't neighbors stay at least 6 m apart.
 3. **Net progress.** The corridor never runs more than 60 m south of the northernmost point it has reached.
-4. **A fair start.** Enemies start at least 15 m from the barrier the players come through, and at least 3 m from the barrier that ends their sector.
+4. **A fair start.** Enemies start at least 15 m from the barrier the players come through, and at least 3 m from the barrier that ends their sector. In an arena, these are the places where the tanks of its waves appear.
 5. **Exact geometry.** Every wall vertex lies on a 1 m lattice. This gives walls at 0°, 45° and 90° plus the slopes 1:2 and 2:1, and it keeps generation identical on every platform.
 
 ## Multiplayer
@@ -419,11 +477,11 @@ Players in a browser can play solo and join games. They can't host, because a br
 
 A browser doesn't join as a desktop game does. It can't look for games on a network, and it only speaks to a game that shows it a certificate. Nobody vouches for the certificate that a hosted game makes for itself, so a browser takes it by its print alone. The host therefore hands out a link: the address of the game's page, followed by where the game is and by the print of its certificate. A page that is opened by that link joins the game at once. What a host hands out stays the same from one game to the next, until the host quits. A browser only joins from a page that it loaded from a secure address, or from the player's own machine.
 
-Players gather in a lobby, where the host picks the mode and the seed, and the run starts for everyone at once. Nobody can join a run in progress. A host who starts alone plays a solo run, with its lives and its flags.
+Players gather in a lobby, where the host picks the mode and the seed, and the run starts for everyone at once. Nobody can join a run in progress. A host who starts alone plays a solo run, with its lives and its checkpoints.
 
 The join screen lists the games of the local network, each with the address of its host and its number of players, and a click joins one. A game whose run is in progress, a full one and one of another version are listed for what they are, and can't be joined. A game is gone from the list a few seconds after its host closed it.
 
-Each player has a seat, which gives them their number and their color. The host has the first seat, and the others take the next ones in the order they joined. When a player leaves the lobby, those behind them move up. Seats don't change during a run: they move up again when the next one starts.
+Each player has a seat, which gives them their number, from P1 to P4. Every player's tank is the same blue, and the number tells them apart. The host has the first seat, and the others take the next ones in the order they joined. When a player leaves the lobby, those behind them move up. Seats don't change during a run: they move up again when the next one starts.
 
 When a run is over, the host decides what comes next: the same seed again, a new run, or the lobby. The host can also end a run from the menu, which brings everyone back to the lobby.
 
@@ -463,31 +521,33 @@ North is at the top of the screen by default. A player can rotate their own view
 
 ### Visual style
 
-The game is drawn as a technical drawing on a dark sheet, and nothing is lit: a solid shows its height by its darker sides. The floor carries a grid with a line every meter and a heavier one every 5 m. Walls are bands between two pale lines, destructible blocks are hatched and explosive crates are crossed in red. Tanks are assembled from parts by the game, not modeled by hand: the body is in the tank's color, and the other parts are dark and edged in pale lines. Bullets are the brightest objects on screen, in one color for the players' bullets and another for the enemies', and each leaves a short line behind it and a patch of light on the floor. A bullet is an elongated shell with one dark stripe for each bounce it has left: it loses a stripe at every bounce, and a plain bullet won't bounce again. The void outside the corridor is empty and dark.
+The game is drawn as a technical drawing on a dark sheet, and nothing is lit: a solid shows its height by its darker sides. The floor carries a grid with a line every meter and a heavier one every 5 m. Walls are bands between two pale lines, destructible blocks are hatched and explosive crates are crossed in red. Tanks are assembled from parts by the game, not modeled by hand: the body is in the tank's color, and the other parts are dark and edged in pale lines. Bullets are the brightest objects on screen. They are white whoever fired them, because any bullet can destroy a player's tank, and each casts a patch of light on the floor. A bullet is an elongated shell with one dark stripe for each bounce it has left: it loses a stripe at every bounce, and a plain bullet won't bounce again. The void outside the corridor is empty and dark.
 
-A line in dashes stands for what isn't there. A dormant enemy is the outline of its tank in dashes, flat on the floor and in its color, with every part that tells a stat. A bullet that is destroyed leaves a short burst of strokes in its color.
+A line in dashes stands for what isn't there. A dormant enemy is the outline of its tank in dashes, flat on the floor and in its color, with every part that tells a stat. A bullet that is destroyed leaves a short burst of white strokes. A life that the player can't take is the outline of itself in dashes.
+
+The floor of an arena bears two circles in dashes around its middle, in a dull red. The place where a tank is about to appear is marked by a red circle that closes in on it. A life on the floor is a square in the players' blue, like those that count the lives on the display, inside the circle within which it is taken.
 
 A fight leaves marks on the floor: a scalloped outline where a blast went off, a square in dashes where it took a block away, and a cross where a tank was destroyed. They last as long as their sector is loaded.
 
 ### Interface
 
-The interface is the margin of the drawing: ruled panels with square corners, labels in capitals, numbers in a monospaced typeface, and one accent color per player.
+The interface is the margin of the drawing: ruled panels with square corners, labels in capitals, numbers in a monospaced typeface, and one accent color, the blue of the players.
 
 | Screen | Content |
 |---|---|
 | Main menu | Solo, host, join, achievements, settings, quit |
 | Join | The games of the local network, the address of the host, join. In a browser: how to join by the link of a host, and that link again once it was followed. |
 | Lobby | Players, mode, seed, the address to join at or the link for browsers with a button that copies it (host), start (host) |
-| Heads-up display | Rounds and reload progress, mines left, shield state, sector number, lives (solo), seed and version, a scale and a north arrow, a ruler along the edge of the screen that gives the distance to the barrier, teammates' state and what to do about a wreck (multiplayer). Rounds, reload and mines are also on an arc under the player's own tank. |
+| Heads-up display | Rounds and reload progress, mines left, shield state, sector number, lives (solo), seed and version, a scale and a north arrow, a ruler along the edge of the screen that gives the distance to the barrier, the number of each wave of an arena as it is announced, a caption over a life on the floor (solo), a numbered square for each teammate's state, a tag with the number of each player over their tank and what to do about a wreck (multiplayer). Rounds, reload and mines are also on an arc under the player's own tank. |
 | Menu | Resume, settings, quit, and the seed with its version. In multiplayer, the host goes back to the lobby or closes the game, and the others leave it. |
-| Game over | Sectors cleared, time, kills, seed and version, the tank that ended the run with the list of its parts, retry, new run. In multiplayer, the choice is the host's. |
+| Game over | Sectors cleared, time, kills, seed and version, the tank that ended the run with its class and the list of its parts, retry, new run. In multiplayer, the choice is the host's. |
 | Settings | Controls, video, audio, accessibility |
 
 The game opens in full screen the first time. After that, it opens the way the player left it.
 
 ### Audio
 
-Sound carries information the eyes can miss: a shot fired off screen, a ricochet, a mine about to blow, a shield coming down. A basic set of such cues arrives with the solo loop (M4), in time for the first real playtest. The full sound pass comes later.
+Sound carries information the eyes can miss: a shot fired off screen, a ricochet, a mine about to blow, a shield coming down, a wave on its way, a tank that appears. A basic set of such cues arrives with the solo loop (M4), in time for the first real playtest. The full sound pass comes later.
 
 The music is one piece that never stops, made by the game as it plays, the same for every seed and on every platform. Its drums and its mode follow the place and the fight, and its melody follows the highest brain tier awake. It never covers a cue. Its specification is in [MUSIC.md](MUSIC.md).
 
@@ -523,7 +583,7 @@ Each milestone is playable and answers a question. From M1 on, the game runs as 
 | M1, Toy | One fixed room, a player tank, bullets, ricochets, piercing, mines, shield, one hand-written enemy | Do the speeds, the one-hit kills and the shield feel right? Is piercing fair to face? |
 | M2, Corridor | Seeded sectors, barriers, loading and unloading, view rotation, generation tests | Is an endless corridor interesting to drive through? Which way do players turn the view? |
 | M3, Genome | Stats, budgets, enemy generation, generated models, brain tiers 0 to 2 | Can players read a tank at a glance? Does equal budget mean equal danger? |
-| M4, Solo loop | Lives, flags, progression curves, heads-up display, main menu, settings, game over, records, basic sound cues, first web build | Is a 20-minute run fun? This is the first real playtest. |
+| M4, Solo loop | Lives, checkpoints, progression curves, heads-up display, main menu, settings, game over, records, basic sound cues, first web build | Is a 20-minute run fun? This is the first real playtest. |
 | M5, Co-op | Lobby, hosting, joining, local discovery, repair, enemy scaling, joining from a browser | Is it fun with friends at 100 ms of latency? |
 | M6, Modes | Achievements, chosen seed, free mode, hard mode, brain tiers 3 and 4 | Do the unlocks give reasons to come back? |
 | M7, Impossible mode | An experiment: enemies bred from the tanks that did best against the players | Do players feel the enemies adapting to them, and is it fun? |
@@ -534,5 +594,6 @@ Later, in no fixed order: controller support, local co-op on one screen (split s
 
 - How do internet games connect for hosts who can't open a port, before the official server exists?
 - In impossible mode, how exactly are enemies scored, and can brains learn fast enough within one run to matter?
-- Which exact colors do players, enemies and bullets use?
+- Which exact shades do the hues of the classes take? The players' blue and the white of the bullets are settled.
+- From about sector 20, some leaders have more points than they can spend: a tank without a brain buys neither mines nor a shield, and most classes buy neither Piercing nor a second bounce. Should a leader's share stop at what its tank can buy, or should what is left over raise its software?
 - How is the game distributed, at which secure address is its page published, and is the name free to use?
