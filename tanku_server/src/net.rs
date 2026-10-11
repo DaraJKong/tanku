@@ -165,10 +165,22 @@ impl Hosting {
     }
 }
 
-/// A server or a listener that was told to stop. It goes at the end of the frame, which has
-/// told its guests.
+/// The server or the listener of a game that was closed, and the seconds that it is still
+/// kept for.
 #[derive(Component)]
-struct Closing;
+struct Closing(f32);
+
+/// What has said its last words. It goes at the end of the frame, which sends them.
+#[derive(Component)]
+struct Closed;
+
+/// How long the server and the listener of a closed game are kept, in seconds. The guests
+/// learn that the game is closed from its lobby, which goes at once, and that word takes a
+/// moment to reach them. The goodbye of the network library doesn't do: it takes the
+/// connections away in the frame that sends it, and where browsers are taken, one time in two
+/// a guest then only sees its connection end, which a browser can't tell from one that was
+/// lost.
+const LAST_WORDS: f32 = 0.25;
 
 /// Turns away those who come while a run is in progress.
 #[derive(Debug)]
@@ -265,21 +277,14 @@ pub fn open(
     Ok(web)
 }
 
-/// Closes the game that this machine hosts. Its guests are told, the local network is told
-/// that the game is gone, and the ports are free again at the end of the frame.
+/// Closes the game that this machine hosts. Its lobby goes at once, which tells its guests,
+/// and the local network is told that the game is gone. The ports are free again a moment
+/// later.
 pub fn close(commands: &mut Commands, hosting: &Hosting) {
-    commands.trigger(Stop {
-        entity: hosting.server,
-    });
-    commands.entity(hosting.server).insert(Closing);
-    if let Some(listener) = hosting.listener {
-        commands.trigger(Unlink {
-            entity: listener,
-            reason: UnlinkReason::UserRequested(None),
-        });
-        commands.entity(listener).insert(Closing);
-    }
     commands.entity(hosting.game).despawn();
+    for kept in [hosting.server].into_iter().chain(hosting.listener) {
+        commands.entity(kept).insert(Closing(LAST_WORDS));
+    }
     commands.remove_resource::<Hosting>();
     commands.remove_resource::<Beacon>();
 }
@@ -342,6 +347,7 @@ impl Plugin for NetPlugin {
                 Update,
                 call_out.run_if(resource_exists::<Hosting>.and_then(resource_exists::<Beacon>)),
             )
+            .add_systems(Update, wind_down)
             .add_systems(Last, bury);
     }
 }
@@ -541,10 +547,35 @@ fn call_out(hosting: Res<Hosting>, lobbies: Query<&Lobby>, mut beacon: ResMut<Be
     }
 }
 
-/// A game that was closed lets go of its ports. The frame has told its guests by now.
-fn bury(mut commands: Commands, closed: Query<Entity, With<Closing>>) {
-    for stopped in &closed {
-        commands.entity(stopped).despawn();
+/// Stops the server of a closed game once its guests had the time to learn of it. Whoever is
+/// still there gets the goodbye of the network library, which this frame sends.
+fn wind_down(
+    mut commands: Commands,
+    time: Res<Time<Real>>,
+    mut kept: Query<(Entity, &mut Closing, Has<NetcodeServer>), Without<Closed>>,
+) {
+    for (entity, mut closing, server) in &mut kept {
+        closing.0 -= time.delta_secs();
+        if closing.0 > 0.0 {
+            continue;
+        }
+        if server {
+            commands.trigger(Stop { entity });
+        }
+        commands.entity(entity).insert(Closed);
+    }
+}
+
+/// A game that was closed lets go of its ports. The frame has said its last words by now.
+fn bury(mut commands: Commands, closed: Query<(Entity, Has<WebTransportServerIo>), With<Closed>>) {
+    for (entity, listens) in &closed {
+        if listens {
+            commands.trigger(Unlink {
+                entity,
+                reason: UnlinkReason::UserRequested(None),
+            });
+        }
+        commands.entity(entity).despawn();
     }
 }
 

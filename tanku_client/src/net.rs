@@ -73,9 +73,16 @@ struct Lookup {
     found: Task<Option<SocketAddr>>,
 }
 
-/// A connection that the player ended. It goes once the host was told.
+/// A connection that the player ended, and the seconds that it is still kept for. It goes
+/// once the host was told.
 #[derive(Component)]
-struct Leaving;
+struct Leaving(f32);
+
+/// How long a connection that ended is kept, in seconds, for its last words to go out. Over
+/// UDP they are out by the end of the frame. The way browsers join, they leave a moment
+/// later, and a connection that is gone before them leaves its host waiting for a guest who
+/// has left.
+const LAST_WORDS: f32 = 0.25;
 
 /// How many letters the print of a certificate has: the 32 bytes of a SHA-256, two a byte.
 const PRINT_LENGTH: usize = 64;
@@ -392,7 +399,7 @@ fn direct(
                     commands.trigger(Disconnect {
                         entity: joined.client,
                     });
-                    commands.entity(joined.client).insert(Leaving);
+                    commands.entity(joined.client).insert(Leaving(LAST_WORDS));
                     commands.remove_resource::<Joined>();
                     commands.remove_resource::<Run>();
                     commands.remove_resource::<Field>();
@@ -437,6 +444,9 @@ fn find_the_host(
     }
 }
 
+/// What a guest is told when its host closed the game.
+const CLOSED: &str = "The host closed the game.";
+
 /// Why a connection ended, as the player is told.
 fn farewell(reason: &DisconnectedReason, joined: &Joined) -> String {
     let address = &joined.address;
@@ -444,7 +454,7 @@ fn farewell(reason: &DisconnectedReason, joined: &Joined) -> String {
         // A host that closes its game says so. Where browsers are taken, its line may close
         // before its word is through, which says the same.
         DisconnectedReason::ByPeer(_) | DisconnectedReason::LinkFailed(UnlinkReason::ByPeer(_)) => {
-            "The host closed the game.".to_string()
+            CLOSED.to_string()
         }
         _ if joined.seated => "The connection to the host was lost.".to_string(),
         DisconnectedReason::TransportError(error) if error.contains("Denied") => {
@@ -476,12 +486,13 @@ fn watch(
     let Ok((connected, disconnected)) = clients.get(joined.client) else {
         return;
     };
-    let seated = lobbies
-        .single()
-        .ok()
-        .and_then(|lobby| lobby.seat_of(Member::Guest(joined.id)));
+    let lobby = lobbies.single().ok();
+    let seated = lobby.and_then(|lobby| lobby.seat_of(Member::Guest(joined.id)));
     let ended = match (disconnected, connected, seated) {
         (Some(disconnected), ..) => Some(farewell(&disconnected.reason, &joined)),
+        // A host that closes its game takes the lobby away first, and its guests leave on
+        // that: the connection is still whole then, and carries the word to every guest.
+        (None, true, None) if joined.seated && lobby.is_none() => Some(CLOSED.to_string()),
         (None, true, Some(given)) => {
             // The lobby is where a guest comes in.
             if !joined.seated {
@@ -510,7 +521,7 @@ fn watch(
     commands.trigger(Disconnect {
         entity: joined.client,
     });
-    commands.entity(joined.client).insert(Leaving);
+    commands.entity(joined.client).insert(Leaving(LAST_WORDS));
     commands.remove_resource::<Joined>();
     commands.remove_resource::<Run>();
     commands.remove_resource::<Field>();
@@ -523,11 +534,14 @@ fn watch(
     next_overlay.set(Overlay::None);
 }
 
-/// A connection that ended goes once the frame has sent what was left to say. Everything it
-/// received goes with it.
-fn let_go(mut commands: Commands, gone: Query<Entity, With<Leaving>>) {
-    for client in &gone {
-        commands.entity(client).despawn();
+/// A connection that ended goes once its last words are out. What it received went when it
+/// ended.
+fn let_go(mut commands: Commands, time: Res<Time<Real>>, mut gone: Query<(Entity, &mut Leaving)>) {
+    for (client, mut leaving) in &mut gone {
+        leaving.0 -= time.delta_secs();
+        if leaving.0 <= 0.0 {
+            commands.entity(client).despawn();
+        }
     }
 }
 
@@ -1146,6 +1160,117 @@ pub(crate) mod tests {
             screen(games[1]) == Screen::Lobby
         });
         assert_eq!(own_seat(&guest), 1);
+    }
+
+    #[test]
+    fn a_host_knows_at_once_that_a_guest_left_whichever_way_it_came() {
+        for by_link in [false, true] {
+            let port = free_port();
+            let mut host = host_with(port, Some(free_port()));
+            let mut guest = game();
+            // With the patience of a real game, a host that isn't told waits 5 s.
+            for game in [&mut host, &mut guest] {
+                game.insert_resource(Patience(5));
+            }
+            let asked = if by_link {
+                code(&host)
+            } else {
+                format!("127.0.0.1:{port}")
+            };
+            ask(&mut guest, SessionRequest::Join(asked));
+            run_until("the lobby", &mut [&mut host, &mut guest], |games| {
+                screen(games[1]) == Screen::Lobby
+            });
+            ask(&mut guest, SessionRequest::Leave);
+            let left = std::time::Instant::now();
+            run_until("the departure", &mut [&mut host, &mut guest], |games| {
+                let world = games[0].world_mut();
+                world.query::<&Seat>().iter(world).count() == 0
+            });
+            let took = left.elapsed();
+            assert!(
+                took < Duration::from_secs(2),
+                "{took:?}, by a link: {by_link}"
+            );
+            // The guest has nothing left of the game, though its last words took a moment.
+            let world = guest.world_mut();
+            assert_eq!(world.query::<&Lobby>().iter(world).count(), 0);
+        }
+    }
+
+    /// Why the connections of a game ended, in the order in which they did.
+    #[derive(Resource, Default)]
+    struct Endings(Vec<DisconnectedReason>);
+
+    fn note_endings(
+        trigger: On<Add, Disconnected>,
+        ended: Query<&Disconnected>,
+        mut endings: ResMut<Endings>,
+    ) {
+        if let Ok(ended) = ended.get(trigger.entity) {
+            endings.0.push(ended.reason.clone());
+        }
+    }
+
+    #[test]
+    fn a_host_that_closes_its_game_tells_its_guests_before_it_stops_listening() {
+        for by_link in [false, true] {
+            let port = free_port();
+            let mut host = host_with(port, Some(free_port()));
+            let mut guest = game();
+            guest.init_resource::<Endings>().add_observer(note_endings);
+            let asked = if by_link {
+                code(&host)
+            } else {
+                format!("127.0.0.1:{port}")
+            };
+            ask(&mut guest, SessionRequest::Join(asked));
+            run_until("the lobby", &mut [&mut host, &mut guest], |games| {
+                screen(games[1]) == Screen::Lobby
+            });
+            ask(&mut host, SessionRequest::Leave);
+            run_until("the way home", &mut [&mut host, &mut guest], |games| {
+                games[1].world().resource::<Notice>().0.is_some()
+            });
+            let told = guest.world().resource::<Notice>().0.clone().unwrap();
+            assert_eq!(told, CLOSED, "by a link: {by_link}");
+            // The guest left on the word of its host. Its connection had not been ended for
+            // it, which is all that a guest in a browser would have seen of a host that
+            // stopped listening at once.
+            let endings = &guest.world().resource::<Endings>().0;
+            let ended_for_it = |reason: &DisconnectedReason| {
+                matches!(
+                    reason,
+                    DisconnectedReason::ByPeer(_) | DisconnectedReason::LinkFailed(_)
+                )
+            };
+            assert!(!endings.iter().any(ended_for_it), "{endings:?}");
+        }
+    }
+
+    #[test]
+    fn a_guest_whose_lobby_goes_knows_that_its_host_closed_the_game() {
+        let port = free_port();
+        let mut host = host(port);
+        let mut guest = guest(port);
+        run_until("the lobby", &mut [&mut host, &mut guest], |games| {
+            screen(games[1]) == Screen::Lobby
+        });
+        // The lobby goes, and nothing else does: the host still listens.
+        let lobby = host.world().resource::<Hosting>().game();
+        host.world_mut().despawn(lobby);
+        run_until("the way home", &mut [&mut host, &mut guest], |games| {
+            games[1].world().resource::<Notice>().0.is_some()
+        });
+        let told = guest.world().resource::<Notice>().0.clone().unwrap();
+        assert_eq!(told, CLOSED);
+        assert_eq!(screen(&guest), Screen::Menu);
+        assert_eq!(*guest.world().resource::<Session>(), Session::Solo);
+        // The host is told that the guest left, as of any guest who leaves.
+        run_until("the departure", &mut [&mut host, &mut guest], |games| {
+            let world = games[0].world_mut();
+            world.query::<&Seat>().iter(world).count() == 0
+        });
     }
 
     #[test]
