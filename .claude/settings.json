@@ -15,10 +15,7 @@
     ],
     "ask": [
       "Bash(git push *)",
-      "Bash(git pull *)",
-      "Bash(git merge *)",
-      "Bash(git rebase *)",
-      "Bash(git reset *)"
+      "Bash(git pull *)"
     ],
     "deny": [
       "Bash(git push --force *)"
