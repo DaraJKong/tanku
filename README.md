@@ -167,6 +167,8 @@ Development builds read a script from `TANKU_DEV_SCRIPT`: commands separated by 
 
 A scripted run opens no window and needs no display: it draws into an image of 1920 by 1080 pixels, which the `shot` command saves. It makes no sound, starts from the default settings, and neither reads nor writes the saved settings and records.
 
+The command `canvas` gives the image another size, to see what a smaller window shows: `canvas 1280 720` draws as a window of 1280 by 720 pixels does. A third number is the scale of the screen: `canvas 1920 1080 1.5` draws as a screen of 1920 by 1080 pixels does when its system enlarges everything by half, which leaves the game 1280 by 720 pixels of its own.
+
 ```bash
 TANKU_DEV_SCRIPT="start TANKU; wait 1; warp 12; wait 1; peek 0; wait 1; shot sector12.png; quit" cargo run -p tanku_client
 ```
