@@ -291,7 +291,8 @@ struct Flown {
     /// Whether the bullet flew into something that ends it. The host will take it away.
     spent: bool,
     /// The tick at which the bullet came upon the tank of the guest's own player, or upon its
-    /// bubble, which ends it too. That holds until the host tells otherwise.
+    /// bubble, which ends it too. That holds until the host tells otherwise. It is the tick at
+    /// which the host gets to end the bullet, whatever the clock of the guest says by then.
     stopped: Option<u32>,
 }
 
@@ -489,13 +490,14 @@ fn show_tanks(
 }
 
 /// When the clock of the guest is set anew, the ticks of what was asked and shown move with
-/// it.
+/// it. The tick at which a bullet ended on the tank of the guest's own player stays: the
+/// host ends the bullet at that tick whatever the clock of the guest says, and the guest has
+/// shown its end already.
 fn shift_ticks(
     shift: On<LocalTimelineShift>,
     mut orders: ResMut<Orders>,
     mut echoes: ResMut<Echoes>,
     mut helms: Query<&mut Ahead>,
-    mut bullets: Query<&mut Flown>,
 ) {
     let moved = |tick: &mut u32| *tick = tick.wrapping_add_signed(shift.delta);
     orders.asked.iter_mut().for_each(|(tick, _)| moved(tick));
@@ -505,11 +507,6 @@ fn shift_ticks(
             .shown
             .iter_mut()
             .for_each(|shown| moved(&mut shown.tick));
-    }
-    for mut bullet in &mut bullets {
-        if let Some(stopped) = &mut bullet.stopped {
-            moved(stopped);
-        }
     }
 }
 
@@ -1808,8 +1805,10 @@ mod tests {
         assert!(here.arms.contains_key(&(last, 1)));
     }
 
-    #[test]
-    fn a_bullet_ends_on_the_bubble_of_a_guest_as_soon_as_it_gets_there() {
+    /// A host whose player has fired a shot at the tank of the guest, which stands well to
+    /// the north of its own, and a guest whose player has raised the shield as the bullet
+    /// came close on their screen.
+    fn a_shot_at_a_bubble() -> (App, App) {
         let (mut host, mut guest) = pair(60, 0, 0.0);
         // The guest's tank drives north, away from the host's.
         let since = tick(&guest);
@@ -1854,6 +1853,12 @@ mod tests {
             order(games[1], asked);
             close
         });
+        (host, guest)
+    }
+
+    #[test]
+    fn a_bullet_ends_on_the_bubble_of_a_guest_as_soon_as_it_gets_there() {
+        let (mut host, mut guest) = a_shot_at_a_bubble();
         run_until("the end", &mut [&mut host, &mut guest], |games| {
             bullets(games[0]) == 0 && bullets(games[1]) == 0
         });
@@ -1890,6 +1895,45 @@ mod tests {
         assert_eq!((there_count, here_count), (1, 1));
         let late = here_tick.unwrap() as i64 - there_tick.unwrap() as i64;
         assert!(late.abs() <= 1, "the bullet burst {late} ticks late");
+    }
+
+    #[test]
+    fn a_bullet_that_ended_on_a_bubble_stays_ended_though_the_clock_of_the_guest_is_set_back() {
+        let (mut host, mut guest) = a_shot_at_a_bubble();
+        // The bullet ends on the bubble on the guest's screen, and the host still has it.
+        run_until(
+            "the end on the guest's screen",
+            &mut [&mut host, &mut guest],
+            |games| bullets(games[1]) == 0,
+        );
+        assert_eq!(bullets(&mut host), 1);
+        // The clock of the guest is set back by hand, as lightyear sets it when the host
+        // stood still for a moment: to before the tick at which the bullet came upon the
+        // bubble.
+        let since = tick(&host);
+        guest.world_mut().trigger(LocalTimelineShift { delta: -6 });
+        let back = RefCell::new(false);
+        run_until("the host's word", &mut [&mut host, &mut guest], |games| {
+            *back.borrow_mut() |= bullets(games[1]) > 0;
+            past(games[0], since) > 45
+        });
+
+        // The bullet didn't show again, and it burst on the bubble once, in sound as in
+        // sight: the host ended it at the tick at which the guest had seen it end.
+        assert!(!back.into_inner(), "the bullet showed again");
+        let count =
+            |game: &App, of: &SimEvent| news(game, |event| discriminant(event) == discriminant(of));
+        let (blocked, burst) = (
+            SimEvent::ShieldBlocked { at: Vec2::ZERO },
+            SimEvent::BulletDestroyed {
+                at: Vec2::ZERO,
+                team: tanku_core::sim::Team::Players,
+            },
+        );
+        assert_eq!((count(&host, &blocked), count(&guest, &blocked)), (1, 1));
+        assert_eq!((count(&host, &burst), count(&guest, &burst)), (1, 1));
+        let world = host.world_mut();
+        assert_eq!(world.query::<&Wreck>().iter(world).count(), 0);
     }
 
     /// Destroys the tank of the host's own player, and waits for the guest to have the wreck.
