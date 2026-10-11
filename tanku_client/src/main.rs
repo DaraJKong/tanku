@@ -25,6 +25,7 @@ mod scars;
 mod scene;
 mod session;
 mod settings;
+mod sheet;
 mod storage;
 mod tags;
 mod theme;
@@ -85,9 +86,9 @@ fn main() {
         .init_state::<Screen>()
         .init_state::<Overlay>()
         .add_plugins((crew::plugin, session::plugin))
+        .add_plugins((settings::plugin, sheet::plugin))
         .add_plugins((
             theme::plugin,
-            settings::plugin,
             input::plugin,
             camera::plugin,
             scene::plugin,
