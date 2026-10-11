@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     rules::MAX_PLAYERS,
+    seed::VERSION,
     sim::{
         Barrier, Block, Bullet, Enemy, ExplosiveCrate, Flag, Gun, Mine, Motion, Player, Position,
         Protected, Run, SectorIndex, Shield, SimEvent, Tank, TankCommand, Wreck,
@@ -28,6 +29,18 @@ use crate::{
 /// the game was last raised. Two builds that don't count the same don't speak the same, so
 /// they don't join each other: raise this with every such change.
 pub const REVISION: u32 = 3;
+
+/// The port a game listens on unless it is told otherwise.
+pub const PORT: u16 = 28405;
+
+/// What tells one build of the game from another on the network: players must run the same
+/// version, and builds that speak the same.
+pub fn protocol_id() -> u64 {
+    let told_apart_by = VERSION.bytes().chain(REVISION.to_le_bytes());
+    told_apart_by.fold(0xCBF2_9CE4_8422_2325, |hash, byte| {
+        (hash ^ byte as u64).wrapping_mul(0x0000_0100_0000_01B3)
+    })
+}
 
 /// Who sits in a seat of a game that several players share.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -120,6 +133,22 @@ impl Plugin for ProtocolPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn builds_that_speak_differently_tell_each_other_apart() {
+        // The same build always goes by the same number.
+        assert_eq!(protocol_id(), protocol_id());
+        // Another version, or another revision of what is told, goes by another.
+        let number = |version: &str, revision: u32| {
+            let told_apart_by = version.bytes().chain(revision.to_le_bytes());
+            told_apart_by.fold(0xCBF2_9CE4_8422_2325u64, |hash, byte| {
+                (hash ^ byte as u64).wrapping_mul(0x0000_0100_0000_01B3)
+            })
+        };
+        assert_eq!(protocol_id(), number(VERSION, REVISION));
+        assert_ne!(protocol_id(), number(VERSION, REVISION + 1));
+        assert_ne!(protocol_id(), number("0.0.0", REVISION));
+    }
 
     #[test]
     fn a_lobby_tells_who_sits_where() {

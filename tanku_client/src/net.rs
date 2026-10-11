@@ -26,14 +26,14 @@ use lightyear::{
 use tanku_core::{
     discovery::{Reach, local_address},
     map::Corridor,
-    protocol::{Lobby, Member, ProtocolPlugin, RunState},
+    protocol::{Lobby, Member, PORT, ProtocolPlugin, RunState, protocol_id},
     rules::TICK_RATE,
     seed::VERSION,
     sim::{Player, Run, RunPhase, RunRequest, Sector, SectorIndex, SimEvent, TankCommand},
 };
 use tanku_server::{
     field::Field,
-    net::{self as server, Hosting, PORT, Seat, protocol_id},
+    net::{self as server, Hosting, Seat},
 };
 
 use crate::{

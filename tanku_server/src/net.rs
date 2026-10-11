@@ -31,9 +31,8 @@ use lightyear::{
 };
 use tanku_core::{
     discovery::{Announcement, Announcer, Reach},
-    protocol::{Lobby, Member, REVISION, Reliable, RunState, Told},
+    protocol::{Lobby, Member, Reliable, RunState, Told, protocol_id},
     rules::{MAX_PLAYERS, TICK_RATE},
-    seed::VERSION,
     sim::{
         Bullet, Gun, Motion, Player, Position, Run, RunPhase, RunRequest, Shield, SimEvent, Tank,
         TankCommand,
@@ -42,8 +41,6 @@ use tanku_core::{
 
 use crate::field::InSector;
 
-/// The port a game listens on unless it is told otherwise.
-pub const PORT: u16 = 28405;
 /// The seat of the player behind a connection. The host has the first seat, and the guests
 /// the ones that follow.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
@@ -102,15 +99,6 @@ impl ConnectionRequestHandler for Doorkeeper {
         let open = self.0.load(Ordering::Relaxed);
         (!open).then(|| DeniedReason::Custom("a run is in progress".into()))
     }
-}
-
-/// What tells one build of the game from another on the network: players must run the same
-/// version, and builds that speak the same.
-pub fn protocol_id() -> u64 {
-    let told_apart_by = VERSION.bytes().chain(REVISION.to_le_bytes());
-    told_apart_by.fold(0xCBF2_9CE4_8422_2325, |hash, byte| {
-        (hash ^ byte as u64).wrapping_mul(0x0000_0100_0000_01B3)
-    })
 }
 
 /// Opens a game on a port of this machine, for others to join, and announces it where games
