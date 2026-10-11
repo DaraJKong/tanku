@@ -104,10 +104,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        net::{
-            HostPort,
-            tests::{ask, free_port, game, run_until, screen},
-        },
+        host::HostPort,
+        net::tests::{ask, free_port, game, run_until, screen},
         session::SessionRequest,
     };
 

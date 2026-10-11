@@ -9,14 +9,14 @@ mod discovery;
 mod draft;
 mod effects;
 mod exhibit;
+#[cfg(not(target_arch = "wasm32"))]
+mod host;
 mod hud;
 mod input;
 mod menu;
-#[cfg(not(target_arch = "wasm32"))]
 mod mirror;
 mod models;
 mod music;
-#[cfg(not(target_arch = "wasm32"))]
 mod net;
 mod repair;
 mod report;
@@ -103,8 +103,7 @@ fn main() {
             repair::plugin,
         ))
         .add_plugins((audio::plugin, music::plugin));
-    // A browser neither hosts nor joins yet.
-    #[cfg(not(target_arch = "wasm32"))]
+    // A browser joins games and hosts none.
     app.add_plugins(net::NetPlugin);
     if options.playtest {
         // The lives count again once the pause menu says so.

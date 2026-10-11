@@ -22,7 +22,7 @@ use crate::{
     cli::Options,
     crew::LocalSeat,
     exhibit::{self, Exhibit, Show},
-    report,
+    net, report,
     scene::Paints,
     session::{Found, Game, Invitation, Notice, Session, SessionRequest},
     settings::{Action, Binding, Records, Settings},
@@ -56,6 +56,8 @@ enum Press {
     Start,
     /// In a lobby: the host draws another seed.
     Reseed,
+    /// In a lobby: the host is shown how players of that kind join.
+    Show(Way),
     /// The host ends the run and brings everyone back to the lobby.
     Regroup,
     OpenSettings,
@@ -112,6 +114,15 @@ struct FoundList;
 #[derive(Resource, Default)]
 struct Address(String);
 
+/// The players whom the lobby of a host tells how to join: those at a desktop game, or
+/// those in a browser.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Way {
+    #[default]
+    Desktop,
+    Browser,
+}
+
 /// The sector a playtest offers to skip to.
 #[derive(Resource)]
 struct Destination(u32);
@@ -141,6 +152,7 @@ pub fn plugin(app: &mut App) {
     app.init_resource::<Capture>()
         .init_resource::<Outcome>()
         .init_resource::<Address>()
+        .init_resource::<Way>()
         .insert_resource(Destination(1))
         .add_systems(OnEnter(Screen::Menu), main_menu)
         .add_systems(OnEnter(Screen::Join), join_screen)
@@ -461,13 +473,11 @@ fn main_menu(
                     },
                 ));
                 primary(parent, "Solo", Press::Solo);
-                // A browser can't accept connections, so it hosts no game. It joins none yet.
+                // A browser can't accept connections, so it hosts no game.
                 if cfg!(not(target_arch = "wasm32")) {
                     button(parent, "Host a game", Press::Host);
-                    button(parent, "Join a game", Press::OpenJoin);
-                } else {
-                    placeholder(parent, "Join a game");
                 }
+                button(parent, "Join a game", Press::OpenJoin);
                 placeholder(parent, "Achievements");
                 button(parent, "Settings", Press::OpenSettings);
                 // A browser tab is closed by the browser.
@@ -670,6 +680,11 @@ fn tell_how_it_goes(
     mut lines: Query<(&mut Text, &mut TextColor), With<StatusLine>>,
 ) {
     let (wanted, color) = match (&notice.0, *session, *screen.get()) {
+        // A browser was given a link, and no address was typed.
+        (_, Session::Guest, Screen::Join) if cfg!(target_arch = "wasm32") => (
+            "Looking for the game of the link...".to_string(),
+            theme::TEXT_DIM,
+        ),
         (_, Session::Guest, Screen::Join) => (
             format!("Looking for a game at {}...", address.0.trim()),
             theme::TEXT_DIM,
@@ -716,6 +731,23 @@ fn join_screen(mut commands: Commands, settings: Res<Settings>, mut address: Res
                         ..default()
                     },
                 ));
+                // A browser neither looks around a network nor joins by an address alone.
+                if cfg!(target_arch = "wasm32") {
+                    section(parent, "Link of the host");
+                    for told in [
+                        "A browser joins a game by the link that its host hands out.",
+                        "Open that link in this browser, or paste it into this page.",
+                    ] {
+                        line(parent, told, theme::TEXT_DIM);
+                    }
+                    // A link that was followed before can be followed again.
+                    if net::link().is_some() {
+                        primary(parent, "Join the game of the link", Press::Join);
+                    }
+                    button(parent, "Back", Press::Abandon);
+                    status_line(parent);
+                    return;
+                }
                 section(parent, "Games on this network");
                 parent.spawn((
                     FoundList,
@@ -813,6 +845,90 @@ fn list_games(mut commands: Commands, found: Res<Found>, lists: Query<(Entity, R
     }
 }
 
+/// What a host hands out for browsers, as the end of a link, in lines that fit the lobby:
+/// where the game takes browsers, then the print of its certificate in two halves.
+fn link_ending(code: &str) -> [String; 3] {
+    let (place, print) = code.split_once('/').unwrap_or((code, ""));
+    let (first, second) = print.split_at(print.len() / 2);
+    [format!("#{place}/"), first.to_string(), second.to_string()]
+}
+
+/// A line of the lobby that tells how to join, with the button that shows how players of
+/// the other kind do.
+fn way_row(parent: &mut ChildSpawnerCommands, told: impl Bundle, other: Option<(&str, Way)>) {
+    let row = Node {
+        justify_content: JustifyContent::SpaceBetween,
+        align_items: AlignItems::Center,
+        column_gap: px(12),
+        ..default()
+    };
+    parent.spawn(row).with_children(|row| {
+        row.spawn(told);
+        if let Some((name, way)) = other {
+            small(row, name, 150.0, Press::Show(way));
+        }
+    });
+}
+
+/// How others join the game of this machine, in the lobby of its host: the players at a
+/// desktop game, or those in a browser.
+fn ways_to_join(parent: &mut ChildSpawnerCommands, invitation: &Invitation, way: Way) {
+    let code = invitation.web.as_ref().filter(|_| way == Way::Browser);
+    if let (Some(code), Some(port)) = (code, invitation.web_port) {
+        let [place, first, second] = link_ending(code);
+        section(parent, "Link for a browser");
+        let other = Some(("For a desktop", Way::Desktop));
+        way_row(parent, theme::figure(place, 20.0, theme::TEXT), other);
+        for half in [first, second] {
+            parent.spawn(theme::figure(half, 15.0, theme::TEXT));
+        }
+        let hint = "A player in a browser opens the page of the game with this at the end of \
+                    its address. The log of this game has it too, to copy.";
+        line(parent, hint, theme::TEXT_DIM);
+        let hint = format!(
+            "From the internet, your public address goes in place of this one, and UDP port \
+             {port} must reach this machine."
+        );
+        line(parent, hint, theme::TEXT_DIM);
+        return;
+    }
+    section(parent, "Address");
+    let other = invitation
+        .web
+        .is_some()
+        .then_some(("For a browser", Way::Browser));
+    match &invitation.address {
+        Some(address) => {
+            way_row(
+                parent,
+                theme::figure(address.clone(), 24.0, theme::TEXT),
+                other,
+            );
+            let hint = "Players on this network find the game on their join screen, or type \
+                        this address there.";
+            line(parent, hint, theme::TEXT_DIM);
+        }
+        None => {
+            let hint = "This machine has no address on a network.";
+            way_row(parent, theme::text(hint, 17.0, theme::TEXT_DIM), other);
+        }
+    }
+    line(
+        parent,
+        format!(
+            "From the internet, they need your public address, and UDP port {} must reach \
+             this machine.",
+            invitation.port
+        ),
+        theme::TEXT_DIM,
+    );
+    // A game that can't listen for browsers says why none can join.
+    if let (None, Some(port)) = (&invitation.web, invitation.web_port) {
+        let hint = format!("No browser can join: UDP port {port} is taken on this machine.");
+        line(parent, hint, theme::TEXT_DIM);
+    }
+}
+
 /// The host draws a seed whenever the players gather in the lobby.
 fn draw_a_seed(
     session: Res<Session>,
@@ -880,14 +996,15 @@ fn lobby_screen(
     lobbies: Query<Ref<Lobby>>,
     session: Res<Session>,
     seat: Res<LocalSeat>,
-    invitation: Res<Invitation>,
+    (invitation, way): (Res<Invitation>, Res<Way>),
     options: Res<Options>,
     roots: Query<Entity, With<LobbyRoot>>,
 ) {
     let Ok(lobby) = lobbies.single() else {
         return;
     };
-    let stale = lobby.is_changed() || seat.is_changed() || invitation.is_changed();
+    let stale =
+        lobby.is_changed() || seat.is_changed() || invitation.is_changed() || way.is_changed();
     if !roots.is_empty() && !stale {
         return;
     }
@@ -945,28 +1062,7 @@ fn lobby_screen(
                     }
                 });
                 if host {
-                    section(parent, "Address");
-                    match &invitation.address {
-                        Some(address) => {
-                            parent.spawn(theme::figure(address.clone(), 24.0, theme::TEXT));
-                            let hint = "Players on this network find the game on their join \
-                                        screen, or type this address there.";
-                            line(parent, hint, theme::TEXT_DIM);
-                        }
-                        None => {
-                            let hint = "This machine has no address on a network.";
-                            line(parent, hint, theme::TEXT_DIM);
-                        }
-                    }
-                    line(
-                        parent,
-                        format!(
-                            "From the internet, they need your public address, and UDP port {} \
-                             must reach this machine.",
-                            invitation.port
-                        ),
-                        theme::TEXT_DIM,
-                    );
+                    ways_to_join(parent, &invitation, *way);
                     let start = if lobby.players() > 1 {
                         "Start"
                     } else {
@@ -1339,7 +1435,7 @@ fn press(
     mut destination: ResMut<Destination>,
     (options, run, time): (Res<Options>, Option<Res<Run>>, Res<Time<Real>>),
     (session, mut address, mut notice): (Res<Session>, ResMut<Address>, ResMut<Notice>),
-    found: Res<Found>,
+    (found, mut way): (Res<Found>, ResMut<Way>),
     mut lobbies: Query<&mut Lobby>,
     mut requests: MessageWriter<RunRequest>,
     mut session_requests: MessageWriter<SessionRequest>,
@@ -1386,7 +1482,14 @@ fn press(
                 notice.0 = None;
                 next_screen.set(Screen::Join);
             }
-            Press::Join => ask_to_join(&address, &mut settings, &mut session_requests),
+            // A browser joins the game of its link, and a desktop game the one at the
+            // address that was typed.
+            Press::Join => match net::link() {
+                Some(link) => {
+                    session_requests.write(SessionRequest::Join(link));
+                }
+                None => ask_to_join(&address, &mut settings, &mut session_requests),
+            },
             // A game that was found is joined as if its address had been typed. While a
             // game is being joined, the address stays the one of that game.
             Press::JoinFound(id) => {
@@ -1404,6 +1507,7 @@ fn press(
                     lobby.seed = fresh_seed();
                 }
             }
+            Press::Show(wanted) => *way = wanted,
             // The guests follow their host to the lobby.
             Press::Regroup => {
                 requests.write(RunRequest::Abandon);
@@ -1604,6 +1708,16 @@ mod tests {
         assert_eq!(new_seed(&chosen, 2), "85GVTHQA");
         let random = Options::default();
         assert_ne!(new_seed(&random, 1), new_seed(&random, 2));
+    }
+
+    #[test]
+    fn what_a_host_hands_out_for_browsers_fits_the_lobby() {
+        let print = "0123456789abcdef".repeat(4);
+        let lines = link_ending(&format!("192.168.0.21:28406/{print}"));
+        assert_eq!(lines[0], "#192.168.0.21:28406/");
+        // Put end to end, the lines are the end of the link.
+        assert_eq!(lines.concat(), format!("#192.168.0.21:28406/{print}"));
+        assert!(lines.iter().all(|line| line.len() <= 32));
     }
 
     #[test]

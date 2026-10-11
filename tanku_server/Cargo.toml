@@ -10,8 +10,16 @@ workspace = true
 [dependencies]
 # Headless: no window and no renderer.
 bevy = { workspace = true, features = ["std", "multi_threaded", "bevy_log"] }
-# For games of several players. A web build has no server that others can reach.
-lightyear = { workspace = true, optional = true, features = ["server", "netcode", "udp"] }
+# For games of several players. A web build has no server that others can reach. Desktop
+# games are listened for over UDP, and browsers over WebTransport, with a certificate that the
+# game makes for itself.
+lightyear = { workspace = true, optional = true, features = [
+    "server",
+    "netcode",
+    "udp",
+    "webtransport",
+    "webtransport_self_signed",
+] }
 tanku_core.workspace = true
 
 [dev-dependencies]

@@ -3,7 +3,9 @@
 //! `TANKU_DEV_SCRIPT` holds commands separated by semicolons, run one after the other:
 //! `start SEED PLAYERS`, `seat NUMBER`, `repair SECONDS` and `shield SECONDS`, which hold the
 //! key of that name for so long, `wait SECONDS`, `warp SECTOR`,
-//! `host PORT`, which opens a game for others to join, `join ADDRESS`, which joins one,
+//! `host PORT`, which opens a game for others to join, and takes browsers on the port after
+//! that one, `join ADDRESS`, which joins a game by its address or by what its host hands out
+//! for browsers,
 //! `type TEXT`, which presses the keys that write a text, `turn QUARTERS`, `peek ENEMY`,
 //! `flag SECTOR`, `look X Y`, `zoom METERS`, `clear`, `reach`, `bubble`, `die`, `pause`,
 //! `settings`, `resume`,
@@ -60,9 +62,9 @@ use crate::{
     audio::Muted,
     camera::{MainCamera, View},
     crew::{LocalSeat, Own},
+    host::{HostPort, WebPort},
     input,
     music::Baton,
-    net::HostPort,
     session::SessionRequest,
     storage,
 };
@@ -382,10 +384,11 @@ fn run_script(
     ),
     canvas: Res<Canvas>,
     (baton, tape, mut seat): (Res<Baton>, Option<Res<Tape>>, ResMut<LocalSeat>),
-    (mut session_requests, mut keys, mut port): (
+    (mut session_requests, mut keys, mut port, mut web): (
         MessageWriter<SessionRequest>,
         MessageWriter<KeyboardInput>,
         ResMut<HostPort>,
+        ResMut<WebPort>,
     ),
     mut events: MessageWriter<SimEvent>,
     mut exit: MessageWriter<AppExit>,
@@ -409,10 +412,12 @@ fn run_script(
             screen.set(Screen::Playing);
         }
         "wait" => script.wait = number(1),
-        // Opens a game for others to join, on a port of its own if one is given.
+        // Opens a game for others to join, on a port of its own if one is given. Browsers
+        // are then taken on the port after it.
         "host" => {
-            if let Ok(wanted) = word(1).parse() {
+            if let Ok(wanted) = word(1).parse::<u16>() {
                 port.0 = wanted;
+                web.0 = wanted.checked_add(1);
             }
             session_requests.write(SessionRequest::Host);
         }

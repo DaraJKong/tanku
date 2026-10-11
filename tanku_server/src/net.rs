@@ -5,6 +5,10 @@
 //! of their tanks. It also announces its game on the local network, for those who look for one.
 //! It needs the server plugins of the network library and the protocol of `tanku_core`, added
 //! in that order.
+//!
+//! Desktop games come over UDP. Browsers can't: they come over WebTransport, on a port of
+//! its own, to a certificate that the game makes for itself. A listener takes them in and
+//! hands each one to the server, which knows no difference between its guests from then on.
 
 use std::{
     hash::{BuildHasher, Hasher, RandomState},
@@ -14,11 +18,13 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
+    time::{Duration, SystemTime},
 };
 
 use bevy::prelude::*;
 use lightyear::{
     connection::shared::{ConnectionRequestHandler, DeniedReason},
+    link::{LinkStart, Unlink, UnlinkReason},
     netcode::NetcodeServer,
     prelude::{
         input::{
@@ -46,15 +52,83 @@ use crate::field::InSector;
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Seat(pub u8);
 
+/// The ports on which a game listens: for the games of other machines, and for browsers if it
+/// takes them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Ports {
+    pub game: u16,
+    pub web: Option<u16>,
+}
+
+/// How a browser reaches a hosted game: the port that listens for browsers, and the print of
+/// the certificate that the game shows them. A browser only trusts a certificate that nobody
+/// vouches for if it was given its print beforehand.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Web {
+    pub port: u16,
+    /// The SHA-256 of the certificate, as 64 letters.
+    pub print: String,
+}
+
+/// The seconds of a day, the measure of how long a certificate is good for.
+const DAY: u64 = 24 * 60 * 60;
+/// A certificate is dated a day back, for a browser whose clock runs behind this machine's,
+/// and is good for 12 days from when it was made. A browser takes a certificate on the
+/// strength of its print only if it is good for two weeks at most.
+const DATED_BACK: Duration = Duration::from_secs(DAY);
+const GOOD_FOR: Duration = Duration::from_secs(12 * DAY);
+/// A certificate serves the games that open within a week. One that opens later gets a new
+/// one, so that no certificate runs out on a game.
+const KEPT: Duration = Duration::from_secs(7 * DAY);
+
+/// The certificate that this machine shows to browsers, and when it was made. It is kept
+/// from one game to the next, so that what a host hands out stays good for as long as the
+/// program runs: players who were given it join the next game with it.
+#[derive(Resource, Default)]
+pub struct Credentials(Option<(Identity, SystemTime)>);
+
+/// Whether a certificate made at some moment still serves a game that opens now. A clock
+/// that was set back since says nothing of its age, so it doesn't.
+fn serves(made: SystemTime, now: SystemTime) -> bool {
+    now.duration_since(made).is_ok_and(|age| age < KEPT)
+}
+
+impl Credentials {
+    /// The certificate to show to browsers from now on: the one that was kept, or a new one.
+    /// It names no address of this machine, which a browser doesn't look at: the print of
+    /// the certificate is all it goes by.
+    fn certificate(&mut self) -> Option<Identity> {
+        let now = SystemTime::now();
+        if let Some((kept, made)) = &self.0
+            && serves(*made, now)
+        {
+            return Some(kept.clone_identity());
+        }
+        let made = Identity::self_signed_builder()
+            .subject_alt_names(["localhost", "127.0.0.1", "::1"])
+            .not_before((now - DATED_BACK).into())
+            .not_after((now + GOOD_FOR).into())
+            .build()
+            .ok()?;
+        let shown = made.clone_identity();
+        self.0 = Some((made, now));
+        Some(shown)
+    }
+}
+
 /// A game that this machine hosts for others to join.
 #[derive(Resource)]
 pub struct Hosting {
-    /// What listens for the guests.
+    /// What takes the guests, and listens for desktop games.
     server: Entity,
+    /// What listens for browsers, if they are taken. Those who come that way are handed to
+    /// the server: the network library takes one server for the guests of a game.
+    listener: Option<Entity>,
     /// What tells the guests of the lobby and of the run.
     game: Entity,
-    /// The port that it listens on.
+    /// The port that it listens on for desktop games.
     port: u16,
+    web: Option<Web>,
     /// Whether players can still join: nobody joins a run in progress.
     open: Arc<AtomicBool>,
 }
@@ -84,9 +158,15 @@ impl Hosting {
     pub fn game(&self) -> Entity {
         self.game
     }
+
+    /// How browsers reach the game, if it takes them.
+    pub fn web(&self) -> Option<&Web> {
+        self.web.as_ref()
+    }
 }
 
-/// A server that was told to stop. It goes at the end of the frame, which has told its guests.
+/// A server or a listener that was told to stop. It goes at the end of the frame, which has
+/// told its guests.
 #[derive(Component)]
 struct Closing;
 
@@ -101,12 +181,18 @@ impl ConnectionRequestHandler for Doorkeeper {
     }
 }
 
-/// Opens a game on a port of this machine, for others to join, and announces it where games
-/// are looked for. Fails if the port is taken.
-pub fn open(commands: &mut Commands, port: u16, reach: &Reach) -> io::Result<()> {
-    let address = SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), port);
-    // The network library takes the port a moment later, and stops the game if it can't.
-    drop(UdpSocket::bind(address)?);
+/// Opens a game on this machine, for others to join, and announces it where games are looked
+/// for. Fails if the port for desktop games is taken. If the one for browsers is, the game
+/// opens without them. Returns how browsers reach it, if they do.
+pub fn open(
+    commands: &mut Commands,
+    ports: Ports,
+    reach: &Reach,
+    credentials: &mut Credentials,
+) -> io::Result<Option<Web>> {
+    let on = |port: u16| SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), port);
+    // The network library takes a port a moment later, and stops the game if it can't.
+    drop(UdpSocket::bind(on(ports.game))?);
     let open = Arc::new(AtomicBool::new(true));
     let server = commands
         .spawn((
@@ -123,11 +209,33 @@ pub fn open(commands: &mut Commands, port: u16, reach: &Reach) -> io::Result<()>
                 server_addr_check: false,
                 ..default()
             }),
-            LocalAddr(address),
+            LocalAddr(on(ports.game)),
             ServerUdpIo::default(),
         ))
         .id();
     commands.trigger(Start { entity: server });
+    // Browsers come by another way, and to a certificate that the game makes for itself.
+    let mut web = None;
+    let listener = ports.web.and_then(|port| {
+        drop(UdpSocket::bind(on(port)).ok()?);
+        let certificate = credentials.certificate()?;
+        let print = certificate.certificate_chain().as_slice()[0].hash();
+        let print = print.as_ref().iter().map(|byte| format!("{byte:02x}"));
+        web = Some(Web {
+            port,
+            print: print.collect(),
+        });
+        let listener = commands
+            .spawn((
+                Name::new("Listener for browsers"),
+                LocalAddr(on(port)),
+                WebTransportServerIo { certificate },
+            ))
+            .id();
+        // It listens, and no more: the server above takes those who come.
+        commands.trigger(LinkStart { entity: listener });
+        Some(listener)
+    });
     let mut lobby = Lobby::default();
     lobby.seats[0] = Some(Member::Host);
     let game = commands
@@ -139,8 +247,10 @@ pub fn open(commands: &mut Commands, port: u16, reach: &Reach) -> io::Result<()>
         .id();
     commands.insert_resource(Hosting {
         server,
+        listener,
         game,
-        port,
+        port: ports.game,
+        web: web.clone(),
         open,
     });
     // A game that can't be announced is joined by its address all the same.
@@ -152,16 +262,23 @@ pub fn open(commands: &mut Commands, port: u16, reach: &Reach) -> io::Result<()>
             said: None,
         });
     }
-    Ok(())
+    Ok(web)
 }
 
 /// Closes the game that this machine hosts. Its guests are told, the local network is told
-/// that the game is gone, and the port is free again at the end of the frame.
+/// that the game is gone, and the ports are free again at the end of the frame.
 pub fn close(commands: &mut Commands, hosting: &Hosting) {
     commands.trigger(Stop {
         entity: hosting.server,
     });
     commands.entity(hosting.server).insert(Closing);
+    if let Some(listener) = hosting.listener {
+        commands.trigger(Unlink {
+            entity: listener,
+            reason: UnlinkReason::UserRequested(None),
+        });
+        commands.entity(listener).insert(Closing);
+    }
     commands.entity(hosting.game).despawn();
     commands.remove_resource::<Hosting>();
     commands.remove_resource::<Beacon>();
@@ -193,6 +310,7 @@ pub struct NetPlugin;
 impl Plugin for NetPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Reach>()
+            .init_resource::<Credentials>()
             .add_observer(greet)
             .add_observer(seat)
             .add_observer(part)
@@ -228,9 +346,24 @@ impl Plugin for NetPlugin {
     }
 }
 
-/// A connection that opens can be sent the simulation.
-fn greet(trigger: On<Add, LinkOf>, mut commands: Commands) {
-    commands.entity(trigger.entity).insert(ReplicationSender);
+/// A connection that opens can be sent the simulation. One that a browser opened came to the
+/// listener for browsers, and is handed to the server, which takes it as any other.
+fn greet(
+    trigger: On<Add, LinkOf>,
+    hosting: Option<Res<Hosting>>,
+    links: Query<&LinkOf>,
+    mut commands: Commands,
+) {
+    let mut link = commands.entity(trigger.entity);
+    link.insert(ReplicationSender);
+    let came_to = links.get(trigger.entity).map(|link| link.server);
+    if let (Some(hosting), Ok(came_to)) = (hosting, came_to)
+        && hosting.listener == Some(came_to)
+    {
+        link.insert(LinkOf {
+            server: hosting.server,
+        });
+    }
 }
 
 /// A client that connects while the lobby is open takes the first free seat.
@@ -408,9 +541,42 @@ fn call_out(hosting: Res<Hosting>, lobbies: Query<&Lobby>, mut beacon: ResMut<Be
     }
 }
 
-/// A game that was closed lets go of its port. The frame has told its guests by now.
+/// A game that was closed lets go of its ports. The frame has told its guests by now.
 fn bury(mut commands: Commands, closed: Query<Entity, With<Closing>>) {
-    for server in &closed {
-        commands.entity(server).despawn();
+    for stopped in &closed {
+        commands.entity(stopped).despawn();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_certificate_serves_the_games_of_a_week() {
+        let made = SystemTime::now();
+        assert!(serves(made, made));
+        assert!(serves(made, made + Duration::from_secs(6 * DAY)));
+        assert!(!serves(made, made + Duration::from_secs(8 * DAY)));
+        // A clock that was set back tells nothing of an age.
+        assert!(!serves(made, made - Duration::from_secs(60)));
+        // It is good for less than the two weeks that a browser allows, and outlasts by
+        // days every game that it serves.
+        assert!(DATED_BACK + GOOD_FOR < Duration::from_secs(14 * DAY));
+        assert!(GOOD_FOR > KEPT + Duration::from_secs(2 * DAY));
+    }
+
+    #[test]
+    fn a_certificate_is_kept_until_it_is_out_of_date() {
+        let print =
+            |identity: Identity| *identity.certificate_chain().as_slice()[0].hash().as_ref();
+        let mut credentials = Credentials::default();
+        let first = print(credentials.certificate().unwrap());
+        assert_eq!(print(credentials.certificate().unwrap()), first);
+        // One that was made too long ago is replaced.
+        credentials.0.as_mut().unwrap().1 -= KEPT;
+        let next = print(credentials.certificate().unwrap());
+        assert_ne!(next, first);
+        assert_eq!(print(credentials.certificate().unwrap()), next);
     }
 }

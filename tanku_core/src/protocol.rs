@@ -32,6 +32,8 @@ pub const REVISION: u32 = 3;
 
 /// The port a game listens on unless it is told otherwise.
 pub const PORT: u16 = 28405;
+/// The port on which it listens for browsers, which don't speak as desktop games do.
+pub const WEB_PORT: u16 = 28406;
 
 /// What tells one build of the game from another on the network: players must run the same
 /// version, and builds that speak the same.

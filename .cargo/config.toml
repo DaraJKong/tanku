@@ -5,6 +5,11 @@ codegen-backend = true
 linker = "clang"
 rustflags = ["-C", "link-arg=-fuse-ld=mold", "-Zshare-generics=y"]
 
+# A browser build speaks WebTransport, which the bindings to the browser still keep behind a
+# flag.
+[target.wasm32-unknown-unknown]
+rustflags = ["--cfg=web_sys_unstable_apis"]
+
 [profile.dev]
 codegen-backend = "cranelift"
 

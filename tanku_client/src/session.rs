@@ -1,6 +1,6 @@
 //! A game that several players share, as the menus see it: whether this machine hosts it or
-//! joined it, and what the player asks about it. The network answers in `net`, which a browser
-//! doesn't have yet.
+//! joined it, and what the player asks about it. The network answers in `net`, and in `host`
+//! on a machine that can host.
 
 use std::net::Ipv4Addr;
 
@@ -45,6 +45,11 @@ pub struct Invitation {
     pub address: Option<String>,
     /// The port that the game listens on.
     pub port: u16,
+    /// What it hands out to players in a browser, if it takes them: where it listens for
+    /// browsers, and the print of the certificate that it shows them.
+    pub web: Option<String>,
+    /// The port on which it listens for browsers, or would if nothing else had taken it.
+    pub web_port: Option<u16>,
 }
 
 /// A game that was found on the local network.

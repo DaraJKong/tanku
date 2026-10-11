@@ -950,7 +950,9 @@ mod tests {
     use super::*;
     use crate::{
         Screen,
-        net::tests::{ask, free_port, game, host, line, order, place, run_until, screen, seats},
+        net::tests::{
+            ask, code, free_port, game, host_with, line, order, place, run_until, screen, seats,
+        },
         session::SessionRequest,
     };
 
@@ -1055,8 +1057,14 @@ mod tests {
     /// A host and a guest in a run of two, on a line that takes so long each way. Both keep a
     /// log, and the guest has had the time to set its clock by the host's.
     fn pair(late: u64, uneven: u64, lost: f32) -> (App, App) {
+        pair_by(late, uneven, lost, false, false)
+    }
+
+    /// The same, with a host that takes browsers too if it is asked to, and a guest that
+    /// joins the way they do if it is.
+    fn pair_by(late: u64, uneven: u64, lost: f32, web: bool, as_browser: bool) -> (App, App) {
         let port = free_port();
-        let mut host = host(port);
+        let mut host = host_with(port, web.then(free_port));
         let mut guest = game();
         for game in [&mut host, &mut guest] {
             line(game, late, uneven, lost);
@@ -1064,10 +1072,12 @@ mod tests {
                 .add_systems(FixedLast, keep_log)
                 .add_systems(Last, keep_news);
         }
-        ask(
-            &mut guest,
-            SessionRequest::Join(format!("127.0.0.1:{port}")),
-        );
+        let at = if as_browser {
+            code(&host)
+        } else {
+            format!("127.0.0.1:{port}")
+        };
+        ask(&mut guest, SessionRequest::Join(at));
         run_until("the lobby", &mut [&mut host, &mut guest], |games| {
             screen(games[1]) == Screen::Lobby
         });
@@ -1127,9 +1137,20 @@ mod tests {
 
         // North, then east, then a stop. All the way, the guest has the tank where the host
         // gets to have it at that tick, and nothing has to be put right.
-        let since = tick(&guest);
+        drive_around_a_corner(&mut host, &mut guest, start);
+    }
+
+    /// Drives the tank of the guest's player north, then east, then stops it, and checks
+    /// that the guest had it where its host got to have it at each tick.
+    fn drive_around_a_corner(host: &mut App, guest: &mut App, start: Vec2) {
+        let drive = |drive: Vec2| TankCommand {
+            drive,
+            aim: Vec2::new(40.0, 40.0),
+            ..default()
+        };
+        let since = tick(guest);
         let off = RefCell::new(0.0f32);
-        run_until("the drive", &mut [&mut host, &mut guest], |games| {
+        run_until("the drive", &mut [&mut *host, &mut *guest], |games| {
             let ticks = past(games[1], since);
             let asked = match ticks {
                 ..40 => drive(Vec2::Y),
@@ -1142,7 +1163,7 @@ mod tests {
             off.replace_with(|worst| worst.max(nudge));
             past(games[0], since) > 110
         });
-        let apart = apart(&host, &guest, 1, since + 2..since + 100);
+        let apart = apart(host, guest, 1, since + 2..since + 100);
         let worst = apart.iter().copied().fold(0.0, f32::max);
         assert!(apart.len() > 90, "{} ticks to compare", apart.len());
         assert!(worst < 1e-3, "the tank was up to {worst} m from its place");
@@ -1152,11 +1173,23 @@ mod tests {
             off.borrow()
         );
         // It did drive, and around a corner.
-        let end = place(&mut host, 1);
+        let end = place(host, 1);
         assert!(
             end.y > start.y + 2.0 && end.x > start.x + 2.0,
             "{start} to {end}"
         );
+    }
+
+    #[test]
+    fn a_guest_has_its_tank_where_a_host_that_takes_browsers_will_have_it() {
+        // The host listens for desktop games and for browsers at once. A guest that came
+        // either way has its tank where the host gets to have it, on a line that takes
+        // 120 ms there and back.
+        for as_browser in [false, true] {
+            let (mut host, mut guest) = pair_by(60, 0, 0.0, true, as_browser);
+            let start = place(&mut guest, 1);
+            drive_around_a_corner(&mut host, &mut guest, start);
+        }
     }
 
     #[test]

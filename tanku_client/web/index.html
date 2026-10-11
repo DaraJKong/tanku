@@ -44,6 +44,60 @@
       document.addEventListener("visibilitychange", () => {
         sounds.forEach((sound) => (document.hidden ? sound.suspend() : sound.resume()).catch(() => {}));
       });
+
+      // A host hands out a link, which ends with where its game is. The game follows what the
+      // address of the page ends with, so a link that is pasted into the page is put there.
+      // The game takes every key for itself, which would keep the browser from pasting: the
+      // keys that paste are kept from the game.
+      addEventListener(
+        "keydown",
+        (key) => {
+          if ((key.ctrlKey || key.metaKey) && key.key.toLowerCase() === "v") {
+            key.stopImmediatePropagation();
+          }
+        },
+        true,
+      );
+      addEventListener("paste", (pasted) => {
+        const text = pasted.clipboardData ? pasted.clipboardData.getData("text") : "";
+        const end = text.slice(text.lastIndexOf("#") + 1).trim();
+        if (/^[0-9.:]+\/[0-9a-fA-F]{64}$/.test(end)) {
+          location.hash = end;
+        }
+      });
+
+      // A game that was joined tells its news in packets, and the page reads each one into a
+      // buffer that it hands to the browser. Firefox refuses that way of reading packets: it
+      // only hands out whole ones. Where the browser refuses, the page is given a reader that
+      // takes whole packets and copies each into the buffer that was handed over, which is
+      // larger than any packet.
+      const getReader = ReadableStream.prototype.getReader;
+      ReadableStream.prototype.getReader = function (options) {
+        try {
+          return getReader.call(this, options);
+        } catch (refused) {
+          if (!options || options.mode !== "byob") {
+            throw refused;
+          }
+          const whole = getReader.call(this);
+          return {
+            read: async (view) => {
+              const { value, done } = await whole.read();
+              if (done) {
+                return { value: undefined, done };
+              }
+              const read = new Uint8Array(view.buffer, view.byteOffset, value.byteLength);
+              read.set(value);
+              return { value: read, done };
+            },
+            releaseLock: () => whole.releaseLock(),
+            cancel: (reason) => whole.cancel(reason),
+            get closed() {
+              return whole.closed;
+            },
+          };
+        }
+      };
     </script>
     <script src="./probe.js"></script>
     <script type="module">

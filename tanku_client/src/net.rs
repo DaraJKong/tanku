@@ -1,54 +1,48 @@
-//! The network of a game that several players share, for a machine that hosts it or joins it.
+//! The network of a game that several players share, for a machine that joins one.
 //!
-//! A host runs the simulation as in a solo game, and its server sends it to the guests. A guest
-//! simulates nothing: it receives the lobby, the run and the simulation of its host, and sends
-//! what its player asks of their tank.
+//! A guest simulates nothing: it receives the lobby, the run and the simulation of its host,
+//! and sends what its player asks of their tank. A desktop game joins at the address of its
+//! host. A browser can't: it only speaks to a server that shows a certificate, and takes the
+//! one that a host makes for itself only with the print of that certificate. So a browser
+//! joins by what its host hands out, an address and a print. Hosting is in `host`, which a
+//! browser doesn't have.
 
+#[cfg(not(target_arch = "wasm32"))]
+use std::net::ToSocketAddrs;
 use std::{
-    hash::{BuildHasher, Hasher, RandomState},
-    net::{Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs},
+    net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     time::Duration,
 };
 
-use bevy::{
-    prelude::*,
-    tasks::{IoTaskPool, Task, futures::check_ready},
-};
+use bevy::prelude::*;
+#[cfg(not(target_arch = "wasm32"))]
+use bevy::tasks::{IoTaskPool, Task, futures::check_ready};
 use lightyear::{
     netcode::{NetcodeClient, client_plugin::NetcodeConfig},
     prelude::{
         client::{input::InputSystems, *},
         input::native::{ActionState, InputMarker},
-        server::ServerPlugins,
         *,
     },
 };
 use tanku_core::{
-    discovery::{Reach, local_address},
     map::Corridor,
-    protocol::{Lobby, Member, PORT, ProtocolPlugin, RunState, protocol_id},
+    protocol::{Lobby, Member, PORT, ProtocolPlugin, RunState, WEB_PORT, protocol_id},
     rules::TICK_RATE,
     seed::VERSION,
-    sim::{Player, Run, RunPhase, RunRequest, Sector, SectorIndex, SimEvent, TankCommand},
+    sim::{Player, Run, RunPhase, Sector, SectorIndex, SimEvent, TankCommand},
 };
-use tanku_server::{
-    field::Field,
-    net::{self as server, Hosting, Seat},
-};
+use tanku_server::field::Field;
 
 use crate::{
     Overlay, Screen,
     crew::{LocalSeat, Own},
-    discovery, mirror,
-    session::{Invitation, Notice, Session, SessionRequest},
+    mirror,
+    session::{Notice, Session, SessionRequest},
 };
 
 /// How long a guest stays connected without a seat before it takes the game for full.
 const SEAT_WAIT: f32 = 3.0;
-
-/// The port on which this machine hosts a game.
-#[derive(Resource, Clone, Copy, Debug)]
-pub struct HostPort(pub u16);
 
 /// How many seconds a guest and its host wait for each other before they call the connection
 /// lost. It is also how long a guest tries to reach a game that doesn't answer.
@@ -63,6 +57,8 @@ struct Joined {
     id: u64,
     /// Where the game is, as the player is told.
     address: String,
+    /// Whether it is joined the way browsers join, by what its host handed out.
+    by_link: bool,
     /// Whether the game gave this machine a seat.
     seated: bool,
     /// Seconds spent connected without a seat.
@@ -70,6 +66,7 @@ struct Joined {
 }
 
 /// The name of a host being looked up, before its game can be joined.
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Resource)]
 struct Lookup {
     name: String,
@@ -80,23 +77,53 @@ struct Lookup {
 #[derive(Component)]
 struct Leaving;
 
-/// Where a game is, from what a player typed.
+/// How many letters the print of a certificate has: the 32 bytes of a SHA-256, two a byte.
+const PRINT_LENGTH: usize = 64;
+/// What a player in a browser is told when they give the address of a host and no print.
+#[cfg(target_arch = "wasm32")]
+const LINK_ONLY: &str = "A browser joins by the link that the host hands out, not by an address.";
+/// What they are told where the browser lets the page speak to no game.
+#[cfg(target_arch = "wasm32")]
+const NO_WAY: &str = "This page can't join a game here. A browser lets a page join one only if it \
+                      loaded that page over HTTPS or from its own machine, and some browsers \
+                      can't join at all.";
+
+/// Where a game is, from what a player typed or was given.
 #[derive(Debug, PartialEq, Eq)]
 enum Target {
+    /// The address at which the game takes desktop games.
     Address(SocketAddr),
+    /// The address at which it takes browsers, and the print of the certificate that it
+    /// shows them there.
+    Web(SocketAddr, String),
     /// A machine known by a name, which has to be looked up, and its port.
     Name(String, u16),
 }
 
-/// Reads an address as a player types it: the number of a machine or its name, followed by a
-/// port unless the game uses the usual one.
-fn target(text: &str) -> Option<Target> {
-    let text = text.trim();
+/// The address of a machine as numbers, with a port unless it is the one that is usual.
+fn numbered(text: &str, usual: u16) -> Option<SocketAddr> {
     if let Ok(machine) = text.parse::<Ipv4Addr>() {
-        return Some(Target::Address(SocketAddr::new(machine.into(), PORT)));
+        return Some(SocketAddr::new(machine.into(), usual));
     }
-    if let Ok(address) = text.parse::<SocketAddrV4>() {
-        return (address.port() != 0).then_some(Target::Address(address.into()));
+    let address = text.parse::<SocketAddrV4>().ok()?;
+    (address.port() != 0).then_some(address.into())
+}
+
+/// Reads where a game is, as a player types it or as its host hands it out.
+///
+/// What a player types is the number of a machine or its name, followed by a port unless
+/// the game uses the usual one. What a host hands out for browsers is such a number, a
+/// stroke and the print of a certificate: only an address that comes with a print leads to
+/// where browsers are taken. It may come at the end of a link, after the last `#`.
+fn target(text: &str) -> Option<Target> {
+    let text = text.trim().rsplit('#').next()?;
+    if let Some((address, print)) = text.rsplit_once('/') {
+        let hex = print.len() == PRINT_LENGTH && print.chars().all(|c| c.is_ascii_hexdigit());
+        let address = numbered(address, WEB_PORT).filter(|_| hex)?;
+        return Some(Target::Web(address, print.to_ascii_lowercase()));
+    }
+    if let Some(address) = numbered(text, PORT) {
+        return Some(Target::Address(address));
     }
     let (name, port) = match text.rsplit_once(':') {
         Some((name, port)) => (name, port.parse().ok().filter(|port| *port != 0)?),
@@ -106,7 +133,14 @@ fn target(text: &str) -> Option<Target> {
     (!name.is_empty() && name.chars().all(named)).then(|| Target::Name(name.to_string(), port))
 }
 
+/// What a host hands out for browsers: where it takes them, and the print of its certificate.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn web_code(machine: impl std::fmt::Display, port: u16, print: &str) -> String {
+    format!("{machine}:{port}/{print}")
+}
+
 /// An address as a player types it: the port is left out when it is the usual one.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn written(machine: impl std::fmt::Display, port: u16) -> String {
     if port == PORT {
         machine.to_string()
@@ -117,17 +151,51 @@ pub(crate) fn written(machine: impl std::fmt::Display, port: u16) -> String {
 
 /// A number for this machine to go by in a game: any one will do, as long as no other guest
 /// has the same.
+#[cfg(not(target_arch = "wasm32"))]
 fn fresh_id() -> u64 {
+    use std::hash::{BuildHasher, Hasher, RandomState};
     RandomState::new().build_hasher().finish().max(1)
 }
 
-/// Starts to join the game at an address.
+/// In a browser, the number is drawn by the browser: what the standard library draws there
+/// is the same in every page.
+#[cfg(target_arch = "wasm32")]
+fn fresh_id() -> u64 {
+    let mut drawn = [0u8; 8];
+    let crypto = web_sys::window().and_then(|window| window.crypto().ok());
+    let random =
+        crypto.is_some_and(|crypto| crypto.get_random_values_with_u8_array(&mut drawn).is_ok());
+    if !random {
+        // Without that, the moment that the page asks is all that tells it apart.
+        let now = web_sys::window().and_then(|window| window.performance());
+        drawn = now.map_or(1.0, |clock| clock.now()).to_bits().to_le_bytes();
+    }
+    u64::from_le_bytes(drawn).max(1)
+}
+
+/// Whether the browser lets this page speak to a game: it must know how, and it only lets a
+/// page that it loaded safely do so.
+#[cfg(target_arch = "wasm32")]
+fn speaks() -> bool {
+    use web_sys::{js_sys::Reflect, wasm_bindgen::JsValue};
+    let known = |window| Reflect::has(&window, &JsValue::from_str("WebTransport"));
+    web_sys::window().is_some_and(|window| known(window.into()).unwrap_or(false))
+}
+
+/// Starts to join the game at an address: the one for desktop games, or the one for
+/// browsers when it comes with the print of the game's certificate.
 fn join(
     commands: &mut Commands,
     address: SocketAddr,
+    print: Option<String>,
     patience: Patience,
     notice: &mut Notice,
 ) -> bool {
+    #[cfg(target_arch = "wasm32")]
+    if !speaks() {
+        notice.0 = Some(NO_WAY.to_string());
+        return false;
+    }
     let id = fresh_id();
     let auth = Authentication::Manual {
         server_addr: address,
@@ -146,23 +214,44 @@ fn join(
         notice.0 = Some("The game could not be joined.".to_string());
         return false;
     };
-    let client = commands
-        .spawn((
-            Name::new("Client"),
-            Client,
-            ReplicationReceiver,
-            Link::default(),
-            LocalAddr(SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 0)),
-            PeerAddr(address),
-            netcode,
-            UdpIo::default(),
-        ))
-        .id();
+    let mut client = commands.spawn((
+        Name::new("Client"),
+        Client,
+        ReplicationReceiver,
+        Link::default(),
+        LocalAddr(SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 0)),
+        PeerAddr(address),
+        netcode,
+    ));
+    let by_link = print.is_some();
+    let told = match print {
+        Some(print) => {
+            client.insert(WebTransportClientIo {
+                certificate_digest: print,
+                target: None,
+            });
+            address.to_string()
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        None => {
+            client.insert(UdpIo::default());
+            written(address.ip(), address.port())
+        }
+        // A browser has no other way than the one that comes with a print.
+        #[cfg(target_arch = "wasm32")]
+        None => {
+            client.despawn();
+            notice.0 = Some(LINK_ONLY.to_string());
+            return false;
+        }
+    };
+    let client = client.id();
     commands.trigger(Connect { entity: client });
     commands.insert_resource(Joined {
         client,
         id,
-        address: written(address.ip(), address.port()),
+        address: told,
+        by_link,
         seated: false,
         waited: 0.0,
     });
@@ -174,92 +263,105 @@ pub struct NetPlugin;
 impl Plugin for NetPlugin {
     fn build(&self, app: &mut App) {
         let tick_duration = Duration::from_secs_f64(1.0 / TICK_RATE);
-        app.add_plugins((
-            ServerPlugins { tick_duration },
-            ClientPlugins { tick_duration },
-            ProtocolPlugin,
-            server::NetPlugin,
-            mirror::plugin,
-            discovery::plugin,
-        ))
-        // A guest makes its picture of the run from what its host told, once that is in.
-        .configure_sets(PreUpdate, mirror::Picture.after(lay_out_sectors))
-        .insert_resource(HostPort(PORT))
-        .insert_resource(Patience(5))
-        .add_systems(Update, (direct, find_the_host).chain())
-        .add_systems(
-            OnEnter(Screen::Lobby),
-            reopen.run_if(resource_exists::<Hosting>),
-        )
-        .add_systems(
-            FixedPreUpdate,
-            send_commands.in_set(InputSystems::WriteClientInputs),
-        )
-        .add_systems(
-            PreUpdate,
-            (
-                watch,
+        // The plugins of the network library come first, then the protocol, then what
+        // listens and what joins.
+        #[cfg(not(target_arch = "wasm32"))]
+        app.add_plugins(lightyear::prelude::server::ServerPlugins { tick_duration });
+        app.add_plugins((ClientPlugins { tick_duration }, ProtocolPlugin));
+        #[cfg(not(target_arch = "wasm32"))]
+        app.add_plugins((crate::host::plugin, crate::discovery::plugin))
+            .add_systems(Update, find_the_host.after(direct));
+        #[cfg(target_arch = "wasm32")]
+        app.add_systems(Update, follow_the_link.before(direct));
+        app.add_plugins(mirror::plugin)
+            // A guest makes its picture of the run from what its host told, once that is in.
+            .configure_sets(PreUpdate, mirror::Picture.after(lay_out_sectors))
+            .insert_resource(Patience(5))
+            .add_systems(Update, direct)
+            .add_systems(
+                FixedPreUpdate,
+                send_commands.in_set(InputSystems::WriteClientInputs),
+            )
+            .add_systems(
+                PreUpdate,
                 (
-                    take_the_controls,
-                    hear,
-                    follow_run,
-                    lay_out_sectors,
-                    follow_host,
+                    watch,
+                    (
+                        take_the_controls,
+                        hear,
+                        follow_run,
+                        lay_out_sectors,
+                        follow_host,
+                    )
+                        .chain()
+                        .run_if(resource_exists::<Joined>),
                 )
                     .chain()
+                    .after(MessageSystems::Receive)
                     .run_if(resource_exists::<Joined>),
             )
-                .chain()
-                .after(MessageSystems::Receive)
-                .run_if(resource_exists::<Joined>),
-        )
-        .add_systems(Last, let_go);
+            .add_systems(Last, let_go);
     }
 }
 
-/// Does what the menus ask about a game of several players.
+/// What the address of this page ends with, when that is what a host hands out for
+/// browsers. A desktop game has no page, and so no such link.
+pub(crate) fn link() -> Option<String> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let end = web_sys::window()?.location().hash().ok()?;
+        matches!(target(&end), Some(Target::Web(..))).then_some(end)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    None
+}
+
+/// A page that is opened by the link of a host joins its game at once: what the host handed
+/// out is at the end of the address of the page. A link that is pasted into the page later,
+/// or put at the end of its address, is followed too, from the menus: no link takes a
+/// player out of a run. A link is followed once. The join screen offers it again.
+#[cfg(target_arch = "wasm32")]
+fn follow_the_link(
+    session: Res<Session>,
+    screen: Res<State<Screen>>,
+    mut followed: Local<Option<String>>,
+    mut requests: MessageWriter<SessionRequest>,
+    mut next_screen: ResMut<NextState<Screen>>,
+) {
+    if *session != Session::Solo || !matches!(*screen.get(), Screen::Menu | Screen::Join) {
+        return;
+    }
+    let link = link();
+    if link == *followed {
+        return;
+    }
+    followed.clone_from(&link);
+    if let Some(link) = link {
+        next_screen.set(Screen::Join);
+        requests.write(SessionRequest::Join(link));
+    }
+}
+
+/// Does what the menus ask of a guest: to join a game, and to leave it.
 fn direct(
     mut commands: Commands,
     mut requests: MessageReader<SessionRequest>,
-    (mut session, mut notice, mut invitation, mut seat): (
-        ResMut<Session>,
-        ResMut<Notice>,
-        ResMut<Invitation>,
-        ResMut<LocalSeat>,
-    ),
-    (port, patience, reach): (Res<HostPort>, Res<Patience>, Res<Reach>),
-    (hosting, joined, run): (Option<Res<Hosting>>, Option<Res<Joined>>, Option<Res<Run>>),
-    mut seats: Query<&mut Seat>,
-    lobbies: Query<&Lobby>,
-    mut run_requests: MessageWriter<RunRequest>,
-    mut next_screen: ResMut<NextState<Screen>>,
-    mut next_overlay: ResMut<NextState<Overlay>>,
+    (mut session, mut notice, mut seat): (ResMut<Session>, ResMut<Notice>, ResMut<LocalSeat>),
+    patience: Res<Patience>,
+    joined: Option<Res<Joined>>,
 ) {
     for request in requests.read() {
         match (request, *session) {
-            (SessionRequest::Host, Session::Solo) => {
-                if server::open(&mut commands, port.0, &reach).is_err() {
-                    notice.0 = Some(format!(
-                        "Port {} is taken on this machine. Is another game open?",
-                        port.0
-                    ));
-                    continue;
-                }
-                *session = Session::Host;
-                notice.0 = None;
-                *invitation = Invitation {
-                    address: local_address().map(|machine| written(machine, port.0)),
-                    port: port.0,
-                };
-                seat.0 = 0;
-                next_screen.set(Screen::Lobby);
-            }
             (SessionRequest::Join(text), Session::Solo) => {
                 notice.0 = None;
                 let started = match target(text) {
                     Some(Target::Address(address)) => {
-                        join(&mut commands, address, *patience, &mut notice)
+                        join(&mut commands, address, None, *patience, &mut notice)
                     }
+                    Some(Target::Web(address, print)) => {
+                        join(&mut commands, address, Some(print), *patience, &mut notice)
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
                     Some(Target::Name(name, port)) => {
                         let host = name.clone();
                         let found = IoTaskPool::get().spawn(async move {
@@ -268,6 +370,11 @@ fn direct(
                         });
                         commands.insert_resource(Lookup { name, found });
                         true
+                    }
+                    #[cfg(target_arch = "wasm32")]
+                    Some(Target::Name(..)) => {
+                        notice.0 = Some(LINK_ONLY.to_string());
+                        false
                     }
                     None => {
                         let hint = "That is not an address. The lobby of the host shows it.";
@@ -278,16 +385,6 @@ fn direct(
                 if started {
                     *session = Session::Guest;
                 }
-            }
-            (SessionRequest::Leave, Session::Host) => {
-                if let Some(hosting) = &hosting {
-                    if run.is_some() {
-                        run_requests.write(RunRequest::Abandon);
-                    }
-                    server::close(&mut commands, hosting);
-                }
-                *session = Session::Solo;
-                *invitation = Invitation::default();
             }
             (SessionRequest::Leave, Session::Guest) => {
                 if let Some(joined) = &joined {
@@ -300,31 +397,20 @@ fn direct(
                     commands.remove_resource::<Run>();
                     commands.remove_resource::<Field>();
                 }
+                #[cfg(not(target_arch = "wasm32"))]
                 commands.remove_resource::<Lookup>();
                 *session = Session::Solo;
                 seat.0 = 0;
             }
-            (SessionRequest::Start, Session::Host) => {
-                let lobby = hosting.as_ref().and_then(|hosting| {
-                    let lobby = lobbies.get(hosting.game()).ok()?;
-                    Some((hosting, lobby))
-                });
-                if let Some((hosting, lobby)) = lobby {
-                    let players = server::muster(hosting, &mut seats);
-                    let seed = lobby.seed.clone();
-                    run_requests.write(RunRequest::Start { seed, players });
-                    next_screen.set(Screen::Playing);
-                    next_overlay.set(Overlay::None);
-                }
-            }
-            // The rest makes no sense where the game stands: a guest starts no run, and
-            // nobody hosts or joins a second game.
+            // The rest is not a guest's to do: opening a game and starting its run are a
+            // host's, and nobody joins a second game.
             _ => {}
         }
     }
 }
 
 /// Joins the game of a host once its name was looked up.
+#[cfg(not(target_arch = "wasm32"))]
 fn find_the_host(
     mut commands: Commands,
     lookup: Option<ResMut<Lookup>>,
@@ -340,7 +426,7 @@ fn find_the_host(
     };
     commands.remove_resource::<Lookup>();
     let joined = match found {
-        Some(address) => join(&mut commands, address, *patience, &mut notice),
+        Some(address) => join(&mut commands, address, None, *patience, &mut notice),
         None => {
             notice.0 = Some(format!("No machine is known as {}.", lookup.name));
             false
@@ -351,20 +437,25 @@ fn find_the_host(
     }
 }
 
-/// Players can join a hosted game again whenever its host is back in the lobby.
-fn reopen(hosting: Res<Hosting>) {
-    hosting.reopen();
-}
-
 /// Why a connection ended, as the player is told.
 fn farewell(reason: &DisconnectedReason, joined: &Joined) -> String {
     let address = &joined.address;
     match reason {
-        DisconnectedReason::ByPeer(_) => "The host closed the game.".to_string(),
+        // A host that closes its game says so. Where browsers are taken, its line may close
+        // before its word is through, which says the same.
+        DisconnectedReason::ByPeer(_) | DisconnectedReason::LinkFailed(UnlinkReason::ByPeer(_)) => {
+            "The host closed the game.".to_string()
+        }
         _ if joined.seated => "The connection to the host was lost.".to_string(),
         DisconnectedReason::TransportError(error) if error.contains("Denied") => {
             format!("The game at {address} is full, or its run has started.")
         }
+        // What a host hands out for browsers is good while its program runs: one that is
+        // started again hands out another.
+        _ if joined.by_link => format!(
+            "No game answers at {address}. Its host must run version {VERSION} too, and the \
+             link must be the one that its lobby shows now."
+        ),
         _ => format!("No game answers at {address}. Its host must run version {VERSION} too."),
     }
 }
@@ -542,7 +633,7 @@ fn follow_host(
     next_overlay.set(Overlay::None);
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) mod tests {
     use std::net::UdpSocket;
 
@@ -552,10 +643,18 @@ pub(crate) mod tests {
         CorePlugin,
         sim::{Position, Tank, Wreck},
     };
-    use tanku_server::ServerPlugin;
+    use tanku_core::{discovery::Reach, sim::RunRequest};
+    use tanku_server::{
+        ServerPlugin,
+        net::{Hosting, Seat},
+    };
 
     use super::*;
-    use crate::{crew, session};
+    use crate::{
+        crew,
+        host::{HostPort, WebPort},
+        session,
+    };
 
     /// The game without its drawings: what plays a run, alone or with others.
     pub(crate) fn game() -> App {
@@ -567,7 +666,9 @@ pub(crate) mod tests {
             // Tests don't wait long for a game that isn't there, and keep to themselves:
             // nothing is announced to the machines around, and nothing is asked of them.
             .insert_resource(Patience(1))
-            .insert_resource(Reach::Nowhere);
+            .insert_resource(Reach::Nowhere)
+            // And they take no browsers, unless they are about taking them.
+            .insert_resource(WebPort(None));
         // What `App::run` does before the first frame: the network library sets itself up there.
         app.finish();
         app.cleanup();
@@ -627,8 +728,14 @@ pub(crate) mod tests {
 
     /// Opens a game and gives its seed, as the host's menus do.
     pub(crate) fn host(port: u16) -> App {
+        host_with(port, None)
+    }
+
+    /// Opens a game that takes browsers on a port too, if one is given.
+    pub(crate) fn host_with(port: u16, web: Option<u16>) -> App {
         let mut game = game();
-        game.insert_resource(HostPort(port));
+        game.insert_resource(HostPort(port))
+            .insert_resource(WebPort(web));
         ask(&mut game, SessionRequest::Host);
         run_until("a lobby", &mut [&mut game], |games| {
             screen(games[0]) == Screen::Lobby
@@ -701,6 +808,37 @@ pub(crate) mod tests {
         // What a lobby shows is what a guest types.
         assert_eq!(written("192.168.1.20", PORT), "192.168.1.20");
         assert_eq!(written("192.168.1.20", 4000), "192.168.1.20:4000");
+    }
+
+    #[test]
+    fn what_a_host_hands_out_is_read_from_the_end_of_a_link() {
+        let print = "0123456789abcdef".repeat(4);
+        let at = |text: &str| Some(Target::Web(text.parse().unwrap(), print.clone()));
+        assert_eq!(
+            target(&format!("10.0.0.7:4000/{print}")),
+            at("10.0.0.7:4000")
+        );
+        // What a host hands out is read as it was written.
+        let handed = web_code("10.0.0.7", 4000, &print);
+        assert_eq!(target(&handed), at("10.0.0.7:4000"));
+        // It comes at the end of a link, and a browser hands that end over with its mark.
+        let link = format!("https://example.org/tanku/#{handed}");
+        assert_eq!(target(&link), at("10.0.0.7:4000"));
+        assert_eq!(target(&format!(" #{handed} ")), at("10.0.0.7:4000"));
+        // The port is left out when it is the usual one, and capitals are the same print.
+        assert_eq!(target(&format!("10.0.0.7/{print}")), at("10.0.0.7:28406"));
+        let capitals = format!("10.0.0.7:4000/{}", print.to_uppercase());
+        assert_eq!(target(&capitals), at("10.0.0.7:4000"));
+        // A print that is short, or that is none, leads nowhere, and neither does a name.
+        for junk in [
+            format!("10.0.0.7:4000/{}", &print[1..]),
+            format!("10.0.0.7:4000/{}g", &print[1..]),
+            format!("10.0.0.7:0/{print}"),
+            format!("example.org/{print}"),
+            "10.0.0.7:4000/".to_string(),
+        ] {
+            assert_eq!(target(&junk), None, "{junk}");
+        }
     }
 
     #[test]
@@ -884,6 +1022,154 @@ pub(crate) mod tests {
         });
         assert_eq!(guest.world().resource::<Notice>().0, None);
         assert_eq!(own_seat(&guest), 1);
+    }
+
+    /// What a host hands out for browsers, for one on its own machine.
+    pub(crate) fn code(host: &App) -> String {
+        let web = host.world().resource::<Hosting>().web().unwrap();
+        web_code("127.0.0.1", web.port, &web.print)
+    }
+
+    #[test]
+    fn a_guest_joins_the_way_browsers_do_and_plays() {
+        let mut host = host_with(free_port(), Some(free_port()));
+        let mut guest = game();
+        ask(&mut guest, SessionRequest::Join(code(&host)));
+        run_until("the lobby", &mut [&mut host, &mut guest], |games| {
+            screen(games[1]) == Screen::Lobby
+        });
+        assert_eq!(own_seat(&guest), 1);
+        ask(&mut host, SessionRequest::Start);
+        run_until("the run", &mut [&mut host, &mut guest], |games| {
+            screen(games[1]) == Screen::Playing && seats(games[1]) == [0, 1]
+        });
+        // Each player drives their own tank, and both see both.
+        let (host_start, guest_start) = (place(&mut host, 0), place(&mut host, 1));
+        run_until("the drive", &mut [&mut host, &mut guest], |games| {
+            let drive = |drive| TankCommand { drive, ..default() };
+            order(games[0], drive(Vec2::X));
+            order(games[1], drive(Vec2::Y));
+            let moved = |game: &mut App| {
+                let east = place(game, 0).x - host_start.x;
+                let north = place(game, 1).y - guest_start.y;
+                east > 1.0 && north > 1.0
+            };
+            moved(games[0]) && moved(games[1])
+        });
+        // The host closes the game, and the guest is told.
+        ask(&mut host, SessionRequest::Leave);
+        run_until("the way home", &mut [&mut host, &mut guest], |games| {
+            screen(games[1]) == Screen::Menu && seats(games[1]).is_empty()
+        });
+        let told = guest.world().resource::<Notice>().0.clone().unwrap();
+        assert_eq!(told, "The host closed the game.");
+    }
+
+    #[test]
+    fn a_desktop_and_a_browser_play_the_same_game() {
+        let port = free_port();
+        let mut host = host_with(port, Some(free_port()));
+        let mut desktop = guest(port);
+        run_until("the first guest", &mut [&mut host, &mut desktop], |games| {
+            screen(games[1]) == Screen::Lobby
+        });
+        let mut browser = game();
+        ask(&mut browser, SessionRequest::Join(code(&host)));
+        let all = &mut [&mut host, &mut desktop, &mut browser];
+        run_until("the second guest", all, |games| {
+            screen(games[2]) == Screen::Lobby
+        });
+        // They take the seats that follow the host's, whichever way they came.
+        assert_eq!((own_seat(&desktop), own_seat(&browser)), (1, 2));
+
+        ask(&mut host, SessionRequest::Start);
+        let all = &mut [&mut host, &mut desktop, &mut browser];
+        run_until("the run", all, |games| {
+            games.iter_mut().all(|game| seats(game) == [0, 1, 2])
+        });
+        // Each guest drives its own tank, and each sees the other's go.
+        let (first, second) = (place(&mut host, 1), place(&mut host, 2));
+        let all = &mut [&mut host, &mut desktop, &mut browser];
+        run_until("the drive", all, |games| {
+            let drive = |drive| TankCommand { drive, ..default() };
+            order(games[1], drive(-Vec2::X));
+            order(games[2], drive(Vec2::Y));
+            games.iter_mut().all(|game| {
+                let west = first.x - place(game, 1).x;
+                let north = place(game, 2).y - second.y;
+                west > 1.0 && north > 1.0
+            })
+        });
+        assert!((place(&mut host, 1).y - first.y).abs() < 0.5);
+        assert!((place(&mut host, 2).x - second.x).abs() < 0.5);
+    }
+
+    #[test]
+    fn a_run_in_progress_takes_nobody_the_way_browsers_come_either() {
+        let mut host = host_with(free_port(), Some(free_port()));
+        ask(&mut host, SessionRequest::Start);
+        run_until("the run", &mut [&mut host], |games| {
+            screen(games[0]) == Screen::Playing && seats(games[0]) == [0]
+        });
+        let mut late = game();
+        ask(&mut late, SessionRequest::Join(code(&host)));
+        run_until("the refusal", &mut [&mut host, &mut late], |games| {
+            games[1].world().resource::<Notice>().0.is_some()
+        });
+        let told = late.world().resource::<Notice>().0.clone().unwrap();
+        assert!(told.contains("its run has started"), "{told}");
+        assert_eq!(*late.world().resource::<Session>(), Session::Solo);
+        assert_eq!(seats(&mut host), [0]);
+    }
+
+    #[test]
+    fn a_host_that_opens_a_game_again_hands_out_what_it_did_before() {
+        let (port, web) = (free_port(), free_port());
+        let mut host = host_with(port, Some(web));
+        let handed = code(&host);
+        // The game closes, and lets go of both its ports.
+        ask(&mut host, SessionRequest::Leave);
+        run_until("the ports", &mut [&mut host], |_| {
+            [port, web]
+                .iter()
+                .all(|port| UdpSocket::bind(("0.0.0.0", *port)).is_ok())
+        });
+        ask(&mut host, SessionRequest::Host);
+        run_until("the lobby", &mut [&mut host], |games| {
+            games[0].world().get_resource::<Hosting>().is_some()
+        });
+        assert_eq!(code(&host), handed);
+        // Whoever was given it before joins the new game with it.
+        let mut guest = game();
+        ask(&mut guest, SessionRequest::Join(handed));
+        run_until("the lobby", &mut [&mut host, &mut guest], |games| {
+            screen(games[1]) == Screen::Lobby
+        });
+        assert_eq!(own_seat(&guest), 1);
+    }
+
+    #[test]
+    fn a_print_that_is_not_the_one_of_the_game_joins_nothing() {
+        let mut host = host_with(free_port(), Some(free_port()));
+        let port = host.world().resource::<Hosting>().web().unwrap().port;
+        let mut guest = game();
+        let other = web_code("127.0.0.1", port, &"ab".repeat(PRINT_LENGTH / 2));
+        ask(&mut guest, SessionRequest::Join(other));
+        run_until("an answer", &mut [&mut host, &mut guest], |games| {
+            let refused = games[1].world().resource::<Notice>().0.is_some();
+            refused || screen(games[1]) == Screen::Lobby
+        });
+        assert_eq!(screen(&guest), Screen::Menu);
+        assert_eq!(*guest.world().resource::<Session>(), Session::Solo);
+        assert_eq!(seats(&mut host), Vec::<u8>::new());
+        // The player is told where nothing answered, and what to ask the host for.
+        let told = guest.world().resource::<Notice>().0.clone().unwrap();
+        let wanted = format!("No game answers at 127.0.0.1:{port}. ");
+        assert!(told.starts_with(&wanted), "{told}");
+        assert!(
+            told.ends_with("the one that its lobby shows now."),
+            "{told}"
+        );
     }
 
     /// Makes what a game receives come late, unevenly, and sometimes not at all: each way
