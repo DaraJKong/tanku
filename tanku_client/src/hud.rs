@@ -856,6 +856,8 @@ fn toasts(
                 (3, message)
             }
             SimEvent::TankRepaired { .. } => (2, "Tank repaired".to_string()),
+            // The waves of an arena are counted, so that the players know when it ends.
+            SimEvent::WaveIncoming { wave, of } => (2, format!("Wave {wave} of {of}")),
             _ => continue,
         };
         if news.as_ref().is_none_or(|(shown, _)| weight >= *shown) {

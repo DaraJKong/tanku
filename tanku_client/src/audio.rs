@@ -56,6 +56,7 @@ fn play(
     time: Res<Time<Real>>,
     mut ducked: ResMut<DuckedUntil>,
 ) {
+    let mut appeared = false;
     for event in events.read() {
         let (cue, at) = match *event {
             SimEvent::Shot {
@@ -82,6 +83,12 @@ fn play(
                 (Cue::Respawned, None)
             }
             SimEvent::RunOver => (Cue::RunOver, None),
+            SimEvent::WaveIncoming { .. } => (Cue::Wave, None),
+            // The tanks of a wave appear together, and sound as one.
+            SimEvent::TankAppeared { at } if !appeared => {
+                appeared = true;
+                (Cue::Appeared, Some(at))
+            }
             _ => continue,
         };
         // What happens far from the middle of the screen is quieter, but never silent: sound

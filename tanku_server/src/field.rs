@@ -1,6 +1,6 @@
 //! The loaded part of the corridor and everything solid in it.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use bevy::prelude::*;
 use tanku_core::{
@@ -14,6 +14,7 @@ use tanku_core::{
         Barrier, Block, Enemy, ExplosiveCrate, Flag, Gun, Motion, Position, PreviousPosition,
         Sector, SectorIndex, Tank, Team,
     },
+    stats::Genome,
 };
 
 use crate::brain::Brain;
@@ -61,6 +62,48 @@ pub struct Collider {
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct InSector(pub u32);
 
+/// An enemy of an arena that isn't there yet: which tank of its group it is, what it is made
+/// of and where it will appear.
+#[derive(Clone, Copy, Debug)]
+pub struct Recruit {
+    pub number: u32,
+    pub genome: Genome,
+    pub at: Vec2,
+}
+
+/// How far an arena is with its waves.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Fuse {
+    /// No player has come in yet.
+    Unlit,
+    /// The players are in, and the first wave is announced after this much longer.
+    Burning(f32),
+    /// The waves are on.
+    Out,
+}
+
+/// The enemies that an arena still holds back. An arena is empty when the players come in:
+/// its enemies appear in waves, each when the one before it is destroyed, at places that are
+/// marked for a moment first.
+#[derive(Clone, Debug)]
+pub struct Arena {
+    /// The waves that have not started, the next one first.
+    pub waiting: VecDeque<Vec<Recruit>>,
+    /// The tanks of the wave in progress that are not there yet, each with the time until it
+    /// appears. A tank whose place a player stands too close to has none: it waits for room.
+    pub incoming: Vec<(Recruit, Option<f32>)>,
+    pub fuse: Fuse,
+    /// How many waves the arena has in all.
+    pub waves: u32,
+}
+
+impl Arena {
+    /// Whether enemies are still to come.
+    pub fn holds_more(&self) -> bool {
+        !self.waiting.is_empty() || !self.incoming.is_empty()
+    }
+}
+
 #[derive(Resource)]
 pub struct Field {
     pub seed: u64,
@@ -76,6 +119,8 @@ pub struct Field {
     pub loaded: BTreeSet<u32>,
     /// Sectors whose enemies are all destroyed.
     pub cleared: BTreeSet<u32>,
+    /// What the loaded arenas still hold back, by sector.
+    pub arenas: BTreeMap<u32, Arena>,
 }
 
 impl Field {
@@ -89,6 +134,7 @@ impl Field {
             stale: true,
             loaded: BTreeSet::new(),
             cleared: BTreeSet::new(),
+            arenas: BTreeMap::new(),
         }
     }
 
@@ -158,6 +204,7 @@ impl Field {
     /// Loads a sector: its walls, its barrier, its flag if it has one, its obstacles and,
     /// unless it is cleared, its dormant enemies. `captured` tells whether its flag already is.
     /// Only a single player has flags, and the enemies are as many as the players call for.
+    /// An arena is loaded empty: its enemies are held back, and come in waves.
     pub fn load(&mut self, commands: &mut Commands, index: u32, captured: bool) {
         if !self.loaded.insert(index) {
             return;
@@ -190,34 +237,68 @@ impl Field {
         if layout.plan.kind != SectorKind::Bay && !self.cleared.contains(&index) {
             let arena = layout.plan.kind == SectorKind::Arena;
             let count = progression::enemy_count(index, self.players().max(1), arena) as usize;
-            let entry = (layout.plan.entry.0 + layout.plan.entry.1).as_vec2() / 2.0;
-            for (number, spawn) in layout.spawns.iter().take(count).enumerate() {
-                let genome = enemy::generate(self.seed, index, number as u32);
-                let position = spawn.as_vec2();
-                let mut rng = Stream::new(self.seed, Purpose::Brain, index, number as u32);
-                commands.spawn((
-                    Tank {
-                        genome,
-                        team: Team::Enemies,
-                        sector: index,
+            let group = layout.spawns.iter().take(count).enumerate();
+            let mut group = group.map(|(number, spawn)| Recruit {
+                number: number as u32,
+                genome: enemy::generate(self.seed, index, number as u32),
+                at: spawn.as_vec2(),
+            });
+            if arena {
+                // A sector that is too small for its whole group holds as many as fit.
+                let sizes = progression::wave_sizes(group.len() as u32);
+                let waves = sizes
+                    .iter()
+                    .map(|&size| group.by_ref().take(size as usize).collect());
+                self.arenas.insert(
+                    index,
+                    Arena {
+                        waiting: waves.collect(),
+                        incoming: Vec::new(),
+                        fuse: Fuse::Unlit,
+                        waves: sizes.len() as u32,
                     },
-                    Enemy { awake: false },
-                    Position(position),
-                    PreviousPosition(position),
-                    Motion {
-                        hull: rng.unit() * std::f32::consts::TAU,
-                        turret: (entry - position).to_angle(),
-                        ..default()
-                    },
-                    Gun::loaded(&genome),
-                    Brain::new(rng, index),
-                    InSector(index),
-                ));
+                );
+            } else {
+                for recruit in group {
+                    self.enlist(commands, &layout.plan, recruit, false);
+                }
             }
         } else {
             self.cleared.insert(index);
         }
         commands.spawn((Sector { layout }, SectorIndex(index), InSector(index)));
+    }
+
+    /// Puts an enemy in its sector: asleep until the players come in, or awake at once when it
+    /// appears in an arena that they are in.
+    pub fn enlist(
+        &self,
+        commands: &mut Commands,
+        plan: &SectorPlan,
+        recruit: Recruit,
+        awake: bool,
+    ) {
+        let Recruit { number, genome, at } = recruit;
+        let entry = (plan.entry.0 + plan.entry.1).as_vec2() / 2.0;
+        let mut rng = Stream::new(self.seed, Purpose::Brain, plan.index, number);
+        commands.spawn((
+            Tank {
+                genome,
+                team: Team::Enemies,
+                sector: plan.index,
+            },
+            Enemy { awake },
+            Position(at),
+            PreviousPosition(at),
+            Motion {
+                hull: rng.unit() * std::f32::consts::TAU,
+                turret: (entry - at).to_angle(),
+                ..default()
+            },
+            Gun::loaded(&genome),
+            Brain::new(rng, plan.index),
+            InSector(plan.index),
+        ));
     }
 
     /// The barrier in front of a sector, for a sector that is loaded without the one before it.
@@ -313,6 +394,8 @@ pub fn unload(
     mut field: ResMut<Field>,
     entities: Query<(Entity, &InSector, Option<&Barrier>)>,
 ) {
+    let loaded = field.loaded.clone();
+    field.arenas.retain(|sector, _| loaded.contains(sector));
     let mut removed = false;
     for (entity, sector, barrier) in &entities {
         // A barrier stays as long as the sector on either side of it.

@@ -55,11 +55,15 @@ pub enum Cue {
     RunOver,
     /// A button of a menu is pressed.
     Click,
+    /// A wave of an arena is on its way.
+    Wave,
+    /// The tanks of a wave are there.
+    Appeared,
 }
 
 impl Cue {
     /// Every cue, in the order of their numbers.
-    pub const ALL: [Cue; 16] = [
+    pub const ALL: [Cue; 18] = [
         Cue::Shot,
         Cue::EnemyShot,
         Cue::Ricochet,
@@ -76,6 +80,8 @@ impl Cue {
         Cue::Respawned,
         Cue::RunOver,
         Cue::Click,
+        Cue::Wave,
+        Cue::Appeared,
     ];
 
     /// How long the cue lasts.
@@ -97,6 +103,8 @@ impl Cue {
             Cue::Respawned => 0.4,
             Cue::RunOver => 1.0,
             Cue::Click => 0.04,
+            Cue::Wave => 0.9,
+            Cue::Appeared => 0.3,
         }
     }
 
@@ -146,6 +154,11 @@ impl Cue {
             Cue::Respawned => 0.3 * glide(300.0, 900.0) * left,
             Cue::RunOver => 0.3 * (note(t, 0.0, A4) + note(t, 0.25, E4) + note(t, 0.5, A3)),
             Cue::Click => 0.3 * tone(t, 1000.0) * decay(t * 80.0),
+            // A siren that climbs three times, between two notes like the warning of a mine.
+            Cue::Wave => 0.3 * sweep(t % 0.3, 330.0, 760.0, 0.3) * (1.0 - (t % 0.3) / 0.6),
+            Cue::Appeared => {
+                0.45 * glide(240.0, 70.0) * decay(t * 12.0) + 0.25 * noise.next() * decay(t * 30.0)
+            }
         }
     }
 }

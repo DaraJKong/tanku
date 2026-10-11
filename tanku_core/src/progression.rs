@@ -3,6 +3,8 @@
 //! Everything that feeds generation is an integer formula or a lookup table, so that a seed
 //! gives the same enemies on every platform.
 
+use crate::rules::ARENA_WAVES;
+
 /// `round(100 - 90 * exp(-(n - 1) / 15))` for sectors 1 to 79. It stays at 100 afterward.
 const SECTOR_BUDGETS: [u8; 79] = [
     10, 16, 21, 26, 31, 36, 40, 44, 47, 51, 54, 57, 60, 62, 65, 67, 69, 71, 73, 75, 76, 78, 79, 81,
@@ -26,6 +28,16 @@ pub fn enemy_count(sector: u32, players: u32, arena: bool) -> u32 {
     // `solo * (1 + 0.5 * (players - 1))`, rounded up.
     let team = (solo * (players + 1)).div_ceil(2);
     if arena { (team * 3).div_ceil(2) } else { team }
+}
+
+/// How many tanks each wave of an arena has, for a group of this size: as many waves as an
+/// arena has, each as large as the others or one tank larger, the larger ones first. A group
+/// that is smaller than the number of waves comes one tank at a time.
+pub fn wave_sizes(count: u32) -> Vec<u32> {
+    let waves = ARENA_WAVES.min(count);
+    (0..waves)
+        .map(|wave| count / waves + (wave < count % waves) as u32)
+        .collect()
 }
 
 /// Highest brain tier an enemy of this sector can have.
@@ -92,6 +104,21 @@ pub fn angled_wall_chance(sector: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_group_of_an_arena_comes_in_waves_of_about_the_same_size() {
+        assert_eq!(wave_sizes(9), [3, 3, 3]);
+        assert_eq!(wave_sizes(8), [3, 3, 2]);
+        assert_eq!(wave_sizes(5), [2, 2, 1]);
+        assert_eq!(wave_sizes(23), [8, 8, 7]);
+        // Fewer tanks than waves come one at a time, and nobody comes to an empty arena.
+        assert_eq!(wave_sizes(2), [1, 1]);
+        assert_eq!(wave_sizes(1), [1]);
+        assert!(wave_sizes(0).is_empty());
+        for count in 0..40 {
+            assert_eq!(wave_sizes(count).iter().sum::<u32>(), count);
+        }
+    }
 
     #[test]
     fn budget_table_follows_the_formula() {

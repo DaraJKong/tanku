@@ -3,11 +3,13 @@
 use bevy::{ecs::message::Messages, prelude::*};
 use tanku_core::{
     CorePlugin,
+    map::SectorKind,
+    progression,
     rng::{Purpose, Stream},
     rules::{
-        BARRIER_GATHER_DISTANCE, PLAYTEST_LAST_SECTOR, REPAIR_PROTECTION, REPAIR_RADIUS,
-        REPAIR_TIME, RESPAWN_DELAY, SHIELD_DURATION, SOLO_LIVES, SPAWN_FIRE_DELAY, TANK_RADIUS,
-        TICK_RATE,
+        APPEAR_ROOM, APPEAR_TIME, ARENA_DELAY, ARENA_WAVES, BARRIER_GATHER_DISTANCE,
+        PLAYTEST_LAST_SECTOR, REPAIR_PROTECTION, REPAIR_RADIUS, REPAIR_TIME, RESPAWN_DELAY,
+        SHIELD_DURATION, SOLO_LIVES, SPAWN_FIRE_DELAY, TANK_RADIUS, TICK_RATE,
     },
     sim::{
         Barrier, Block, Blow, Bullet, Enemy, ExplosiveCrate, Flag, Gun, Mine, MineState, Motion,
@@ -20,7 +22,7 @@ use tanku_core::{
 use crate::{
     Casualties, Maker, ServerPlugin,
     brain::Brain,
-    field::{Field, InSector},
+    field::{Field, Fuse, InSector},
 };
 
 /// Where a run starts: the start bay spans x from -7 to 7 and y from 0 to 16.
@@ -188,14 +190,28 @@ fn spawn_veteran(app: &mut App, at: Vec2, levels: &[(Stat, u8)]) -> Entity {
     enemy
 }
 
-/// Destroys every enemy of a sector, as a player would.
-fn clear_sector(app: &mut App, sector: u32) {
+/// Destroys the enemies that are in a sector, as a player would.
+fn destroy_enemies(app: &mut App, sector: u32) {
     let destroyed = enemies(app, sector);
     app.world_mut()
         .resource_mut::<Casualties>()
         .tanks
         .extend(destroyed);
     tick(app, 1);
+}
+
+/// Destroys every enemy of a sector, those that an arena still holds back included.
+fn clear_sector(app: &mut App, sector: u32) {
+    if let Some(arena) = app
+        .world_mut()
+        .resource_mut::<Field>()
+        .arenas
+        .get_mut(&sector)
+    {
+        arena.waiting.clear();
+        arena.incoming.clear();
+    }
+    destroy_enemies(app, sector);
 }
 
 /// Carries the player through the barrier of the sector it is in.
@@ -1213,6 +1229,180 @@ fn a_flag_left_behind_is_no_checkpoint() {
     let entity = player(&mut app).unwrap();
     assert_eq!(position(&mut app, entity), START);
     assert_eq!(enemies(&mut app, 1).len(), 1, "sector 1 is to fight again");
+}
+
+/// The first arena of the corridor of a run.
+fn first_arena(app: &mut App) -> u32 {
+    let mut field = app.world_mut().resource_mut::<Field>();
+    let arena = (1..60).find(|&sector| field.corridor.plan(sector).kind == SectorKind::Arena);
+    arena.unwrap()
+}
+
+/// Starts the run of a playtest and puts the player in the first arena of its corridor, just
+/// behind the barrier. Returns the sector of the arena and how many tanks each wave has.
+fn enter_arena(seed: &str) -> (App, u32, Vec<u32>) {
+    let mut app = start(seed);
+    app.insert_resource(Playtest {
+        infinite_lives: true,
+    });
+    let arena = first_arena(&mut app);
+    skip_to(&mut app, arena);
+    // Seen through its barrier, an arena is empty.
+    assert!(enemies(&mut app, arena).is_empty());
+    cross_barrier(&mut app);
+    assert_eq!(run(&app).sector, arena);
+    let sizes = progression::wave_sizes(progression::enemy_count(arena, 1, true));
+    (app, arena, sizes)
+}
+
+/// Keeps the player's tank from harm, so that a test of the enemies isn't cut short by one
+/// of their bullets.
+fn shelter(app: &mut App) {
+    let entity = player(app).unwrap();
+    app.world_mut().entity_mut(entity).insert(Protected(1.0e9));
+}
+
+/// How many of the events that happened are the ones wanted.
+fn told(app: &mut App, wanted: impl Fn(&SimEvent) -> bool) -> usize {
+    count(&events(app), wanted)
+}
+
+#[test]
+fn the_enemies_of_an_arena_come_in_waves_after_a_warning() {
+    let (mut app, arena, sizes) = enter_arena("TEST");
+    shelter(&mut app);
+    assert_eq!(sizes.len(), ARENA_WAVES as usize);
+    let incoming = |event: &SimEvent| matches!(event, SimEvent::TankIncoming { .. });
+    let appeared = |event: &SimEvent| matches!(event, SimEvent::TankAppeared { .. });
+
+    // Nothing happens for a moment after the player comes in.
+    events(&mut app);
+    tick(&mut app, seconds(ARENA_DELAY) - 5);
+    assert_eq!(told(&mut app, |_| true), 0);
+    assert!(enemies(&mut app, arena).is_empty());
+    // What was told since the wave before was destroyed.
+    let mut news: Vec<SimEvent> = Vec::new();
+    for (wave, &size) in sizes.iter().enumerate() {
+        // Then the wave is announced, and the place of each of its tanks is marked.
+        tick(&mut app, 8);
+        news.extend(events(&mut app));
+        let announced = SimEvent::WaveIncoming {
+            wave: wave as u32 + 1,
+            of: sizes.len() as u32,
+        };
+        assert_eq!(count(&news, |event| *event == announced), 1, "wave {wave}");
+        assert_eq!(count(&news, incoming), size as usize);
+        assert!(enemies(&mut app, arena).is_empty());
+        // The tanks are there a moment later, awake, and nothing of the sort is said twice.
+        tick(&mut app, seconds(APPEAR_TIME) - 12);
+        assert!(enemies(&mut app, arena).is_empty());
+        tick(&mut app, 16);
+        let there = enemies(&mut app, arena);
+        assert_eq!(there.len(), size as usize);
+        assert!(
+            there
+                .iter()
+                .all(|&tank| app.world().get::<Enemy>(tank).unwrap().awake)
+        );
+        let there_news = events(&mut app);
+        assert_eq!(count(&there_news, appeared), size as usize);
+        assert_eq!(count(&there_news, incoming), 0);
+
+        // The sector isn't cleared while the arena holds a wave back, and the next wave waits
+        // for the last tank of this one.
+        let cleared = SimEvent::SectorCleared { sector: arena };
+        if size > 1 {
+            let one = there[0];
+            destroy(&mut app, one);
+            tick(&mut app, seconds(1.0));
+            assert_eq!(told(&mut app, incoming), 0);
+        }
+        destroy_enemies(&mut app, arena);
+        let last = wave + 1 == sizes.len();
+        news = events(&mut app);
+        assert_eq!(count(&news, |event| *event == cleared), last as usize);
+        assert_eq!(run(&app).cleared >= arena, last);
+    }
+    // Once the last wave is destroyed, the arena is cleared like any sector.
+    let entity = player(&mut app).unwrap();
+    let gate = barrier(&mut app, arena);
+    teleport(&mut app, entity, (gate.from + gate.to) / 2.0 - gate.outward);
+    tick(&mut app, 2);
+    assert!(barrier(&mut app, arena).unlocked);
+}
+
+#[test]
+fn a_tank_of_an_arena_waits_for_room_to_appear() {
+    let (mut app, arena, sizes) = enter_arena("TEST");
+    shelter(&mut app);
+    // The player stands on the place of the first tank of the first wave.
+    let place = {
+        let field = app.world().resource::<Field>();
+        field.arenas[&arena].waiting[0][0].at
+    };
+    let entity = player(&mut app).unwrap();
+    teleport(&mut app, entity, place + Vec2::X);
+    tick(&mut app, seconds(ARENA_DELAY + APPEAR_TIME) + 6);
+    // The others are there. That one isn't, and its place was never marked.
+    assert_eq!(enemies(&mut app, arena).len(), sizes[0] as usize - 1);
+    let marked = |event: &SimEvent| matches!(event, SimEvent::TankIncoming { at } if *at == place);
+    assert_eq!(told(&mut app, marked), 0);
+    // It comes once the player has moved away, and the wave isn't over before.
+    destroy_enemies(&mut app, arena);
+    tick(&mut app, seconds(1.0));
+    assert!(enemies(&mut app, arena).is_empty());
+    assert_eq!(
+        told(&mut app, |event| matches!(
+            event,
+            SimEvent::WaveIncoming { .. }
+        )),
+        0
+    );
+    teleport(&mut app, entity, place + Vec2::X * (APPEAR_ROOM + 1.0));
+    tick(&mut app, 2);
+    assert_eq!(told(&mut app, marked), 1);
+    tick(&mut app, seconds(APPEAR_TIME) + 4);
+    assert_eq!(enemies(&mut app, arena).len(), 1);
+}
+
+#[test]
+fn an_arena_starts_over_when_the_player_comes_back_to_it() {
+    let (mut app, arena, sizes) = enter_arena("TEST");
+    tick(&mut app, seconds(ARENA_DELAY + APPEAR_TIME) + 6);
+    assert_eq!(enemies(&mut app, arena).len(), sizes[0] as usize);
+    // The player is destroyed, and comes back in front of the arena: it is empty again, and
+    // holds all its waves.
+    destroy_player(&mut app);
+    tick(&mut app, seconds(RESPAWN_DELAY) + 1);
+    assert_eq!(run(&app).sector, arena - 1);
+    assert!(enemies(&mut app, arena).is_empty());
+    let field = app.world().resource::<Field>();
+    let held: usize = field.arenas[&arena].waiting.iter().map(Vec::len).sum();
+    assert_eq!(held as u32, sizes.iter().sum::<u32>());
+    assert_eq!(field.arenas[&arena].fuse, Fuse::Unlit);
+}
+
+#[test]
+fn an_arena_holds_the_group_that_its_players_call_for() {
+    let mut app = team("TEST", 4);
+    app.insert_resource(Playtest {
+        infinite_lives: true,
+    });
+    let arena = first_arena(&mut app);
+    skip_to(&mut app, arena);
+    // Four players call for a larger group, which comes in as many waves. The smallest
+    // arenas hold as many tanks as fit.
+    let mut field = app.world_mut().resource_mut::<Field>();
+    let room = field.corridor.layout(arena).spawns.len() as u32;
+    let expected = progression::enemy_count(arena, 4, true).min(room);
+    assert!(expected > progression::enemy_count(arena, 1, true));
+    let held: Vec<u32> = field.arenas[&arena]
+        .waiting
+        .iter()
+        .map(|wave| wave.len() as u32)
+        .collect();
+    assert_eq!(held, progression::wave_sizes(expected));
+    assert!(enemies(&mut app, arena).is_empty());
 }
 
 /// Asks to skip to a sector, as the menu of a playtest does.

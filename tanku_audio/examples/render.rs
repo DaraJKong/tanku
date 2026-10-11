@@ -199,6 +199,8 @@ fn told(cue: Cue) -> &'static str {
         Cue::Respawned => "The player's tank is back",
         Cue::RunOver => "The run is over",
         Cue::Click => "A button is pressed",
+        Cue::Wave => "A wave of an arena is on its way",
+        Cue::Appeared => "The tanks of a wave are there",
     }
 }
 

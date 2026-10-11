@@ -14,6 +14,7 @@ use bevy::{
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
 };
 use tanku_core::{
+    map::SectorKind,
     rules::{
         BLAST_RADIUS, BLOCK_SIZE, BULLET_RADIUS, FLAG_CAPTURE_RADIUS, MINE_RADIUS,
         MINE_TRIGGER_RADIUS,
@@ -762,6 +763,27 @@ pub fn floor_mesh(outline: &[Vec2]) -> Mesh {
     ))
 }
 
+/// The radius of the outer circle on the floor of an arena whose walls fit in a box, and of
+/// the inner one: they stay clear of the walls of the smallest arena and don't grow past a
+/// size that reads at a glance.
+fn arena_rings(min: Vec2, max: Vec2) -> (f32, f32) {
+    let outer = ((max - min).min_element() / 2.0 - 3.0).clamp(4.0, 11.0);
+    (outer, outer * 0.55)
+}
+
+/// What is drawn on the floor of an arena: two circles in dashes around its middle, in the
+/// red of what is dangerous.
+fn arena_drawing(min: Vec2, max: Vec2) -> Draft {
+    let mut draft = Draft::default();
+    let middle = to_world((min + max) / 2.0, 2.0 * LIFT);
+    let (outer, inner) = arena_rings(min, max);
+    let ink = theme::DANGER.mix(&theme::FLOOR, 0.45);
+    for (radius, dashes) in [(outer, 48), (inner, 28)] {
+        draft.ring(middle, (radius - 0.12, radius), (dashes, 0.5), ink);
+    }
+    draft
+}
+
 /// The walls of a sector, as the drawing takes them.
 fn walls_of(sector: &Sector) -> Vec<(Vec2, Vec2)> {
     let walls = sector.layout.plan.walls.iter();
@@ -808,10 +830,24 @@ fn dress_sectors(
         }
         let outline: Vec<Vec2> = plan.outline.iter().map(|point| point.as_vec2()).collect();
         let floor = meshes.add(floor_mesh(&outline));
+        // An arena is empty until its enemies appear: circles on its floor tell it from a
+        // sector that was cleared.
+        let rings = (plan.kind == SectorKind::Arena)
+            .then(|| meshes.add(arena_drawing(plan.min.as_vec2(), plan.max.as_vec2()).build()));
         commands
             .entity(entity)
             .insert((Transform::default(), Visibility::default()))
             .with_children(|parent| {
+                if let Some(rings) = rings {
+                    parent.spawn((
+                        Ground {
+                            sector: index,
+                            floor: false,
+                        },
+                        Mesh3d(rings),
+                        MeshMaterial3d(paints.ink_dormant.clone()),
+                    ));
+                }
                 parent.spawn((
                     Ground {
                         sector: index,
@@ -1554,6 +1590,25 @@ mod tests {
         // A bounce turns the bullet: the line behind it is on the other side of the wall.
         let north_east = Vec2::new(9.0, 9.0).normalize() * 9.0;
         assert!(close(trail_after(&mut trail, north_east, 0.1), 0.9));
+    }
+
+    #[test]
+    fn the_circles_of_an_arena_fit_its_floor() {
+        // The smallest arena is 16 m across, and the largest 36 m.
+        for across in [16.0, 24.0, 36.0] {
+            let (outer, inner) = arena_rings(Vec2::ZERO, Vec2::new(across, 34.0));
+            assert!(
+                outer <= across / 2.0 - 3.0 || outer == 4.0,
+                "{across}: {outer}"
+            );
+            assert!(outer <= 11.0 && inner < outer && inner > 2.0);
+        }
+        // They are drawn around the middle of the arena, on the floor.
+        let drawing = arena_drawing(Vec2::new(10.0, 0.0), Vec2::new(40.0, 34.0));
+        let (low, high) = drawing.bounds();
+        let middle = to_ground((low + high) / 2.0);
+        assert!(middle.distance(Vec2::new(25.0, 17.0)) < 0.2, "{middle}");
+        assert!(high.y < 0.1);
     }
 
     /// The triangles of a bullet, and whether each is part of a stripe.

@@ -50,6 +50,16 @@ pub const REPAIR_TIME: f32 = 4.0;
 /// Time during which nothing destroys a tank that was just repaired.
 pub const REPAIR_PROTECTION: f32 = 1.0;
 
+/// The enemies of an arena come in this many waves at most, each when the one before it is
+/// destroyed.
+pub const ARENA_WAVES: u32 = 3;
+/// Time between the entry of the first player into an arena and the warning of its first wave.
+pub const ARENA_DELAY: f32 = 2.0;
+/// How long the place of a tank of an arena is marked before the tank appears there.
+pub const APPEAR_TIME: f32 = 1.5;
+/// The mark of a tank of an arena waits while the tank of a player is this close to its place.
+pub const APPEAR_ROOM: f32 = 4.0;
+
 pub const SOLO_LIVES: u32 = 3;
 /// Delay between the destruction of the solo player and the respawn.
 pub const RESPAWN_DELAY: f32 = 1.5;

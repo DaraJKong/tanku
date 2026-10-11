@@ -7,7 +7,10 @@
 //! their size and stay upright whichever way the view is turned.
 
 use bevy::prelude::*;
-use tanku_core::sim::Barrier;
+use tanku_core::{
+    map::SectorKind,
+    sim::{Barrier, Sector},
+};
 
 use crate::{
     Screen,
@@ -74,10 +77,12 @@ fn numbers(barrier: &Barrier) -> (String, String) {
     (barrier.sector.to_string(), (barrier.sector + 1).to_string())
 }
 
-/// What the caption of a barrier says.
-fn caption(barrier: &Barrier) -> String {
+/// What the caption of a barrier says: whether it is locked, and whether the sector behind it
+/// is an arena, which looks empty from here.
+fn caption(barrier: &Barrier, arena: bool) -> String {
     let state = if barrier.unlocked { "OPEN" } else { "LOCKED" };
-    format!("BARRIER {} \u{b7} {state}", barrier.sector)
+    let ahead = if arena { " \u{b7} ARENA AHEAD" } else { "" };
+    format!("BARRIER {} \u{b7} {state}{ahead}", barrier.sector)
 }
 
 /// The color of a barrier, which its tags take.
@@ -242,6 +247,7 @@ fn show(at: Option<Vec2>, transform: &mut UiTransform, visibility: &mut Visibili
 fn place(
     screen: OnScreen,
     barriers: Query<&Barrier>,
+    sectors: Query<&Sector>,
     mut balloons: Query<(&Balloon, &mut UiTransform, &mut Visibility, &Children), Without<Part>>,
     mut parts: Query<
         (
@@ -370,7 +376,11 @@ fn place(
             let Ok((mut text, mut text_color, mut hold)) = texts.get_mut(child) else {
                 continue;
             };
-            let content = caption(barrier);
+            let arena = sectors.iter().any(|sector| {
+                let plan = &sector.layout.plan;
+                plan.index == barrier.sector + 1 && plan.kind == SectorKind::Arena
+            });
+            let content = caption(barrier, arena);
             if text.0 != content {
                 text.0 = content;
             }
@@ -416,8 +426,16 @@ mod tests {
 
     #[test]
     fn a_caption_tells_in_words_whether_its_barrier_is_locked() {
-        assert_eq!(caption(&barrier(12, false)), "BARRIER 12 \u{b7} LOCKED");
-        assert_eq!(caption(&barrier(12, true)), "BARRIER 12 \u{b7} OPEN");
+        assert_eq!(
+            caption(&barrier(12, false), false),
+            "BARRIER 12 \u{b7} LOCKED"
+        );
+        assert_eq!(caption(&barrier(12, true), false), "BARRIER 12 \u{b7} OPEN");
+        // An arena looks empty through its barrier, so the barrier says what it is.
+        assert_eq!(
+            caption(&barrier(12, false), true),
+            "BARRIER 12 \u{b7} LOCKED \u{b7} ARENA AHEAD"
+        );
         assert_ne!(color(&barrier(12, false)), color(&barrier(12, true)));
     }
 

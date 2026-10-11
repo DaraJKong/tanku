@@ -3,12 +3,12 @@
 use bevy::prelude::*;
 use tanku_core::{
     geom,
-    rules::{BARRIER_GATHER_DISTANCE, FLAG_CAPTURE_RADIUS, TANK_RADIUS},
+    rules::{ARENA_DELAY, BARRIER_GATHER_DISTANCE, FLAG_CAPTURE_RADIUS, TANK_RADIUS},
     sim::{Barrier, Enemy, Flag, Player, Position, PreviousPosition, Run, SimEvent, Tank, Wreck},
 };
 
 use crate::{
-    field::{self, Field},
+    field::{self, Arena, Field, Fuse},
     run::formation,
 };
 
@@ -29,7 +29,9 @@ pub fn advance(
     mut events: MessageWriter<SimEvent>,
 ) {
     let front = run.sector;
-    let fought = enemies.iter().any(|(tank, _)| tank.sector == front);
+    // An arena is fought for as long as it holds enemies back.
+    let fought = enemies.iter().any(|(tank, _)| tank.sector == front)
+        || field.arenas.get(&front).is_some_and(Arena::holds_more);
     if !fought && field.cleared.insert(front) {
         run.cleared = run.cleared.max(front);
         events.write(SimEvent::SectorCleared { sector: front });
@@ -92,6 +94,10 @@ pub fn advance(
                 if enemy_tank.sector == entered {
                     enemy.awake = true;
                 }
+            }
+            // An arena lets the players in before its first wave is announced.
+            if let Some(arena) = field.arenas.get_mut(&entered) {
+                arena.fuse = Fuse::Burning(ARENA_DELAY);
             }
             // The next sector waits behind its barrier.
             field.load(&mut commands, entered + 1, false);

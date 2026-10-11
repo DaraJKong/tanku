@@ -46,6 +46,7 @@ fn clear(
 /// Loads the corridor around a sector and puts the players in it. Returns where they stand.
 fn enter(commands: &mut Commands, field: &mut Field, sector: u32) -> Vec2 {
     field.loaded.clear();
+    field.arenas.clear();
     field.load_entry_barrier(commands, sector);
     // A player comes back in the sector of the last flag captured.
     field.load(commands, sector, true);
