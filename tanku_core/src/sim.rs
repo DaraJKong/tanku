@@ -51,7 +51,7 @@ pub struct TankCommand {
     pub repair: bool,
 }
 
-#[derive(Component, Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Gun {
     pub rounds: u8,
     /// Time spent reloading the next round.
@@ -85,7 +85,7 @@ pub enum ShieldState {
     Active(f32),
 }
 
-#[derive(Component, Clone, Copy, Debug, Default, Serialize, Deserialize)]
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Shield {
     pub state: ShieldState,
     /// Time before the shield can be raised again.

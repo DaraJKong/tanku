@@ -13,16 +13,48 @@ use tanku_core::{
         Bullet, Enemy, Gun, Mine, MineState, Motion, Player, Position, PreviousPosition, Shield,
         ShieldState, SimEvent, Tank, TankCommand, Team, Wreck,
     },
+    stats::Genome,
 };
 
 use crate::{
     Casualties, Maker,
-    bullets::{self, Flight},
+    bullets::{self, Flight, FlightReport},
     field::{Field, InSector},
     repair::Repairers,
 };
 
-/// Runs the shields: the bubble, then the cooldown.
+/// What a shield did in a tick.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Bubble {
+    Raised,
+    Dropped,
+}
+
+/// One tick of a shield: the bubble while it is up, then the cooldown, which is all that a
+/// shield costs its tank. `asked` tells whether the tank wants its bubble up and is free to
+/// raise it. The host does this for every tank, and a guest for the tank of its own player.
+pub fn step_shield(shield: &mut Shield, cooldown: f32, asked: bool) -> Option<Bubble> {
+    match shield.state {
+        ShieldState::Ready => {
+            shield.cooldown = (shield.cooldown - TICK).max(0.0);
+            if asked && shield.cooldown == 0.0 {
+                shield.state = ShieldState::Active(SHIELD_DURATION);
+                return Some(Bubble::Raised);
+            }
+        }
+        ShieldState::Active(left) if left > TICK => {
+            shield.state = ShieldState::Active(left - TICK);
+        }
+        ShieldState::Active(_) => {
+            shield.state = ShieldState::Ready;
+            shield.cooldown = cooldown;
+            return Some(Bubble::Dropped);
+        }
+    }
+    None
+}
+
+/// Runs the shields.
 pub fn shields(
     repairers: Res<Repairers>,
     mut tanks: Query<(Entity, &Tank, &Position, &TankCommand, &mut Shield), Without<Wreck>>,
@@ -32,28 +64,20 @@ pub fn shields(
         let Some(cooldown) = tank.genome.shield_cooldown() else {
             continue;
         };
-        match shield.state {
-            ShieldState::Ready => {
-                // What doesn't change is left alone: guests are told of what was touched.
-                if shield.cooldown > 0.0 {
-                    shield.cooldown = (shield.cooldown - TICK).max(0.0);
-                }
-                // A tank that repairs a wreck has its hands full.
-                let free = !repairers.0.contains(&entity);
-                if command.shield && free && shield.cooldown == 0.0 {
-                    shield.state = ShieldState::Active(SHIELD_DURATION);
-                    events.write(SimEvent::ShieldRaised { at: position.0 });
-                }
+        // A tank that repairs a wreck has its hands full.
+        let asked = command.shield && !repairers.0.contains(&entity);
+        let mut next = *shield;
+        let did = step_shield(&mut next, cooldown, asked);
+        // What doesn't change is left alone: guests are told of what was touched.
+        shield.set_if_neq(next);
+        match did {
+            Some(Bubble::Raised) => {
+                events.write(SimEvent::ShieldRaised { at: position.0 });
             }
-            ShieldState::Active(left) if left > TICK => {
-                shield.state = ShieldState::Active(left - TICK);
-            }
-            // The cooldown is all that a shield costs its tank.
-            ShieldState::Active(_) => {
-                shield.state = ShieldState::Ready;
-                shield.cooldown = cooldown;
+            Some(Bubble::Dropped) => {
                 events.write(SimEvent::ShieldDropped { at: position.0 });
             }
+            None => {}
         }
     }
 }
@@ -180,6 +204,79 @@ pub fn separate(
     }
 }
 
+/// What a gun did in a tick.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Worked {
+    pub fired: bool,
+    /// Whether the tank laid a mine.
+    pub laid: bool,
+}
+
+/// One tick of a gun: it cools down and reloads, then fires and lays a mine if its tank asks
+/// for it, is free to, and can. The host does this for every tank, and a guest for the tank of
+/// its own player.
+pub fn step_gun(gun: &mut Gun, genome: &Genome, command: &TankCommand, free: bool) -> Worked {
+    gun.cooldown = (gun.cooldown - TICK).max(0.0);
+    gun.mine_cooldown = (gun.mine_cooldown - TICK).max(0.0);
+    if gun.rounds < genome.magazine() {
+        gun.reload += TICK;
+        if gun.reload >= genome.reload_time() {
+            gun.reload = 0.0;
+            gun.rounds += 1;
+        }
+    }
+    if !free {
+        return Worked::default();
+    }
+    let fired = command.fire && gun.rounds > 0 && gun.cooldown == 0.0;
+    if fired {
+        gun.rounds -= 1;
+        gun.cooldown = FIRE_COOLDOWN;
+    }
+    let laid = command.mine && gun.mine_cooldown == 0.0 && gun.mines < genome.mines();
+    if laid {
+        gun.mine_cooldown = MINE_COOLDOWN;
+        gun.mines += 1;
+    }
+    Worked { fired, laid }
+}
+
+/// A shot as it leaves its tank.
+pub struct Shot {
+    /// The tip of the barrel.
+    pub muzzle: Vec2,
+    /// Where the bullet is once it is out of the barrel, and the bullet as it is there.
+    pub at: Vec2,
+    pub bullet: Bullet,
+    /// What the bullet met on its way down the barrel.
+    pub flight: FlightReport,
+}
+
+/// Fires the gun of a tank that stands at a place with its turret turned so. The bullet starts
+/// in the turret and travels down the barrel, so that a tank against a wall can't shoot
+/// through it.
+pub fn shoot(field: &Field, owner: Entity, tank: &Tank, position: Vec2, turret: f32) -> Shot {
+    let genome = &tank.genome;
+    let direction = Vec2::from_angle(turret);
+    let mut bullet = Bullet {
+        owner,
+        team: tank.team,
+        sector: tank.sector,
+        velocity: direction * genome.bullet_speed(),
+        bounces_left: genome.bounces(),
+        pierces_left: genome.piercing(),
+        bounced: false,
+    };
+    let mut at = position;
+    let flight = bullets::fly_past_walls(field, &mut at, &mut bullet, MUZZLE_DISTANCE);
+    Shot {
+        muzzle: position + direction * MUZZLE_DISTANCE,
+        at,
+        bullet,
+        flight,
+    }
+}
+
 /// Reloads the guns, fires them and places mines.
 pub fn operate(
     mut commands: Commands,
@@ -191,80 +288,47 @@ pub fn operate(
     mut events: MessageWriter<SimEvent>,
 ) {
     for (entity, tank, position, motion, command, mut gun) in &mut tanks {
-        let genome = &tank.genome;
-        // What doesn't change is left alone: guests are told of what was touched.
-        if gun.cooldown > 0.0 {
-            gun.cooldown = (gun.cooldown - TICK).max(0.0);
-        }
-        if gun.mine_cooldown > 0.0 {
-            gun.mine_cooldown = (gun.mine_cooldown - TICK).max(0.0);
-        }
-        let laid = mines.iter().filter(|mine| mine.owner == entity).count() as u8;
-        if gun.mines != laid {
-            gun.mines = laid;
-        }
-        if gun.rounds < genome.magazine() {
-            gun.reload += TICK;
-            if gun.reload >= genome.reload_time() {
-                gun.reload = 0.0;
-                gun.rounds += 1;
-            }
-        }
+        let (genome, team) = (&tank.genome, tank.team);
+        let mut next = *gun;
+        next.mines = mines.iter().filter(|mine| mine.owner == entity).count() as u8;
         // A tank that repairs a wreck has its hands full.
-        if repairers.0.contains(&entity) {
-            continue;
-        }
+        let free = !repairers.0.contains(&entity);
+        let worked = step_gun(&mut next, genome, command, free);
+        // What doesn't change is left alone: guests are told of what was touched.
+        gun.set_if_neq(next);
 
-        if command.fire && gun.rounds > 0 && gun.cooldown == 0.0 {
-            gun.rounds -= 1;
-            gun.cooldown = FIRE_COOLDOWN;
-            let direction = Vec2::from_angle(motion.turret);
-            let mut bullet = Bullet {
-                owner: entity,
-                team: tank.team,
-                sector: tank.sector,
-                velocity: direction * genome.bullet_speed(),
-                bounces_left: genome.bounces(),
-                pierces_left: genome.piercing(),
-                bounced: false,
-            };
+        if worked.fired {
+            let shot = shoot(&field, entity, tank, position.0, motion.turret);
             events.write(SimEvent::Shot {
-                at: position.0 + direction * MUZZLE_DISTANCE,
-                team: tank.team,
+                at: shot.muzzle,
+                team,
             });
-            // The bullet starts in the turret and travels down the barrel, so that a tank
-            // against a wall can't shoot through it.
-            let mut at = position.0;
-            let flight = bullets::fly_past_walls(&field, &mut at, &mut bullet, MUZZLE_DISTANCE);
-            for bounce in &flight.bounces {
+            for bounce in &shot.flight.bounces {
                 events.write(SimEvent::Ricochet { at: *bounce });
             }
-            match flight.end {
+            match shot.flight.end {
                 Flight::Flying => {
                     commands.spawn((
-                        bullet,
+                        shot.bullet,
                         Maker(*genome),
-                        Position(at),
-                        PreviousPosition(at),
+                        Position(shot.at),
+                        PreviousPosition(shot.at),
                         InSector(tank.sector),
                     ));
                 }
                 // A shot that ends in the barrel hits what stopped it all the same.
                 Flight::Stopped(solid) => {
-                    let team = tank.team;
                     bullets::strike(&mut casualties, solid, Some((*genome, team)));
-                    events.write(SimEvent::BulletDestroyed { at, team });
+                    events.write(SimEvent::BulletDestroyed { at: shot.at, team });
                 }
             }
         }
 
-        if command.mine && gun.mine_cooldown == 0.0 && gun.mines < genome.mines() {
-            gun.mine_cooldown = MINE_COOLDOWN;
-            gun.mines += 1;
+        if worked.laid {
             commands.spawn((
                 Mine {
                     owner: entity,
-                    team: tank.team,
+                    team,
                     sector: tank.sector,
                     state: MineState::Arming(MINE_ARMING_TIME),
                 },
