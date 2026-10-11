@@ -7,7 +7,8 @@
 //! that one, `join ADDRESS`, which joins a game by its address or by what its host hands out
 //! for browsers,
 //! `type TEXT`, which presses the keys that write a text, `turn QUARTERS`, `peek ENEMY`,
-//! `flag SECTOR`, `look X Y`, `zoom METERS`, `clear`, `reach`, `bubble`, `die`, `pause`,
+//! `flag SECTOR`, `look X Y`, `zoom METERS`, `clear`, `reach`, `cross`, which carries the tank
+//! through the barrier of its sector, `bubble`, `die`, `pause`,
 //! `settings`, `resume`,
 //! `lose ENEMY`, `blast X Y`, which sets off a mine at a point of the map, `warn X Y`, which
 //! sounds the warning of a mine there without any mine, `shot PATH` and
@@ -47,8 +48,8 @@ use bevy::{
 };
 use tanku_core::{
     sim::{
-        Blow, Bullet, Enemy, Flag, Mine, MineState, Motion, Position, PreviousPosition, Run,
-        RunPhase, RunRequest, Shield, ShieldState, SimEvent, Tank, TankCommand, Team, Weapon,
+        Barrier, Blow, Bullet, Enemy, Flag, Mine, MineState, Motion, Position, PreviousPosition,
+        Run, RunPhase, RunRequest, Shield, ShieldState, SimEvent, Tank, TankCommand, Team, Weapon,
     },
     stats::{Genome, Stat},
 };
@@ -375,12 +376,13 @@ fn run_script(
     mut run: Option<ResMut<Run>>,
     mut field: Option<ResMut<Field>>,
     mut casualties: ResMut<Casualties>,
-    (enemies, mut player, flags, exhibits, mut shields): (
+    (enemies, mut player, flags, exhibits, mut shields, barriers): (
         Query<(Entity, &Tank, &Position), With<Enemy>>,
         Query<(Entity, &mut Position), (With<Own>, Without<Enemy>)>,
         Query<(&Flag, &Position), Without<Own>>,
         Query<Entity, With<Exhibit>>,
         Query<(&Tank, &mut Shield)>,
+        Query<&Barrier>,
     ),
     canvas: Res<Canvas>,
     (baton, tape, mut seat): (Res<Baton>, Option<Res<Tape>>, ResMut<LocalSeat>),
@@ -524,6 +526,15 @@ fn run_script(
             let flag = flags.iter().find(|(flag, _)| flag.sector == sector);
             if let (Some((_, flag)), Ok((_, mut position))) = (flag, player.single_mut()) {
                 position.0 = flag.0 + Vec2::X;
+            }
+        }
+        // Carries the tank through the barrier of the sector that the run has reached, if it
+        // is unlocked, as a player who drives through it.
+        "cross" => {
+            let sector = run.as_ref().map_or(0, |run| run.sector);
+            let gate = barriers.iter().find(|gate| gate.sector == sector);
+            if let (Some(gate), Ok((_, mut position))) = (gate, player.single_mut()) {
+                position.0 = (gate.from + gate.to) / 2.0 + gate.outward * 2.5;
             }
         }
         "play" => {
