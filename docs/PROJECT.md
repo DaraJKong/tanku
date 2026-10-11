@@ -589,8 +589,10 @@ Each milestone is playable and answers a question. From M1 on, the game runs as 
 | M3, Genome | Stats, budgets, enemy generation, generated models, brain tiers 0 to 2 | Can players read a tank at a glance? Does equal budget mean equal danger? |
 | M4, Solo loop | Lives, checkpoints, progression curves, heads-up display, main menu, settings, game over, records, basic sound cues, first web build | Is a 20-minute run fun? This is the first real playtest. |
 | M5, Co-op | Lobby, hosting, joining, local discovery, repair, enemy scaling, joining from a browser | Is it fun with friends at 100 ms of latency? |
-| M6, Modes | Achievements, chosen seed, free mode, hard mode, brain tiers 3 and 4 | Do the unlocks give reasons to come back? |
+| M6, Modes | Achievements, chosen seed, free mode, hard mode, the options of a host for a game of several players with its password, brain tiers 3 and 4 | Do the unlocks give reasons to come back? |
 | M7, Impossible mode | An experiment: enemies bred from the tanks that did best against the players | Do players feel the enemies adapting to them, and is it fun? |
+
+The question of M5 waits for more players than the project has now. An early access release will bring them. It needs two things that the game doesn't have yet: a way for players to update the game, and a way for them to report bugs and feedback.
 
 Later, in no fixed order: controller support, local co-op on one screen (split screen, or one camera that follows all players), the full sound pass, interface polish and more options, a performance pass, the official server, new bullet types (splitting, seeking, exploding), and brains that learn (see [Impossible mode](#impossible-mode)).
 
@@ -601,3 +603,4 @@ Later, in no fixed order: controller support, local co-op on one screen (split s
 - Which exact shades do the hues of the classes take? The players' blue and the white of the bullets are settled.
 - From about sector 20, some leaders have more points than they can spend: a tank without a brain buys neither mines nor a shield, and most classes buy neither Piercing nor a second bounce. Should a leader's share stop at what its tank can buy, or should what is left over raise its software?
 - How is the game distributed, at which secure address is its page published, and is the name free to use?
+- How do the players of an early access release update the game, and how do they report bugs and feedback?
