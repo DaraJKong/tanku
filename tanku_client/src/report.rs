@@ -8,7 +8,7 @@ use std::f32::consts::TAU;
 use bevy::prelude::*;
 use tanku_core::{
     sim::{Blow, Run, Team, Weapon},
-    stats::{Genome, SpendingGroup, Stat},
+    stats::{Class, Genome, Stat},
 };
 
 use crate::{
@@ -165,16 +165,27 @@ pub fn parts(blow: &Blow) -> Vec<Part> {
     anchors(blow).iter().map(listed).collect()
 }
 
-/// What kind of tank it was: where most of its points went, which is what its hue tells.
-/// Among several players, the run doesn't tell whose tank a player's tank was.
+/// The name of a class, as the players read it.
+pub fn class_name(class: Class) -> &'static str {
+    match class {
+        Class::None => "All-rounder",
+        Class::Sniper => "Sniper",
+        Class::Scout => "Scout",
+        Class::Tactician => "Tactician",
+        Class::Trickster => "Trickster",
+        Class::Lancer => "Lancer",
+        Class::Sapper => "Sapper",
+        Class::Gunner => "Gunner",
+    }
+}
+
+/// What kind of tank it was: its class, which is what its hue tells. Among several players,
+/// the run doesn't tell whose tank a player's tank was.
 pub fn build(blow: &Blow, solo: bool) -> &'static str {
-    match (blow.team, blow.genome.main_group()) {
-        (Team::Players, _) if solo => "Your own tank",
-        (Team::Players, _) => "A player's tank",
-        (_, SpendingGroup::Mobility) => "Mobility build",
-        (_, SpendingGroup::Firepower) => "Firepower build",
-        (_, SpendingGroup::Utility) => "Mines and shield build",
-        (_, SpendingGroup::Software) => "Software build",
+    match blow.team {
+        Team::Players if solo => "Your own tank",
+        Team::Players => "A player's tank",
+        Team::Enemies => class_name(blow.genome.class),
     }
 }
 
@@ -640,7 +651,10 @@ mod tests {
     #[test]
     fn the_report_tells_what_the_tank_was_and_how_it_did_it() {
         let enemy = blow(Team::Enemies, burster());
-        assert_eq!(build(&enemy, true), "Firepower build");
+        assert_eq!(build(&enemy, true), "All-rounder");
+        let mut gunner = burster();
+        gunner.class = Class::Gunner;
+        assert_eq!(build(&blow(Team::Enemies, gunner), true), "Gunner");
         assert_eq!(means(&enemy, true), "With a bullet");
         assert_eq!(means(&enemy, false), "With a bullet");
         let own = Blow {

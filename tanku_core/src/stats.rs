@@ -21,13 +21,70 @@ pub enum Stat {
     Ballistics,
 }
 
-/// What a tank spends its points on, which decides its hue.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SpendingGroup {
-    Mobility,
-    Firepower,
-    Utility,
-    Software,
+/// The class of an enemy tank: the stats that it favors when it spends its points, which is
+/// also what its hue tells. The tank of a player has none.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Class {
+    /// A bit of everything.
+    #[default]
+    None,
+    /// A fast bullet and a turret that follows.
+    Sniper,
+    /// A tank that is hard to catch.
+    Scout,
+    /// The best brain and the best aim that its sector allows.
+    Tactician,
+    /// Bullets that bounce again and again.
+    Trickster,
+    /// Bullets that pierce: no other class has them.
+    Lancer,
+    /// Mines and a shield.
+    Sapper,
+    /// Many rounds, reloaded fast.
+    Gunner,
+}
+
+impl Class {
+    pub const ALL: [Class; 8] = [
+        Class::None,
+        Class::Sniper,
+        Class::Scout,
+        Class::Tactician,
+        Class::Trickster,
+        Class::Lancer,
+        Class::Sapper,
+        Class::Gunner,
+    ];
+
+    /// The stats that a tank of this class favors, the one it takes first in front.
+    pub const fn favorites(self) -> &'static [Stat] {
+        match self {
+            Class::None => &[],
+            Class::Sniper => &[Stat::Muzzle, Stat::Turret],
+            Class::Scout => &[Stat::Engine, Stat::Tracks],
+            Class::Tactician => &[Stat::Brain, Stat::Ballistics],
+            Class::Trickster => &[Stat::Ricochet],
+            Class::Lancer => &[Stat::Piercing],
+            Class::Sapper => &[Stat::Mines, Stat::Shield],
+            Class::Gunner => &[Stat::Magazine, Stat::Loader],
+        }
+    }
+
+    /// The highest level of a stat that a tank of this class can have. Two things are kept
+    /// for the classes that are about them: only a lancer's bullets pierce, and only a
+    /// trickster's bounce more than once, or a tactician's, whose bank shots need it.
+    pub const fn highest(self, stat: Stat) -> u8 {
+        match (stat, self) {
+            (Stat::Piercing, Class::Lancer) => stat.max_level(),
+            (Stat::Piercing, _) => 0,
+            (Stat::Ricochet, Class::Trickster | Class::Tactician) => stat.max_level(),
+            (Stat::Ricochet, _) => 1,
+            // A bank shot off two walls needs a bullet that bounces twice.
+            (Stat::Ballistics, Class::Trickster | Class::Tactician) => stat.max_level(),
+            (Stat::Ballistics, _) => 2,
+            _ => stat.max_level(),
+        }
+    }
 }
 
 impl Stat {
@@ -93,27 +150,15 @@ impl Stat {
     pub const fn share(self, tier: u8, budget: u32) -> u32 {
         (budget * self.shares()[tier as usize] as u32).div_ceil(100)
     }
-
-    pub const fn group(self) -> SpendingGroup {
-        match self {
-            Stat::Engine | Stat::Tracks => SpendingGroup::Mobility,
-            Stat::Turret
-            | Stat::Muzzle
-            | Stat::Magazine
-            | Stat::Loader
-            | Stat::Ricochet
-            | Stat::Piercing => SpendingGroup::Firepower,
-            Stat::Mines | Stat::Shield => SpendingGroup::Utility,
-            Stat::Brain | Stat::Ballistics => SpendingGroup::Software,
-        }
-    }
 }
 
-/// A tank's full list of stat levels, with the budget that paid for them.
+/// A tank's full list of stat levels, with the budget that paid for them and the class that
+/// chose them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Genome {
     levels: [u8; Stat::COUNT],
     pub budget: u16,
+    pub class: Class,
 }
 
 impl Genome {
@@ -122,13 +167,15 @@ impl Genome {
         //       Eng Trk Tur Muz Mag Ldr Ric Min Shd Prc Brn Bal
         levels: [4, 5, 0, 2, 4, 6, 1, 2, 2, 0, 0, 0],
         budget: PLAYER_BUDGET,
+        class: Class::None,
     };
 
-    /// A tank with every stat at level 0.
+    /// A tank with every stat at level 0, and no class.
     pub const fn empty(budget: u16) -> Self {
         Self {
             levels: [0; Stat::COUNT],
             budget,
+            class: Class::None,
         }
     }
 
@@ -156,31 +203,6 @@ impl Genome {
 
     pub fn cost(&self) -> u32 {
         self.hardware_cost() + self.software_cost()
-    }
-
-    /// The group that received the most points.
-    pub fn main_group(&self) -> SpendingGroup {
-        let spent = |group| -> u32 {
-            Stat::HARDWARE
-                .iter()
-                .filter(|stat| stat.group() == group)
-                .map(|&stat| stat.price(self.level(stat)))
-                .sum()
-        };
-        let candidates = [
-            (spent(SpendingGroup::Mobility), SpendingGroup::Mobility),
-            (spent(SpendingGroup::Firepower), SpendingGroup::Firepower),
-            (spent(SpendingGroup::Utility), SpendingGroup::Utility),
-            (self.software_cost(), SpendingGroup::Software),
-        ];
-        // The first group wins a tie, so the order above is the tie-break.
-        let mut best = candidates[0];
-        for candidate in candidates {
-            if candidate.0 > best.0 {
-                best = candidate;
-            }
-        }
-        best.1
     }
 
     /// Top speed in m/s.
@@ -449,7 +471,5 @@ mod tests {
             };
             assert_eq!((1..).find(possible), Some(sector), "{name}");
         }
-        let hunter = build(96, builds[7].3);
-        assert_eq!(hunter.main_group(), SpendingGroup::Software);
     }
 }

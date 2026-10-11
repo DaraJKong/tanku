@@ -17,7 +17,7 @@
 //! this label, in capitals or not, `lineup`, which lays out one bullet of each kind next to the
 //! tank, `pierce`, which sends a piercing bullet at a bullet of the players there,
 //! `showcase STAT`, which lines up in the start bay one tank for each level of a stat,
-//! `palette`, which lines up there three tanks of each hue, from a weak one to a strong one,
+//! `palette`, which lines up there three tanks of each class, from a weak one to a strong one,
 //! `doze`, which puts the tanks that are lined up to sleep, and `tape PATH`, which keeps the
 //! music from there on. It is how the game is looked at, and listened to, without anyone at
 //! the keyboard.
@@ -50,7 +50,7 @@ use tanku_core::{
         Blow, Bullet, Enemy, Flag, Mine, MineState, Motion, Position, PreviousPosition, Run,
         RunPhase, RunRequest, Shield, ShieldState, SimEvent, Tank, TankCommand, Team, Weapon,
     },
-    stats::{Genome, Stat},
+    stats::{Class, Genome, Stat},
 };
 use tanku_server::{
     Casualties, Maker,
@@ -156,33 +156,20 @@ const SHOWN_ON: [(Stat, u8); 9] = [
     (Stat::Brain, 2),
 ];
 
-/// What `palette` gives its tanks so that each hue shows: most of the points go to mobility,
-/// to firepower, to mines and shield, then to software.
-const HUES: [&[(Stat, u8)]; 4] = [
-    &[(Stat::Engine, 6), (Stat::Tracks, 4)],
-    &[
-        (Stat::Engine, 2),
-        (Stat::Muzzle, 5),
-        (Stat::Magazine, 3),
-        (Stat::Loader, 4),
-    ],
-    &[(Stat::Engine, 2), (Stat::Mines, 4), (Stat::Shield, 5)],
-    &[(Stat::Engine, 1), (Stat::Brain, 4)],
-];
-
 /// The budgets of the tanks of `palette`, from a pale tank to a saturated one.
 const STRENGTHS: [u16; 3] = [15, 55, 100];
 
-/// Three tanks of each hue, each with a sight and a pointed tip.
+/// Three tanks of each class, from a weak one to a strong one, each with a few levels of
+/// what its class favors.
 fn palette() -> impl Iterator<Item = Genome> {
-    HUES.into_iter().flat_map(|levels| {
+    Class::ALL.into_iter().flat_map(|class| {
         STRENGTHS.map(|budget| {
             let mut genome = Genome::empty(budget);
-            for &(stat, level) in levels {
-                genome.set(stat, level);
+            genome.class = class;
+            genome.set(Stat::Engine, 2);
+            for &stat in class.favorites() {
+                genome.set(stat, class.highest(stat).min(3));
             }
-            genome.set(Stat::Piercing, 1);
-            genome.set(Stat::Ballistics, 3);
             genome
         })
     })

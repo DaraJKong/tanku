@@ -11,6 +11,8 @@ pub enum Purpose {
     Obstacles = 3,
     Enemy = 4,
     Brain = 5,
+    /// How the enemies of a sector share the budget of their group.
+    Group = 6,
 }
 
 /// A SplitMix64 generator, which starts from a state that depends on the seed and on its key.

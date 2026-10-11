@@ -1927,7 +1927,8 @@ fn a_barrier_waits_for_every_running_tank_and_each_player_crosses_alone() {
     let gate = barrier(&mut app, 1);
     let depth = (towed - gate.from).dot(gate.outward);
     assert!(depth > TANK_RADIUS && depth < 6.0, "{depth}");
-    // It can be repaired there.
+    // It can be repaired there, once the enemies of that sector leave the repairer alone.
+    clear_sector(&mut app, 2);
     teleport(&mut app, first, towed + gate.outward * 2.0);
     order(
         &mut app,
