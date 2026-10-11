@@ -412,10 +412,12 @@ Every game, solo included, is run by a server that has the final say on everythi
 | Session | How it works |
 |---|---|
 | Solo | The client runs its own server. Nothing goes over the network. |
-| Hosted game | One player's client hosts up to three others. The game is announced on the local network, where the join screen of the others lists it. A game that isn't listed is joined by the address of the host's machine, which the lobby shows. From the internet, the host's UDP port 28405 must be reachable. An optional password protects it. |
+| Hosted game | One player's client hosts up to three others. The game is announced on the local network, where the join screen of the others lists it. A game that isn't listed is joined by the address of the host's machine, which the lobby shows. A browser joins by a link, which the lobby shows too. From the internet, the host's UDP port 28405 must be reachable, and port 28406 for browsers. An optional password protects it. |
 | Official server | Later. Dedicated servers run by the project, which also remove the need to open a port. |
 
 Players in a browser can play solo and join games. They can't host, because a browser can't accept connections.
+
+A browser doesn't join as a desktop game does. It can't look for games on a network, and it only speaks to a game that shows it a certificate. Nobody vouches for the certificate that a hosted game makes for itself, so a browser takes it by its print alone. The host therefore hands out a link: the address of the game's page, followed by where the game is and by the print of its certificate. A page that is opened by that link joins the game at once. What a host hands out stays the same from one game to the next, until the host quits. A browser only joins from a page that it loaded from a secure address, or from the player's own machine.
 
 Players gather in a lobby, where the host picks the mode and the seed, and the run starts for everyone at once. Nobody can join a run in progress. A host who starts alone plays a solo run, with its lives and its flags.
 
@@ -474,8 +476,8 @@ The interface is the margin of the drawing: ruled panels with square corners, la
 | Screen | Content |
 |---|---|
 | Main menu | Solo, host, join, achievements, settings, quit |
-| Join | The games of the local network, the address of the host, join |
-| Lobby | Players, mode, seed, the address to join at (host), start (host) |
+| Join | The games of the local network, the address of the host, join. In a browser: how to join by the link of a host, and that link again once it was followed. |
+| Lobby | Players, mode, seed, the address to join at or the link for browsers (host), start (host) |
 | Heads-up display | Rounds and reload progress, mines left, shield state, sector number, lives (solo), seed and version, a scale and a north arrow, a ruler along the edge of the screen that gives the distance to the barrier, teammates' state and what to do about a wreck (multiplayer). Rounds, reload and mines are also on an arc under the player's own tank. |
 | Menu | Resume, settings, quit, and the seed with its version. In multiplayer, the host goes back to the lobby or closes the game, and the others leave it. |
 | Game over | Sectors cleared, time, kills, seed and version, the tank that ended the run with the list of its parts, retry, new run. In multiplayer, the choice is the host's. |
@@ -531,7 +533,6 @@ Later, in no fixed order: controller support, local co-op on one screen (split s
 ## Open questions
 
 - How do internet games connect for hosts who can't open a port, before the official server exists?
-- Can a browser join a game hosted on a player's machine, which needs a certificate the browser accepts, or only games on the official server?
 - In impossible mode, how exactly are enemies scored, and can brains learn fast enough within one run to matter?
 - Which exact colors do players, enemies and bullets use?
-- How is the game distributed, and is the name free to use?
+- How is the game distributed, at which secure address is its page published, and is the name free to use?
