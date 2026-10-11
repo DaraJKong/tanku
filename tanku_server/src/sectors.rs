@@ -110,6 +110,10 @@ pub fn advance(
             if let Some(arena) = field.arenas.get_mut(&entered) {
                 arena.fuse = Fuse::Burning(ARENA_DELAY);
             }
+            // A life that was left on the floor is lost: nobody crosses a barrier backward.
+            for (life, _) in &lives {
+                commands.entity(life).try_despawn();
+            }
             // The next sector waits behind its barrier.
             field.load(&mut commands, entered + 1);
             events.write(SimEvent::SectorEntered { sector: entered });

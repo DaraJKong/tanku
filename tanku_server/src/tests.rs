@@ -1354,6 +1354,24 @@ fn a_life_lies_out_of_reach_until_the_player_comes_to_it() {
 }
 
 #[test]
+fn a_life_that_is_left_on_the_floor_is_lost_when_the_player_moves_on() {
+    let (mut app, arena, _) = enter_arena("TEST");
+    clear_sector(&mut app, arena);
+    assert_eq!(lives_on_the_floor(&mut app).len(), 1);
+    cross_barrier(&mut app);
+    assert_eq!(run(&app).sector, arena + 1);
+    assert!(lives_on_the_floor(&mut app).is_empty());
+    // A player who is destroyed in the next sector comes back in the arena, and finds nothing.
+    app.insert_resource(Playtest {
+        infinite_lives: false,
+    });
+    destroy_player(&mut app);
+    tick(&mut app, seconds(RESPAWN_DELAY) + 1);
+    assert_eq!((run(&app).sector, run(&app).lives), (arena, SOLO_LIVES - 1));
+    assert!(lives_on_the_floor(&mut app).is_empty());
+}
+
+#[test]
 fn several_players_are_left_no_life() {
     let mut app = team("TEST", 2);
     app.insert_resource(Playtest {
