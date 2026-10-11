@@ -81,6 +81,72 @@ pub fn command_player(
 mod tests {
     use super::*;
 
+    /// What the tank of the player is asked after a frame with these keys and buttons down.
+    fn asked(keys: &[KeyCode], buttons: &[MouseButton]) -> TankCommand {
+        let mut app = App::new();
+        app.insert_resource(Settings::default())
+            .init_resource::<View>()
+            .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<ButtonInput<MouseButton>>()
+            .insert_resource(State::new(Screen::Playing))
+            .insert_resource(State::new(Overlay::None))
+            .add_systems(Update, command_player);
+        let tank = app.world_mut().spawn((TankCommand::default(), Own)).id();
+        // Nothing is down in the first frame of a run: what was held in the menu doesn't count.
+        app.update();
+        let mut held = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        keys.iter().for_each(|key| held.press(*key));
+        let mut held = app.world_mut().resource_mut::<ButtonInput<MouseButton>>();
+        buttons.iter().for_each(|button| held.press(*button));
+        app.update();
+        *app.world().get::<TankCommand>(tank).unwrap()
+    }
+
+    #[test]
+    fn each_key_asks_its_own_thing_of_the_tank() {
+        assert_eq!(asked(&[], &[]), TankCommand::default());
+        let drive = asked(&[KeyCode::KeyW], &[]).drive;
+        assert!(drive.length() > 0.99, "{drive}");
+        let all = TankCommand {
+            fire: true,
+            mine: true,
+            shield: true,
+            repair: true,
+            ..default()
+        };
+        let only = |command: TankCommand| TankCommand {
+            drive: Vec2::ZERO,
+            aim: Vec2::ZERO,
+            ..command
+        };
+        let fire = TankCommand {
+            fire: true,
+            ..default()
+        };
+        assert_eq!(only(asked(&[], &[MouseButton::Left])), fire);
+        let mine = TankCommand {
+            mine: true,
+            ..default()
+        };
+        assert_eq!(only(asked(&[], &[MouseButton::Right])), mine);
+        let shield = TankCommand {
+            shield: true,
+            ..default()
+        };
+        assert_eq!(only(asked(&[KeyCode::Space], &[])), shield);
+        // The repair key is held together with the keys that drive the tank into the circle.
+        let repair = TankCommand {
+            repair: true,
+            ..default()
+        };
+        assert_eq!(only(asked(&[KeyCode::ShiftLeft], &[])), repair);
+        let driving = asked(&[KeyCode::ShiftLeft, KeyCode::KeyD], &[]);
+        assert!(driving.repair && driving.drive.length() > 0.99);
+        let held = [KeyCode::ShiftLeft, KeyCode::Space];
+        let buttons = [MouseButton::Left, MouseButton::Right];
+        assert_eq!(only(asked(&held, &buttons)), all);
+    }
+
     #[test]
     fn a_button_held_since_a_menu_waits_until_it_is_let_go() {
         let mut let_go = false;

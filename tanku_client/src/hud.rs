@@ -9,8 +9,8 @@ use tanku_core::{
     progression,
     seed::VERSION,
     sim::{
-        Enemy, Gun, Player, Playtest, Position, Run, Shield, ShieldState, SimEvent, Tank, Team,
-        Wreck,
+        Enemy, Gun, Player, Playtest, Position, Run, Shield, ShieldState, SimEvent, Tank,
+        TankCommand, Team, Wreck,
     },
     stats::Stat,
 };
@@ -20,7 +20,7 @@ use crate::{
     camera::{MainCamera, View},
     crew::{LocalSeat, Own},
     draft::{Draft, LIFT},
-    scene,
+    repair, scene,
     settings::{Action, Settings},
     theme,
 };
@@ -84,6 +84,8 @@ enum Readout {
     Seed,
     Shield,
     Hint,
+    /// What to do about a wreck, among several players.
+    Repair,
 }
 
 #[derive(Component)]
@@ -579,10 +581,15 @@ fn build(mut commands: Commands) {
                     position_type: PositionType::Absolute,
                     bottom: px(MARGIN),
                     width: percent(100),
-                    justify_content: JustifyContent::Center,
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    row_gap: px(10),
                     ..default()
                 },
-                children![(Readout::Hint, theme::text("", 15.0, theme::TEXT_DIM))],
+                children![
+                    (Readout::Repair, theme::title("", 18.0, theme::TEXT)),
+                    (Readout::Hint, theme::text("", 15.0, theme::TEXT_DIM)),
+                ],
             ),
         ],
     ));
@@ -630,6 +637,7 @@ fn status(
     settings: Res<Settings>,
     seat: Res<LocalSeat>,
     crew: Query<(&Player, Has<Wreck>)>,
+    tanks: Query<(&Position, Option<&Wreck>, &TankCommand, Has<Own>), With<Player>>,
     mut readouts: Query<(&Readout, &mut Text)>,
     mut pips: Query<(&Pip, &mut BackgroundColor, &mut BorderColor, &mut Node)>,
 ) {
@@ -637,6 +645,20 @@ fn status(
         return;
     };
     let infinite_lives = playtest.is_some_and(|playtest| playtest.infinite_lives);
+    let key = |action| {
+        let bound = settings.bindings(action)[0];
+        bound.map_or("?".to_string(), |binding| binding.name())
+    };
+    // What the player is told about the wrecks, where their own tank still shows.
+    let repair = tanks.iter().find(|(.., own)| *own).and_then(|own| {
+        let (place, wreck, command, _) = own;
+        let wrecks = tanks.iter().filter(|(.., own)| !own);
+        let wrecks: Vec<(Vec2, f32)> = wrecks
+            .filter_map(|(place, wreck, ..)| Some((place.0, wreck?.repair)))
+            .collect();
+        let own = (place.0, wreck.map(|wreck| wreck.repair), command.repair);
+        repair::word(own, &wrecks)
+    });
     for (readout, mut text) in &mut readouts {
         let wanted = match readout {
             Readout::Player => format!("PLAYER {}", seat.0 + 1),
@@ -651,14 +673,15 @@ fn status(
             Readout::Lives if infinite_lives && run.solo => "INFINITE".to_string(),
             Readout::Lives => String::new(),
             Readout::Seed => run.seed_text.clone(),
-            // The controls are shown where a run starts.
+            // The controls are shown where a run starts. Several players have one more.
             Readout::Hint if run.sector == 0 => {
-                let key = |action| {
-                    let bound = settings.bindings(action)[0];
-                    bound.map_or("?".to_string(), |binding| binding.name())
+                let repair = if run.solo {
+                    String::new()
+                } else {
+                    format!("hold {} to repair, ", key(Action::Repair))
                 };
                 format!(
-                    "{}{}{}{} move, mouse aim, {} shoot, {} mine\n{} shield, {}/{} turn the view, Esc menu",
+                    "{}{}{}{} move, mouse aim, {} shoot, {} mine\n{} shield, {repair}{}/{} turn the view, Esc menu",
                     key(Action::Up),
                     key(Action::Left),
                     key(Action::Down),
@@ -671,6 +694,11 @@ fn status(
                 )
             }
             Readout::Hint => String::new(),
+            Readout::Repair => {
+                let word = repair.filter(|_| !run.solo);
+                let sentence = word.map(|word| word.sentence(&key(Action::Repair)));
+                sentence.unwrap_or_default().to_uppercase()
+            }
             Readout::Shield => continue,
         };
         if text.0 != wanted {
@@ -972,10 +1000,23 @@ fn attach_dial(
     }
 }
 
-/// Keeps the dial under the tank on the screen, whichever way the view is turned.
-fn turn_dial(view: Res<View>, mut dials: Query<&mut Transform, With<Dial>>) {
-    for mut transform in &mut dials {
+/// Keeps the dial under the tank on the screen, whichever way the view is turned. A wreck
+/// has none: its weapons are of no use until it is repaired.
+fn turn_dial(
+    view: Res<View>,
+    mut dials: Query<(&mut Transform, &mut Visibility, &ChildOf), With<Dial>>,
+    wrecks: Query<(), With<Wreck>>,
+) {
+    for (mut transform, mut visibility, tank) in &mut dials {
         transform.rotation = Quat::from_rotation_y(view.yaw());
+        let wanted = if wrecks.contains(tank.parent()) {
+            Visibility::Hidden
+        } else {
+            Visibility::Inherited
+        };
+        if *visibility != wanted {
+            *visibility = wanted;
+        }
     }
 }
 

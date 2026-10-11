@@ -77,7 +77,10 @@ fn play(
             SimEvent::SectorCleared { sector } if sector > 0 => (Cue::Cleared, None),
             SimEvent::FlagCaptured { .. } => (Cue::Captured, None),
             SimEvent::BarrierUnlocked { sector } if sector > 0 => (Cue::Unlocked, None),
-            SimEvent::PlayerRespawned { .. } => (Cue::Respawned, None),
+            // A tank that comes back sounds the same, whatever brought it back.
+            SimEvent::PlayerRespawned { .. } | SimEvent::TankRepaired { .. } => {
+                (Cue::Respawned, None)
+            }
             SimEvent::RunOver => (Cue::RunOver, None),
             _ => continue,
         };
@@ -218,6 +221,7 @@ mod tests {
             (SimEvent::FlagCaptured { at: far }, Cue::Captured),
             (SimEvent::BarrierUnlocked { sector: 3 }, Cue::Unlocked),
             (SimEvent::PlayerRespawned { at: far }, Cue::Respawned),
+            (SimEvent::TankRepaired { at: far }, Cue::Respawned),
             (SimEvent::RunOver, Cue::RunOver),
         ];
         for (event, cue) in told {
