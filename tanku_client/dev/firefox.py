@@ -40,13 +40,21 @@ class Firefox:
         self.read()
         self.send("WebDriver:NewSession", {})
 
+    def receive(self):
+        # A Firefox that is gone sends nothing, as often as it is asked: waiting for more
+        # would never end.
+        received = self.socket.recv(1 << 20)
+        if not received:
+            raise ConnectionError("Firefox is gone")
+        return received
+
     def read(self):
         while b":" not in self.unread:
-            self.unread += self.socket.recv(1 << 20)
+            self.unread += self.receive()
         length, _, rest = self.unread.partition(b":")
         length = int(length)
         while len(rest) < length:
-            rest += self.socket.recv(1 << 20)
+            rest += self.receive()
         self.unread = rest[length:]
         return json.loads(rest[:length])
 
