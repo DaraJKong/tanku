@@ -193,7 +193,7 @@ pub struct Barrier {
 }
 
 /// A life that an arena left on its floor when it was cleared. A single player who is short
-/// of one takes it by driving over it.
+/// of one takes it by driving over it, and it is lost once the player has left the arena.
 #[derive(Component, Clone, Copy, Debug, Serialize, Deserialize)]
 #[require(Position)]
 pub struct Life {
