@@ -1402,6 +1402,134 @@ mod tests {
         assert_eq!((shots(&host), shots(&guest)), (1, 1));
     }
 
+    /// Lets go of the buttons once a tick has taken what was asked, so that a test asks for
+    /// one shot, however many ticks its frame holds.
+    fn let_go_after_a_tick(mut tanks: Query<&mut TankCommand, With<Own>>) {
+        for mut asked in &mut tanks {
+            if asked.fire || asked.mine || asked.shield {
+                (asked.fire, asked.mine, asked.shield) = (false, false, false);
+            }
+        }
+    }
+
+    #[test]
+    fn a_shot_is_one_shot_though_the_clock_of_the_guest_is_set_anew() {
+        // lightyear sets the clock of a guest anew, by whole ticks, once it is more than ten
+        // ticks off: ahead after the guest stood still for a moment, back after its host
+        // did, and both ways when the line changes. When it will can't be told, so the clock
+        // is set by hand here, by less than lightyear would put right at once.
+        for by in [6, -6] {
+            let (mut host, mut guest, aim) = aiming_east(60);
+            guest.add_systems(FixedLast, let_go_after_a_tick);
+            let shots = |game: &App| news(game, |event| matches!(event, SimEvent::Shot { .. }));
+
+            // The guest shows and sounds its shot, and its clock is set anew before the host
+            // has heard of the order.
+            order(&mut guest, TankCommand { fire: true, ..aim });
+            run_until("a shot", &mut [&mut host, &mut guest], |games| {
+                bullets(games[1]) > 0
+            });
+            assert_eq!((bullets(&mut host), shots(&host)), (0, 0));
+            let (fired_at, since) = (tick(&guest), tick(&host));
+            guest.world_mut().trigger(LocalTimelineShift { delta: by });
+            assert_eq!(past(&guest, fired_at), by as i64);
+            // Its player raises the shield at once. With a clock that was set back, the guest
+            // shows the bubble at a tick before the one of the shot, and the shot is still
+            // one that it waits for the host to tell of.
+            order(
+                &mut guest,
+                TankCommand {
+                    shield: true,
+                    ..aim
+                },
+            );
+            run_until("the host's word", &mut [&mut host, &mut guest], |games| {
+                past(games[0], since) > 45
+            });
+
+            // The host fired once. The guest took what its player had asked for the same
+            // shot as before, and the host's word of it for the shot that it had sounded.
+            assert_eq!(
+                (shots(&host), shots(&guest)),
+                (1, 1),
+                "with a clock set {by} ticks from where it was"
+            );
+        }
+    }
+
+    /// By how many ticks lightyear set the clock of a game anew, each time it did.
+    #[derive(Resource, Default)]
+    struct Resets(Vec<i32>);
+
+    fn note_resets(reset: On<LocalTimelineShift>, mut resets: ResMut<Resets>) {
+        resets.0.push(reset.delta);
+    }
+
+    /// Prints how far a guest has its tank from where its host gets to have it once lightyear
+    /// itself has set its clock anew, after each of five hitches of half a second, or of as
+    /// many milliseconds as `TANKU_HITCH` says:
+    /// `cargo test -p tanku_client after_a_hitch -- --ignored --nocapture`.
+    ///
+    /// While the guest stands still, its clock falls some fifteen ticks behind. What its
+    /// player asks then reaches the host about ten ticks late, and lightyear sets the clock
+    /// ten ticks ahead a quarter of a second later. The player drives back and forth all the
+    /// while. What was asked moves with the clock, to the ticks at which the host took it: in
+    /// most hitches the tank is where the host has it from the first tick on, and in the
+    /// others the host took an order a tick off, which puts the tank 0.2 m off at most. With
+    /// nothing moved it is 0.3 to 0.6 m off for some five ticks.
+    ///
+    /// Nothing is checked here, because none of it is steady: a hitch of 450 ms is followed
+    /// by no such jump, and after one of 600 ms the orders still come late once the clock is
+    /// set, so that the tank is up to 0.2 m off for a quarter of a second either way.
+    #[test]
+    #[ignore = "prints a list"]
+    fn print_where_a_guest_has_its_tank_after_a_hitch() {
+        let hitch_for = std::env::var("TANKU_HITCH").map_or(500, |text| text.parse().unwrap());
+        let drive = |north: f32| TankCommand {
+            drive: Vec2::Y * north,
+            ..default()
+        };
+        for hitch in 1..=5 {
+            let (mut host, mut guest) = pair(60, 0, 0.0);
+            guest.init_resource::<Resets>().add_observer(note_resets);
+            let since = tick(&host);
+            run_until("the drive", &mut [&mut host, &mut guest], |games| {
+                order(games[1], drive(1.0));
+                past(games[0], since) > 40
+            });
+            let stood_still = std::time::Instant::now();
+            while stood_still.elapsed().as_millis() < hitch_for {
+                host.update();
+                std::thread::sleep(std::time::Duration::from_millis(4));
+            }
+            // The guest's tick once its clock was set, and how long after the hitch.
+            let (back_at, set) = (tick(&host), RefCell::new(None));
+            run_until("the clock", &mut [&mut host, &mut guest], |games| {
+                let ticks = past(games[0], back_at);
+                let north = if (ticks / 10) % 2 == 0 { -1.0 } else { 1.0 };
+                order(games[1], drive(north));
+                let reset = !games[1].world().resource::<Resets>().0.is_empty();
+                if reset && set.borrow().is_none() {
+                    set.replace(Some((tick(games[1]), ticks)));
+                }
+                ticks > 90
+            });
+            let Some((at, after)) = set.into_inner() else {
+                println!("hitch {hitch}: the clock was not set anew");
+                continue;
+            };
+            let by = &guest.world().resource::<Resets>().0;
+            let apart = apart(&host, &guest, 1, at + 1..at + 21);
+            let worst = apart.iter().copied().fold(0.0, f32::max);
+            let off = apart.iter().filter(|apart| **apart > 1e-3).count();
+            println!(
+                "hitch {hitch}: the clock was set by {by:?} ticks, {after} ticks after the \
+                 hitch; the tank was up to {worst:.3} m off, at {off} of the {} ticks after",
+                apart.len()
+            );
+        }
+    }
+
     #[test]
     fn a_guest_lays_a_mine_at_once_where_the_host_will_have_it() {
         let (mut host, mut guest, aim) = aiming_east(60);
