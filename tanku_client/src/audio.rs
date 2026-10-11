@@ -76,7 +76,7 @@ fn play(
             SimEvent::ShieldBlocked { at } => (Cue::ShieldBlocked, Some(at)),
             SimEvent::ShieldDropped { at } => (Cue::ShieldDropped, Some(at)),
             SimEvent::SectorCleared { sector } if sector > 0 => (Cue::Cleared, None),
-            SimEvent::FlagCaptured { .. } => (Cue::Captured, None),
+            SimEvent::LifeTaken { .. } => (Cue::LifeTaken, None),
             SimEvent::BarrierUnlocked { sector } if sector > 0 => (Cue::Unlocked, None),
             // A tank that comes back sounds the same, whatever brought it back.
             SimEvent::PlayerRespawned { .. } | SimEvent::TankRepaired { .. } => {
@@ -225,7 +225,7 @@ mod tests {
         // What happens to the run is as loud wherever the players are.
         let told = [
             (SimEvent::SectorCleared { sector: 3 }, Cue::Cleared),
-            (SimEvent::FlagCaptured { at: far }, Cue::Captured),
+            (SimEvent::LifeTaken { at: far }, Cue::LifeTaken),
             (SimEvent::BarrierUnlocked { sector: 3 }, Cue::Unlocked),
             (SimEvent::PlayerRespawned { at: far }, Cue::Respawned),
             (SimEvent::TankRepaired { at: far }, Cue::Respawned),

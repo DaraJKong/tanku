@@ -7,8 +7,10 @@
 //! that one, `join ADDRESS`, which joins a game by its address or by what its host hands out
 //! for browsers,
 //! `type TEXT`, which presses the keys that write a text, `turn QUARTERS`, `peek ENEMY`,
-//! `flag SECTOR`, `look X Y`, `zoom METERS`, `clear`, `reach`, `cross`, which carries the tank
-//! through the barrier of its sector, `bubble`, `die`, `pause`,
+//! `look X Y`, `zoom METERS`, `clear`, `reach DX DY`, which puts the tank that far from the life
+//! that an arena left, `lives NUMBER`, `cross`, which carries the tank through the barrier of
+//! its sector,
+//! `bubble`, `die`, `pause`,
 //! `settings`, `resume`,
 //! `lose ENEMY`, `blast X Y`, which sets off a mine at a point of the map, `warn X Y`, which
 //! sounds the warning of a mine there without any mine, `shot PATH` and
@@ -48,7 +50,7 @@ use bevy::{
 };
 use tanku_core::{
     sim::{
-        Barrier, Blow, Bullet, Enemy, Flag, Mine, MineState, Motion, Position, PreviousPosition,
+        Barrier, Blow, Bullet, Enemy, Life, Mine, MineState, Motion, Position, PreviousPosition,
         Run, RunPhase, RunRequest, Shield, ShieldState, SimEvent, Tank, TankCommand, Team, Weapon,
     },
     stats::{Genome, Stat},
@@ -376,10 +378,10 @@ fn run_script(
     mut run: Option<ResMut<Run>>,
     mut field: Option<ResMut<Field>>,
     mut casualties: ResMut<Casualties>,
-    (enemies, mut player, flags, exhibits, mut shields, barriers): (
+    (enemies, mut player, lives, exhibits, mut shields, barriers): (
         Query<(Entity, &Tank, &Position), With<Enemy>>,
         Query<(Entity, &mut Position), (With<Own>, Without<Enemy>)>,
-        Query<(&Flag, &Position), Without<Own>>,
+        Query<&Position, (With<Life>, Without<Own>)>,
         Query<Entity, With<Exhibit>>,
         Query<(&Tank, &mut Shield)>,
         Query<&Barrier>,
@@ -462,13 +464,6 @@ fn run_script(
                 view.look_at(position.0, 3.0);
             }
         }
-        // Looks at the flag of a loaded sector for a few seconds.
-        "flag" => {
-            let sector = number(1) as u32;
-            if let Some((_, position)) = flags.iter().find(|(flag, _)| flag.sector == sector) {
-                view.look_at(position.0, 3.0);
-            }
-        }
         // Looks at a point of the map until the script ends.
         "look" => view.look_at(Vec2::new(number(1), number(2)), f32::MAX),
         // Shows this many meters of ground from the bottom to the top of the screen. The
@@ -520,12 +515,18 @@ fn run_script(
             let doomed = enemies.iter().filter(|(_, tank, _)| tank.sector == sector);
             casualties.tanks.extend(doomed.map(|(entity, ..)| entity));
         }
-        // Puts the tank next to the flag of its sector.
+        // Puts the tank this far east and north of the life that lies on the floor.
         "reach" => {
-            let sector = run.as_ref().map_or(0, |run| run.sector);
-            let flag = flags.iter().find(|(flag, _)| flag.sector == sector);
-            if let (Some((_, flag)), Ok((_, mut position))) = (flag, player.single_mut()) {
-                position.0 = flag.0 + Vec2::X;
+            let aside = Vec2::new(number(1), number(2));
+            if let (Some(life), Ok((_, mut position))) = (lives.iter().next(), player.single_mut())
+            {
+                position.0 = life.0 + aside;
+            }
+        }
+        // Gives a single player this many lives.
+        "lives" => {
+            if let Some(run) = run.as_mut() {
+                run.lives = number(1) as u32;
             }
         }
         // Carries the tank through the barrier of the sector that the run has reached, if it

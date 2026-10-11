@@ -490,7 +490,7 @@ mod tests {
             map::{Corridor, SectorKind},
             progression,
         };
-        // A wide screen, and a tank on the flag of its sector, or where one would be.
+        // A wide screen, and a tank 4 m in front of the barrier of its sector.
         const SHAPE: f32 = 16.0 / 9.0;
         const WAIT: f32 = 4.0;
         let mut seen = [[[0u32; 3]; 2]; 2];

@@ -46,8 +46,8 @@ pub enum Cue {
     ShieldDropped,
     /// The last enemy of a sector is destroyed.
     Cleared,
-    /// A flag is captured.
-    Captured,
+    /// A single player takes a life from the floor.
+    LifeTaken,
     /// A barrier unlocks.
     Unlocked,
     /// A player's tank is back.
@@ -75,7 +75,7 @@ impl Cue {
         Cue::ShieldBlocked,
         Cue::ShieldDropped,
         Cue::Cleared,
-        Cue::Captured,
+        Cue::LifeTaken,
         Cue::Unlocked,
         Cue::Respawned,
         Cue::RunOver,
@@ -98,7 +98,7 @@ impl Cue {
             Cue::ShieldBlocked => 0.16,
             Cue::ShieldDropped => 0.45,
             Cue::Cleared => 0.5,
-            Cue::Captured => 0.6,
+            Cue::LifeTaken => 0.6,
             Cue::Unlocked => 0.45,
             Cue::Respawned => 0.4,
             Cue::RunOver => 1.0,
@@ -149,7 +149,7 @@ impl Cue {
             }
             Cue::ShieldDropped => (0.35 * glide(700.0, 120.0) + 0.15 * noise.next()) * left,
             Cue::Cleared => 0.3 * (note(t, 0.0, E5) + note(t, 0.14, A5)),
-            Cue::Captured => 0.3 * (note(t, 0.0, E5) + note(t, 0.1, A5) + note(t, 0.2, E6)),
+            Cue::LifeTaken => 0.3 * (note(t, 0.0, E5) + note(t, 0.1, A5) + note(t, 0.2, E6)),
             Cue::Unlocked => 0.3 * (note(t, 0.0, A5) + note(t, 0.12, E6)),
             Cue::Respawned => 0.3 * glide(300.0, 900.0) * left,
             Cue::RunOver => 0.3 * (note(t, 0.0, A4) + note(t, 0.25, E4) + note(t, 0.5, A3)),
@@ -229,7 +229,7 @@ mod tests {
             (Cue::MinePlaced, &[E5]),
             (Cue::ShieldBlocked, &[A5, E6]),
             (Cue::Cleared, &[E5, A5]),
-            (Cue::Captured, &[E5, A5, E6]),
+            (Cue::LifeTaken, &[E5, A5, E6]),
             (Cue::Unlocked, &[A5, E6]),
             (Cue::RunOver, &[A3, E4, A4]),
         ];

@@ -70,7 +70,7 @@ cargo run -p tanku_client -- --playtest
 | Cheat | How |
 |---|---|
 | Infinite lives | On from the start. The pause menu turns them off and on. |
-| Skip to a sector | The pause menu picks any sector up to 999. The tank comes back at the end of the sector before it, in front of its open barrier, as it does after capturing a flag there. |
+| Skip to a sector | The pause menu picks any sector up to 999. The tank comes back at the end of the sector before it, in front of its barrier, as it does after clearing that sector. |
 | Choose the seed | `--seed TEXT` after `--playtest` starts every run on that seed instead of a random one. |
 
 With both, a seed and a sector from a report are a few clicks away:

@@ -11,8 +11,8 @@ use tanku_core::{
     rng::{Purpose, Stream},
     rules::{BLOCK_SIZE, TANK_RADIUS},
     sim::{
-        Barrier, Block, Enemy, ExplosiveCrate, Flag, Gun, Motion, Position, PreviousPosition,
-        Sector, SectorIndex, Tank, Team,
+        Barrier, Block, Enemy, ExplosiveCrate, Gun, Motion, Position, PreviousPosition, Sector,
+        SectorIndex, Tank, Team,
     },
     stats::Genome,
 };
@@ -62,6 +62,16 @@ pub struct Collider {
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct InSector(pub u32);
 
+/// Where an enemy started, and which tank of its group it is. It goes back there, as it was,
+/// when a single player who fell comes back to its sector.
+#[derive(Component, Clone, Copy, Debug)]
+pub struct Home {
+    pub number: u32,
+    pub at: Vec2,
+    pub hull: f32,
+    pub turret: f32,
+}
+
 /// An enemy of an arena that isn't there yet: which tank of its group it is, what it is made
 /// of and where it will appear.
 #[derive(Clone, Copy, Debug)]
@@ -110,7 +120,7 @@ pub struct Field {
     /// The seats of the players in the run. Sectors are loaded for as many: enemy groups grow
     /// with their number.
     pub seats: Vec<u8>,
-    /// Whether the run started with a single player, whose sectors have flags.
+    /// Whether the run started with a single player, who has lives.
     pub solo: bool,
     pub corridor: Corridor,
     pub colliders: Vec<Collider>,
@@ -201,27 +211,16 @@ impl Field {
         }
     }
 
-    /// Loads a sector: its walls, its barrier, its flag if it has one, its obstacles and,
-    /// unless it is cleared, its dormant enemies. `captured` tells whether its flag already is.
-    /// Only a single player has flags, and the enemies are as many as the players call for.
-    /// An arena is loaded empty: its enemies are held back, and come in waves.
-    pub fn load(&mut self, commands: &mut Commands, index: u32, captured: bool) {
+    /// Loads a sector: its walls, its barrier, its obstacles and, unless it is cleared, its
+    /// dormant enemies, which are as many as the players call for. An arena is loaded empty:
+    /// its enemies are held back, and come in waves.
+    pub fn load(&mut self, commands: &mut Commands, index: u32) {
         if !self.loaded.insert(index) {
             return;
         }
         self.stale = true;
         let layout = self.corridor.layout(index);
         spawn_barrier(commands, &layout.plan);
-        if self.solo && progression::is_checkpoint(index) {
-            commands.spawn((
-                Flag {
-                    sector: index,
-                    captured,
-                },
-                Position(layout.plan.flag_point.as_vec2()),
-                InSector(index),
-            ));
-        }
         let center = |corner: &IVec2| Position(corner.as_vec2() + Vec2::splat(BLOCK_SIZE / 2.0));
         for corner in &layout.blocks {
             commands.spawn((Block { sector: index }, center(corner), InSector(index)));
@@ -280,7 +279,8 @@ impl Field {
     ) {
         let Recruit { number, genome, at } = recruit;
         let entry = (plan.entry.0 + plan.entry.1).as_vec2() / 2.0;
-        let mut rng = Stream::new(self.seed, Purpose::Brain, plan.index, number);
+        let (brain, hull) = self.brain(plan.index, number);
+        let turret = (entry - at).to_angle();
         commands.spawn((
             Tank {
                 genome,
@@ -288,17 +288,31 @@ impl Field {
                 sector: plan.index,
             },
             Enemy { awake },
+            Home {
+                number,
+                at,
+                hull,
+                turret,
+            },
             Position(at),
             PreviousPosition(at),
             Motion {
-                hull: rng.unit() * std::f32::consts::TAU,
-                turret: (entry - at).to_angle(),
+                hull,
+                turret,
                 ..default()
             },
             Gun::loaded(&genome),
-            Brain::new(rng, plan.index),
+            brain,
             InSector(plan.index),
         ));
+    }
+
+    /// The brain of an enemy as it is when the enemy is put in its sector, and the way its
+    /// hull is turned then.
+    pub fn brain(&self, sector: u32, number: u32) -> (Brain, f32) {
+        let mut rng = Stream::new(self.seed, Purpose::Brain, sector, number);
+        let hull = rng.unit() * std::f32::consts::TAU;
+        (Brain::new(rng, sector), hull)
     }
 
     /// The barrier in front of a sector, for a sector that is loaded without the one before it.

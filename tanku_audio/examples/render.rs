@@ -194,7 +194,7 @@ fn told(cue: Cue) -> &'static str {
         Cue::ShieldBlocked => "A shield destroys a bullet",
         Cue::ShieldDropped => "The bubble of a shield is gone",
         Cue::Cleared => "A sector is cleared",
-        Cue::Captured => "A flag is captured",
+        Cue::LifeTaken => "A life is taken",
         Cue::Unlocked => "A barrier unlocks",
         Cue::Respawned => "The player's tank is back",
         Cue::RunOver => "The run is over",

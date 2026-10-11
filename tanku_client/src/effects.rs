@@ -220,7 +220,7 @@ fn spawn(
             SimEvent::PlayerRespawned { at } | SimEvent::TankRepaired { at } => {
                 (at, 0.6, 4.0, 0.5, &glows.cold)
             }
-            SimEvent::FlagCaptured { at } => (at, 0.6, 5.0, 0.5, &glows.good),
+            SimEvent::LifeTaken { at } => (at, 0.6, 5.0, 0.5, &glows.good),
             _ => continue,
         };
         // Blasts shake the camera, the more the closer they are.

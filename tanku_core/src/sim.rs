@@ -192,12 +192,12 @@ pub struct Barrier {
     pub unlocked: bool,
 }
 
-/// The flag of a sector, near its barrier. A solo player who captures it comes back there.
+/// A life that an arena left on its floor when it was cleared. A single player who is short
+/// of one takes it by driving over it.
 #[derive(Component, Clone, Copy, Debug, Serialize, Deserialize)]
 #[require(Position)]
-pub struct Flag {
+pub struct Life {
     pub sector: u32,
-    pub captured: bool,
 }
 
 /// What destroys a tank.
@@ -243,7 +243,8 @@ pub struct Run {
     pub sector: u32,
     /// The score: the furthest sector cleared.
     pub cleared: u32,
-    /// The sector of the last flag captured, or 0 for the start bay.
+    /// The last sector cleared, or 0 for the start bay: a single player whose tank is
+    /// destroyed comes back in front of its barrier.
     pub checkpoint: u32,
     pub lives: u32,
     pub kills: u32,
@@ -280,7 +281,7 @@ pub enum RunRequest {
         seat: u8,
     },
     /// In a playtest: puts the player in front of a sector, as if every sector before it was
-    /// cleared and the flag of the last one captured.
+    /// cleared.
     SkipTo {
         sector: u32,
     },
@@ -336,7 +337,12 @@ pub enum SimEvent {
     SectorCleared {
         sector: u32,
     },
-    FlagCaptured {
+    /// An arena that was cleared left a life on its floor.
+    LifeDropped {
+        at: Vec2,
+    },
+    /// A single player took a life from the floor.
+    LifeTaken {
         at: Vec2,
     },
     BarrierUnlocked {

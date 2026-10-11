@@ -63,17 +63,6 @@ pub fn experience(sector: u32) -> f32 {
     1.0 - (-(sector.max(1) as f32 - 1.0) / 20.0).exp()
 }
 
-/// Whether this sector has a flag, which is a checkpoint in solo once it is captured.
-pub fn is_checkpoint(sector: u32) -> bool {
-    match sector {
-        0 => false,
-        1..=8 => true,
-        9..=16 => sector.is_multiple_of(2),
-        17..=24 => (sector - 16).is_multiple_of(3),
-        _ => (sector - 24).is_multiple_of(4),
-    }
-}
-
 /// A value that goes from `easy` in sector 1 to `harsh` in sector 30 and stays there.
 fn harshness(sector: u32, easy: i32, harsh: i32) -> i32 {
     let step = (sector.clamp(1, HARSHEST_SECTOR) - 1) as i32;
@@ -177,15 +166,6 @@ mod tests {
         assert_eq!(enemy_count(1, 2, false), 2);
         assert_eq!(enemy_count(15, 1, true), 9);
         assert_eq!(enemy_count(3, 1, true), 3);
-    }
-
-    #[test]
-    fn checkpoints_get_sparser() {
-        let checkpoints: Vec<u32> = (0..=32).filter(|&sector| is_checkpoint(sector)).collect();
-        assert_eq!(
-            checkpoints,
-            [1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 14, 16, 19, 22, 28, 32]
-        );
     }
 
     #[test]
