@@ -2,7 +2,7 @@ mod audio;
 mod camera;
 mod cli;
 mod crew;
-#[cfg(feature = "development")]
+#[cfg(feature = "script")]
 mod dev;
 #[cfg(not(target_arch = "wasm32"))]
 mod discovery;
@@ -60,12 +60,12 @@ pub enum Overlay {
 fn main() {
     let options = cli::Options::from_command_line();
     let mut app = App::new();
-    #[cfg(feature = "development")]
+    #[cfg(feature = "script")]
     let scripted = dev::scripted();
-    #[cfg(not(feature = "development"))]
+    #[cfg(not(feature = "script"))]
     let scripted = false;
     if scripted {
-        #[cfg(feature = "development")]
+        #[cfg(feature = "script")]
         dev::add_engine(&mut app);
     } else {
         let settings = settings::Settings::load();
@@ -114,7 +114,7 @@ fn main() {
         });
     }
     app.insert_resource(options);
-    #[cfg(feature = "development")]
+    #[cfg(feature = "script")]
     app.add_plugins(dev::plugin);
     app.run();
 }

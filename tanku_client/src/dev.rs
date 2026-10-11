@@ -1,4 +1,5 @@
-//! Development tools, left out of release builds.
+//! Development tools, left out of release builds: they come with the `script` feature, which
+//! a development build has.
 //!
 //! `TANKU_DEV_SCRIPT` holds commands separated by semicolons, run one after the other:
 //! `start SEED PLAYERS`, `seat NUMBER`, `repair SECONDS` and `shield SECONDS`, which hold the

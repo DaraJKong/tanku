@@ -94,7 +94,7 @@ impl View {
     }
 
     /// Looks at a point for a while instead of following the player.
-    #[cfg(feature = "development")]
+    #[cfg(feature = "script")]
     pub fn look_at(&mut self, point: Vec2, seconds: f32) {
         self.focus = point;
         self.hold = seconds;

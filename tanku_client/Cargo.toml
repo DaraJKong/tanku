@@ -45,5 +45,10 @@ web-sys = { workspace = true, features = [
 # Build releases with `--no-default-features`.
 [features]
 default = ["development", "debug"]
-development = ["bevy/dynamic_linking"]
+# A development build links the engine dynamically, which compiles faster, and takes scripts.
+development = ["script", "bevy/dynamic_linking"]
+# The tools of `dev.rs`: a game that plays what `TANKU_DEV_SCRIPT` holds, without a window. On
+# its own, with `--no-default-features --features script`, it gives a build that stands alone
+# and still takes scripts, to check a release build or one for another system.
+script = []
 debug = ["bevy/debug"]

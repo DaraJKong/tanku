@@ -99,6 +99,27 @@ Development builds link Bevy dynamically. A release build leaves the development
 cargo build --release --no-default-features -p tanku_client
 ```
 
+A release build takes no script (see [Looking at the game without playing](#looking-at-the-game-without-playing)). With `--features script` on top, it does, and still stands alone.
+
+### Windows
+
+The game is built for Windows from Linux, with the compiler of mingw-w64 (`x86_64-w64-mingw32-gcc`). The toolchain that is pinned has the target:
+
+```bash
+cargo build --release --no-default-features -p tanku_client --target x86_64-pc-windows-gnu
+```
+
+`target/x86_64-pc-windows-gnu/release/tanku_client.exe` stands alone: it asks for nothing that Windows doesn't have. It opens a console next to its window, which shows what the game logs. The development features are always left out there: a build that links Bevy dynamically crashes on Windows.
+
+A script checks that build under [wine](https://www.winehq.org/), on a Linux machine, without a window and without a sound:
+
+```bash
+tanku_client/dev/windows.sh "start TANKU 1; wait 2; shot target/windows/solo.png; quit"
+TESTS=1 tanku_client/dev/windows.sh
+```
+
+The first plays a scripted game in the build for Windows and saves what it draws. The second runs the tests of the rules, of the sound and of the simulation as Windows programs: a seed gives the same level there, and the music the same sound. Wine is not Windows: a window, a sound device, the keys and a firewall are only checked on a real one.
+
 ### Web
 
 The web build needs the `wasm-bindgen` tool, installed once into `target/tools`:
@@ -171,7 +192,7 @@ cargo bench -p tanku_core -p tanku_server -p tanku_audio
 
 ## Looking at the game without playing
 
-Development builds read a script from `TANKU_DEV_SCRIPT`: commands separated by semicolons that start a run, jump to a sector, drive the tank, press the buttons of the menus and save screenshots. The commands are listed at the top of `tanku_client/src/dev.rs`.
+Development builds, and any build with the `script` feature, read a script from `TANKU_DEV_SCRIPT`: commands separated by semicolons that start a run, jump to a sector, drive the tank, press the buttons of the menus and save screenshots. The commands are listed at the top of `tanku_client/src/dev.rs`.
 
 A scripted run opens no window and needs no display: it draws into an image of 1920 by 1080 pixels, which the `shot` command saves. It makes no sound, starts from the default settings, and neither reads nor writes the saved settings and records.
 

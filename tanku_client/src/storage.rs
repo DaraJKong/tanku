@@ -11,7 +11,7 @@ use std::{
 static KEEPS_NOTHING: AtomicBool = AtomicBool::new(false);
 
 /// Makes this run read and write nothing: it starts from the defaults and leaves no trace.
-#[cfg(feature = "development")]
+#[cfg(feature = "script")]
 pub fn keep_nothing() {
     KEEPS_NOTHING.store(true, Ordering::Relaxed);
 }
