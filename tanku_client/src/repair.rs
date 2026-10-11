@@ -194,8 +194,13 @@ pub enum Word {
 
 /// What there is to tell the player whose tank is at a place: whether it is a wreck, and
 /// how far its repair has got, or whether its player holds the repair key. The other wrecks
-/// are given with how far their repair has got.
-pub fn word(own: (Vec2, Option<f32>, bool), wrecks: &[(Vec2, f32)]) -> Option<Word> {
+/// are given with how far their repair has got, and whether this player's tank is the one,
+/// or one of those, at it.
+///
+/// A tank repairs one wreck at a time. The host says which one. Until it has, a tank whose
+/// player holds the key is taken to be at the nearest wreck within reach, which is the one
+/// that the host picks.
+pub fn word(own: (Vec2, Option<f32>, bool), wrecks: &[(Vec2, f32, bool)]) -> Option<Word> {
     let (place, wrecked, holds) = own;
     let left = |repair: f32| REPAIR_TIME - repair;
     if let Some(repair) = wrecked {
@@ -205,16 +210,15 @@ pub fn word(own: (Vec2, Option<f32>, bool), wrecks: &[(Vec2, f32)]) -> Option<Wo
             Word::Wrecked
         });
     }
-    // The key repairs every wreck within reach at once. The one that is done first counts.
-    let within = wrecks
-        .iter()
-        .filter(|(wreck, _)| wreck.distance(place) <= REPAIR_RADIUS);
-    let furthest = within.map(|(_, repair)| *repair).max_by(f32::total_cmp);
-    match furthest {
-        Some(repair) if holds => Some(Word::Repairing(left(repair))),
-        Some(_) => Some(Word::Within),
-        None if !wrecks.is_empty() => Some(Word::Wanted),
-        None => None,
+    let reach = |(wreck, ..): &(Vec2, f32, bool)| wreck.distance(place);
+    let within = wrecks.iter().filter(|wreck| reach(wreck) <= REPAIR_RADIUS);
+    let nearest = within.min_by(|a, b| reach(a).total_cmp(&reach(b)));
+    let at_work = wrecks.iter().find(|(.., at_work)| *at_work).or(nearest);
+    match (at_work, nearest) {
+        (Some((_, repair, _)), _) if holds => Some(Word::Repairing(left(*repair))),
+        (_, Some(_)) => Some(Word::Within),
+        _ if !wrecks.is_empty() => Some(Word::Wanted),
+        _ => None,
     }
 }
 
@@ -284,7 +288,11 @@ mod tests {
         app.update();
         assert_eq!(drawn(&mut app), (0, 0));
         let repair = REPAIR_TIME / 4.0;
-        app.world_mut().entity_mut(tank).insert(Wreck { repair });
+        let wreck = Wreck {
+            repair,
+            ..default()
+        };
+        app.world_mut().entity_mut(tank).insert(wreck);
         app.update();
         assert_eq!(drawn(&mut app), (1, STEPS / 4));
     }
@@ -314,24 +322,37 @@ mod tests {
         assert_eq!(word((here, None, false), &[]), None);
         assert_eq!(word((here, None, true), &[]), None);
         // A wreck somewhere, then within reach, then under repair.
-        assert_eq!(word((here, None, false), &[(far, 0.0)]), Some(Word::Wanted));
-        assert_eq!(word((here, None, true), &[(far, 0.0)]), Some(Word::Wanted));
+        let idle = |wreck: Vec2| (wreck, 0.0, false);
+        assert_eq!(word((here, None, false), &[idle(far)]), Some(Word::Wanted));
+        assert_eq!(word((here, None, true), &[idle(far)]), Some(Word::Wanted));
+        assert_eq!(word((here, None, false), &[idle(near)]), Some(Word::Within));
         assert_eq!(
-            word((here, None, false), &[(near, 0.0)]),
-            Some(Word::Within)
-        );
-        assert_eq!(
-            word((here, None, true), &[(near, 0.5)]),
+            word((here, None, true), &[(near, 0.5, true)]),
             Some(Word::Repairing(REPAIR_TIME - 0.5))
         );
-        // Of two wrecks within reach, the one that is done first counts.
+        // A tank repairs one wreck at a time. Of several within reach, the one that the host
+        // says this tank is at counts, though another is nearer and a teammate is further
+        // along with a third.
+        let (nearer, other) = (near / 2.0, -near);
+        let wrecks = [(nearer, 0.0, false), (near, 0.5, true), (other, 1.5, false)];
         assert_eq!(
-            word((here, None, true), &[(near, 0.5), (-near, 1.5), (far, 1.8)]),
-            Some(Word::Repairing(REPAIR_TIME - 1.5))
+            word((here, None, true), &wrecks),
+            Some(Word::Repairing(REPAIR_TIME - 0.5))
+        );
+        // Until the host has said, a tank that holds the key is at the nearest one.
+        let wrecks = [(near, 0.0, false), (nearer, 1.0, false), (far, 1.8, false)];
+        assert_eq!(
+            word((here, None, true), &wrecks),
+            Some(Word::Repairing(REPAIR_TIME - 1.0))
+        );
+        // Once the key is let go, the tank is at none, whatever the host still says.
+        assert_eq!(
+            word((here, None, false), &[(near, 0.5, true)]),
+            Some(Word::Within)
         );
         // The player whose tank is the wreck waits, and sees when someone is at it.
         assert_eq!(
-            word((here, Some(0.0), true), &[(near, 0.0)]),
+            word((here, Some(0.0), true), &[idle(near)]),
             Some(Word::Wrecked)
         );
         assert_eq!(

@@ -695,8 +695,11 @@ fn status(
     let repair = tanks.iter().find(|(.., own)| *own).and_then(|own| {
         let (place, wreck, command, _) = own;
         let wrecks = tanks.iter().filter(|(.., own)| !own);
-        let wrecks: Vec<(Vec2, f32)> = wrecks
-            .filter_map(|(place, wreck, ..)| Some((place.0, wreck?.repair)))
+        let wrecks: Vec<(Vec2, f32, bool)> = wrecks
+            .filter_map(|(place, wreck, ..)| {
+                let wreck = wreck?;
+                Some((place.0, wreck.repair, wreck.repaired_by(seat.0)))
+            })
             .collect();
         let own = (place.0, wreck.map(|wreck| wreck.repair), command.repair);
         repair::word(own, &wrecks)

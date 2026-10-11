@@ -111,6 +111,16 @@ pub struct Player {
 pub struct Wreck {
     /// Seconds of repair done so far.
     pub repair: f32,
+    /// The seats of the players whose tanks are repairing it, one bit for each. A tank
+    /// repairs one wreck at a time, so a seat is in one wreck at most.
+    pub repairers: u8,
+}
+
+impl Wreck {
+    /// Whether the tank of the player of a seat is repairing it.
+    pub fn repaired_by(&self, seat: u8) -> bool {
+        self.repairers & (1 << seat) != 0
+    }
 }
 
 /// A tank that was just repaired: nothing destroys it for this much longer.

@@ -2293,6 +2293,120 @@ fn a_tank_that_repairs_keeps_its_hands_free() {
     assert!((repair - 1.0).abs() < 0.05, "{repair} s of repair");
 }
 
+/// How far the repair of the tank of a seat has got, and which seats are at it, if the tank
+/// is a wreck.
+fn repair_of(app: &App, tank: Entity) -> Option<(f32, u8)> {
+    let wreck = app.world().get::<Wreck>(tank)?;
+    Some((wreck.repair, wreck.repairers))
+}
+
+#[test]
+fn a_tank_repairs_one_wreck_at_a_time() {
+    let mut app = team("TEST", 3);
+    let [first, second, third] = [0, 1, 2].map(|number| seat(&mut app, number));
+    // Two tanks are destroyed two and a half meters from each other, and the third stands
+    // between them, within reach of both and nearer to one.
+    let middle = position(&mut app, first);
+    let (left, right) = (middle + Vec2::NEG_X, middle + Vec2::X * 1.5);
+    teleport(&mut app, second, left);
+    teleport(&mut app, third, right);
+    destroy(&mut app, second);
+    destroy(&mut app, third);
+    assert_eq!(run(&app).phase, RunPhase::Playing);
+    let hold = TankCommand {
+        repair: true,
+        ..default()
+    };
+    order(&mut app, first, hold);
+    tick(&mut app, seconds(1.0));
+    // Only the nearer one is being repaired, by the player of the first seat.
+    let (repair, repairers) = repair_of(&app, second).unwrap();
+    assert!((repair - 1.0).abs() < 0.05, "{repair} s of repair");
+    assert_eq!(repairers, 0b001);
+    assert!(app.world().get::<Wreck>(second).unwrap().repaired_by(0));
+    assert_eq!(repair_of(&app, third), Some((0.0, 0)));
+
+    // The tank stays with the wreck it is at, though it drives nearer to the other one.
+    teleport(&mut app, first, middle + Vec2::X);
+    tick(&mut app, seconds(0.5));
+    let (repair, _) = repair_of(&app, second).unwrap();
+    assert!((repair - 1.5).abs() < 0.05, "{repair} s of repair");
+    assert_eq!(repair_of(&app, third), Some((0.0, 0)));
+
+    // Once that tank is back, the same hold starts on the other wreck, from nothing.
+    tick(&mut app, seconds(0.5) + 2);
+    assert!(!is_wreck(&app, second));
+    let (repair, repairers) = repair_of(&app, third).unwrap();
+    assert!(repair > 0.0 && repair < 0.1, "{repair} s of repair");
+    assert_eq!(repairers, 0b001);
+    tick(&mut app, seconds(REPAIR_TIME) - 6);
+    assert!(is_wreck(&app, third));
+    tick(&mut app, 6);
+    assert!(!is_wreck(&app, third));
+}
+
+#[test]
+fn a_repair_that_loses_its_wreck_moves_on_to_another_and_starts_over() {
+    let mut app = team("TEST", 3);
+    let [first, second, third] = [0, 1, 2].map(|number| seat(&mut app, number));
+    let middle = position(&mut app, first);
+    // Two wrecks five meters apart: a tank between them can leave the reach of one and
+    // stay within the reach of the other.
+    let (left, right) = (middle + Vec2::NEG_X * 2.0, middle + Vec2::X * 3.0);
+    teleport(&mut app, second, left);
+    teleport(&mut app, third, right);
+    destroy(&mut app, second);
+    destroy(&mut app, third);
+    let hold = TankCommand {
+        repair: true,
+        ..default()
+    };
+    order(&mut app, first, hold);
+    tick(&mut app, seconds(1.0));
+    assert!(repair_of(&app, second).unwrap().0 > 0.9);
+    assert_eq!(repair_of(&app, third), Some((0.0, 0)));
+    // Out of reach of the one it was at, the tank is at the other, and the first repair is
+    // lost.
+    teleport(&mut app, first, right + Vec2::NEG_X);
+    tick(&mut app, 2);
+    assert_eq!(repair_of(&app, second), Some((0.0, 0)));
+    let (repair, repairers) = repair_of(&app, third).unwrap();
+    assert!(repair > 0.0 && repair < 0.1, "{repair} s of repair");
+    assert_eq!(repairers, 0b001);
+    // Letting the key go ends that one too.
+    order(&mut app, first, TankCommand::default());
+    tick(&mut app, 1);
+    assert_eq!(repair_of(&app, third), Some((0.0, 0)));
+}
+
+#[test]
+fn two_tanks_at_one_wreck_repair_it_no_faster_than_one() {
+    let mut app = team("TEST", 3);
+    let [first, second, third] = [0, 1, 2].map(|number| seat(&mut app, number));
+    destroy(&mut app, third);
+    let wreck_at = position(&mut app, third);
+    teleport(&mut app, first, wreck_at + Vec2::NEG_X * 2.0);
+    teleport(&mut app, second, wreck_at + Vec2::Y * 2.0);
+    let hold = TankCommand {
+        repair: true,
+        ..default()
+    };
+    order(&mut app, first, hold);
+    order(&mut app, second, hold);
+    tick(&mut app, seconds(1.0));
+    let (repair, repairers) = repair_of(&app, third).unwrap();
+    assert!((repair - 1.0).abs() < 0.05, "{repair} s of repair");
+    assert_eq!(repairers, 0b011);
+    // One of them lets go, and the repair goes on with the other.
+    order(&mut app, first, TankCommand::default());
+    tick(&mut app, seconds(0.5));
+    let (repair, repairers) = repair_of(&app, third).unwrap();
+    assert!((repair - 1.5).abs() < 0.05, "{repair} s of repair");
+    assert_eq!(repairers, 0b010);
+    tick(&mut app, seconds(0.5) + 2);
+    assert!(!is_wreck(&app, third));
+}
+
 #[test]
 fn the_run_of_several_players_ends_when_every_tank_is_a_wreck() {
     let mut app = team("TEST", 3);

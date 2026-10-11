@@ -198,6 +198,8 @@ The cooldown is the only drawback. A shield saves a tank from one threat, and fo
 
 A player repairs a wrecked teammate by holding the repair key within 3 m of the wreck for 2 s. The repairer keeps every other verb: the tank drives within that reach, shoots, places mines and shields as usual. All progress is lost if the repair is interrupted: when the key is let go, when the tank leaves the reach, or when it is destroyed. The repaired tank returns with a full magazine and 1 s of protection, during which bullets end on it and blasts leave it alone.
 
+A tank repairs one wreck at a time. With several wrecks within reach, it works on the nearest one and stays with it, wherever it drives within that reach, until that tank is back or the repair is interrupted. If the key is still held then, it goes on with the nearest wreck that is left, from nothing. Two tanks at the same wreck repair it no faster than one.
+
 Nothing destroys a wreck again, and a wreck is in nobody's way: tanks drive over it, bullets fly over it, it sets off no mine and it stays through any blast. It therefore gives no cover to the tank that repairs it. A tank that comes back under another one pushes it aside over a few ticks, without a jump.
 
 A wreck lies in a circle in dashes and keeps the number of its player over it: a tank whose center is inside the circle can repair it. The circle is inked in from the top as the repair goes on, and starts over when the repair is interrupted. While a teammate's tank is a wreck, a player is told on screen which key to hold, and how long the repair still takes. The player whose tank is the wreck is told when a teammate is at it.
