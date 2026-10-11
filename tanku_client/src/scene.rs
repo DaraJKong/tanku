@@ -1118,13 +1118,19 @@ fn bullet_shape<'a>(shapes: &'a Shapes, bullet: &Bullet) -> &'a Handle<Mesh> {
     &shapes[(bullet.bounces_left as usize).min(shapes.len() - 1)]
 }
 
+/// How long the line behind a bullet is when the bullet first shows. A guest shows a bullet
+/// where it is by now, which is further than where its host told of it.
+#[derive(Component, Clone, Copy, Debug)]
+pub struct Tail(pub f32);
+
 fn dress_bullets(
     mut commands: Commands,
-    bullets: Query<(Entity, &Bullet, &Position), Added<Bullet>>,
+    bullets: Query<(Entity, &Bullet, &Position, Option<&Tail>), Added<Bullet>>,
     shapes: Res<Shapes>,
     paints: Res<Paints>,
 ) {
-    for (entity, bullet, position) in &bullets {
+    for (entity, bullet, position, tail) in &bullets {
+        let tail = tail.map_or(0.0, |tail| tail.0.min(TRAIL_LENGTH));
         let (paint, trail, pool) = match bullet.team {
             Team::Players => (
                 &paints.player_bullet,
@@ -1147,10 +1153,13 @@ fn dress_bullets(
             },
             children![
                 (
-                    Trail::default(),
+                    Trail {
+                        length: tail,
+                        heading: bullet.velocity.normalize_or_zero(),
+                    },
                     Mesh3d(shapes.trail.clone()),
                     MeshMaterial3d(trail.clone()),
-                    Transform::from_scale(Vec3::new(0.0, 1.0, TRAIL_WIDTH)),
+                    Transform::from_scale(Vec3::new(tail, 1.0, TRAIL_WIDTH)),
                 ),
                 // On the floor, under the bullet.
                 (

@@ -480,14 +480,20 @@ fn send_commands(
     }
 }
 
-/// What happens in the simulation of the host, for the effects and the sounds here.
+/// What happens in the simulation of the host, for the effects and the sounds here. What
+/// this machine has shown already, ahead of its host, doesn't show again.
 fn hear(
+    timeline: Res<LocalTimeline>,
     mut receivers: Query<&mut MessageReceiver<SimEvent>, With<Client>>,
+    mut echoes: ResMut<mirror::Echoes>,
     mut events: MessageWriter<SimEvent>,
 ) {
+    let now = timeline.tick().0;
     for mut receiver in &mut receivers {
         for event in receiver.receive() {
-            events.write(event);
+            if !echoes.claims(now, &event) {
+                events.write(event);
+            }
         }
     }
 }

@@ -32,7 +32,8 @@ use tanku_core::{
     rules::{MAX_PLAYERS, TICK_RATE},
     seed::VERSION,
     sim::{
-        Bullet, Motion, Player, Position, Run, RunPhase, RunRequest, SimEvent, Tank, TankCommand,
+        Bullet, Gun, Motion, Player, Position, Run, RunPhase, RunRequest, Shield, SimEvent, Tank,
+        TankCommand,
     },
 };
 
@@ -186,7 +187,13 @@ impl Plugin for NetPlugin {
                 (
                     (close_ranks, announce).chain(),
                     share,
-                    (report::<Position>, report::<Motion>, report::<Bullet>),
+                    (
+                        report::<Position>,
+                        report::<Motion>,
+                        report::<Bullet>,
+                        report::<Gun>,
+                        report::<Shield>,
+                    ),
                     herald,
                     tell,
                 )
@@ -261,26 +268,31 @@ fn announce(
 }
 
 /// Sends the guests everything the simulation owns. Of a tank and of a bullet, they are told
-/// the place and the motion apart from the rest: they show those in their own time. The tank
-/// of a guest is theirs to command. It stays when they go: the run takes it away.
+/// the place and the motion apart from the rest: they show those in their own time. They show
+/// the gun of a player's tank and nothing of the others'. The tank of a guest is theirs to
+/// command. It stays when they go: the run takes it away.
 fn share(
     mut commands: Commands,
     fresh: Query<
         (
             Entity,
             Option<&Player>,
-            Option<(&Position, &Motion, &Tank)>,
+            Option<(&Position, &Motion, &Shield, &Tank)>,
+            Option<&Gun>,
             Option<(&Position, &Bullet)>,
         ),
         (Or<(With<InSector>, With<Player>)>, Without<Replicate>),
     >,
     seats: Query<(Entity, &Seat)>,
 ) {
-    for (entity, player, tank, bullet) in &fresh {
+    for (entity, player, tank, gun, bullet) in &fresh {
         let mut entity = commands.entity(entity);
         entity.insert(Replicate::to_clients(NetworkTarget::All));
-        if let Some((position, motion, _)) = tank {
-            entity.insert((Told(*position), Told(*motion)));
+        if let Some((position, motion, shield, _)) = tank {
+            entity.insert((Told(*position), Told(*motion), Told(*shield)));
+        }
+        if let (Some(_), Some(gun)) = (player, gun) {
+            entity.insert(Told(*gun));
         }
         if let Some((position, bullet)) = bullet {
             entity.insert((Told(*position), Told(*bullet)));

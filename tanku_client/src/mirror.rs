@@ -5,33 +5,43 @@
 //!
 //! - The other tanks are shown a moment in the past, between two tellings, so that they move
 //!   evenly.
-//! - The tank of the guest's own player does at once what the player asks. The guest moves it
-//!   as the host will. When the host tells where the tank was, the guest starts again from
-//!   there and does again what was asked since.
+//! - The tank of the guest's own player does at once what the player asks: it drives, fires,
+//!   lays mines and raises its shield. The guest does all of it as the host will. When the
+//!   host tells how the tank was, the guest starts again from there and does again what was
+//!   asked since. The bullet or the mine that the guest showed meanwhile makes way for the
+//!   one that the host tells of, and what the host says of a shot that the guest has sounded
+//!   already is not sounded again.
 //! - A bullet flies straight and bounces off what stands still, so the guest knows where it
 //!   is by now. It shows the bullet there, in the time of its player's tank, and not where it
-//!   was when the host told: what comes at the tank is where the screen shows it.
+//!   was when the host told: what comes at the tank is where the screen shows it, and ends
+//!   where it meets the tank or its bubble.
 
-use std::collections::VecDeque;
+use std::{collections::VecDeque, mem::discriminant};
 
 use bevy::prelude::*;
 use lightyear::prelude::*;
 use tanku_core::{
     geom,
     protocol::Told,
-    rules::{TICK, TICK_RATE},
+    rules::{
+        BULLET_RADIUS, MINE_ARMING_TIME, REPAIR_RADIUS, SHIELD_RADIUS, TANK_RADIUS, TICK, TICK_RATE,
+    },
     sim::{
-        Barrier, Block, Bullet, ExplosiveCrate, Motion, Position, PreviousPosition, Run, Sector,
-        Tank, TankCommand, Wreck,
+        Barrier, Block, Bullet, ExplosiveCrate, Gun, Mine, MineState, Motion, Position,
+        PreviousPosition, Run, Sector, Shield, SimEvent, Tank, TankCommand, Wreck,
     },
 };
 use tanku_server::{
     bullets::{self, Flight},
     field::{self, Field},
-    tanks,
+    tanks::{self, Bubble},
 };
 
-use crate::{crew::Own, scene::Nudge, session::Session};
+use crate::{
+    crew::Own,
+    scene::{Nudge, Tail},
+    session::Session,
+};
 
 /// How far in the past the other tanks are shown, in ticks: enough for the next telling to be
 /// there in time, most of the time.
@@ -52,6 +62,13 @@ const REACH: u32 = 40;
 /// the distance beyond which it is put there at once.
 const EASE: f32 = 0.1;
 const JUMP: f32 = 3.0;
+/// How many ticks apart a shot is in two accounts of what the tank did, and is still the same
+/// shot. An order that reaches the host late is obeyed a tick or two late.
+const LATITUDE: u32 = 2;
+/// How long the guest waits for the host to tell of what it has shown already, in ticks, and
+/// how near to it the host's word must be, in meters.
+const AWAITED: u32 = 120;
+const NEAR: f32 = 1.5;
 
 /// When the picture of a guest is made, in each frame: after what the host told has come in.
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -162,20 +179,133 @@ impl Orders {
     }
 }
 
-/// The tank of this guest's player, which the guest moves ahead of the host.
+/// Whether a tick comes after another.
+fn after(tick: u32, other: u32) -> bool {
+    (tick.wrapping_sub(other) as i32) > 0
+}
+
+/// Where something happened, when the host tells where.
+fn place_of(event: &SimEvent) -> Option<Vec2> {
+    match *event {
+        SimEvent::Shot { at, .. }
+        | SimEvent::Ricochet { at }
+        | SimEvent::BulletDestroyed { at, .. }
+        | SimEvent::MinePlaced { at }
+        | SimEvent::ShieldRaised { at }
+        | SimEvent::ShieldBlocked { at }
+        | SimEvent::ShieldDropped { at } => Some(at),
+        _ => None,
+    }
+}
+
+/// What the guest has shown and sounded ahead of its host. The host tells of it a moment
+/// later, and that must not show a second time.
+#[derive(Resource, Debug, Default)]
+pub struct Echoes {
+    awaited: Vec<(u32, SimEvent)>,
+}
+
+impl Echoes {
+    /// Notes what the guest has just shown, at a tick of its clock.
+    fn expect(&mut self, now: u32, event: SimEvent) {
+        self.awaited
+            .retain(|(shown_at, _)| now.wrapping_sub(*shown_at) <= AWAITED);
+        self.awaited.push((now, event));
+    }
+
+    /// Whether the host tells here of something that the guest has shown already: the same
+    /// kind of thing at about the same place, not long ago. What was shown answers for one
+    /// telling.
+    pub fn claims(&mut self, now: u32, told: &SimEvent) -> bool {
+        let Some(there) = place_of(told) else {
+            return false;
+        };
+        let answers = |(shown_at, shown): &(u32, SimEvent)| {
+            now.wrapping_sub(*shown_at) <= AWAITED
+                && discriminant(shown) == discriminant(told)
+                && place_of(shown).is_some_and(|here| here.distance(there) <= NEAR)
+        };
+        let found = self.awaited.iter().position(answers);
+        found.map(|index| self.awaited.remove(index)).is_some()
+    }
+}
+
+/// Something that the tank of the guest's own player did at a tick, ahead of the host's word.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Deed {
+    /// A shot from where the tank stood, with its turret turned so.
+    Shot {
+        from: Vec2,
+        turret: f32,
+    },
+    Mine {
+        at: Vec2,
+    },
+    Raised {
+        at: Vec2,
+    },
+    Dropped {
+        at: Vec2,
+    },
+}
+
+/// A deed that the guest has shown and sounded, and the bullet or the mine that it shows for
+/// it until the host's word of that tick is in.
+#[derive(Debug)]
+struct Shown {
+    tick: u32,
+    deed: Deed,
+    thing: Option<Entity>,
+}
+
+impl Shown {
+    /// Whether this is a deed of an account of what the tank did: the same kind of deed, at
+    /// about the same tick.
+    fn is(&self, tick: u32, deed: &Deed) -> bool {
+        discriminant(&self.deed) == discriminant(deed) && self.tick.abs_diff(tick) <= LATITUDE
+    }
+}
+
+/// The tank of this guest's player, which the guest runs ahead of the host.
 #[derive(Component, Debug, Default)]
 struct Ahead {
-    /// The tick of the telling that the tank was last moved on from.
+    /// The tick of the telling that the tank was last run on from.
     heard: Option<u32>,
+    /// What the tank did since, which the host has yet to tell of.
+    shown: Vec<Shown>,
 }
+
+/// How the tank of the guest's own player is at a tick.
+#[derive(Clone, Copy, Debug)]
+struct Helm {
+    place: Vec2,
+    moving: Motion,
+    gun: Gun,
+    shield: Shield,
+}
+
+/// A bullet or a mine that the guest shows ahead of the host's word.
+#[derive(Component, Debug)]
+struct Foreseen;
 
 /// A bullet that the guest flies ahead of the host.
 #[derive(Component, Debug)]
 struct Flown {
-    /// The tick of the telling that the bullet was last flown on from.
+    /// The tick of the telling that the bullet was last flown on from. For a bullet that the
+    /// guest shows ahead of the host's word, the tick of its shot.
     heard: u32,
     /// Whether the bullet flew into something that ends it. The host will take it away.
     spent: bool,
+    /// The tick at which the bullet came upon the tank of the guest's own player, or upon its
+    /// bubble, which ends it too. That holds until the host tells otherwise.
+    stopped: Option<u32>,
+}
+
+impl Flown {
+    /// Whether the bullet is at its end as far as the guest can tell.
+    fn gone(&self) -> bool {
+        self.spent || self.stopped.is_some()
+    }
 }
 
 /// The tick of the host that what a guest knows of a thing is true of. That is the last tick
@@ -191,13 +321,15 @@ pub fn plugin(app: &mut App) {
     let guest = |session: Res<Session>| *session == Session::Guest;
     app.init_resource::<Past>()
         .init_resource::<Orders>()
-        .add_observer(shift_orders)
+        .init_resource::<Echoes>()
+        .add_observer(shift_ticks)
+        .add_observer(take_back)
         .add_systems(
             PreUpdate,
             (
                 keep_field,
                 field::rebuild_colliders.run_if(resource_exists::<Field>),
-                (take_the_helm, hear_tanks),
+                (take_the_helm, hear_tanks, hear_shields),
                 show_tanks,
             )
                 .chain()
@@ -207,6 +339,7 @@ pub fn plugin(app: &mut App) {
         .add_systems(
             FixedUpdate,
             (foresee, fly)
+                .chain()
                 .run_if(guest)
                 .run_if(resource_exists::<Field>),
         )
@@ -243,32 +376,45 @@ fn keep_field(
                 field.stale = true;
             }
         }
-        // A new run, maybe of another host: what was asked in the last one is of no use.
+        // A new run, maybe of another host: what was asked and shown in the last one is of
+        // no use.
         (Some(run), _) => {
             commands.insert_resource(Field::new(run.seed, run.players));
             commands.insert_resource(Orders::default());
+            commands.insert_resource(Echoes::default());
         }
         (None, Some(_)) => commands.remove_resource::<Field>(),
         (None, None) => {}
     }
 }
 
-/// The tank of the guest's own player is the one that the guest moves ahead.
+/// The tank of the guest's own player is the one that the guest runs ahead. Its gun is the
+/// one that the guest shows.
 fn take_the_helm(
     mut commands: Commands,
-    tanks: Query<(Entity, Has<Own>, Has<Ahead>), (With<Tank>, With<Remote>)>,
+    tanks: Query<(Entity, Has<Own>, Has<Ahead>, &Told<Gun>), (With<Tank>, With<Remote>)>,
 ) {
-    for (entity, own, ahead) in &tanks {
+    for (entity, own, ahead, gun) in &tanks {
         match (own, ahead) {
             (true, false) => {
                 commands
                     .entity(entity)
-                    .insert((Ahead::default(), Nudge::default()));
+                    .insert((Ahead::default(), Nudge::default(), gun.0));
             }
             (false, true) => {
                 commands.entity(entity).remove::<(Ahead, Nudge)>();
             }
             _ => {}
+        }
+    }
+}
+
+/// A tank that the guest no longer runs ahead takes back what it had shown of it.
+fn take_back(gone: On<Remove, Ahead>, helms: Query<&Ahead>, mut commands: Commands) {
+    let things = helms.get(gone.entity).map(|ahead| &ahead.shown);
+    for shown in things.into_iter().flatten() {
+        if let Some(thing) = shown.thing {
+            commands.entity(thing).try_despawn();
         }
     }
 }
@@ -315,6 +461,13 @@ fn hear_tanks(
     }
 }
 
+/// The shields of the tanks that the guest doesn't run itself are as the host tells them.
+fn hear_shields(mut tanks: Query<(&Told<Shield>, &mut Shield), Without<Ahead>>) {
+    for (told, mut shield) in &mut tanks {
+        shield.set_if_neq(told.0);
+    }
+}
+
 /// Shows the tanks that the guest doesn't move itself where they were a moment ago.
 fn show_tanks(
     time: Res<Time<Real>>,
@@ -341,111 +494,330 @@ fn show_tanks(
     }
 }
 
-/// When the clock of the guest is set anew, the ticks of what was asked move with it.
-fn shift_orders(shift: On<LocalTimelineShift>, mut orders: ResMut<Orders>) {
-    for (tick, _) in &mut orders.asked {
-        *tick = tick.wrapping_add_signed(shift.delta);
+/// When the clock of the guest is set anew, the ticks of what was asked and shown move with
+/// it.
+fn shift_ticks(
+    shift: On<LocalTimelineShift>,
+    mut orders: ResMut<Orders>,
+    mut echoes: ResMut<Echoes>,
+    mut helms: Query<&mut Ahead>,
+    mut bullets: Query<&mut Flown>,
+) {
+    let moved = |tick: &mut u32| *tick = tick.wrapping_add_signed(shift.delta);
+    orders.asked.iter_mut().for_each(|(tick, _)| moved(tick));
+    echoes.awaited.iter_mut().for_each(|(tick, _)| moved(tick));
+    for mut ahead in &mut helms {
+        ahead
+            .shown
+            .iter_mut()
+            .for_each(|shown| moved(&mut shown.tick));
+    }
+    for mut bullet in &mut bullets {
+        if let Some(stopped) = &mut bullet.stopped {
+            moved(stopped);
+        }
     }
 }
 
-/// Moves the tank of the guest's own player by a tick, as the host will when the order of this
-/// tick reaches it. When the host has told where the tank was, the tank starts again from
-/// there and does again what was asked since.
+/// Runs the tank of the guest's own player by a tick, as the host will when the order of this
+/// tick reaches it: the tank drives, aims, shields, fires and lays mines. When the host has
+/// told how the tank was, the tank starts again from there and does again what was asked
+/// since.
+///
+/// What the tank does shows at once: its bullet and its mine are the guest's own until the
+/// host's word of that tick is in. From then on the host's are shown, or nothing, if the host
+/// had it otherwise.
 fn foresee(
+    mut commands: Commands,
     timeline: Res<LocalTimeline>,
     checkpoints: Res<ReplicationCheckpointMap>,
     field: Res<Field>,
-    mut orders: ResMut<Orders>,
+    (mut orders, mut echoes): (ResMut<Orders>, ResMut<Echoes>),
+    mut events: MessageWriter<SimEvent>,
     mut own: Query<
         (
+            Entity,
             &Tank,
             &TankCommand,
-            (&Told<Position>, &Told<Motion>, &ConfirmHistory),
-            (&mut Position, &mut PreviousPosition, &mut Motion),
+            (
+                &Told<Position>,
+                &Told<Motion>,
+                &Told<Gun>,
+                &Told<Shield>,
+                &ConfirmHistory,
+            ),
+            (
+                &mut Position,
+                &mut PreviousPosition,
+                &mut Motion,
+                &mut Gun,
+                &mut Shield,
+            ),
             &mut Ahead,
             &mut Nudge,
             Has<Wreck>,
         ),
         With<Own>,
     >,
-    others: Query<(&Position, &Tank, Has<Wreck>), Without<Own>>,
+    others: Query<(&Position, &Told<Position>, &Tank, Has<Wreck>), Without<Own>>,
+    mut bullets: Query<
+        (
+            &mut Bullet,
+            &mut Position,
+            &mut PreviousPosition,
+            &mut Flown,
+        ),
+        (With<Foreseen>, Without<Tank>),
+    >,
 ) {
     let now = timeline.tick().0;
-    for (tank, command, told, shown, mut ahead, mut nudge, wreck) in &mut own {
-        let (told_position, told_motion, confirmed) = told;
-        let (mut position, mut previous, mut motion) = shown;
+    for (entity, tank, command, told, shown, mut ahead, mut nudge, wreck) in &mut own {
+        let (told_position, told_motion, told_gun, told_shield, confirmed) = told;
+        let (mut position, mut previous, mut motion, mut gun, mut shield) = shown;
         orders.note(now, *command);
+        let told = Helm {
+            place: told_position.0.0,
+            moving: told_motion.0,
+            gun: told_gun.0,
+            shield: told_shield.0,
+        };
         let told_at = heard(&checkpoints, confirmed);
         let ahead_by = told_at.map(|told_at| now.wrapping_sub(told_at));
-        // A wreck stays where the host has it, and so does a tank while the clock of the guest
-        // is not yet the host's.
+        // A wreck is as the host has it, and so is a tank while the clock of the guest is not
+        // yet the host's.
         if wreck || ahead_by.is_none_or(|ticks| ticks == 0 || ticks > REACH) {
-            position.0 = told_position.0.0;
-            previous.0 = position.0;
-            *motion = told_motion.0;
-            *ahead = Ahead::default();
+            (position.0, previous.0) = (told.place, told.place);
+            *motion = told.moving;
+            gun.set_if_neq(told.gun);
+            shield.set_if_neq(told.shield);
+            for shown in std::mem::take(&mut *ahead).shown {
+                if let Some(thing) = shown.thing {
+                    commands.entity(thing).try_despawn();
+                }
+            }
             nudge.0 = Vec2::ZERO;
             continue;
         }
-        let step = |place: &mut Vec2, moving: &mut Motion, asked: &TankCommand| {
-            tanks::step(&field, tank, true, asked, place, moving);
-            let others = others.iter().map(|(other, tank, wreck)| {
+
+        // The wrecks within reach, which a tank that repairs has its hands full with.
+        let wrecks = others.iter().filter(|(.., wreck)| *wreck);
+        let wrecks: Vec<Vec2> = wrecks.map(|(_, told, ..)| told.0.0).collect();
+        let step = |helm: &mut Helm, asked: &TankCommand, tick: u32, did: &mut Vec<(u32, Deed)>| {
+            let within = |wreck: &Vec2| wreck.distance(helm.place) <= REPAIR_RADIUS;
+            let free = !(asked.repair && wrecks.iter().any(within));
+            if let Some(cooldown) = tank.genome.shield_cooldown() {
+                let at = helm.place;
+                match tanks::step_shield(&mut helm.shield, cooldown, asked.shield && free) {
+                    Some(Bubble::Raised) => did.push((tick, Deed::Raised { at })),
+                    Some(Bubble::Dropped) => did.push((tick, Deed::Dropped { at })),
+                    None => {}
+                }
+            }
+            tanks::step(&field, tank, true, asked, &mut helm.place, &mut helm.moving);
+            let others = others.iter().map(|(other, _, tank, wreck)| {
                 let gives_way = tank.genome.top_speed() > 0.0 && !wreck;
                 (other.0, gives_way)
             });
-            tanks::give_way(place, others);
-            field.push_out(tank, place, &mut moving.velocity);
-        };
-        let (mut place, mut moving) = (position.0, *motion);
-        previous.0 = place;
-        step(&mut place, &mut moving, command);
-        if let Some(told_at) = told_at.filter(|told_at| ahead.heard != Some(*told_at)) {
-            ahead.heard = Some(told_at);
-            let thought = place;
-            (place, moving) = (told_position.0.0, told_motion.0);
-            for tick in 1..now.wrapping_sub(told_at) {
-                step(
-                    &mut place,
-                    &mut moving,
-                    &orders.at(told_at.wrapping_add(tick)),
-                );
+            tanks::give_way(&mut helm.place, others);
+            field.push_out(tank, &mut helm.place, &mut helm.moving.velocity);
+            let worked = tanks::step_gun(&mut helm.gun, &tank.genome, asked, free);
+            if worked.fired {
+                let (from, turret) = (helm.place, helm.moving.turret);
+                did.push((tick, Deed::Shot { from, turret }));
             }
-            previous.0 = place;
-            step(&mut place, &mut moving, command);
+            if worked.laid {
+                did.push((tick, Deed::Mine { at: helm.place }));
+            }
+        };
+
+        let mut helm = Helm {
+            place: position.0,
+            moving: *motion,
+            gun: *gun,
+            shield: *shield,
+        };
+        let mut did: Vec<(u32, Deed)> = Vec::new();
+        previous.0 = helm.place;
+        step(&mut helm, command, now, &mut did);
+        let again = told_at.filter(|told_at| ahead.heard != Some(*told_at));
+        if let Some(told_at) = again {
+            ahead.heard = Some(told_at);
+            let thought = helm.place;
+            helm = told;
+            did.clear();
+            for tick in 1..now.wrapping_sub(told_at) {
+                let tick = told_at.wrapping_add(tick);
+                step(&mut helm, &orders.at(tick), tick, &mut did);
+            }
+            previous.0 = helm.place;
+            step(&mut helm, command, now, &mut did);
             // The tank is drawn where the guest thought it was, and brought to its place.
-            let off = thought - place;
+            let off = thought - helm.place;
             nudge.0 = if off.length() > JUMP {
                 Vec2::ZERO
             } else {
                 nudge.0 + off
             };
+            // The host's word of a tick settles what the tank did in it: its bullet or its
+            // mine is there as the host tells it, or there is none. So what the guest showed
+            // goes once it is not in this new account of the ticks since that word.
+            ahead.shown.retain(|shown| {
+                let stands = did.iter().any(|(tick, deed)| shown.is(*tick, deed));
+                if let (false, Some(thing)) = (stands, shown.thing) {
+                    commands.entity(thing).try_despawn();
+                }
+                stands
+            });
         }
-        position.0 = place;
-        *motion = moving;
+        position.0 = helm.place;
+        *motion = helm.moving;
+        gun.set_if_neq(helm.gun);
+        shield.set_if_neq(helm.shield);
+
+        // The bullets that the guest shows for the tank fly on.
+        for shown in &ahead.shown {
+            let Some(Ok(bullet)) = shown.thing.map(|thing| bullets.get_mut(thing)) else {
+                continue;
+            };
+            let (mut bullet, mut place, mut before, mut state) = bullet;
+            if state.spent {
+                continue;
+            }
+            let mut flying = *bullet;
+            let flew = flown(&field, &mut place.0, &mut flying, 1);
+            before.0 = flew.way[0];
+            bullet.set_if_neq(flying);
+            if flew.spent {
+                state.spent = true;
+                commands.entity(shown.thing.unwrap()).insert(hidden(true));
+            }
+        }
+
+        // What the tank did and the guest has not shown yet shows now, and sounds.
+        let team = tank.team;
+        for (tick, deed) in did {
+            if ahead.shown.iter().any(|shown| shown.is(tick, &deed)) {
+                continue;
+            }
+            let mut tell = |event: SimEvent| {
+                events.write(event);
+                echoes.expect(now, event);
+            };
+            let thing = match deed {
+                Deed::Shot { from, turret } => {
+                    let shot = tanks::shoot(&field, entity, tank, from, turret);
+                    tell(SimEvent::Shot {
+                        at: shot.muzzle,
+                        team,
+                    });
+                    for bounce in &shot.flight.bounces {
+                        tell(SimEvent::Ricochet { at: *bounce });
+                    }
+                    match shot.flight.end {
+                        Flight::Stopped(_) => {
+                            tell(SimEvent::BulletDestroyed { at: shot.at, team });
+                            None
+                        }
+                        Flight::Flying => {
+                            let (mut at, mut bullet) = (shot.at, shot.bullet);
+                            // The bullet flies on in the tick of its shot, and in each since.
+                            let ticks = 1 + now.wrapping_sub(tick);
+                            let flew = flown(&field, &mut at, &mut bullet, ticks);
+                            let state = Flown {
+                                heard: tick,
+                                spent: flew.spent,
+                                stopped: None,
+                            };
+                            let place = (Position(at), PreviousPosition(flew.way[0]));
+                            let look = (Tail(flew.straight), hidden(flew.spent));
+                            Some(commands.spawn((Foreseen, bullet, place, state, look)).id())
+                        }
+                    }
+                }
+                Deed::Mine { at } => {
+                    tell(SimEvent::MinePlaced { at });
+                    let mine = Mine {
+                        owner: entity,
+                        team,
+                        sector: tank.sector,
+                        state: MineState::Arming(MINE_ARMING_TIME),
+                    };
+                    Some(commands.spawn((Foreseen, mine, Position(at))).id())
+                }
+                Deed::Raised { at } => {
+                    tell(SimEvent::ShieldRaised { at });
+                    None
+                }
+                Deed::Dropped { at } => {
+                    tell(SimEvent::ShieldDropped { at });
+                    None
+                }
+            };
+            ahead.shown.push(Shown { tick, deed, thing });
+        }
     }
 }
 
-/// Flies a bullet for some ticks. Returns where it was a tick before the end, and whether it
-/// flew into something that ends it.
-fn flown(field: &Field, position: &mut Vec2, bullet: &mut Bullet, ticks: u32) -> (Vec2, bool) {
-    let mut before = *position;
+/// How a bullet flew for some ticks.
+struct Flew {
+    /// The way it took in the last of them: where it was before, where it bounced, where it
+    /// is now.
+    way: Vec<Vec2>,
+    /// Whether it flew into something that ends it.
+    spent: bool,
+    /// How far it has flown in a straight line: from the start, or since its last bounce.
+    straight: f32,
+}
+
+/// Flies a bullet for some ticks, past what stands still.
+fn flown(field: &Field, position: &mut Vec2, bullet: &mut Bullet, ticks: u32) -> Flew {
+    let mut flew = Flew {
+        way: vec![*position],
+        spent: false,
+        straight: 0.0,
+    };
     for _ in 0..ticks {
-        before = *position;
+        let from = *position;
         let distance = bullet.velocity.length() * TICK;
         let flight = bullets::fly_past_walls(field, position, bullet, distance);
+        flew.straight = match flight.bounces.last() {
+            Some(bounce) => bounce.distance(*position),
+            None => flew.straight + from.distance(*position),
+        };
+        flew.way.clear();
+        flew.way.push(from);
+        flew.way.extend(&flight.bounces);
+        flew.way.push(*position);
         if flight.end != Flight::Flying {
-            return (before, true);
+            flew.spent = true;
+            break;
         }
     }
-    (before, false)
+    flew
+}
+
+/// Where a bullet that went this way came upon a circle, if it did.
+fn met(way: &[Vec2], center: Vec2, radius: f32) -> Option<Vec2> {
+    way.windows(2).find_map(|ends| {
+        let (from, delta) = (ends[0], ends[1] - ends[0]);
+        let along = geom::sweep_circle_point(from, delta, center, radius + BULLET_RADIUS)?;
+        Some(from + delta * along)
+    })
 }
 
 /// Flies the bullets to where they are by now, from where the host last told that they were.
+///
+/// A bullet that comes upon the tank of the guest's own player ends there, or on its bubble:
+/// the guest has both where the host will have them. It doesn't wait for the host to say so,
+/// and sounds the bubble at once.
 fn fly(
     mut commands: Commands,
     timeline: Res<LocalTimeline>,
     checkpoints: Res<ReplicationCheckpointMap>,
     field: Res<Field>,
+    mut echoes: ResMut<Echoes>,
+    mut events: MessageWriter<SimEvent>,
+    own: Query<(&Position, &Shield), (With<Ahead>, Without<Told<Bullet>>)>,
     mut told: Query<
         (
             Entity,
@@ -463,6 +835,34 @@ fn fly(
     >,
 ) {
     let now = timeline.tick().0;
+    let own = own.single().ok().map(|(position, shield)| {
+        let radius = if shield.is_active() {
+            SHIELD_RADIUS
+        } else {
+            TANK_RADIUS
+        };
+        (position.0, radius, shield.is_active())
+    });
+    // Ends a bullet that came upon the tank of the guest's own player in its last tick.
+    let mut meet = |state: &mut Flown, flew: &Flew, bullet: &Bullet| {
+        let Some((center, radius, shielded)) = own.filter(|_| !state.gone()) else {
+            return;
+        };
+        let Some(at) = met(&flew.way, center, radius) else {
+            return;
+        };
+        state.stopped = Some(now);
+        if shielded {
+            let team = bullet.team;
+            for event in [
+                SimEvent::ShieldBlocked { at: center },
+                SimEvent::BulletDestroyed { at, team },
+            ] {
+                events.write(event);
+                echoes.expect(now, event);
+            }
+        }
+    };
     for (entity, told_position, told_bullet, confirmed, shown) in &mut told {
         let Some(told_at) = heard(&checkpoints, confirmed) else {
             continue;
@@ -471,45 +871,56 @@ fn fly(
         let afresh = || {
             let (mut place, mut bullet) = (told_position.0.0, told_bullet.0);
             let ticks = Some(now.wrapping_sub(told_at)).filter(|ticks| *ticks <= REACH);
-            let (before, spent) = flown(&field, &mut place, &mut bullet, ticks.unwrap_or(0));
-            (bullet, place, before, spent)
+            let flew = flown(&field, &mut place, &mut bullet, ticks.unwrap_or(0));
+            (bullet, place, flew)
         };
         let Some((mut bullet, mut position, mut previous, mut state)) = shown else {
-            let (bullet, place, before, spent) = afresh();
-            let flown = Flown {
+            let (bullet, place, flew) = afresh();
+            let mut state = Flown {
                 heard: told_at,
-                spent,
+                spent: flew.spent,
+                stopped: None,
             };
-            let hidden = hidden(spent);
-            let place = (Position(place), PreviousPosition(before));
-            commands
-                .entity(entity)
-                .insert((bullet, place, flown, hidden));
+            meet(&mut state, &flew, &bullet);
+            let place = (Position(place), PreviousPosition(flew.way[0]));
+            // The line behind it is as long as its flight since the host told of it.
+            let look = (Tail(flew.straight), hidden(state.gone()));
+            commands.entity(entity).insert((bullet, place, state, look));
             continue;
         };
+        let was_gone = state.gone();
         if state.heard != told_at {
-            let was_spent = state.spent;
-            let flying;
-            (flying, position.0, previous.0, state.spent) = afresh();
+            let (flying, place, flew) = afresh();
+            (position.0, previous.0) = (place, flew.way[0]);
             bullet.set_if_neq(flying);
             state.heard = told_at;
-            if state.spent != was_spent {
-                commands.entity(entity).insert(hidden(state.spent));
+            state.spent = flew.spent;
+            // The host still has the bullet after the tick at which the guest saw it end on
+            // its player's tank: it didn't end there.
+            if state
+                .stopped
+                .is_some_and(|stopped| !after(stopped, told_at))
+            {
+                state.stopped = None;
             }
+            meet(&mut state, &flew, &flying);
         } else if !state.spent {
             let mut flying = *bullet;
-            (previous.0, state.spent) = flown(&field, &mut position.0, &mut flying, 1);
+            let flew = flown(&field, &mut position.0, &mut flying, 1);
+            previous.0 = flew.way[0];
             bullet.set_if_neq(flying);
-            if state.spent {
-                commands.entity(entity).insert(hidden(true));
-            }
+            state.spent = flew.spent;
+            meet(&mut state, &flew, &flying);
+        }
+        if state.gone() != was_gone {
+            commands.entity(entity).insert(hidden(state.gone()));
         }
     }
 }
 
-/// A bullet that flew into something on this side is not shown any more.
-fn hidden(spent: bool) -> Visibility {
-    if spent {
+/// A bullet that is at its end on this side is not shown any more.
+fn hidden(gone: bool) -> Visibility {
+    if gone {
         Visibility::Hidden
     } else {
         Visibility::Inherited
@@ -543,29 +954,92 @@ mod tests {
         session::SessionRequest,
     };
 
-    /// What a game has at each of its ticks. A test keeps it to compare what a guest shows at
-    /// a tick with what its host has once it gets to that tick.
+    /// What a game has at each of its ticks, and what it showed and sounded. A test keeps it to
+    /// compare what a guest shows at a tick with what its host has once it gets to that tick.
     #[derive(Resource, Default)]
     struct Log {
         tanks: HashMap<(u32, u8), Vec2>,
         bullets: HashMap<u32, Vec<Vec2>>,
+        mines: HashMap<u32, Vec<Vec2>>,
+        /// The gun and the shield of the tank of a seat, where the game has both.
+        arms: HashMap<(u32, u8), (Gun, Shield)>,
+        news: Vec<(u32, SimEvent)>,
     }
 
     fn keep_log(
         timeline: Res<LocalTimeline>,
         mut log: ResMut<Log>,
-        tanks: Query<(&Player, &Position)>,
+        tanks: Query<(&Player, &Position, Option<&Gun>, &Shield)>,
         bullets: Query<(&Position, Option<&Flown>), With<Bullet>>,
+        mines: Query<&Position, With<Mine>>,
     ) {
         let tick = timeline.tick().0;
-        for (player, position) in &tanks {
+        for (player, position, gun, shield) in &tanks {
             log.tanks.insert((tick, player.seat), position.0);
+            if let Some(gun) = gun {
+                log.arms.insert((tick, player.seat), (*gun, *shield));
+            }
         }
         let flying = bullets
             .iter()
-            .filter(|(_, flown)| flown.is_none_or(|flown| !flown.spent));
+            .filter(|(_, flown)| flown.is_none_or(|flown| !flown.gone()));
         let places = flying.map(|(position, _)| position.0).collect();
         log.bullets.insert(tick, places);
+        let places = mines.iter().map(|position| position.0).collect();
+        log.mines.insert(tick, places);
+    }
+
+    fn keep_news(
+        timeline: Res<LocalTimeline>,
+        mut log: ResMut<Log>,
+        mut events: MessageReader<SimEvent>,
+    ) {
+        let tick = timeline.tick().0;
+        log.news.extend(events.read().map(|event| (tick, *event)));
+    }
+
+    /// How many times a game showed and sounded something.
+    fn news(game: &App, of: impl Fn(&SimEvent) -> bool) -> usize {
+        let log = game.world().resource::<Log>();
+        log.news.iter().filter(|(_, event)| of(event)).count()
+    }
+
+    /// The bullets that a game shows.
+    fn bullets(game: &mut App) -> usize {
+        let world = game.world_mut();
+        let mut bullets = world.query_filtered::<Option<&Flown>, With<Bullet>>();
+        let shown = bullets
+            .iter(world)
+            .filter(|flown| flown.is_none_or(|flown| !flown.gone()));
+        shown.count()
+    }
+
+    /// The ticks at which a game had some of a thing, from the first to the last, and how
+    /// many it had at most and at least in between.
+    fn span(had: &HashMap<u32, Vec<Vec2>>) -> Option<(u32, u32, usize, usize)> {
+        let ticks = had.iter().filter(|(_, places)| !places.is_empty());
+        let (first, last) = (
+            ticks.clone().map(|(tick, _)| *tick).min()?,
+            ticks.map(|(tick, _)| *tick).max()?,
+        );
+        let counts = (first..=last).filter_map(|tick| had.get(&tick).map(Vec::len));
+        let (most, least) = (counts.clone().max()?, counts.min()?);
+        Some((first, last, most, least))
+    }
+
+    /// How far apart two games have the one thing of a kind that each has, at the ticks at
+    /// which each has one.
+    fn apart_at_each_tick(
+        there: &HashMap<u32, Vec<Vec2>>,
+        here: &HashMap<u32, Vec<Vec2>>,
+    ) -> Vec<f32> {
+        let both = here.iter().filter_map(|(tick, here)| {
+            match (&here[..], there.get(tick).map(Vec::as_slice)) {
+                (&[here], Some(&[there])) => Some(here.distance(there)),
+                _ => None,
+            }
+        });
+        both.collect()
     }
 
     fn tick(game: &App) -> u32 {
@@ -586,7 +1060,9 @@ mod tests {
         let mut guest = game();
         for game in [&mut host, &mut guest] {
             line(game, late, uneven, lost);
-            game.init_resource::<Log>().add_systems(FixedLast, keep_log);
+            game.init_resource::<Log>()
+                .add_systems(FixedLast, keep_log)
+                .add_systems(Last, keep_news);
         }
         ask(
             &mut guest,
@@ -765,10 +1241,6 @@ mod tests {
             fire,
             ..default()
         };
-        let bullets = |game: &mut App| {
-            let world = game.world_mut();
-            world.query::<&Bullet>().iter(world).count()
-        };
         let since = tick(&host);
         run_until("the aim", &mut [&mut host, &mut guest], |games| {
             order(games[0], aim(false));
@@ -789,31 +1261,18 @@ mod tests {
             host.world().resource::<Log>(),
             guest.world().resource::<Log>(),
         );
-        let mut same: Vec<(u32, Vec2, f32)> = Vec::new();
-        for (tick, places) in &here.bullets {
-            if let (&[here], Some(&[there])) =
-                (&places[..], there.bullets.get(tick).map(Vec::as_slice))
-            {
-                same.push((*tick, here, here.distance(there)));
-            }
-        }
-        same.sort_by_key(|(tick, ..)| *tick);
-        let worst = same.iter().map(|(.., apart)| *apart).fold(0.0, f32::max);
-        assert!(same.len() > 30, "{} ticks to compare", same.len());
+        let apart = apart_at_each_tick(&there.bullets, &here.bullets);
+        let worst = apart.iter().copied().fold(0.0, f32::max);
+        assert!(apart.len() > 30, "{} ticks to compare", apart.len());
         assert!(
             worst < 1e-3,
             "the bullet was up to {worst} m from its place"
         );
-        let west = same
-            .iter()
-            .map(|(_, place, _)| place.x)
-            .fold(f32::MAX, f32::min);
-        let last = same.last().unwrap().1.x;
-        assert!(
-            last - west > 1.0,
-            "it came back {} m from the wall",
-            last - west
-        );
+        let shown = here.bullets.values().flatten();
+        let west = shown.clone().map(|place| place.x).fold(f32::MAX, f32::min);
+        let (_, last, ..) = span(&here.bullets).unwrap();
+        let back = here.bullets[&last][0].x - west;
+        assert!(back > 1.0, "it came back {back} m from the wall");
     }
 
     #[test]
@@ -859,6 +1318,499 @@ mod tests {
             even * 100 >= count * 95,
             "{even} even frames of {count}: {paces:?}"
         );
+    }
+
+    /// A host and a guest whose player has turned their turret east, at a wall of the bay and
+    /// away from the tank of the host. Returns what the guest's player asks to keep it there.
+    fn aiming_east(late: u64) -> (App, App, TankCommand) {
+        let (mut host, mut guest) = pair(late, 0, 0.0);
+        let aim = TankCommand {
+            aim: place(&mut guest, 1) + Vec2::new(30.0, 5.0),
+            ..default()
+        };
+        let since = tick(&guest);
+        run_until("the aim", &mut [&mut host, &mut guest], |games| {
+            order(games[1], aim);
+            past(games[1], since) > 30
+        });
+        (host, guest, aim)
+    }
+
+    #[test]
+    fn a_guest_fires_at_once_and_shows_its_bullet_where_the_host_will_have_it() {
+        // A line that takes 120 ms there and back.
+        let (mut host, mut guest, aim) = aiming_east(60);
+        let fire = TankCommand { fire: true, ..aim };
+        let shots = |game: &App| news(game, |event| matches!(event, SimEvent::Shot { .. }));
+
+        // The shot shows and sounds before the host has heard of the order.
+        order(&mut guest, fire);
+        let asked_at = std::time::Instant::now();
+        run_until("a shot", &mut [&mut host, &mut guest], |games| {
+            bullets(games[1]) > 0
+        });
+        assert!(
+            asked_at.elapsed().as_millis() < 60,
+            "{:?}",
+            asked_at.elapsed()
+        );
+        assert_eq!((bullets(&mut host), shots(&host)), (0, 0));
+        guest.update();
+        assert_eq!(shots(&guest), 1);
+        // The round is out of the gun that the guest shows.
+        let world = guest.world_mut();
+        let gun = world.query_filtered::<&Gun, With<Own>>().single(world);
+        assert_eq!(gun.unwrap().rounds, 4);
+
+        let fired_at = tick(&guest);
+        order(&mut guest, aim);
+        run_until("the flight", &mut [&mut host, &mut guest], |games| {
+            let flown = past(games[0], fired_at) > 30;
+            flown && bullets(games[0]) == 0 && bullets(games[1]) == 0
+        });
+        let (there, here) = (
+            host.world().resource::<Log>(),
+            guest.world().resource::<Log>(),
+        );
+        // The guest showed one bullet all along, from the tick at which the host fired it to
+        // the tick at which the host saw it end: its own at first, then the one that the
+        // host told of.
+        let (first, last, most, least) = span(&here.bullets).unwrap();
+        assert_eq!((most, least), (1, 1), "from tick {first} to tick {last}");
+        let (fired, ended, ..) = span(&there.bullets).unwrap();
+        assert_eq!((first, last), (fired, ended));
+        // It was where the host had it at each tick, before it bounced off the wall and after.
+        let apart = apart_at_each_tick(&there.bullets, &here.bullets);
+        let worst = apart.iter().copied().fold(0.0, f32::max);
+        assert!(apart.len() > 60, "{} ticks to compare", apart.len());
+        assert!(
+            worst < 1e-3,
+            "the bullet was up to {worst} m from its place"
+        );
+        // What the host told of the shot didn't sound a second time.
+        assert_eq!((shots(&host), shots(&guest)), (1, 1));
+    }
+
+    #[test]
+    fn a_guest_lays_a_mine_at_once_where_the_host_will_have_it() {
+        let (mut host, mut guest, aim) = aiming_east(60);
+        let mine = TankCommand { mine: true, ..aim };
+        let laid = |game: &App| news(game, |event| matches!(event, SimEvent::MinePlaced { .. }));
+        let mines = |game: &mut App| {
+            let world = game.world_mut();
+            world.query::<&Mine>().iter(world).count()
+        };
+
+        order(&mut guest, mine);
+        let asked_at = std::time::Instant::now();
+        run_until("a mine", &mut [&mut host, &mut guest], |games| {
+            mines(games[1]) > 0
+        });
+        assert!(
+            asked_at.elapsed().as_millis() < 60,
+            "{:?}",
+            asked_at.elapsed()
+        );
+        assert_eq!(mines(&mut host), 0);
+        guest.update();
+        assert_eq!(laid(&guest), 1);
+
+        let laid_at = tick(&guest);
+        order(&mut guest, aim);
+        run_until("the host's word", &mut [&mut host, &mut guest], |games| {
+            past(games[0], laid_at) > 30
+        });
+        let (there, here) = (
+            host.world().resource::<Log>(),
+            guest.world().resource::<Log>(),
+        );
+        // One mine all along, from the tick at which the host laid it, and at the same place.
+        let (first, _, most, least) = span(&here.mines).unwrap();
+        assert_eq!((most, least), (1, 1));
+        assert_eq!(first, span(&there.mines).unwrap().0);
+        let apart = apart_at_each_tick(&there.mines, &here.mines);
+        assert!(apart.len() > 30, "{} ticks to compare", apart.len());
+        assert!(apart.iter().all(|apart| *apart < 1e-3), "{apart:?}");
+        assert_eq!((laid(&host), laid(&guest)), (1, 1));
+    }
+
+    #[test]
+    fn a_guest_raises_its_shield_at_once_and_for_as_long_as_the_host_will() {
+        let (mut host, mut guest, aim) = aiming_east(60);
+        let shield = TankCommand {
+            shield: true,
+            ..aim
+        };
+        let raised =
+            |game: &App| news(game, |event| matches!(event, SimEvent::ShieldRaised { .. }));
+        let dropped = |game: &App| {
+            news(game, |event| {
+                matches!(event, SimEvent::ShieldDropped { .. })
+            })
+        };
+        let up = |game: &mut App, seat: u8| {
+            let world = game.world_mut();
+            let mut tanks = world.query::<(&Player, &Shield)>();
+            let tank = tanks.iter(world).find(|(player, _)| player.seat == seat);
+            tank.unwrap().1.is_active()
+        };
+
+        let since = tick(&guest);
+        order(&mut guest, shield);
+        let asked_at = std::time::Instant::now();
+        run_until("a bubble", &mut [&mut host, &mut guest], |games| {
+            up(games[1], 1)
+        });
+        assert!(
+            asked_at.elapsed().as_millis() < 60,
+            "{:?}",
+            asked_at.elapsed()
+        );
+        assert!(!up(&mut host, 1));
+        guest.update();
+        assert_eq!(raised(&guest), 1);
+
+        order(&mut guest, aim);
+        run_until("the cooldown", &mut [&mut host, &mut guest], |games| {
+            past(games[0], since) > 90
+        });
+        // The bubble was up on the guest's screen at the ticks at which the host had it up.
+        let (there, here) = (
+            host.world().resource::<Log>(),
+            guest.world().resource::<Log>(),
+        );
+        let ticks = (since..since + 80).filter_map(|tick| {
+            let (there, here) = (there.arms.get(&(tick, 1))?, here.arms.get(&(tick, 1))?);
+            Some((tick, there.1, here.1))
+        });
+        let ticks: Vec<(u32, Shield, Shield)> = ticks.collect();
+        let wrong: Vec<_> = ticks
+            .iter()
+            .filter(|(_, there, here)| there != here)
+            .collect();
+        assert!(ticks.len() > 70, "{} ticks to compare", ticks.len());
+        assert!(wrong.is_empty(), "{wrong:?}");
+        let up_for = ticks.iter().filter(|(_, there, _)| there.is_active());
+        assert_eq!(up_for.count(), 30);
+        // It rose and fell once, in sound as in sight.
+        assert_eq!((raised(&guest), dropped(&guest)), (1, 1));
+    }
+
+    #[test]
+    fn the_gun_of_a_guest_is_as_the_host_will_have_it_at_each_tick() {
+        let (mut host, mut guest, aim) = aiming_east(60);
+        // Three seconds of holding every button: the magazine empties and reloads, two mines
+        // go down and the shield goes up and comes down.
+        let all = TankCommand {
+            fire: true,
+            mine: true,
+            shield: true,
+            ..aim
+        };
+        let since = tick(&guest);
+        run_until("the barrage", &mut [&mut host, &mut guest], |games| {
+            let busy = past(games[1], since) < 180;
+            order(games[1], if busy { all } else { aim });
+            past(games[0], since) > 200
+        });
+        let (there, here) = (
+            host.world().resource::<Log>(),
+            guest.world().resource::<Log>(),
+        );
+        let ticks = (since + 2..since + 195).filter_map(|tick| {
+            let (there, here) = (there.arms.get(&(tick, 1))?, here.arms.get(&(tick, 1))?);
+            Some((tick, *there, *here))
+        });
+        let ticks: Vec<(u32, (Gun, Shield), (Gun, Shield))> = ticks.collect();
+        let wrong: Vec<_> = ticks
+            .iter()
+            .filter(|(_, there, here)| there != here)
+            .collect();
+        assert!(ticks.len() > 180, "{} ticks to compare", ticks.len());
+        assert!(
+            wrong.is_empty(),
+            "{} ticks differ: {:?}",
+            wrong.len(),
+            wrong.first()
+        );
+        // The gun did work meanwhile.
+        let shots = |game: &App| news(game, |event| matches!(event, SimEvent::Shot { .. }));
+        assert_eq!((shots(&host), shots(&guest)), (7, 7));
+        let mines = |game: &App| news(game, |event| matches!(event, SimEvent::MinePlaced { .. }));
+        assert_eq!((mines(&host), mines(&guest)), (2, 2));
+        let emptied = ticks.iter().any(|(_, (gun, _), _)| gun.rounds == 0);
+        assert!(emptied);
+    }
+
+    #[test]
+    fn a_shot_that_the_host_does_not_fire_goes_away() {
+        let (mut host, mut guest, aim) = aiming_east(60);
+        // The gun of the guest's tank is empty on the host, and the guest has yet to hear of
+        // it when its player fires.
+        let world = host.world_mut();
+        let mut guns = world.query::<(&Player, &mut Gun)>();
+        let (_, mut gun) = guns
+            .iter_mut(world)
+            .find(|(player, _)| player.seat == 1)
+            .unwrap();
+        gun.rounds = 0;
+        order(&mut guest, TankCommand { fire: true, ..aim });
+        run_until("a shot", &mut [&mut host, &mut guest], |games| {
+            bullets(games[1]) > 0
+        });
+        let fired_at = tick(&guest);
+        order(&mut guest, aim);
+        run_until("the host's word", &mut [&mut host, &mut guest], |games| {
+            bullets(games[1]) == 0
+        });
+        // The bullet went with the host's word of that tick, not later.
+        let waited = past(&guest, fired_at);
+        assert!(waited < 25, "the bullet stayed for {waited} ticks");
+        run_until("a while", &mut [&mut host, &mut guest], |games| {
+            past(games[0], fired_at) > 20
+        });
+        assert!(span(&host.world().resource::<Log>().bullets).is_none());
+        // And the gun shows what the host has.
+        let world = guest.world_mut();
+        let gun = world.query_filtered::<&Gun, With<Own>>().single(world);
+        assert_eq!(gun.unwrap().rounds, 0);
+    }
+
+    #[test]
+    fn a_shot_that_the_host_fires_a_tick_late_is_still_one_shot() {
+        let (mut host, mut guest, aim) = aiming_east(60);
+        let shots = |game: &App| news(game, |event| matches!(event, SimEvent::Shot { .. }));
+        // The gun of the guest's tank is not quite ready on the host at the tick at which
+        // the guest's player fires, and the guest has yet to hear of it.
+        let ahead = past(&guest, tick(&host)) as f32;
+        let world = host.world_mut();
+        let mut guns = world.query::<(&Player, &mut Gun)>();
+        let (_, mut gun) = guns
+            .iter_mut(world)
+            .find(|(player, _)| player.seat == 1)
+            .unwrap();
+        gun.cooldown = (ahead + 1.5) * TICK;
+        let since = tick(&guest);
+        run_until("the flight", &mut [&mut host, &mut guest], |games| {
+            let held = past(games[1], since) < 6;
+            order(games[1], TankCommand { fire: held, ..aim });
+            past(games[0], since) > 40
+        });
+        let (there, here) = (
+            host.world().resource::<Log>(),
+            guest.world().resource::<Log>(),
+        );
+        // The guest fired a tick before the host did.
+        let (first, _, most, least) = span(&here.bullets).unwrap();
+        let (fired, ..) = span(&there.bullets).unwrap();
+        assert_eq!((first + 1, most, least), (fired, 1, 1));
+        // Its bullet was a tick ahead until the host's took its place, and the shot sounded
+        // once.
+        let apart = apart_at_each_tick(&there.bullets, &here.bullets);
+        let ahead = apart.iter().filter(|apart| **apart > 1e-3);
+        let worst = ahead.clone().copied().fold(0.0, f32::max);
+        assert!(apart.len() > 30, "{} ticks to compare", apart.len());
+        assert!(
+            (1..20).contains(&ahead.count()) && worst < 0.16,
+            "{apart:?}"
+        );
+        assert_eq!((shots(&host), shots(&guest)), (1, 1));
+    }
+
+    #[test]
+    fn a_guest_fires_as_often_as_its_host_on_a_line_that_loses_packets() {
+        // What the host tells comes unevenly, and some of it is lost, each way.
+        let (mut host, mut guest) = pair(30, 12, 0.03);
+        let aim = TankCommand {
+            aim: place(&mut guest, 1) + Vec2::new(30.0, 5.0),
+            ..default()
+        };
+        let since = tick(&guest);
+        run_until("the barrage", &mut [&mut host, &mut guest], |games| {
+            let ticks = past(games[1], since);
+            let busy = (30..270).contains(&ticks);
+            let all = TankCommand {
+                fire: true,
+                mine: true,
+                shield: true,
+                ..aim
+            };
+            order(games[1], if busy { all } else { aim });
+            past(games[0], since) > 330
+        });
+        // Every shot, mine and bubble showed and sounded once on the guest's screen.
+        for (what, of) in [
+            (
+                "shots",
+                SimEvent::Shot {
+                    at: Vec2::ZERO,
+                    team: tanku_core::sim::Team::Players,
+                },
+            ),
+            ("mines", SimEvent::MinePlaced { at: Vec2::ZERO }),
+            ("bubbles", SimEvent::ShieldRaised { at: Vec2::ZERO }),
+        ] {
+            let count = |game: &App| news(game, |event| discriminant(event) == discriminant(&of));
+            assert_eq!(count(&guest), count(&host), "{what}");
+            assert!(count(&host) > 0, "{what}");
+        }
+        // Nothing of the guest's own is left on its screen, and its gun is the host's.
+        let world = guest.world_mut();
+        assert_eq!(world.query::<&Foreseen>().iter(world).count(), 0);
+        let (there, here) = (
+            host.world().resource::<Log>(),
+            guest.world().resource::<Log>(),
+        );
+        let last = since + 325;
+        assert_eq!(here.arms.get(&(last, 1)), there.arms.get(&(last, 1)));
+        assert!(here.arms.contains_key(&(last, 1)));
+    }
+
+    #[test]
+    fn a_bullet_ends_on_the_bubble_of_a_guest_as_soon_as_it_gets_there() {
+        let (mut host, mut guest) = pair(60, 0, 0.0);
+        // The guest's tank drives north, away from the host's.
+        let since = tick(&guest);
+        run_until("the drive", &mut [&mut host, &mut guest], |games| {
+            let north = TankCommand {
+                drive: Vec2::Y,
+                ..default()
+            };
+            let driving = past(games[1], since) < 80;
+            order(games[1], if driving { north } else { default() });
+            past(games[0], since) > 100
+        });
+        // The host's player fires at it.
+        let target = place(&mut host, 1);
+        assert!(target.distance(place(&mut host, 0)) > 5.0);
+        let aim = |fire: bool| TankCommand {
+            aim: target,
+            fire,
+            ..default()
+        };
+        let since = tick(&host);
+        run_until("the aim", &mut [&mut host, &mut guest], |games| {
+            order(games[0], aim(false));
+            past(games[0], since) > 30
+        });
+        run_until("the shot", &mut [&mut host, &mut guest], |games| {
+            let fired = bullets(games[0]) > 0;
+            order(games[0], aim(!fired));
+            fired
+        });
+        // The guest's player raises the shield when the bullet is close on their screen.
+        run_until("the bubble", &mut [&mut host, &mut guest], |games| {
+            let world = games[1].world_mut();
+            let mut shown = world.query_filtered::<&Position, With<Bullet>>();
+            let close = shown
+                .iter(world)
+                .any(|bullet| bullet.0.distance(target) < 3.5);
+            let asked = TankCommand {
+                shield: close,
+                ..default()
+            };
+            order(games[1], asked);
+            close
+        });
+        run_until("the end", &mut [&mut host, &mut guest], |games| {
+            bullets(games[0]) == 0 && bullets(games[1]) == 0
+        });
+        let ended_at = tick(&host);
+        run_until("the host's word", &mut [&mut host, &mut guest], |games| {
+            past(games[0], ended_at) > 30
+        });
+
+        // The tank is whole, and the bubble took the bullet.
+        let world = host.world_mut();
+        assert_eq!(world.query::<&Wreck>().iter(world).count(), 0);
+        let blocked = |game: &App| {
+            news(game, |event| {
+                matches!(event, SimEvent::ShieldBlocked { .. })
+            })
+        };
+        assert_eq!((blocked(&host), blocked(&guest)), (1, 1));
+        // The guest saw the bullet end at the tick at which the host ended it, without
+        // waiting for the host to say so: by then the bullet would have flown on for as long
+        // as the line takes there and back.
+        let (there, here) = (
+            host.world().resource::<Log>(),
+            guest.world().resource::<Log>(),
+        );
+        let (_, ended, ..) = span(&there.bullets).unwrap();
+        let (_, last, most, _) = span(&here.bullets).unwrap();
+        assert_eq!((last, most), (ended, 1));
+        let burst = |log: &Log| {
+            let ended = |event: &SimEvent| matches!(event, SimEvent::BulletDestroyed { .. });
+            let mut ticks = log.news.iter().filter(|(_, event)| ended(event));
+            (ticks.clone().count(), ticks.next().map(|(tick, _)| *tick))
+        };
+        let ((there_count, there_tick), (here_count, here_tick)) = (burst(there), burst(here));
+        assert_eq!((there_count, here_count), (1, 1));
+        let late = here_tick.unwrap() as i64 - there_tick.unwrap() as i64;
+        assert!(late.abs() <= 1, "the bullet burst {late} ticks late");
+    }
+
+    #[test]
+    fn a_guest_that_repairs_has_its_hands_full() {
+        let (mut host, mut guest, aim) = aiming_east(60);
+        // The tank of the host's player is destroyed, next to the guest's.
+        let world = host.world_mut();
+        let mut tanks = world.query::<(Entity, &Player)>();
+        let (wrecked, _) = tanks
+            .iter(world)
+            .find(|(_, player)| player.seat == 0)
+            .unwrap();
+        let mut casualties = world.resource_mut::<tanku_server::Casualties>();
+        casualties.tanks.push(wrecked);
+        let wrecks = |game: &mut App| {
+            let world = game.world_mut();
+            world.query::<&Wreck>().iter(world).count()
+        };
+        run_until("the wreck", &mut [&mut host, &mut guest], |games| {
+            wrecks(games[1]) == 1
+        });
+
+        // While its player holds the repair key, the guest's tank neither fires, nor lays a
+        // mine, nor shields: on its own screen as on the host's.
+        let busy = TankCommand {
+            fire: true,
+            mine: true,
+            shield: true,
+            repair: true,
+            ..aim
+        };
+        let since = tick(&guest);
+        run_until("the repair", &mut [&mut host, &mut guest], |games| {
+            order(games[1], busy);
+            past(games[0], since) > 60
+        });
+        let deeds = |game: &App| {
+            news(game, |event| {
+                matches!(
+                    event,
+                    SimEvent::Shot { .. }
+                        | SimEvent::MinePlaced { .. }
+                        | SimEvent::ShieldRaised { .. }
+                )
+            })
+        };
+        assert_eq!((deeds(&host), deeds(&guest)), (0, 0));
+        let world = host.world_mut();
+        let repair = world.query::<&Wreck>().single(world).unwrap().repair;
+        assert!(repair > 0.5, "{repair} s of repair");
+
+        // Once the key is let go, the tank does all three at once.
+        order(
+            &mut guest,
+            TankCommand {
+                repair: false,
+                ..busy
+            },
+        );
+        run_until("a free hand", &mut [&mut host, &mut guest], |games| {
+            deeds(games[1]) == 3
+        });
+        assert_eq!(deeds(&host), 0);
     }
 
     fn fix(tick: u32, x: f32) -> Fix {
@@ -966,5 +1918,79 @@ mod tests {
             orders.note(tick, drive(0.0));
         }
         assert_eq!(orders.asked.len(), MEMORY);
+    }
+
+    #[test]
+    fn what_the_guest_has_shown_answers_for_one_telling_of_the_host() {
+        let shot = |x: f32| SimEvent::Shot {
+            at: Vec2::new(x, 0.0),
+            team: tanku_core::sim::Team::Players,
+        };
+        let mut echoes = Echoes::default();
+        // Nothing was shown: what the host tells shows.
+        assert!(!echoes.claims(100, &shot(0.0)));
+        echoes.expect(100, shot(0.0));
+        // Another kind of thing, or the same kind elsewhere, is not what was shown.
+        assert!(!echoes.claims(107, &SimEvent::Ricochet { at: Vec2::ZERO }));
+        assert!(!echoes.claims(107, &shot(5.0)));
+        // The host's word of it comes a little off, and only once.
+        assert!(echoes.claims(107, &shot(0.4)));
+        assert!(!echoes.claims(108, &shot(0.4)));
+        // What the host never told of is forgotten: a later shot from there is another one.
+        echoes.expect(200, shot(0.0));
+        assert!(!echoes.claims(200 + AWAITED + 1, &shot(0.0)));
+        // What happens nowhere in particular is never the guest's doing.
+        echoes.expect(400, SimEvent::RunOver);
+        assert!(!echoes.claims(401, &SimEvent::RunOver));
+    }
+
+    #[test]
+    fn a_deed_is_the_same_a_tick_or_two_later() {
+        let at = Vec2::ZERO;
+        let shown = Shown {
+            tick: 50,
+            deed: Deed::Mine { at },
+            thing: None,
+        };
+        assert!(shown.is(50, &Deed::Mine { at: Vec2::X }));
+        assert!(shown.is(52, &Deed::Mine { at }));
+        assert!(!shown.is(53, &Deed::Mine { at }));
+        assert!(!shown.is(50, &Deed::Raised { at }));
+        assert!(after(5, 4) && !after(4, 4) && !after(3, 4));
+        // Ticks wrap around.
+        assert!(after(2, u32::MAX));
+    }
+
+    #[test]
+    fn a_bullet_comes_upon_a_circle_on_its_way() {
+        let center = Vec2::new(5.0, 0.0);
+        let reach = 1.0 + BULLET_RADIUS;
+        // Straight at it: it stops where it touches.
+        let at = met(&[Vec2::ZERO, Vec2::new(10.0, 0.0)], center, 1.0).unwrap();
+        assert!((at.x - (5.0 - reach)).abs() < 1e-4, "{at}");
+        // Past it, or short of it, or on a way that bends away before it: not at all.
+        assert!(met(&[Vec2::new(0.0, 2.0), Vec2::new(10.0, 2.0)], center, 1.0).is_none());
+        assert!(met(&[Vec2::ZERO, Vec2::new(3.0, 0.0)], center, 1.0).is_none());
+        let bent = [Vec2::ZERO, Vec2::new(3.0, 0.0), Vec2::new(3.0, 9.0)];
+        assert!(met(&bent, center, 1.0).is_none());
+        // After a bend toward it.
+        let bent = [
+            Vec2::new(0.0, 4.0),
+            Vec2::new(5.0, 4.0),
+            Vec2::new(5.0, 0.0),
+        ];
+        let at = met(&bent, center, 1.0).unwrap();
+        assert!((at.y - reach).abs() < 1e-4, "{at}");
+        // One that starts inside and flies out is not stopped: a tank's own shot leaves.
+        assert!(
+            met(
+                &[center + Vec2::X * 0.5, center + Vec2::X * 3.0],
+                center,
+                1.0
+            )
+            .is_none()
+        );
+        // A bullet that didn't move went no way.
+        assert!(met(&[Vec2::ZERO], Vec2::ZERO, 1.0).is_none());
     }
 }

@@ -4,10 +4,13 @@
 //! here goes to the clients as it changes. A client sends what its player asks of their tank,
 //! tick by tick.
 //!
-//! What moves is told apart from what is shown. A client doesn't show a tank or a bullet where
-//! the server last said it was: it shows the other tanks a moment late, between two tellings,
-//! and its own tank and the bullets where they are by now. So the place and the motion of
-//! those travel as [`Told`], and each side keeps its own `Position`, `Motion` and `Bullet`.
+//! What a client shows in a time of its own is told apart from what it shows. A client doesn't
+//! show a tank or a bullet where the server last said it was: it shows the other tanks a
+//! moment late, between two tellings, and the bullets where they are by now. And its own tank
+//! does at once what its player asks: it drives, fires, lays mines and shields ahead of the
+//! server's word. So the place and the motion of tanks and bullets travel as [`Told`], and so
+//! do the guns and the shields: each side keeps its own `Position`, `Motion`, `Bullet`, `Gun`
+//! and `Shield`.
 
 use bevy::{ecs::entity::MapEntities, prelude::*};
 use lightyear::prelude::*;
@@ -24,7 +27,7 @@ use crate::{
 /// Counts the changes to what the server and its clients tell each other since the version of
 /// the game was last raised. Two builds that don't count the same don't speak the same, so
 /// they don't join each other: raise this with every such change.
-pub const REVISION: u32 = 2;
+pub const REVISION: u32 = 3;
 
 /// Who sits in a seat of a game that several players share.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -57,7 +60,8 @@ impl Lobby {
     }
 }
 
-/// What the server tells of a part of a tank or of a bullet: where it is, and how it moves.
+/// What the server tells of a part of a tank or of a bullet: where it is, how it moves, what
+/// its gun holds and how its shield is.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Told<T: Send + Sync + 'static>(pub T);
 
@@ -98,11 +102,11 @@ impl Plugin for ProtocolPlugin {
         app.component::<Told<Position>>().replicate();
         app.component::<Told<Motion>>().replicate();
         app.component::<Told<Bullet>>().replicate();
+        app.component::<Told<Gun>>().replicate();
+        app.component::<Told<Shield>>().replicate();
         app.component::<Tank>().replicate();
         app.component::<Player>().replicate();
         app.component::<Enemy>().replicate();
-        app.component::<Gun>().replicate();
-        app.component::<Shield>().replicate();
         app.component::<Wreck>().replicate();
         app.component::<Protected>().replicate();
         app.component::<Mine>().replicate();

@@ -1,7 +1,8 @@
 //! Development tools, left out of release builds.
 //!
 //! `TANKU_DEV_SCRIPT` holds commands separated by semicolons, run one after the other:
-//! `start SEED PLAYERS`, `seat NUMBER`, `repair SECONDS`, `wait SECONDS`, `warp SECTOR`,
+//! `start SEED PLAYERS`, `seat NUMBER`, `repair SECONDS` and `shield SECONDS`, which hold the
+//! key of that name for so long, `wait SECONDS`, `warp SECTOR`,
 //! `host PORT`, which opens a game for others to join, `join ADDRESS`, which joins one,
 //! `type TEXT`, which presses the keys that write a text, `turn QUARTERS`, `peek ENEMY`,
 //! `flag SECTOR`, `look X Y`, `zoom METERS`, `clear`, `reach`, `bubble`, `die`, `pause`,
@@ -9,7 +10,8 @@
 //! `lose ENEMY`, `blast X Y`, which sets off a mine at a point of the map, `warn X Y`, which
 //! sounds the warning of a mine there without any mine, `shot PATH` and
 //! `quit`, plus `play DX DY AX AY SECONDS`, which drives the tank in a direction while it fires
-//! at a point relative to itself, `press LABEL`, which presses the button of a menu that bears
+//! at a point relative to itself, `aim AX AY`, which turns the turret to such a point without
+//! firing, `press LABEL`, which presses the button of a menu that bears
 //! this label, in capitals or not, `lineup`, which lays out one bullet of each kind next to the
 //! tank, `pierce`, which sends a piercing bullet at a bullet of the players there,
 //! `showcase STAT`, which lines up in the start bay one tank for each level of a stat,
@@ -74,8 +76,11 @@ struct Script {
     wait: f32,
     /// What the script makes the player's tank do, and for how long.
     play: Option<(Vec2, Vec2, f32)>,
-    /// Seconds during which the script still holds the repair key.
+    /// The point that the script keeps the turret turned to, from the tank.
+    aim: Option<Vec2>,
+    /// Seconds during which the script still holds the repair key, and the shield key.
     repair: f32,
+    shield: f32,
     /// The label of the button that the script presses.
     press: Option<String>,
 }
@@ -213,7 +218,9 @@ pub fn plugin(app: &mut App) {
             .collect(),
         wait: 0.0,
         play: None,
+        aim: None,
         repair: 0.0,
+        shield: 0.0,
         press: None,
     })
     .add_systems(PostStartup, draw_into_an_image)
@@ -272,12 +279,17 @@ fn play(
     mut script: ResMut<Script>,
     mut player: Query<(&Position, &mut TankCommand), With<Own>>,
 ) {
-    let repair = script.repair > 0.0;
+    let (repair, shield) = (script.repair > 0.0, script.shield > 0.0);
     script.repair = (script.repair - time.delta_secs()).max(0.0);
+    script.shield = (script.shield - time.delta_secs()).max(0.0);
     let Ok((position, mut command)) = player.single_mut() else {
         return;
     };
     command.repair |= repair;
+    command.shield |= shield;
+    if let Some(aim) = script.aim {
+        command.aim = position.0 + aim;
+    }
     let Some((drive, aim, left)) = script.play else {
         return;
     };
@@ -287,7 +299,7 @@ fn play(
         aim: position.0 + aim,
         fire: aim != Vec2::ZERO,
         mine: left % 2.0 < 0.1,
-        shield: false,
+        shield,
         repair,
     };
 }
@@ -488,8 +500,9 @@ fn run_script(
             }
         }
         "press" => script.press = Some(words[1..].join(" ")),
-        // Holds the repair key for this long.
+        // Holds the repair key for this long, or the shield key.
         "repair" => script.repair = number(1),
+        "shield" => script.shield = number(1),
         // Destroys the player's tank.
         "die" => casualties
             .tanks
@@ -515,6 +528,8 @@ fn run_script(
             );
             script.play = Some((drive, aim, number(5)));
         }
+        // Turns the turret to a point relative to the tank, and keeps it there.
+        "aim" => script.aim = Some(Vec2::new(number(1), number(2))),
         // Sets off a mine of the player at a point of the map, in the sector the player is in.
         "blast" => {
             if let (Ok((owner, _)), Some(run)) = (player.single(), run.as_ref()) {
