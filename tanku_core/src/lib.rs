@@ -1,5 +1,6 @@
 //! Code shared by the Tanku client and server.
 
+pub mod discovery;
 pub mod enemy;
 pub mod geom;
 pub mod map;

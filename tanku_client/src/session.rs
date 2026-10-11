@@ -2,7 +2,10 @@
 //! joined it, and what the player asks about it. The network answers in `net`, which a browser
 //! doesn't have yet.
 
+use std::net::Ipv4Addr;
+
 use bevy::prelude::*;
+use tanku_core::discovery::Standing;
 use tanku_server::Simulation;
 
 /// How the game at this screen is played.
@@ -44,10 +47,29 @@ pub struct Invitation {
     pub port: u16,
 }
 
+/// A game that was found on the local network.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Game {
+    /// The number that its host gave it.
+    pub id: u64,
+    /// The machine that its word came from.
+    pub machine: Ipv4Addr,
+    /// Where it is joined, as a player would type it.
+    pub address: String,
+    pub players: u8,
+    /// What the player can do about it.
+    pub standing: Standing,
+}
+
+/// The games that the join screen found on the local network. A browser finds none.
+#[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]
+pub struct Found(pub Vec<Game>);
+
 pub fn plugin(app: &mut App) {
     app.init_resource::<Session>()
         .init_resource::<Notice>()
         .init_resource::<Invitation>()
+        .init_resource::<Found>()
         .add_message::<SessionRequest>()
         // A guest shows the run of its host and simulates nothing.
         .configure_sets(

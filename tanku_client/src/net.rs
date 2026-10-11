@@ -6,7 +6,7 @@
 
 use std::{
     hash::{BuildHasher, Hasher, RandomState},
-    net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs, UdpSocket},
+    net::{Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs},
     time::Duration,
 };
 
@@ -24,6 +24,7 @@ use lightyear::{
     },
 };
 use tanku_core::{
+    discovery::{Reach, local_address},
     map::Corridor,
     protocol::{Lobby, Member, ProtocolPlugin, RunState},
     rules::TICK_RATE,
@@ -38,7 +39,7 @@ use tanku_server::{
 use crate::{
     Overlay, Screen,
     crew::{LocalSeat, Own},
-    mirror,
+    discovery, mirror,
     session::{Invitation, Notice, Session, SessionRequest},
 };
 
@@ -106,24 +107,11 @@ fn target(text: &str) -> Option<Target> {
 }
 
 /// An address as a player types it: the port is left out when it is the usual one.
-fn written(machine: impl std::fmt::Display, port: u16) -> String {
+pub(crate) fn written(machine: impl std::fmt::Display, port: u16) -> String {
     if port == PORT {
         machine.to_string()
     } else {
         format!("{machine}:{port}")
-    }
-}
-
-/// The address of this machine on its network, if it has one. Nothing is sent: aiming a socket
-/// at an address only picks the route to it, and with it the address that this machine has on
-/// that route.
-fn local_address() -> Option<Ipv4Addr> {
-    let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).ok()?;
-    // An address kept for documents, which no machine has.
-    socket.connect((Ipv4Addr::new(192, 0, 2, 1), 9)).ok()?;
-    match socket.local_addr().ok()?.ip() {
-        IpAddr::V4(address) if !address.is_loopback() && !address.is_unspecified() => Some(address),
-        _ => None,
     }
 }
 
@@ -192,6 +180,7 @@ impl Plugin for NetPlugin {
             ProtocolPlugin,
             server::NetPlugin,
             mirror::plugin,
+            discovery::plugin,
         ))
         // A guest makes its picture of the run from what its host told, once that is in.
         .configure_sets(PreUpdate, mirror::Picture.after(lay_out_sectors))
@@ -238,7 +227,7 @@ fn direct(
         ResMut<Invitation>,
         ResMut<LocalSeat>,
     ),
-    (port, patience): (Res<HostPort>, Res<Patience>),
+    (port, patience, reach): (Res<HostPort>, Res<Patience>, Res<Reach>),
     (hosting, joined, run): (Option<Res<Hosting>>, Option<Res<Joined>>, Option<Res<Run>>),
     mut seats: Query<&mut Seat>,
     lobbies: Query<&Lobby>,
@@ -249,7 +238,7 @@ fn direct(
     for request in requests.read() {
         match (request, *session) {
             (SessionRequest::Host, Session::Solo) => {
-                if server::open(&mut commands, port.0).is_err() {
+                if server::open(&mut commands, port.0, &reach).is_err() {
                     notice.0 = Some(format!(
                         "Port {} is taken on this machine. Is another game open?",
                         port.0
@@ -555,6 +544,8 @@ fn follow_host(
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use std::net::UdpSocket;
+
     use bevy::state::app::StatesPlugin;
     use lightyear::link::LinkSystems;
     use tanku_core::{
@@ -573,8 +564,10 @@ pub(crate) mod tests {
             .init_state::<Screen>()
             .init_state::<Overlay>()
             .add_plugins((crew::plugin, session::plugin, NetPlugin))
-            // Tests don't wait long for a game that isn't there.
-            .insert_resource(Patience(1));
+            // Tests don't wait long for a game that isn't there, and keep to themselves:
+            // nothing is asked of the machines around, and nothing is told to them.
+            .insert_resource(Patience(1))
+            .insert_resource(Reach::nobody());
         // What `App::run` does before the first frame: the network library sets itself up there.
         app.finish();
         app.cleanup();

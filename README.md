@@ -37,14 +37,14 @@ Settings and records are kept in the user's configuration directory, under `tank
 Up to four players share a run. One of them hosts the game, and the others join it:
 
 1. The host picks "Host a game" in the main menu. The lobby shows the address of the machine on its network.
-2. Each of the others picks "Join a game" and types that address.
+2. Each of the others picks "Join a game". A game that is hosted on the same network shows there, and a click joins it. One that doesn't show is joined by typing the address of its host.
 3. The host starts the run once everyone is in the lobby. Nobody joins a run in progress.
 
 A tank that is destroyed stays as a wreck, in a circle in dashes. A teammate repairs it by driving into the circle and holding the repair key for four seconds: the circle is inked in meanwhile, and starts over if the key is let go. The run is over when every tank is a wreck.
 
-All players need the same version of the game. The game listens on UDP port 28405, which the firewall of the host's machine must let in. To play over the internet, that port of the host's router must lead to the host's machine, and the others type the host's public address.
+All players need the same version of the game. The game listens on UDP port 28405, which the firewall of the host's machine must let in. Games find each other on UDP port 28406: a firewall that keeps it shut only takes the list away, and the address still joins. To play over the internet, that port of the host's router must lead to the host's machine, and the others type the host's public address.
 
-Two games on one machine can play together, which is the quickest way to try it: the second one joins `127.0.0.1`.
+Two games on one machine can play together, which is the quickest way to try it: the second one finds the first on its join screen.
 
 The web build doesn't join games yet.
 
@@ -175,6 +175,8 @@ tanku_client/dev/two_machines.sh "host; wait 6; press Start; wait 5; shot host.p
 ```
 
 It takes Linux with user namespaces and needs no privileges. The third argument is optional: here it makes a round trip of 100 ms that loses one packet in fifty each way.
+
+The guest can also find the game as a player does, instead of being told its address: `press Join a game; wait 3; press 10.77.0.1` opens the join screen and presses the row of the game that it lists.
 
 The command `tape` keeps the music that the run would have played from there on. When the script quits, the music goes to a sound file, and the list of what the game told the music, with the time of each change, to a text file of the same name:
 

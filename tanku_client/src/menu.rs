@@ -8,6 +8,7 @@ use bevy::{
     prelude::*,
 };
 use tanku_core::{
+    discovery::Standing,
     protocol::{Lobby, Member},
     rules::{MAX_PLAYERS, PLAYTEST_LAST_SECTOR, TICK_RATE},
     seed::{self, VERSION},
@@ -23,7 +24,7 @@ use crate::{
     exhibit::{self, Exhibit, Show},
     report,
     scene::Paints,
-    session::{Invitation, Notice, Session, SessionRequest},
+    session::{Found, Game, Invitation, Notice, Session, SessionRequest},
     settings::{Action, Binding, Records, Settings},
     theme,
 };
@@ -49,6 +50,8 @@ enum Press {
     OpenJoin,
     /// Joins the game at the address that was typed.
     Join,
+    /// Joins a game that was found on the local network, by the number of that game.
+    JoinFound(u64),
     /// In a lobby: the host starts a run with everyone who is there.
     Start,
     /// In a lobby: the host draws another seed.
@@ -100,6 +103,10 @@ struct AddressField;
 /// it failed.
 #[derive(Component)]
 struct StatusLine;
+
+/// Where the join screen lists the games that were found on the local network.
+#[derive(Component)]
+struct FoundList;
 
 /// The address that the player types to join a game.
 #[derive(Resource, Default)]
@@ -159,6 +166,7 @@ pub fn plugin(app: &mut App) {
                     .run_if(in_state(Overlay::Pause).and_then(resource_exists::<Playtest>)),
                 refresh_settings.run_if(in_state(Overlay::Settings)),
                 lobby_screen.run_if(in_state(Screen::Lobby)),
+                list_games.run_if(in_state(Screen::Join)),
                 (show_address, tell_how_it_goes),
                 hover,
                 pause_time,
@@ -708,6 +716,15 @@ fn join_screen(mut commands: Commands, settings: Res<Settings>, mut address: Res
                         ..default()
                     },
                 ));
+                section(parent, "Games on this network");
+                parent.spawn((
+                    FoundList,
+                    Node {
+                        flex_direction: FlexDirection::Column,
+                        row_gap: px(6),
+                        ..default()
+                    },
+                ));
                 section(parent, "Address of the host");
                 parent.spawn((
                     ruled(Node {
@@ -720,7 +737,7 @@ fn join_screen(mut commands: Commands, settings: Res<Settings>, mut address: Res
                 ));
                 line(
                     parent,
-                    "The lobby of the host shows it. Enter joins.",
+                    "For a game that isn't listed: the lobby of its host shows it. Enter joins.",
                     theme::TEXT_DIM,
                 );
                 primary(parent, "Join", Press::Join);
@@ -728,6 +745,72 @@ fn join_screen(mut commands: Commands, settings: Res<Settings>, mut address: Res
                 status_line(parent);
             });
         });
+}
+
+/// What a row of the join screen says about a game that was found, next to its address.
+fn found_words(game: &Game) -> String {
+    match game.standing {
+        Standing::Open | Standing::Full => {
+            let seats = format!("{} of {MAX_PLAYERS} players", game.players);
+            if game.standing == Standing::Full {
+                format!("{seats} \u{b7} full")
+            } else {
+                seats
+            }
+        }
+        Standing::Running => "Run in progress".to_string(),
+        Standing::Other => "Another version of the game".to_string(),
+    }
+}
+
+/// The row of a game that was found. One that can be joined is a button.
+fn found_row(parent: &mut ChildSpawnerCommands, game: &Game) {
+    let open = game.standing == Standing::Open;
+    let ink = if open { theme::TEXT } else { theme::TEXT_DIM };
+    let node = Node {
+        justify_content: JustifyContent::SpaceBetween,
+        align_items: AlignItems::Center,
+        column_gap: px(16),
+        ..button_node(Val::Auto)
+    };
+    let words = children![
+        theme::figure(game.address.clone(), 20.0, ink),
+        theme::text(found_words(game), 16.0, ink),
+    ];
+    if open {
+        parent.spawn((
+            Button,
+            Press::JoinFound(game.id),
+            node,
+            BackgroundColor(theme::SURFACE_RAISED),
+            BorderColor::all(theme::RULE),
+            words,
+        ));
+    } else {
+        parent.spawn((node, BorderColor::all(theme::RULE_DIM), words));
+    }
+}
+
+/// Lists the games that were found on the local network, again whenever one comes, goes or
+/// changes.
+fn list_games(mut commands: Commands, found: Res<Found>, lists: Query<(Entity, Ref<FoundList>)>) {
+    for (list, fresh) in &lists {
+        if !found.is_changed() && !fresh.is_added() {
+            continue;
+        }
+        commands
+            .entity(list)
+            .despawn_related::<Children>()
+            .with_children(|rows| {
+                for game in &found.0 {
+                    found_row(rows, game);
+                }
+                if found.0.is_empty() {
+                    let none = "None so far. A game that is hosted on this network shows here.";
+                    line(rows, none, theme::TEXT_DIM);
+                }
+            });
+    }
 }
 
 /// The host draws a seed whenever the players gather in the lobby.
@@ -866,7 +949,8 @@ fn lobby_screen(
                     match &invitation.address {
                         Some(address) => {
                             parent.spawn(theme::figure(address.clone(), 24.0, theme::TEXT));
-                            let hint = "Players on this network join at this address.";
+                            let hint = "Players on this network find the game on their join \
+                                        screen, or type this address there.";
                             line(parent, hint, theme::TEXT_DIM);
                         }
                         None => {
@@ -1254,7 +1338,8 @@ fn press(
     mut playtest: Option<ResMut<Playtest>>,
     mut destination: ResMut<Destination>,
     (options, run, time): (Res<Options>, Option<Res<Run>>, Res<Time<Real>>),
-    (session, address, mut notice): (Res<Session>, Res<Address>, ResMut<Notice>),
+    (session, mut address, mut notice): (Res<Session>, ResMut<Address>, ResMut<Notice>),
+    found: Res<Found>,
     mut lobbies: Query<&mut Lobby>,
     mut requests: MessageWriter<RunRequest>,
     mut session_requests: MessageWriter<SessionRequest>,
@@ -1302,6 +1387,13 @@ fn press(
                 next_screen.set(Screen::Join);
             }
             Press::Join => ask_to_join(&address, &mut settings, &mut session_requests),
+            // A game that was found is joined as if its address had been typed.
+            Press::JoinFound(id) => {
+                if let Some(game) = found.0.iter().find(|game| game.id == id) {
+                    address.0 = game.address.clone();
+                    ask_to_join(&address, &mut settings, &mut session_requests);
+                }
+            }
             Press::Start => {
                 session_requests.write(SessionRequest::Start);
             }
@@ -1510,6 +1602,27 @@ mod tests {
         assert_eq!(new_seed(&chosen, 2), "85GVTHQA");
         let random = Options::default();
         assert_ne!(new_seed(&random, 1), new_seed(&random, 2));
+    }
+
+    #[test]
+    fn a_game_that_was_found_says_whether_it_can_be_joined() {
+        let game = |players: u8, standing: Standing| Game {
+            id: 1,
+            machine: std::net::Ipv4Addr::new(192, 168, 0, 21),
+            address: "192.168.0.21".to_string(),
+            players,
+            standing,
+        };
+        assert_eq!(found_words(&game(2, Standing::Open)), "2 of 4 players");
+        assert_eq!(
+            found_words(&game(4, Standing::Full)),
+            "4 of 4 players \u{b7} full"
+        );
+        assert_eq!(found_words(&game(3, Standing::Running)), "Run in progress");
+        assert_eq!(
+            found_words(&game(1, Standing::Other)),
+            "Another version of the game"
+        );
     }
 
     #[test]

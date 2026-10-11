@@ -2,10 +2,12 @@
 //!
 //! The server listens for clients and gives each one a seat while its lobby is open. It sends
 //! them the lobby, the run and the simulation as they change, and takes what their players ask
-//! of their tanks. It needs the server plugins of the network library and the protocol of
-//! `tanku_core`, added in that order.
+//! of their tanks. It also tells the local network of its game, for those who look for one.
+//! It needs the server plugins of the network library and the protocol of `tanku_core`, added
+//! in that order.
 
 use std::{
+    hash::{BuildHasher, Hasher, RandomState},
     io,
     net::{Ipv4Addr, SocketAddr, UdpSocket},
     sync::{
@@ -28,6 +30,7 @@ use lightyear::{
     },
 };
 use tanku_core::{
+    discovery::{self, Announcement, Heard, Reach},
     protocol::{Lobby, Member, REVISION, Reliable, RunState, Told},
     rules::{MAX_PLAYERS, TICK_RATE},
     seed::VERSION,
@@ -41,6 +44,14 @@ use crate::field::InSector;
 
 /// The port a game listens on unless it is told otherwise.
 pub const PORT: u16 = 28405;
+/// Seconds between two times that a game tells every machine of the local network of itself.
+const CALL: f32 = 1.0;
+/// How many of those who ask for a game are answered between two calls. A machine that asks
+/// does so once a second, so this is plenty, and it keeps the game from being made to send
+/// much to an address that never asked.
+const ANSWERS: u32 = 20;
+/// How many packets from those who look for a game are read in a frame.
+const READ: usize = 64;
 
 /// The seat of the player behind a connection. The host has the first seat, and the guests
 /// the ones that follow.
@@ -54,8 +65,23 @@ pub struct Hosting {
     server: Entity,
     /// What tells the guests of the lobby and of the run.
     game: Entity,
+    /// The port that it listens on.
+    port: u16,
     /// Whether players can still join: nobody joins a run in progress.
     open: Arc<AtomicBool>,
+}
+
+/// How a hosted game is found on the local network: it answers those who look for a game, and
+/// tells every machine of itself now and then.
+#[derive(Resource)]
+struct Beacon {
+    socket: UdpSocket,
+    /// The number by which a game that is heard of by two ways is known as one.
+    game: u64,
+    /// Seconds until the next call to every machine.
+    wait: f32,
+    /// How many more of those who ask are answered until then.
+    answers: u32,
 }
 
 impl Hosting {
@@ -98,8 +124,9 @@ pub fn protocol_id() -> u64 {
     })
 }
 
-/// Opens a game on a port of this machine, for others to join. Fails if the port is taken.
-pub fn open(commands: &mut Commands, port: u16) -> io::Result<()> {
+/// Opens a game on a port of this machine, for others to join, and announces it where games
+/// are looked for. Fails if the port is taken.
+pub fn open(commands: &mut Commands, port: u16, reach: &Reach) -> io::Result<()> {
     let address = SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), port);
     // The network library takes the port a moment later, and stops the game if it can't.
     drop(UdpSocket::bind(address)?);
@@ -133,7 +160,21 @@ pub fn open(commands: &mut Commands, port: u16) -> io::Result<()> {
             Replicate::to_clients(NetworkTarget::All),
         ))
         .id();
-    commands.insert_resource(Hosting { server, game, open });
+    commands.insert_resource(Hosting {
+        server,
+        game,
+        port,
+        open,
+    });
+    // A game that can't be announced is joined by its address all the same.
+    if let Ok(socket) = reach.socket() {
+        commands.insert_resource(Beacon {
+            socket,
+            game: RandomState::new().build_hasher().finish(),
+            wait: 0.0,
+            answers: ANSWERS,
+        });
+    }
     Ok(())
 }
 
@@ -146,6 +187,7 @@ pub fn close(commands: &mut Commands, hosting: &Hosting) {
     commands.entity(hosting.server).insert(Closing);
     commands.entity(hosting.game).despawn();
     commands.remove_resource::<Hosting>();
+    commands.remove_resource::<Beacon>();
 }
 
 /// Gives the guests the seats that follow the host's, in the order they had. Returns how many
@@ -173,7 +215,8 @@ pub struct NetPlugin;
 
 impl Plugin for NetPlugin {
     fn build(&self, app: &mut App) {
-        app.add_observer(greet)
+        app.init_resource::<Reach>()
+            .add_observer(greet)
             .add_observer(seat)
             .add_observer(part)
             // A client commands its own tank and no other.
@@ -199,6 +242,10 @@ impl Plugin for NetPlugin {
                 )
                     .run_if(resource_exists::<Hosting>)
                     .before(ReplicationSystems::Send),
+            )
+            .add_systems(
+                Update,
+                call_out.run_if(resource_exists::<Hosting>.and_then(resource_exists::<Beacon>)),
             )
             .add_systems(Last, bury);
     }
@@ -369,6 +416,45 @@ fn tell(
 fn take_commands(mut tanks: Query<(&ActionState<TankCommand>, &mut TankCommand), With<Player>>) {
     for (asked, mut command) in &mut tanks {
         *command = asked.0;
+    }
+}
+
+/// Answers those who look for a game on the local network, and tells every machine of this
+/// one now and then: a question can get lost, and so can its answer.
+fn call_out(
+    time: Res<Time<Real>>,
+    hosting: Res<Hosting>,
+    reach: Res<Reach>,
+    lobbies: Query<&Lobby>,
+    mut beacon: ResMut<Beacon>,
+) {
+    // What the game says of itself, when there is someone to say it to.
+    let told = || {
+        let players = lobbies.get(hosting.game).map_or(1, Lobby::players) as u8;
+        Announcement::of(beacon.game, hosting.port, players, hosting.is_open()).packet()
+    };
+    let mut answers = beacon.answers;
+    // A packet that fills this is longer than any that says something.
+    let mut packet = [0; discovery::LIMIT + 1];
+    for _ in 0..READ {
+        let Ok((length, from)) = beacon.socket.recv_from(&mut packet) else {
+            break;
+        };
+        let asked = discovery::read(&packet[..length]) == Some(Heard::Question);
+        if asked && answers > 0 {
+            answers -= 1;
+            let _ = beacon.socket.send_to(&told(), from);
+        }
+    }
+    let wait = beacon.wait - time.delta_secs();
+    if wait <= 0.0 {
+        let told = told();
+        for everyone in reach.addresses() {
+            let _ = beacon.socket.send_to(&told, everyone);
+        }
+        (beacon.wait, beacon.answers) = (CALL, ANSWERS);
+    } else {
+        (beacon.wait, beacon.answers) = (wait, answers);
     }
 }
 
