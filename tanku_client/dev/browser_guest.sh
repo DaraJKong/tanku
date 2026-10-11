@@ -47,7 +47,11 @@ unshare --user --map-root-user --net bash -euo pipefail -c '
     # The browser has a network of its own, which a sleeping process keeps open.
     unshare --net sleep 3600 &
     other=$!
-    tidy() { kill $other ${host:-} ${pages:-} ${browser:-} 2> /dev/null || true; }
+    # Whatever was started is told to end, and the script ends once it has.
+    tidy() {
+        kill $other ${host:-} ${pages:-} ${browser:-} 2> /dev/null || true
+        wait
+    }
     trap tidy EXIT
     until [ "$(readlink /proc/$other/ns/net)" != "$(readlink /proc/self/ns/net)" ]; do
         sleep 0.02
@@ -84,10 +88,15 @@ unshare --user --map-root-user --net bash -euo pipefail -c '
     # A browser only joins from a page that it loaded safely, as from its own machine. This
     # one keeps the desktop in its environment: without it, it draws no 3D at all. It opens
     # no window for all that.
-    there python3 -m http.server 8765 --bind 127.0.0.1 --directory target/web-dist > /dev/null 2>&1 &
+    #
+    # Both are started by `nsenter` itself and not through `there`: a function that is sent to
+    # the background runs in a shell of its own, and `$!` is then that shell. Stopping it
+    # leaves the program running for good.
+    nsenter --target "$other" --net python3 -m http.server 8765 --bind 127.0.0.1 \
+        --directory target/web-dist > /dev/null 2>&1 &
     pages=$!
-    there env MOZ_HEADLESS=1 firefox --headless --no-remote --marionette \
-        -remote-allow-system-access --profile "$OUT/profile" > "$OUT/firefox.log" 2>&1 &
+    nsenter --target "$other" --net env MOZ_HEADLESS=1 firefox --headless --no-remote \
+        --marionette -remote-allow-system-access --profile "$OUT/profile" > "$OUT/firefox.log" 2>&1 &
     browser=$!
     page="http://localhost:8765/"
     [ "$OPEN" = bare ] || page="$page$link"
