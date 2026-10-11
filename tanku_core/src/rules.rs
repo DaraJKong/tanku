@@ -55,8 +55,9 @@ pub const REPAIR_PROTECTION: f32 = 1.0;
 pub const ARENA_WAVES: u32 = 3;
 /// Time between the entry of the first player into an arena and the warning of its first wave.
 pub const ARENA_DELAY: f32 = 2.0;
-/// How long the place of a tank of an arena is marked before the tank appears there.
-pub const APPEAR_TIME: f32 = 1.5;
+/// How long the place of a tank of an arena is marked before the tank appears there. It is
+/// short, so that the players can't aim at the place and destroy the tank as it appears.
+pub const APPEAR_TIME: f32 = 1.0;
 /// The mark of a tank of an arena waits while the tank of a player is this close to its place.
 pub const APPEAR_ROOM: f32 = 4.0;
 

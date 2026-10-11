@@ -84,7 +84,7 @@ An arena is a wide and short sector that holds 1.5 times the enemies of a corrid
 Seen through its barrier, an arena is empty. Two circles in dashes on its floor and the caption of the barrier tell what it is. Its group comes in three waves of the same size, give or take one tank:
 
 1. The first wave is announced 2 s after the first player has crossed, and each of the others when the last tank of the wave before it is destroyed. The announcement is a message with the number of the wave, and a sound.
-2. The place of each tank of the wave is then marked on the floor for 1.5 s, by a circle that closes in on it. A mark waits for as long as a player's tank is within 4 m of the place.
+2. The place of each tank of the wave is then marked on the floor for 1 s, by a circle that closes in on it. The mark is short on purpose: a longer one lets the players aim at the place and destroy the tank as it appears. A mark waits for as long as a player's tank is within 4 m of the place.
 3. The tank appears on its mark, awake.
 
 The barrier of an arena unlocks like any other, once the last tank of its last wave is destroyed. In an arena, the markers at the screen edge point to the last two tanks of the wave that is there.
@@ -220,7 +220,7 @@ A wreck lies in a circle in dashes and keeps the number of its player over it: a
 | Lives of a solo player | 3 at the start, and never more |
 | Life of an arena | 4 m in front of the barrier, taken within 1.5 m |
 | Waves of an arena | 3, the first announced 2 s after the first player has crossed |
-| Mark of a tank that is about to appear | 1.5 s, once no player's tank is within 4 m of the place |
+| Mark of a tank that is about to appear | 1 s, once no player's tank is within 4 m of the place |
 | Repair | 4 s within 3 m |
 
 ## Tanks

@@ -60,7 +60,9 @@ The tempo of a fight is the game's own. At 120 beats per minute, the timings of 
 | Time between two shots of a gun | 0.25 s | Half a beat |
 | Shield, time between two mines, time without shooting after a tank appears | 0.5 s | One beat |
 | Reload of one round of the player tank, arming of a mine | 1 s | Two beats |
+| Mark of a tank that is about to appear in an arena | 1 s | Two beats |
 | Respawn | 1.5 s | Three beats |
+| Wait before the first wave of an arena | 2 s | One bar |
 | Repair | 4 s | Two bars |
 | Fuse of a mine | 10 s | Five bars |
 
