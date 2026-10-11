@@ -6,8 +6,9 @@ use bevy::prelude::*;
 use tanku_core::{
     geom,
     rules::{
-        FIRE_COOLDOWN, MINE_ARMING_TIME, MINE_COOLDOWN, MUZZLE_DISTANCE, PIVOT_ANGLE,
-        PLAYER_TURRET_RATE, SHIELD_DURATION, TANK_ACCELERATION_TIME, TANK_RADIUS, TICK,
+        BULLET_RADIUS, FIRE_COOLDOWN, MINE_ARMING_TIME, MINE_COOLDOWN, MUZZLE_DISTANCE,
+        PIVOT_ANGLE, PLAYER_TURRET_RATE, SHIELD_DURATION, TANK_ACCELERATION_TIME, TANK_RADIUS,
+        TICK,
     },
     sim::{
         Bullet, Enemy, Gun, Mine, MineState, Motion, Player, Position, PreviousPosition, Shield,
@@ -18,7 +19,7 @@ use tanku_core::{
 
 use crate::{
     Casualties, Maker,
-    bullets::{self, Flight, FlightReport},
+    bullets::{self, Flight},
     field::{Field, InSector},
     repair::Repairers,
 };
@@ -245,20 +246,22 @@ pub fn step_gun(gun: &mut Gun, genome: &Genome, command: &TankCommand, free: boo
 pub struct Shot {
     /// The tip of the barrel.
     pub muzzle: Vec2,
-    /// Where the bullet is once it is out of the barrel, and the bullet as it is there.
+    /// Where the bullet is once it is out of the barrel, or where the barrel is blocked, and
+    /// the bullet as it is there.
     pub at: Vec2,
     pub bullet: Bullet,
-    /// What the bullet met on its way down the barrel.
-    pub flight: FlightReport,
+    /// Whether the bullet got out of the barrel, or what stopped it there.
+    pub end: Flight,
 }
 
 /// Fires the gun of a tank that stands at a place with its turret turned so. The bullet starts
 /// in the turret and travels down the barrel, so that a tank against a wall can't shoot
-/// through it.
+/// through it. A bullet doesn't bounce in there: it ends on whatever blocks the barrel. It
+/// would come back at its tank before anyone could move out of its way.
 pub fn shoot(field: &Field, owner: Entity, tank: &Tank, position: Vec2, turret: f32) -> Shot {
     let genome = &tank.genome;
     let direction = Vec2::from_angle(turret);
-    let mut bullet = Bullet {
+    let bullet = Bullet {
         owner,
         team: tank.team,
         sector: tank.sector,
@@ -267,13 +270,16 @@ pub fn shoot(field: &Field, owner: Entity, tank: &Tank, position: Vec2, turret: 
         pierces_left: genome.piercing(),
         bounced: false,
     };
-    let mut at = position;
-    let flight = bullets::fly_past_walls(field, &mut at, &mut bullet, MUZZLE_DISTANCE);
+    let barrel = direction * MUZZLE_DISTANCE;
+    let (at, end) = match field.cast(position, barrel, BULLET_RADIUS) {
+        Some((hit, solid)) => (position + barrel * hit.t, Flight::Stopped(solid)),
+        None => (position + barrel, Flight::Flying),
+    };
     Shot {
-        muzzle: position + direction * MUZZLE_DISTANCE,
+        muzzle: position + barrel,
         at,
         bullet,
-        flight,
+        end,
     }
 }
 
@@ -303,10 +309,7 @@ pub fn operate(
                 at: shot.muzzle,
                 team,
             });
-            for bounce in &shot.flight.bounces {
-                events.write(SimEvent::Ricochet { at: *bounce });
-            }
-            match shot.flight.end {
+            match shot.end {
                 Flight::Flying => {
                     commands.spawn((
                         shot.bullet,

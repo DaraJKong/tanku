@@ -710,10 +710,7 @@ fn foresee(
                         at: shot.muzzle,
                         team,
                     });
-                    for bounce in &shot.flight.bounces {
-                        tell(SimEvent::Ricochet { at: *bounce });
-                    }
-                    match shot.flight.end {
+                    match shot.end {
                         Flight::Stopped(_) => {
                             tell(SimEvent::BulletDestroyed { at: shot.at, team });
                             None

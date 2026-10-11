@@ -306,6 +306,62 @@ fn a_ricochet_can_destroy_the_player_who_fired() {
 }
 
 #[test]
+fn a_bullet_ends_on_what_blocks_the_barrel_and_bounces_off_what_is_further() {
+    // The east wall of the bay is at x = 7. From 0.5 m off it, the tip of the barrel is in
+    // the wall: the bullet ends there, though the tank's bullets bounce once.
+    let mut app = start("TEST");
+    let tank = player(&mut app).unwrap();
+    teleport(&mut app, tank, Vec2::new(5.6, 5.0));
+    shoot_at(&mut app, Vec2::new(7.0, 5.0));
+    let told = events(&mut app);
+    assert_eq!(bullets(&mut app), 0);
+    let shots = count(&told, |event| matches!(event, SimEvent::Shot { .. }));
+    let bounces = count(&told, |event| matches!(event, SimEvent::Ricochet { .. }));
+    let ended = count(&told, |event| {
+        matches!(event, SimEvent::BulletDestroyed { .. })
+    });
+    assert_eq!((shots, bounces, ended), (1, 0, 1));
+    // The round is spent all the same, and the tank is unharmed.
+    assert_eq!(app.world().get::<Gun>(tank).unwrap().rounds, 4);
+    tick(&mut app, seconds(1.0));
+    assert_eq!(run(&app).lives, 3);
+    assert!(alive(&app, tank));
+
+    // From a little further, the bullet is out of the barrel when it meets the wall: it
+    // bounces, and comes back at the tank that fired it.
+    let mut app = start("TEST");
+    let tank = player(&mut app).unwrap();
+    teleport(&mut app, tank, Vec2::new(5.0, 5.0));
+    shoot_at(&mut app, Vec2::new(7.0, 5.0));
+    assert_eq!(bullets(&mut app), 1);
+    tick(&mut app, seconds(1.0));
+    let told = events(&mut app);
+    let bounces = count(&told, |event| matches!(event, SimEvent::Ricochet { .. }));
+    assert_eq!(bounces, 1);
+    assert_eq!(run(&app).lives, 2);
+}
+
+#[test]
+fn a_block_that_blocks_the_barrel_stops_the_bullet_and_stays() {
+    let mut app = start("TEST");
+    // The near side of the block is 0.3 m in front of the tank.
+    let block_at = START + Vec2::new(2.2, 0.0);
+    let block = app
+        .world_mut()
+        .spawn((Block { sector: 0 }, Position(block_at), InSector(0)))
+        .id();
+    app.world_mut().resource_mut::<Field>().stale = true;
+    shoot_at(&mut app, block_at);
+    let told = events(&mut app);
+    assert_eq!(bullets(&mut app), 0);
+    let bounces = count(&told, |event| matches!(event, SimEvent::Ricochet { .. }));
+    assert_eq!(bounces, 0);
+    tick(&mut app, seconds(1.0));
+    assert!(alive(&app, block));
+    assert_eq!(run(&app).lives, 3);
+}
+
+#[test]
 fn the_magazine_empties_and_reloads_one_round_at_a_time() {
     let mut app = start("TEST");
     let entity = player(&mut app).unwrap();
