@@ -2,7 +2,13 @@
 
 A cooperative top-down tank game for one to four players, built with Rust and Bevy. The players fight their way through an endless, procedurally generated corridor of enemy tanks, and one hit destroys a tank.
 
-The solo game is playable: the corridor, the generated enemies and their brains, lives and checkpoints, the menus, the sound cues and the music are in. Co-op has begun: a desktop build hosts a game that others join, from a desktop build or from a browser. Achievements and the other modes are not in. The specification is in [docs/PROJECT.md](docs/PROJECT.md).
+The solo game and co-op are playable, on Linux, on Windows and in a browser:
+
+- **Solo:** the corridor, the generated enemies with their classes and their brains, arenas and their waves, lives and checkpoints, the menus, the sound cues and the music.
+- **Co-op:** up to four players. One of them hosts a game, which the others find on the local network or join by its address, from a desktop build or from a browser. A destroyed tank is a wreck that a teammate repairs.
+- **Not in yet:** achievements, the other modes, the password of a hosted game, and brain tiers 3 and 4. An enemy that has one of those tiers acts as tier 2 for now.
+
+Co-op has been played by two players. With three or four, it is checked by tests and by scripted runs only. The build for Windows is checked under wine, not yet on Windows itself. The specification is in [docs/PROJECT.md](docs/PROJECT.md).
 
 ## Workspace
 
@@ -229,6 +235,8 @@ tanku_client/dev/browser_guest.sh "host; wait 30; press Start; wait 14; shot hos
 ```
 
 It takes Firefox, Python 3 and the web build in `target/web-dist`. No window opens. What the browser showed goes to `target/browser_guest`.
+
+On a bad line, a host may log errors of `lightyear_debug::input` about an input for a tick that it has already simulated. They tell that the orders of a guest came late: its clock was behind, after the guest stalled for a moment or the line suddenly got slower. The host goes on with the last orders it had, the network library sets the clock of the guest anew within a second or two, and the errors stop. Nothing is lost: what the guest shows of its own tank is put right by what the host tells.
 
 The command `tape` keeps the music that the run would have played from there on. When the script quits, the music goes to a sound file, and the list of what the game told the music, with the time of each change, to a text file of the same name:
 
