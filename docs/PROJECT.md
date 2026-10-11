@@ -412,12 +412,14 @@ Every game, solo included, is run by a server that has the final say on everythi
 | Session | How it works |
 |---|---|
 | Solo | The client runs its own server. Nothing goes over the network. |
-| Hosted game | One player's client hosts up to three others. The game is announced on the local network, and it is joined by the address of the host's machine, which the lobby shows. From the internet, the host's UDP port 28405 must be reachable. An optional password protects it. |
+| Hosted game | One player's client hosts up to three others. The game is announced on the local network, where the join screen of the others lists it. A game that isn't listed is joined by the address of the host's machine, which the lobby shows. From the internet, the host's UDP port 28405 must be reachable. An optional password protects it. |
 | Official server | Later. Dedicated servers run by the project, which also remove the need to open a port. |
 
 Players in a browser can play solo and join games. They can't host, because a browser can't accept connections.
 
 Players gather in a lobby, where the host picks the mode and the seed, and the run starts for everyone at once. Nobody can join a run in progress. A host who starts alone plays a solo run, with its lives and its flags.
+
+The join screen lists the games of the local network, each with the address of its host and its number of players, and a click joins one. A game whose run is in progress, a full one and one of another version are listed for what they are, and can't be joined. A game is gone from the list a few seconds after its host closed it.
 
 Each player has a seat, which gives them their number and their color. The host has the first seat, and the others take the next ones in the order they joined. When a player leaves the lobby, those behind them move up. Seats don't change during a run: they move up again when the next one starts.
 
@@ -472,7 +474,7 @@ The interface is the margin of the drawing: ruled panels with square corners, la
 | Screen | Content |
 |---|---|
 | Main menu | Solo, host, join, achievements, settings, quit |
-| Join | The address of the host, join |
+| Join | The games of the local network, the address of the host, join |
 | Lobby | Players, mode, seed, the address to join at (host), start (host) |
 | Heads-up display | Rounds and reload progress, mines left, shield state, sector number, lives (solo), seed and version, a scale and a north arrow, a ruler along the edge of the screen that gives the distance to the barrier, teammates' state and what to do about a wreck (multiplayer). Rounds, reload and mines are also on an arc under the player's own tank. |
 | Menu | Resume, settings, quit, and the seed with its version. In multiplayer, the host goes back to the lobby or closes the game, and the others leave it. |
