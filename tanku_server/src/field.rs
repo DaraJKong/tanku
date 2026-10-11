@@ -189,10 +189,12 @@ impl Field {
 
         if layout.plan.kind != SectorKind::Bay && !self.cleared.contains(&index) {
             let arena = layout.plan.kind == SectorKind::Arena;
-            let count = progression::enemy_count(index, self.players().max(1), arena) as usize;
+            let count = progression::enemy_count(index, self.players().max(1), arena);
             let entry = (layout.plan.entry.0 + layout.plan.entry.1).as_vec2() / 2.0;
-            for (number, spawn) in layout.spawns.iter().take(count).enumerate() {
-                let genome = enemy::generate(self.seed, index, number as u32);
+            // The group shares its budget among as many tanks as the players call for. A
+            // sector that is too small for all of them holds as many as fit.
+            let group = enemy::group(self.seed, index, count);
+            for (number, (spawn, genome)) in layout.spawns.iter().zip(group).enumerate() {
                 let position = spawn.as_vec2();
                 let mut rng = Stream::new(self.seed, Purpose::Brain, index, number as u32);
                 commands.spawn((

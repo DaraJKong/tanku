@@ -16,8 +16,8 @@ fn generation(criterion: &mut Criterion) {
     });
     criterion.bench_function("generate 100 enemies", |bencher| {
         bencher.iter(|| {
-            for index in 0..100 {
-                black_box(enemy::generate(black_box(42), 20 + index / 10, index));
+            for sector in 20..30 {
+                black_box(enemy::group(black_box(42), sector, 10));
             }
         });
     });

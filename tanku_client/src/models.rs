@@ -13,7 +13,7 @@ use bevy::prelude::*;
 use tanku_core::{
     rules::SHIELD_RADIUS,
     sim::{Enemy, Motion, Player, Run, Shield, Tank, Wreck},
-    stats::{Genome, SpendingGroup, Stat},
+    stats::{Class, Genome, Stat},
 };
 
 use crate::{
@@ -132,22 +132,39 @@ fn setup(mut commands: Commands, mut materials: ResMut<Assets<StandardMaterial>>
     commands.insert_resource(Glass { bubble, edge });
 }
 
-/// The color of an enemy: its hue tells where most of its points went, and its intensity tells
-/// how many points it has.
-pub fn enemy_color(genome: &Genome) -> Color {
-    let hue = match genome.main_group() {
-        SpendingGroup::Mobility => 55.0,
-        SpendingGroup::Firepower => 5.0,
-        SpendingGroup::Utility => 285.0,
-        SpendingGroup::Software => 150.0,
-    };
-    let strength = (genome.budget as f32 / 100.0).clamp(0.0, 1.0);
-    Color::hsl(hue, 0.2 + 0.75 * strength, 0.66 - 0.2 * strength)
+/// The hue of a class, in degrees: teal for a sniper, yellow for a scout, green for a
+/// tactician, purple for a trickster, orange for a lancer, pink for a sapper and red for a
+/// gunner. A tank without a class has none: it is gray. Blue is the players'.
+pub fn class_hue(class: Class) -> Option<f32> {
+    match class {
+        Class::None => None,
+        Class::Sniper => Some(176.0),
+        Class::Scout => Some(52.0),
+        Class::Tactician => Some(125.0),
+        Class::Trickster => Some(272.0),
+        Class::Lancer => Some(26.0),
+        Class::Sapper => Some(322.0),
+        Class::Gunner => Some(0.0),
+    }
 }
 
-/// The color of the sight and of the tip of the barrel: a light tint of the hue of the body.
+/// The color of an enemy: its hue tells its class, and its intensity tells how many points
+/// it has. Even the weakest tank shows its hue.
+pub fn enemy_color(genome: &Genome) -> Color {
+    let strength = (genome.budget as f32 / 100.0).clamp(0.0, 1.0);
+    let lightness = 0.68 - 0.22 * strength;
+    match class_hue(genome.class) {
+        Some(hue) => Color::hsl(hue, 0.4 + 0.55 * strength, lightness),
+        None => Color::hsl(0.0, 0.0, lightness),
+    }
+}
+
+/// The color of the sight and of the tip of the barrel: a light tint of the hue of the body,
+/// or a light gray on a gray body.
 fn accent_color(body: Color) -> Color {
-    Color::hsl(Hsla::from(body).hue, 1.0, 0.75)
+    let body = Hsla::from(body);
+    let saturation = if body.saturation > 0.01 { 1.0 } else { 0.0 };
+    Color::hsl(body.hue, saturation, 0.8)
 }
 
 /// Length of the hull: agile tanks are short.
@@ -751,13 +768,44 @@ mod tests {
 
     #[test]
     fn the_sight_and_the_tip_are_paler_than_the_body_and_of_its_hue() {
-        // Hard mode has the largest budgets.
-        let enemies = (0..=130).map(|budget| enemy_color(&Genome::empty(budget)));
+        // The leader of a late group has the largest budget.
+        let enemies = Class::ALL.into_iter().flat_map(|class| {
+            (0..=150).map(move |budget| {
+                let mut genome = Genome::empty(budget);
+                genome.class = class;
+                enemy_color(&genome)
+            })
+        });
         for body in enemies.chain([theme::PLAYER]) {
             let (body, accent) = (Hsla::from(body), Hsla::from(accent_color(body)));
             assert_eq!(accent.hue, body.hue);
             assert!(accent.lightness > body.lightness + 0.05, "{body:?}");
+            // A gray tank has a gray sight, not a red one.
+            assert_eq!(accent.saturation > 0.0, body.saturation > 0.0);
         }
+    }
+
+    #[test]
+    fn every_class_has_a_hue_of_its_own_and_none_has_the_players() {
+        let player = Hsla::from(theme::PLAYER).hue;
+        let hues: Vec<f32> = Class::ALL.into_iter().filter_map(class_hue).collect();
+        assert_eq!(hues.len(), Class::ALL.len() - 1);
+        let apart = |a: f32, b: f32| ((a - b).abs()).min(360.0 - (a - b).abs());
+        for (index, &hue) in hues.iter().enumerate() {
+            assert!(
+                apart(hue, player) > 35.0,
+                "{hue} is close to the players' blue"
+            );
+            for &other in &hues[index + 1..] {
+                assert!(apart(hue, other) > 20.0, "{hue} and {other}");
+            }
+        }
+        // A tank without a class is gray, however strong, and the weakest tank of a class
+        // still shows its hue.
+        let mut weak = Genome::empty(3);
+        assert_eq!(Hsla::from(enemy_color(&weak)).saturation, 0.0);
+        weak.class = Class::Sapper;
+        assert!(Hsla::from(enemy_color(&weak)).saturation > 0.35);
     }
 
     #[test]
@@ -845,7 +893,7 @@ mod tests {
     #[test]
     fn an_outline_lies_flat_where_its_tank_stands() {
         let outline = Outline::dormant(theme::PLAYER, theme::FLOOR);
-        let enemies = (0..30).map(|seed| tanku_core::enemy::generate(seed, 20, 0));
+        let enemies = (0..5).flat_map(|seed| tanku_core::enemy::group(seed, 20, 6));
         for genome in enemies.chain([full(), Genome::empty(10), Genome::PLAYER]) {
             let pairs = [
                 (
