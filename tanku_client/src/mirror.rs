@@ -553,7 +553,7 @@ fn foresee(
         ),
         With<Own>,
     >,
-    others: Query<(&Position, &Tank, Has<Wreck>), Without<Own>>,
+    others: Query<(&Position, &Tank), (Without<Own>, Without<Wreck>)>,
     mut bullets: Query<
         (
             &mut Bullet,
@@ -603,10 +603,10 @@ fn foresee(
                 }
             }
             tanks::step(&field, tank, true, asked, &mut helm.place, &mut helm.moving);
-            let others = others.iter().map(|(other, tank, wreck)| {
-                let gives_way = tank.genome.top_speed() > 0.0 && !wreck;
-                (other.0, gives_way)
-            });
+            // The tanks that run are in its way, and the wrecks are not.
+            let others = others
+                .iter()
+                .map(|(other, tank)| (other.0, tank.genome.top_speed() > 0.0));
             tanks::give_way(&mut helm.place, others);
             field.push_out(tank, &mut helm.place, &mut helm.moving.velocity);
             let worked = tanks::step_gun(&mut helm.gun, &tank.genome, asked);
@@ -788,7 +788,7 @@ fn met(way: &[Vec2], center: Vec2, radius: f32) -> Option<Vec2> {
 ///
 /// A bullet that comes upon the tank of the guest's own player ends there, or on its bubble:
 /// the guest has both where the host will have them. It doesn't wait for the host to say so,
-/// and sounds the bubble at once.
+/// and sounds the bubble at once. A bullet flies over that tank once it is a wreck.
 fn fly(
     mut commands: Commands,
     timeline: Res<LocalTimeline>,
@@ -796,7 +796,7 @@ fn fly(
     field: Res<Field>,
     mut echoes: ResMut<Echoes>,
     mut events: MessageWriter<SimEvent>,
-    own: Query<(&Position, &Shield), (With<Ahead>, Without<Told<Bullet>>)>,
+    own: Query<(&Position, &Shield), (With<Ahead>, Without<Told<Bullet>>, Without<Wreck>)>,
     mut told: Query<
         (
             Entity,
@@ -1764,10 +1764,8 @@ mod tests {
         assert!(late.abs() <= 1, "the bullet burst {late} ticks late");
     }
 
-    #[test]
-    fn a_guest_that_repairs_keeps_its_hands_free() {
-        let (mut host, mut guest, aim) = aiming_east(60);
-        // The tank of the host's player is destroyed, next to the guest's.
+    /// Destroys the tank of the host's own player, and waits for the guest to have the wreck.
+    fn wreck_the_host(host: &mut App, guest: &mut App) {
         let world = host.world_mut();
         let mut tanks = world.query::<(Entity, &Player)>();
         let (wrecked, _) = tanks
@@ -1776,13 +1774,45 @@ mod tests {
             .unwrap();
         let mut casualties = world.resource_mut::<tanku_server::Casualties>();
         casualties.tanks.push(wrecked);
-        let wrecks = |game: &mut App| {
-            let world = game.world_mut();
-            world.query::<&Wreck>().iter(world).count()
-        };
-        run_until("the wreck", &mut [&mut host, &mut guest], |games| {
-            wrecks(games[1]) == 1
+        run_until("the wreck", &mut [host, guest], |games| {
+            let world = games[1].world_mut();
+            world.query::<&Wreck>().iter(world).count() == 1
         });
+    }
+
+    #[test]
+    fn a_guest_drives_its_own_tank_over_a_wreck_as_the_host_has_it() {
+        let (mut host, mut guest) = pair(60, 0, 0.0);
+        wreck_the_host(&mut host, &mut guest);
+        // The wreck lies next to the guest's tank, which drives straight at it and on.
+        let (wreck, start) = (place(&mut guest, 0), place(&mut guest, 1));
+        assert!(wreck.distance(start) < 4.0);
+        let across = TankCommand {
+            drive: (wreck - start).normalize(),
+            ..default()
+        };
+        let since = tick(&guest);
+        run_until("the other side", &mut [&mut host, &mut guest], |games| {
+            order(games[1], across);
+            past(games[0], since) > 75
+        });
+        // It went over the middle of the wreck, on its own screen and on the host's.
+        let log = guest.world().resource::<Log>();
+        let way = (since..since + 70).filter_map(|tick| log.tanks.get(&(tick, 1)));
+        let nearest = way.map(|at| at.distance(wreck)).fold(f32::MAX, f32::min);
+        assert!(nearest < 0.2, "the tank came no nearer than {nearest} m");
+        assert!(place(&mut host, 1).distance(start) > wreck.distance(start) + 1.0);
+        let apart = apart(&host, &guest, 1, since + 2..since + 70);
+        let worst = apart.iter().copied().fold(0.0, f32::max);
+        assert!(apart.len() > 60, "{} ticks to compare", apart.len());
+        assert!(worst < 1e-3, "the tank was up to {worst} m from its place");
+    }
+
+    #[test]
+    fn a_guest_that_repairs_keeps_its_hands_free() {
+        let (mut host, mut guest, aim) = aiming_east(60);
+        // The tank of the host's player is destroyed, next to the guest's.
+        wreck_the_host(&mut host, &mut guest);
 
         // While its player holds the repair key, the guest's tank fires, lays a mine and
         // shields as it always does: on its own screen at once, and on the host's.

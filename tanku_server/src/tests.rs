@@ -9,7 +9,7 @@ use tanku_core::{
     rules::{
         APPEAR_ROOM, APPEAR_TIME, ARENA_DELAY, ARENA_WAVES, BARRIER_GATHER_DISTANCE, LIFE_REACH,
         PLAYTEST_LAST_SECTOR, REPAIR_PROTECTION, REPAIR_RADIUS, REPAIR_TIME, RESPAWN_DELAY,
-        SHIELD_DURATION, SOLO_LIVES, SPAWN_FIRE_DELAY, TANK_RADIUS, TICK_RATE,
+        SHIELD_DURATION, SOLO_LIVES, SPAWN_FIRE_DELAY, TANK_PUSH, TANK_RADIUS, TICK_RATE,
     },
     sim::{
         Barrier, Block, Blow, Bullet, Enemy, ExplosiveCrate, Gun, Life, Mine, MineState, Motion,
@@ -2071,12 +2071,16 @@ fn a_destroyed_tank_of_several_players_becomes_a_wreck() {
     assert_eq!(bullets(&mut app), 0);
     assert!(!app.world().get::<Shield>(second).unwrap().is_active());
 
-    // It absorbs the bullets of both sides, and nothing destroys it again.
+    // The bullets of both sides fly over it, and nothing destroys it again.
     for team in [Team::Enemies, Team::Players] {
-        spawn_bullet(&mut app, team, place + Vec2::Y * 4.0, Vec2::NEG_Y * 10.0, 0);
+        let bullet = spawn_bullet(&mut app, team, place + Vec2::Y * 4.0, Vec2::NEG_Y * 10.0, 0);
         tick(&mut app, seconds(0.6));
+        let past = place.y - position(&mut app, bullet).y;
+        assert!(alive(&app, bullet) && past > 1.5, "{past} m past the wreck");
+        tick(&mut app, seconds(1.0));
         assert_eq!(bullets(&mut app), 0);
     }
+    assert!(is_wreck(&app, second));
     destroy(&mut app, second);
     let told = events(&mut app);
     assert_eq!(
@@ -2088,7 +2092,7 @@ fn a_destroyed_tank_of_several_players_becomes_a_wreck() {
     );
     assert_eq!(run(&app).phase, RunPhase::Playing);
 
-    // It blocks the way: a tank that drives straight into it stops against it, and the wreck
+    // It is in nobody's way: a tank that drives straight at it drives over it, and the wreck
     // stays.
     teleport(&mut app, first, place + Vec2::NEG_X * 4.0);
     app.world_mut().get_mut::<Motion>(first).unwrap().hull = 0.0;
@@ -2100,10 +2104,83 @@ fn a_destroyed_tank_of_several_players_becomes_a_wreck() {
             ..default()
         },
     );
-    tick(&mut app, seconds(2.0));
+    let mut nearest = f32::MAX;
+    for _ in 0..seconds(1.5) {
+        tick(&mut app, 1);
+        nearest = nearest.min(position(&mut app, first).distance(place));
+    }
     assert_eq!(position(&mut app, second), place);
-    let gap = position(&mut app, first).distance(place);
-    assert!((gap - 2.0 * TANK_RADIUS).abs() < 0.05, "{gap}");
+    assert!(nearest < 0.1, "the tank came no nearer than {nearest} m");
+    let beyond = position(&mut app, first).x - place.x;
+    assert!(beyond > 2.0 * TANK_RADIUS, "{beyond} m beyond the wreck");
+}
+
+#[test]
+fn a_tank_that_comes_back_under_another_pushes_it_aside_without_a_jump() {
+    let mut app = team("TEST", 2);
+    let (first, second) = (seat(&mut app, 0), seat(&mut app, 1));
+    destroy(&mut app, second);
+    let place = position(&mut app, second);
+    // A teammate repairs the wreck from right on top of it.
+    let on_top = place + Vec2::X * 0.1;
+    teleport(&mut app, first, on_top);
+    let hold = TankCommand {
+        repair: true,
+        ..default()
+    };
+    order(&mut app, first, hold);
+    tick(&mut app, seconds(REPAIR_TIME) - 2);
+    assert!(is_wreck(&app, second));
+    assert_eq!(position(&mut app, first), on_top);
+
+    // The tank is back under the other one. They part over a few ticks, each a little at a
+    // time, until they stand side by side.
+    let places = |app: &mut App| [position(app, first), position(app, second)];
+    let mut last = places(&mut app);
+    let mut parting = 0;
+    for _ in 0..30 {
+        tick(&mut app, 1);
+        let now = places(&mut app);
+        for tank in 0..2 {
+            let moved = now[tank].distance(last[tank]);
+            assert!(moved <= TANK_PUSH / 2.0 + 1e-4, "a jump of {moved} m");
+        }
+        parting += u32::from(now != last);
+        last = now;
+    }
+    assert!(!is_wreck(&app, second));
+    assert!(parting >= 5, "they parted in {parting} ticks");
+    let gap = last[0].distance(last[1]);
+    assert!((gap - 2.0 * TANK_RADIUS).abs() < 1e-3, "{gap} m apart");
+}
+
+#[test]
+fn tanks_that_run_stay_solid_to_each_other() {
+    // No two tanks close in on each other by more in a tick than they are moved apart.
+    let mut fastest = Genome::empty(0);
+    fastest.set(Stat::Engine, Stat::Engine.max_level());
+    assert!(2.0 * fastest.top_speed() / (TICK_RATE as f32) < TANK_PUSH);
+
+    // A tank that drives into another one pushes it along, and never gets into it.
+    let mut app = team("TEST", 2);
+    let (first, second) = (seat(&mut app, 0), seat(&mut app, 1));
+    let place = position(&mut app, second);
+    teleport(&mut app, first, place + Vec2::NEG_X * 3.0);
+    app.world_mut().get_mut::<Motion>(first).unwrap().hull = 0.0;
+    order(
+        &mut app,
+        first,
+        TankCommand {
+            drive: Vec2::X,
+            ..default()
+        },
+    );
+    for _ in 0..seconds(1.0) {
+        tick(&mut app, 1);
+        let gap = position(&mut app, first).distance(position(&mut app, second));
+        assert!(gap > 2.0 * TANK_RADIUS - 1e-3, "{gap} m apart");
+    }
+    assert!(position(&mut app, second).x > place.x + 0.5);
 }
 
 #[test]

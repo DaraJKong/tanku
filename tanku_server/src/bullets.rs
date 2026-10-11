@@ -81,7 +81,7 @@ enum Target {
     Tank(Entity),
     Shield(Vec2),
     Mine(Entity),
-    /// A wreck, or a tank that was just repaired: the bullet ends there and destroys nothing.
+    /// A tank that was just repaired: the bullet ends there and destroys nothing.
     Hulk,
 }
 
@@ -140,10 +140,12 @@ pub fn fly(
                 let reach = |radius: f32| {
                     geom::sweep_circle_point(from, delta, tank_position.0, radius + BULLET_RADIUS)
                 };
-                // A tank's own shot leaves its bubble, but doesn't come back through it.
+                // A bullet flies over a wreck, which gives no cover to the tank that repairs it.
                 if wreck {
-                    consider(reach(TANK_RADIUS), Target::Hulk);
-                } else if shield.is_active() && (tank_entity != flying.owner || flying.bounced) {
+                    continue;
+                }
+                // A tank's own shot leaves its bubble, but doesn't come back through it.
+                if shield.is_active() && (tank_entity != flying.owner || flying.bounced) {
                     consider(reach(SHIELD_RADIUS), Target::Shield(tank_position.0));
                 } else if tanks::hits(&flying, tank_entity, tank.team) {
                     let target = if safe {

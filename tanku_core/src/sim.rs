@@ -104,8 +104,9 @@ pub struct Player {
     pub seat: u8,
 }
 
-/// A player's tank that was destroyed in a run of several players. It stays where it is, blocks
-/// the way and absorbs bullets until a teammate has repaired it.
+/// A player's tank that was destroyed in a run of several players. It stays where it is until
+/// a teammate has repaired it, and is in nobody's way: tanks drive over it and bullets fly
+/// over it, so that it gives no cover to the tank that repairs it.
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Wreck {
     /// Seconds of repair done so far.

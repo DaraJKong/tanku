@@ -8,6 +8,11 @@ pub const TICK_RATE: f64 = 60.0;
 pub const TICK: f32 = 1.0 / TICK_RATE as f32;
 
 pub const TANK_RADIUS: f32 = 0.9;
+/// The most that two tanks that overlap are moved apart in a tick. It is more than the two
+/// fastest tanks close in on each other in a tick, so tanks stay solid to each other, and it
+/// is little enough that a tank that comes back under another one pushes it aside without a
+/// jump.
+pub const TANK_PUSH: f32 = 0.3;
 /// Time a tank needs to reach its top speed.
 pub const TANK_ACCELERATION_TIME: f32 = 0.15;
 /// A tank pivots in place while its hull is further than this from the wanted direction.

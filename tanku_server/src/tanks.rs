@@ -7,8 +7,8 @@ use tanku_core::{
     geom,
     rules::{
         BULLET_RADIUS, FIRE_COOLDOWN, MINE_ARMING_TIME, MINE_COOLDOWN, MUZZLE_DISTANCE,
-        PIVOT_ANGLE, PLAYER_TURRET_RATE, SHIELD_DURATION, TANK_ACCELERATION_TIME, TANK_RADIUS,
-        TICK,
+        PIVOT_ANGLE, PLAYER_TURRET_RATE, SHIELD_DURATION, TANK_ACCELERATION_TIME, TANK_PUSH,
+        TANK_RADIUS, TICK,
     },
     sim::{
         Bullet, Enemy, Gun, Mine, MineState, Motion, Player, Position, PreviousPosition, Shield,
@@ -150,12 +150,14 @@ pub fn drive(
     }
 }
 
-/// How far the second of two tanks must go from the first for them not to overlap.
+/// How far the second of two tanks goes from the first in a tick for them not to overlap: all
+/// the way when one drove into the other, and as far as a tick allows when one appeared under
+/// the other.
 fn overlap(a: Vec2, b: Vec2) -> Option<Vec2> {
     let offset = b - a;
     let distance = offset.length();
     let overlaps = (1e-5..2.0 * TANK_RADIUS).contains(&distance);
-    overlaps.then(|| offset / distance * (2.0 * TANK_RADIUS - distance))
+    overlaps.then(|| offset / distance * (2.0 * TANK_RADIUS - distance).min(TANK_PUSH))
 }
 
 /// Moves a tank out of the others, which stay where they are. Each is given with whether it
@@ -169,21 +171,20 @@ pub fn give_way(position: &mut Vec2, others: impl Iterator<Item = (Vec2, bool)>)
     }
 }
 
-/// Tanks are solid to each other. A tank without an engine doesn't give way, and neither does
-/// a wreck.
+/// The tanks that run are solid to each other. A tank without an engine doesn't give way. A
+/// wreck is in nobody's way: tanks drive over it.
 pub fn separate(
     field: Res<Field>,
-    mut tanks: Query<(&Tank, &mut Position, &mut Motion, Has<Wreck>)>,
+    mut tanks: Query<(&Tank, &mut Position, &mut Motion), Without<Wreck>>,
 ) {
     let mut pairs = tanks.iter_combinations_mut();
-    while let Some([(tank_a, mut a, _, wreck_a), (tank_b, mut b, _, wreck_b)]) = pairs.fetch_next()
-    {
+    while let Some([(tank_a, mut a, _), (tank_b, mut b, _)]) = pairs.fetch_next() {
         let Some(push) = overlap(a.0, b.0) else {
             continue;
         };
         let (a_moves, b_moves) = (
-            tank_a.genome.top_speed() > 0.0 && !wreck_a,
-            tank_b.genome.top_speed() > 0.0 && !wreck_b,
+            tank_a.genome.top_speed() > 0.0,
+            tank_b.genome.top_speed() > 0.0,
         );
         match (a_moves, b_moves) {
             (true, false) => a.0 -= push,
@@ -194,7 +195,7 @@ pub fn separate(
             }
         }
     }
-    for (tank, mut position, mut motion, _) in &mut tanks {
+    for (tank, mut position, mut motion) in &mut tanks {
         let mut velocity = motion.velocity;
         field.push_out(tank, &mut position.0, &mut velocity);
         motion.velocity = velocity;
