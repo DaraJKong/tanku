@@ -2,7 +2,7 @@
 
 A cooperative top-down tank game for one to four players, built with Rust and Bevy. The players fight their way through an endless, procedurally generated corridor of enemy tanks, and one hit destroys a tank.
 
-The solo game is playable: the corridor, the generated enemies and their brains, lives and checkpoints, the menus, the sound cues and the music are in. Co-op has begun: a desktop build hosts a game that others join by its address. Achievements and the other modes are not in. The specification is in [docs/PROJECT.md](docs/PROJECT.md).
+The solo game is playable: the corridor, the generated enemies and their brains, lives and checkpoints, the menus, the sound cues and the music are in. Co-op has begun: a desktop build hosts a game that others join, from a desktop build or from a browser. Achievements and the other modes are not in. The specification is in [docs/PROJECT.md](docs/PROJECT.md).
 
 ## Workspace
 
@@ -46,7 +46,18 @@ All players need the same version of the game. The game listens on UDP port 2840
 
 Two games on one machine can play together, which is the quickest way to try it: the second one finds the first on its join screen.
 
-The web build doesn't join games yet.
+#### From a browser
+
+The web build joins games too, and hosts none. A browser can't look around a network, and it only speaks to a game that shows it a certificate. A hosted game makes its own certificate, which a browser takes by its print alone. So a browser joins by a link that the host hands out:
+
+1. The host picks "For a browser" in the lobby. The lobby then shows what the link ends with: a `#`, where the game takes browsers, and the print of its certificate. The game also writes it to its log, where it can be copied.
+2. The player opens the page of the game with that at the end of its address, as in `http://localhost:8000/#192.168.1.20:28406/3f0c…`. The page joins the game at once. A link that is pasted into a page that is already open is followed too.
+
+What a host hands out stays the same from one game to the next, until the host quits the program. A player who left, or whose connection was lost, joins again from "Join a game".
+
+A hosted game listens for browsers on UDP port 28406, which the firewall of the host's machine must let in. Over the internet, that port of the host's router must lead to the host's machine as well, and the host's public address goes into the link in place of the one that the lobby shows.
+
+A browser only joins from a page that it loaded over HTTPS or from its own machine, such as `http://localhost:8000`. A page that another machine serves over plain HTTP joins nothing, and says so. The page stands still while its tab is hidden, and a game takes a player whose machine stays silent for 5 s for gone. Only Firefox was tried.
 
 ### Playtest
 
@@ -108,6 +119,8 @@ python3 -m http.server --directory target/web-dist
 
 The web build keeps settings and records in the local storage of the browser. A browser lets no sound play before the first click or key, so the sound of the game starts with it.
 
+The web build joins the games that desktop builds host: see [From a browser](#from-a-browser).
+
 With `?probe` after the address, the page shows how long its frames are and whether its sound has holes, for the music and for the cues. A click on those numbers starts the count again.
 
 ```
@@ -158,7 +171,7 @@ A scripted run opens no window and needs no display: it draws into an image of 1
 TANKU_DEV_SCRIPT="start TANKU; wait 1; warp 12; wait 1; peek 0; wait 1; shot sector12.png; quit" cargo run -p tanku_client
 ```
 
-Two scripted games can play together: one hosts on a port, and the other joins it.
+Two scripted games can play together: one hosts on a port, and the other joins it. A game that hosts on a port of its own takes browsers on the port after it.
 
 ```bash
 TANKU_DEV_SCRIPT="host 28999; wait 6; press Start; wait 5; shot host.png; quit" cargo run -p tanku_client
@@ -177,6 +190,14 @@ tanku_client/dev/two_machines.sh "host; wait 6; press Start; wait 5; shot host.p
 It takes Linux with user namespaces and needs no privileges. The third argument is optional: here it makes a round trip of 100 ms that loses one packet in fifty each way.
 
 The guest can also find the game as a player does, instead of being told its address: `press Join a game; wait 3; press 10.77.0.1` opens the join screen and presses the row of the game that it lists. With `WALL=mdns` in front of the command, each machine has a firewall that lets in what the ones that systems ship with do: the game must still be found. With `WALL=shut`, the firewalls keep multicast DNS out as well: only the address joins.
+
+A browser doesn't join as a desktop game does, so a second script runs a scripted host and a Firefox as two machines. The browser opens the web build with the link of the host at its end, and then does what its steps say: it waits, clicks, holds keys and saves what the page shows. The steps are listed at the top of `tanku_client/dev/firefox.py`.
+
+```bash
+tanku_client/dev/browser_guest.sh "host; wait 30; press Start; wait 14; shot host.png; quit" "wait:24 shot:lobby wait:14 click:683:600 key:w:2 shot:run" "delay 60ms 10ms loss 2%"
+```
+
+It takes Firefox, Python 3 and the web build in `target/web-dist`. No window opens. What the browser showed goes to `target/browser_guest`.
 
 The command `tape` keeps the music that the run would have played from there on. When the script quits, the music goes to a sound file, and the list of what the game told the music, with the time of each change, to a text file of the same name:
 
