@@ -183,6 +183,8 @@ A player repairs a wrecked teammate by holding the repair key within 3 m of the 
 
 Nothing destroys a wreck again: it absorbs bullets, sets off no mine and stays through any blast.
 
+A wreck lies in a circle in dashes, in the color of its player: a tank whose center is inside the circle can repair it. The circle is inked in from the top as the repair goes on, and starts over when the repair is interrupted. While a teammate's tank is a wreck, a player is told on screen which key to hold, and how long the repair still takes. The player whose tank is the wreck is told when a teammate is at it.
+
 ### Constants
 
 | Constant | Value |
@@ -425,8 +427,8 @@ A player who disconnects loses their tank, and later sectors are generated for t
 
 The game must stay playable up to a round trip of 120 ms. What the host tells comes late, so a player who joined a game is shown three things in three ways:
 
-- **Their own tank** responds to input immediately. Their machine moves it as the host will, and brings it to its place without a jump when the host tells otherwise.
-- **Bullets** are shown where they are at that moment, in the time of the player's own tank. What comes at a tank is where the screen shows it: a bullet that is dodged on screen is dodged.
+- **Their own tank** responds to input immediately: it drives, aims, fires, lays mines and raises its shield at once, with the sounds of each. Their machine does all of it as the host will. When the host tells otherwise, the tank is brought to its place without a jump, and a shot or a mine that the host doesn't have goes away.
+- **Bullets** are shown where they are at that moment, in the time of the player's own tank. What comes at a tank is where the screen shows it: a bullet that is dodged on screen is dodged, and a bullet ends where it meets the player's own tank or its bubble.
 - **The other tanks** are shown about 50 ms in the past, between two tellings of the host, so that they move evenly.
 
 ## Determinism
@@ -472,7 +474,7 @@ The interface is the margin of the drawing: ruled panels with square corners, la
 | Main menu | Solo, host, join, achievements, settings, quit |
 | Join | The address of the host, join |
 | Lobby | Players, mode, seed, the address to join at (host), start (host) |
-| Heads-up display | Rounds and reload progress, mines left, shield state, sector number, lives (solo), seed and version, a scale and a north arrow, a ruler along the edge of the screen that gives the distance to the barrier, teammates' state (multiplayer). Rounds, reload and mines are also on an arc under the player's own tank. |
+| Heads-up display | Rounds and reload progress, mines left, shield state, sector number, lives (solo), seed and version, a scale and a north arrow, a ruler along the edge of the screen that gives the distance to the barrier, teammates' state and what to do about a wreck (multiplayer). Rounds, reload and mines are also on an arc under the player's own tank. |
 | Menu | Resume, settings, quit, and the seed with its version. In multiplayer, the host goes back to the lobby or closes the game, and the others leave it. |
 | Game over | Sectors cleared, time, kills, seed and version, the tank that ended the run with the list of its parts, retry, new run. In multiplayer, the choice is the host's. |
 | Settings | Controls, video, audio, accessibility |
