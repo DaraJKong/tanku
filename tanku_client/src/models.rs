@@ -590,7 +590,7 @@ fn drawings(
 ) -> [(Handle<Mesh>, f32); 2] {
     let genome = &tank.genome;
     let color = match player {
-        Some(player) => theme::PLAYERS[player.seat as usize % theme::PLAYERS.len()],
+        Some(_) => theme::PLAYER,
         None => enemy_color(genome),
     };
     let (hull, turret, height) = match look {

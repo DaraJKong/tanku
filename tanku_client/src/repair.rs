@@ -36,8 +36,8 @@ struct Step(usize);
 struct Rings {
     dashes: Handle<Mesh>,
     step: Handle<Mesh>,
-    /// For the player of each seat: the paint of the dashes, and the ink of the arcs.
-    paints: Vec<(Handle<StandardMaterial>, Handle<StandardMaterial>)>,
+    /// The paint of the dashes, and the ink of the arcs: both in the color of the players.
+    paints: (Handle<StandardMaterial>, Handle<StandardMaterial>),
 }
 
 pub fn plugin(app: &mut App) {
@@ -72,16 +72,14 @@ fn setup(
         (1, 1.0 / STEPS as f32),
         Color::WHITE,
     );
-    let paints = theme::PLAYERS.map(|color| {
-        (
-            scene::paint(&mut materials, color.with_alpha(0.6)),
-            scene::paint(&mut materials, color),
-        )
-    });
+    let paints = (
+        scene::paint(&mut materials, theme::PLAYER.with_alpha(0.6)),
+        scene::paint(&mut materials, theme::PLAYER),
+    );
     commands.insert_resource(Rings {
         dashes: meshes.add(dashes.build()),
         step: meshes.add(step.build()),
-        paints: paints.to_vec(),
+        paints,
     });
 }
 
@@ -97,11 +95,11 @@ fn inked(repair: f32) -> usize {
     ((repair / REPAIR_TIME).clamp(0.0, 1.0) * STEPS as f32).ceil() as usize
 }
 
-/// Gives its circle to a tank that became a wreck, in the color of its player, and takes it
+/// Gives its circle to a tank that became a wreck, in the color of the players, and takes it
 /// back from one that was repaired.
 fn circle_wrecks(
     mut commands: Commands,
-    wrecks: Query<(Entity, &Player), Added<Wreck>>,
+    wrecks: Query<Entity, (With<Player>, Added<Wreck>)>,
     mut repaired: RemovedComponents<Wreck>,
     circles: Query<(Entity, &ChildOf), With<Circle>>,
     rings: Res<Rings>,
@@ -113,8 +111,8 @@ fn circle_wrecks(
             }
         }
     }
-    for (tank, player) in &wrecks {
-        let (paint, ink) = &rings.paints[player.seat as usize % rings.paints.len()];
+    for tank in &wrecks {
+        let (paint, ink) = &rings.paints;
         let circle = commands
             .spawn((
                 Circle,

@@ -587,7 +587,6 @@ fn main_menu(
 
 /// Draws the player's tank large on the sheet behind the menus that come before a run, inside
 /// the circle that stands for it when something hits it and the one that its shield reaches.
-/// In a game of several players, the tank has the color of the player's seat.
 ///
 /// It waits for the menu to be on screen: the first one comes before the paints are mixed.
 fn exhibit(
@@ -597,22 +596,19 @@ fn exhibit(
     mut meshes: ResMut<Assets<Mesh>>,
     mut view: ResMut<View>,
     screen: Res<State<Screen>>,
-    seat: Res<LocalSeat>,
-    mut shown: Local<Option<(Screen, u8)>>,
+    mut shown: Local<Option<Screen>>,
 ) {
-    let wanted = (*screen.get(), seat.0);
+    let wanted = *screen.get();
     if !exhibits.is_empty() && *shown == Some(wanted) {
         return;
     }
-    // A seat that changes in the lobby changes the color.
     for stale in &exhibits {
         commands.entity(stale).despawn();
     }
     *shown = Some(wanted);
-    let color = theme::PLAYERS[seat.0 as usize % theme::PLAYERS.len()];
     let show = Show {
         genome: Genome::PLAYER,
-        color,
+        color: theme::PLAYER,
         span: EXHIBIT_SPAN,
         place: EXHIBIT_PLACE,
         turret: 0.35,
@@ -624,7 +620,7 @@ fn exhibit(
         &mut meshes,
         &paints,
         &mut view,
-        wanted.0,
+        wanted,
         &show,
     );
 }
@@ -1018,10 +1014,10 @@ fn draw_a_seed(
     }
 }
 
-/// A seat of the lobby: its color, its number and who sits there.
+/// A seat of the lobby: its number and who sits there.
 fn seat_row(parent: &mut ChildSpawnerCommands, seat: usize, member: Option<Member>, own: bool) {
     let taken = member.is_some();
-    let color = theme::PLAYERS[seat % theme::PLAYERS.len()];
+    let color = theme::PLAYER;
     let who = match (member, own) {
         (None, _) => "Open",
         (Some(Member::Host), true) => "You, the host",

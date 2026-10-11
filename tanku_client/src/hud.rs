@@ -6,7 +6,7 @@
 
 use bevy::prelude::*;
 use tanku_core::{
-    rules::SOLO_LIVES,
+    rules::{MAX_PLAYERS, SOLO_LIVES},
     seed::VERSION,
     sim::{
         Enemy, Gun, Player, Playtest, Position, Run, Shield, ShieldState, SimEvent, Tank,
@@ -60,15 +60,6 @@ enum Bar {
     Shield,
 }
 
-/// A part of the interface that takes the color of the player at this screen.
-#[derive(Component)]
-struct Accented;
-
-/// The color of the player at this screen: the one of their seat.
-fn accent(seat: &LocalSeat) -> Color {
-    theme::PLAYERS[seat.0 as usize % theme::PLAYERS.len()]
-}
-
 /// A text that follows the game.
 #[derive(Component, Clone, Copy)]
 enum Readout {
@@ -93,6 +84,25 @@ struct Toast(f32);
 
 #[derive(Component)]
 struct EnemyMarker(usize);
+
+/// The number of the player of a seat, next to the square of their tank.
+#[derive(Component)]
+struct MateNumber(u8);
+
+/// The tag that follows the tank of the player of a seat, among several players: their tanks
+/// look alike, and the tag tells whose each one is.
+#[derive(Component)]
+struct PlayerTag(u8);
+
+/// How far over the middle of a tank its tag stands, in meters of ground, and how wide the
+/// tag is on screen.
+const TAG_RISE: f32 = 1.9;
+const TAG_WIDTH: f32 = 30.0;
+
+/// How a player is named for short: by the number of their seat.
+pub fn short_name(seat: u8) -> String {
+    format!("P{}", seat + 1)
+}
 
 /// The bar of the scale, which is as long as [`SCALE`] meters of ground.
 #[derive(Component)]
@@ -129,9 +139,9 @@ pub fn plugin(app: &mut App) {
             (
                 status,
                 weapons,
-                tint,
                 toasts,
                 mark_enemies,
+                tag_players,
                 instruments,
                 (attach_dial, turn_dial, light_dial).chain(),
             )
@@ -262,6 +272,28 @@ fn pip(pip: Pip) -> impl Bundle {
     )
 }
 
+/// The square of the tank of the player of a seat, which bears their number: the tanks of
+/// the players all have one color.
+fn mate(seat: u8) -> impl Bundle {
+    (
+        Pip::Mate(seat),
+        Node {
+            width: px(20),
+            height: px(18),
+            border: UiRect::all(px(1)),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            ..default()
+        },
+        BackgroundColor(Color::NONE),
+        BorderColor::all(theme::RULE),
+        children![(
+            MateNumber(seat),
+            theme::label((seat + 1).to_string(), 12.0, theme::TEXT_DIM),
+        )],
+    )
+}
+
 fn bar(bar: Bar) -> impl Bundle {
     (
         Node {
@@ -273,7 +305,6 @@ fn bar(bar: Bar) -> impl Bundle {
         BorderColor::all(theme::RULE),
         children![(
             bar,
-            Accented,
             Node {
                 width: percent(0),
                 height: percent(100),
@@ -298,7 +329,6 @@ fn weapons_panel() -> impl Bundle {
                 row(false),
                 children![
                     (
-                        Accented,
                         Node {
                             width: px(12),
                             height: px(12),
@@ -373,11 +403,7 @@ fn title_block() -> impl Bundle {
                         children![
                             caption("GAME"),
                             theme::title("TANKU", 26.0, theme::TEXT),
-                            (
-                                Readout::Mode,
-                                Accented,
-                                theme::label("", 13.0, theme::ACCENT)
-                            ),
+                            (Readout::Mode, theme::label("", 13.0, theme::ACCENT)),
                         ],
                     ),
                     (
@@ -401,15 +427,11 @@ fn title_block() -> impl Bundle {
                                     pip(Pip::Life(1)),
                                     pip(Pip::Life(2)),
                                     pip(Pip::Life(3)),
-                                    pip(Pip::Mate(0)),
-                                    pip(Pip::Mate(1)),
-                                    pip(Pip::Mate(2)),
-                                    pip(Pip::Mate(3)),
-                                    (
-                                        Readout::Lives,
-                                        Accented,
-                                        theme::label("", 13.0, theme::ACCENT)
-                                    ),
+                                    mate(0),
+                                    mate(1),
+                                    mate(2),
+                                    mate(3),
+                                    (Readout::Lives, theme::label("", 13.0, theme::ACCENT)),
                                 ],
                             ),
                         ],
@@ -593,6 +615,25 @@ fn build(mut commands: Commands) {
             ),
         ],
     ));
+    for seat in 0..MAX_PLAYERS as u8 {
+        commands.spawn((
+            DespawnOnExit(Screen::Playing),
+            PlayerTag(seat),
+            Node {
+                position_type: PositionType::Absolute,
+                width: px(TAG_WIDTH),
+                justify_content: JustifyContent::Center,
+                padding: UiRect::axes(px(0), px(1)),
+                border: UiRect::all(px(1)),
+                display: Display::None,
+                ..default()
+            },
+            BackgroundColor(theme::SURFACE),
+            BorderColor::all(theme::PLAYER),
+            Pickable::IGNORE,
+            children![theme::label(short_name(seat), 12.0, theme::TEXT)],
+        ));
+    }
     for index in 0..MARKED_ENEMIES {
         commands.spawn((
             DespawnOnExit(Screen::Playing),
@@ -640,6 +681,7 @@ fn status(
     tanks: Query<(&Position, Option<&Wreck>, &TankCommand, Has<Own>), With<Player>>,
     mut readouts: Query<(&Readout, &mut Text)>,
     mut pips: Query<(&Pip, &mut BackgroundColor, &mut BorderColor, &mut Node)>,
+    mut numbers: Query<(&MateNumber, &mut TextColor)>,
 ) {
     let Some(run) = run else {
         return;
@@ -710,45 +752,27 @@ fn status(
             // A single player has lives.
             Pip::Life(life) => {
                 node.display = shown(run.solo && !infinite_lives);
-                light(life <= run.lives, accent(&seat), &mut color, &mut border);
+                light(life <= run.lives, theme::ACCENT, &mut color, &mut border);
             }
-            // Several players have each other: a square for each tank, in its color while
-            // it runs and empty while it is a wreck.
+            // Several players have each other: a square for each tank, with the number of
+            // its player, lit while the tank runs and empty while it is a wreck.
             Pip::Mate(seat) => {
                 let mate = crew.iter().find(|(player, _)| player.seat == seat);
                 node.display = shown(!run.solo && mate.is_some());
-                let lit = theme::PLAYERS[seat as usize % theme::PLAYERS.len()];
                 let runs = mate.is_some_and(|(_, wreck)| !wreck);
-                light(runs, lit, &mut color, &mut border);
+                light(runs, theme::ACCENT, &mut color, &mut border);
             }
             _ => {}
         }
     }
-}
-
-/// The interface takes the color of the player's seat. A guest's seat can change when a run
-/// starts, as the seats close ranks.
-fn tint(
-    seat: Res<LocalSeat>,
-    parts: Res<DialParts>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    fresh: Query<(), Added<Accented>>,
-    // A text has a ground too, which stays clear.
-    mut fills: Query<&mut BackgroundColor, (With<Accented>, Without<Text>)>,
-    mut texts: Query<&mut TextColor, With<Accented>>,
-) {
-    if !seat.is_changed() && fresh.is_empty() {
-        return;
-    }
-    let accent = accent(&seat);
-    for mut fill in &mut fills {
-        fill.0 = accent;
-    }
-    for mut text in &mut texts {
-        text.0 = accent;
-    }
-    if let Some(mut loading) = materials.get_mut(&parts.loading) {
-        loading.base_color = accent;
+    for (number, mut ink) in &mut numbers {
+        let mut mates = crew.iter().filter(|(player, _)| player.seat == number.0);
+        let runs = mates.any(|(_, wreck)| !wreck);
+        ink.set_if_neq(TextColor(if runs {
+            theme::TEXT_ON_ACCENT
+        } else {
+            theme::TEXT_DIM
+        }));
     }
 }
 
@@ -768,7 +792,6 @@ fn shield_gauge(shield: &Shield, cooldown: f32, accent: Color) -> (f32, Color, S
 
 fn weapons(
     player: Query<(&Tank, &Gun, &Shield), With<Own>>,
-    seat: Res<LocalSeat>,
     mut pips: Query<(&Pip, &mut BackgroundColor, &mut BorderColor, &mut Node)>,
     mut bars: Query<(&Bar, &mut BackgroundColor, &mut Node), Without<Pip>>,
     mut readouts: Query<(&Readout, &mut Text)>,
@@ -789,7 +812,7 @@ fn weapons(
     }
     let has_shield = genome.level(Stat::Shield) > 0;
     let cooldown = genome.shield_cooldown().unwrap_or(1.0);
-    let (fill, shield_color, state) = shield_gauge(shield, cooldown, accent(&seat));
+    let (fill, shield_color, state) = shield_gauge(shield, cooldown, theme::ACCENT);
     for (bar, mut color, mut node) in &mut bars {
         match bar {
             Bar::Reload => node.width = percent(100.0 * gun.reload / genome.reload_time()),
@@ -917,6 +940,43 @@ fn mark_enemies(
         node.display = Display::Flex;
         node.left = px(edge.x / ui_scale.0);
         node.top = px(edge.y / ui_scale.0);
+    }
+}
+
+/// Where the tag of a tank goes on the screen: over the tank, by so many meters of ground,
+/// and centered on it. `meter` is how long a meter of ground is on the screen there.
+fn tag_place(tank: Vec2, meter: f32) -> Vec2 {
+    tank - Vec2::new(TAG_WIDTH / 2.0, TAG_RISE * meter)
+}
+
+/// Among several players, puts over each of their tanks the number of its player: the tanks
+/// all have one color, and a wreck keeps its tag.
+fn tag_players(
+    run: Option<Res<Run>>,
+    ui_scale: Res<UiScale>,
+    camera: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
+    tanks: Query<(&Player, &GlobalTransform)>,
+    mut tags: Query<(&PlayerTag, &mut Node)>,
+) {
+    let (camera, camera_transform) = *camera;
+    let several = run.is_some_and(|run| !run.solo);
+    for (tag, mut node) in &mut tags {
+        let tank = tanks.iter().find(|(player, _)| player.seat == tag.0);
+        let place = tank.filter(|_| several).and_then(|(_, tank)| {
+            let middle = tank.translation();
+            // A meter of ground across the screen, at the tank.
+            let aside = middle + camera_transform.rotation() * Vec3::X;
+            let at = camera.world_to_viewport(camera_transform, middle).ok()?;
+            let beside = camera.world_to_viewport(camera_transform, aside).ok()?;
+            Some(tag_place(at, at.distance(beside)))
+        });
+        let Some(place) = place else {
+            node.display = Display::None;
+            continue;
+        };
+        node.display = Display::Flex;
+        node.left = px(place.x / ui_scale.0);
+        node.top = px(place.y / ui_scale.0);
     }
 }
 
@@ -1069,6 +1129,19 @@ fn light_dial(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_tag_stands_over_its_tank_and_names_its_player_by_number() {
+        assert_eq!(short_name(0), "P1");
+        assert_eq!(short_name(3), "P4");
+        // With 36 pixels to the meter, the tag is centered on the tank and well over it.
+        let place = tag_place(Vec2::new(400.0, 300.0), 36.0);
+        assert_eq!(place.x + TAG_WIDTH / 2.0, 400.0);
+        assert!(
+            place.y < 300.0 - 1.3 * 36.0,
+            "the tag would cover the barrel"
+        );
+    }
 
     #[test]
     fn the_arc_of_the_rounds_is_centered_under_the_tank() {
