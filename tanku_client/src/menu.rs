@@ -58,6 +58,8 @@ enum Press {
     Reseed,
     /// In a lobby: the host is shown how players of that kind join.
     Show(Way),
+    /// In a lobby: the host copies what the link for browsers ends with.
+    Copy,
     /// The host ends the run and brings everyone back to the lobby.
     Regroup,
     OpenSettings,
@@ -123,6 +125,18 @@ enum Way {
     Browser,
 }
 
+/// Whether the last copy of the link for browsers reached the clipboard, and the seconds for
+/// which the lobby still says so.
+#[derive(Resource, Default)]
+struct Copied(Option<(bool, f32)>);
+
+/// The words on the button that copies the link for browsers.
+#[derive(Component)]
+struct CopyLabel;
+
+/// Seconds for which the lobby says how a copy went.
+const COPY_SHOWN: f32 = 2.0;
+
 /// The sector a playtest offers to skip to.
 #[derive(Resource)]
 struct Destination(u32);
@@ -153,6 +167,7 @@ pub fn plugin(app: &mut App) {
         .init_resource::<Outcome>()
         .init_resource::<Address>()
         .init_resource::<Way>()
+        .init_resource::<Copied>()
         .insert_resource(Destination(1))
         .add_systems(OnEnter(Screen::Menu), main_menu)
         .add_systems(OnEnter(Screen::Join), join_screen)
@@ -177,7 +192,7 @@ pub fn plugin(app: &mut App) {
                 refresh_pause
                     .run_if(in_state(Overlay::Pause).and_then(resource_exists::<Playtest>)),
                 refresh_settings.run_if(in_state(Overlay::Settings)),
-                lobby_screen.run_if(in_state(Screen::Lobby)),
+                (lobby_screen.run_if(in_state(Screen::Lobby)), show_copy).chain(),
                 list_games.run_if(in_state(Screen::Join)),
                 (show_address, tell_how_it_goes),
                 hover,
@@ -367,6 +382,16 @@ fn row(
 
 /// A small button, for the controls of a row.
 fn small(parent: &mut ChildSpawnerCommands, content: impl Into<String>, width: f32, press: Press) {
+    small_with(
+        parent,
+        theme::text(content, 16.0, theme::TEXT),
+        width,
+        press,
+    );
+}
+
+/// A small button around words of its own, which may change.
+fn small_with(parent: &mut ChildSpawnerCommands, words: impl Bundle, width: f32, press: Press) {
     parent.spawn((
         Button,
         press,
@@ -376,7 +401,7 @@ fn small(parent: &mut ChildSpawnerCommands, content: impl Into<String>, width: f
         },
         BackgroundColor(theme::SURFACE_RAISED),
         BorderColor::all(theme::RULE),
-        children![theme::text(content, 16.0, theme::TEXT)],
+        children![words],
     ));
 }
 
@@ -853,9 +878,53 @@ fn link_ending(code: &str) -> [String; 3] {
     [format!("#{place}/"), first.to_string(), second.to_string()]
 }
 
-/// A line of the lobby that tells how to join, with the button that shows how players of
-/// the other kind do.
-fn way_row(parent: &mut ChildSpawnerCommands, told: impl Bundle, other: Option<(&str, Way)>) {
+/// What the button of the lobby copies: what the link for browsers ends with, mark and all.
+/// It goes after the address of the game's page, or is pasted into that page.
+fn link_end(code: &str) -> String {
+    format!("#{code}")
+}
+
+/// What the button that copies the link says: what it does, or how it just went.
+fn copy_label(copied: &Copied) -> &'static str {
+    match copied.0 {
+        None => "Copy",
+        Some((true, _)) => "Copied",
+        Some((false, _)) => "Not copied",
+    }
+}
+
+/// Puts a text on the clipboard of the system. Says whether it got there: a machine may have
+/// no clipboard that the game can reach.
+fn copy(clipboard: Option<&mut Clipboard>, text: String) -> bool {
+    clipboard.is_some_and(|clipboard| clipboard.set_text(text).is_ok())
+}
+
+/// Says on the button that copies the link how the last copy went, for a moment.
+fn show_copy(
+    time: Res<Time<Real>>,
+    mut copied: ResMut<Copied>,
+    mut labels: Query<&mut Text, With<CopyLabel>>,
+) {
+    if let Some((_, left)) = &mut copied.0 {
+        *left -= time.delta_secs();
+        if *left <= 0.0 {
+            copied.0 = None;
+        }
+    }
+    let wanted = copy_label(&copied);
+    for mut label in &mut labels {
+        if label.0 != wanted {
+            label.0 = wanted.to_string();
+        }
+    }
+}
+
+/// A line of the lobby that tells how to join, with a small button at its end.
+fn told_row(
+    parent: &mut ChildSpawnerCommands,
+    told: impl Bundle,
+    control: impl FnOnce(&mut ChildSpawnerCommands),
+) {
     let row = Node {
         justify_content: JustifyContent::SpaceBetween,
         align_items: AlignItems::Center,
@@ -864,26 +933,36 @@ fn way_row(parent: &mut ChildSpawnerCommands, told: impl Bundle, other: Option<(
     };
     parent.spawn(row).with_children(|row| {
         row.spawn(told);
-        if let Some((name, way)) = other {
-            small(row, name, 150.0, Press::Show(way));
-        }
+        control(row);
     });
 }
 
 /// How others join the game of this machine, in the lobby of its host: the players at a
 /// desktop game, or those in a browser.
-fn ways_to_join(parent: &mut ChildSpawnerCommands, invitation: &Invitation, way: Way) {
+fn ways_to_join(
+    parent: &mut ChildSpawnerCommands,
+    invitation: &Invitation,
+    way: Way,
+    copied: &Copied,
+) {
     let code = invitation.web.as_ref().filter(|_| way == Way::Browser);
     if let (Some(code), Some(port)) = (code, invitation.web_port) {
         let [place, first, second] = link_ending(code);
         section(parent, "Link for a browser");
-        let other = Some(("For a desktop", Way::Desktop));
-        way_row(parent, theme::figure(place, 20.0, theme::TEXT), other);
-        for half in [first, second] {
-            parent.spawn(theme::figure(half, 15.0, theme::TEXT));
-        }
-        let hint = "A player in a browser opens the page of the game with this at the end of \
-                    its address. The log of this game has it too, to copy.";
+        told_row(parent, theme::figure(place, 20.0, theme::TEXT), |row| {
+            small(row, "For a desktop", 150.0, Press::Show(Way::Desktop));
+        });
+        // Nobody types the print: a button copies the lot.
+        told_row(parent, theme::figure(first, 15.0, theme::TEXT), |row| {
+            let words = (
+                CopyLabel,
+                theme::text(copy_label(copied), 16.0, theme::TEXT),
+            );
+            small_with(row, words, 150.0, Press::Copy);
+        });
+        parent.spawn(theme::figure(second, 15.0, theme::TEXT));
+        let hint = "In a browser, it goes at the end of the address of the game's page, or is \
+                    pasted into that page. The log has it too.";
         line(parent, hint, theme::TEXT_DIM);
         let hint = format!(
             "From the internet, your public address goes in place of this one, and UDP port \
@@ -893,24 +972,22 @@ fn ways_to_join(parent: &mut ChildSpawnerCommands, invitation: &Invitation, way:
         return;
     }
     section(parent, "Address");
-    let other = invitation
-        .web
-        .is_some()
-        .then_some(("For a browser", Way::Browser));
+    let other = |row: &mut ChildSpawnerCommands| {
+        if invitation.web.is_some() {
+            small(row, "For a browser", 150.0, Press::Show(Way::Browser));
+        }
+    };
     match &invitation.address {
         Some(address) => {
-            way_row(
-                parent,
-                theme::figure(address.clone(), 24.0, theme::TEXT),
-                other,
-            );
+            let told = theme::figure(address.clone(), 24.0, theme::TEXT);
+            told_row(parent, told, other);
             let hint = "Players on this network find the game on their join screen, or type \
                         this address there.";
             line(parent, hint, theme::TEXT_DIM);
         }
         None => {
             let hint = "This machine has no address on a network.";
-            way_row(parent, theme::text(hint, 17.0, theme::TEXT_DIM), other);
+            told_row(parent, theme::text(hint, 17.0, theme::TEXT_DIM), other);
         }
     }
     line(
@@ -996,7 +1073,7 @@ fn lobby_screen(
     lobbies: Query<Ref<Lobby>>,
     session: Res<Session>,
     seat: Res<LocalSeat>,
-    (invitation, way): (Res<Invitation>, Res<Way>),
+    (invitation, way, copied): (Res<Invitation>, Res<Way>, Res<Copied>),
     options: Res<Options>,
     roots: Query<Entity, With<LobbyRoot>>,
 ) {
@@ -1062,7 +1139,7 @@ fn lobby_screen(
                     }
                 });
                 if host {
-                    ways_to_join(parent, &invitation, *way);
+                    ways_to_join(parent, &invitation, *way, &copied);
                     let start = if lobby.players() > 1 {
                         "Start"
                     } else {
@@ -1435,7 +1512,13 @@ fn press(
     mut destination: ResMut<Destination>,
     (options, run, time): (Res<Options>, Option<Res<Run>>, Res<Time<Real>>),
     (session, mut address, mut notice): (Res<Session>, ResMut<Address>, ResMut<Notice>),
-    (found, mut way): (Res<Found>, ResMut<Way>),
+    (found, mut way, invitation, mut clipboard, mut copied): (
+        Res<Found>,
+        ResMut<Way>,
+        Res<Invitation>,
+        Option<ResMut<Clipboard>>,
+        ResMut<Copied>,
+    ),
     mut lobbies: Query<&mut Lobby>,
     mut requests: MessageWriter<RunRequest>,
     mut session_requests: MessageWriter<SessionRequest>,
@@ -1508,6 +1591,12 @@ fn press(
                 }
             }
             Press::Show(wanted) => *way = wanted,
+            Press::Copy => {
+                if let Some(code) = &invitation.web {
+                    let done = copy(clipboard.as_deref_mut(), link_end(code));
+                    copied.0 = Some((done, COPY_SHOWN));
+                }
+            }
             // The guests follow their host to the lobby.
             Press::Regroup => {
                 requests.write(RunRequest::Abandon);
@@ -1715,9 +1804,23 @@ mod tests {
         let print = "0123456789abcdef".repeat(4);
         let lines = link_ending(&format!("192.168.0.21:28406/{print}"));
         assert_eq!(lines[0], "#192.168.0.21:28406/");
-        // Put end to end, the lines are the end of the link.
+        // Put end to end, the lines are the end of the link, which is what the lobby copies.
         assert_eq!(lines.concat(), format!("#192.168.0.21:28406/{print}"));
+        assert_eq!(
+            lines.concat(),
+            link_end(&format!("192.168.0.21:28406/{print}"))
+        );
         assert!(lines.iter().all(|line| line.len() <= 32));
+    }
+
+    #[test]
+    fn the_button_that_copies_the_link_says_how_the_copy_went() {
+        assert_eq!(copy_label(&Copied(None)), "Copy");
+        assert_eq!(copy_label(&Copied(Some((true, COPY_SHOWN)))), "Copied");
+        assert_eq!(copy_label(&Copied(Some((false, COPY_SHOWN)))), "Not copied");
+        // A machine without a clipboard that the game can reach copies nothing, and the
+        // game says so.
+        assert!(!copy(None, "#192.168.0.21:28406/0123".to_string()));
     }
 
     #[test]

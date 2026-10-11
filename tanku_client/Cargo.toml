@@ -16,8 +16,10 @@ tanku_audio.workspace = true
 tanku_core.workspace = true
 tanku_server.workspace = true
 
-# A desktop build also hosts them, and joins the games of other desktops over UDP.
+# A desktop build also hosts them, and joins the games of other desktops over UDP. A host
+# copies the link for browsers from its lobby, which takes the clipboard of the system.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+bevy = { workspace = true, features = ["system_clipboard"] }
 lightyear = { workspace = true, features = ["server", "udp"] }
 tanku_server = { workspace = true, features = ["net"] }
 
