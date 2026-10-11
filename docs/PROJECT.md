@@ -515,7 +515,9 @@ Impossible mode keeps the first row of this table and gives up the second: its e
 
 ### Camera
 
-The camera looks down at the ground at a steep angle. It shows about 30 m of ground from the bottom to the top of the screen, and more from side to side. Each player has their own view. It follows that player's tank smoothly and shifts a little toward the cursor, so players see further where they aim. Markers at the screen edge point to teammates who are out of view.
+The camera looks down at the ground at a steep angle. It shows about 30 m of ground from the bottom to the top of the screen, and more from side to side. Each player has their own view. It follows that player's tank smoothly and shifts a little toward the cursor, so players see further where they aim.
+
+Among several players, a marker at the screen edge points to each teammate whose tank is out of view. It bears the number of its player, and it is full for a tank that runs and hollow for a wreck, as the squares of the team are on the display. A player whose own tank is a wreck is shown where it lies in the same way. Markers that would hide each other, or the marker of one of the last enemies, stand side by side.
 
 Once a sector has no enemy left and none of their bullets in flight, the view of a player whose tank comes close to its barrier runs up to 10 m ahead of the tank, past the barrier, so that the next group can be studied before crossing. It comes back to the tank once the tank is through.
 
@@ -540,7 +542,7 @@ The interface is the margin of the drawing: ruled panels with square corners, la
 | Main menu | Solo, host, join, achievements, settings, quit |
 | Join | The games of the local network, the address of the host, join. In a browser: how to join by the link of a host, and that link again once it was followed. |
 | Lobby | Players, mode, seed, the address to join at or the link for browsers with a button that copies it (host), start (host) |
-| Heads-up display | Rounds and reload progress, mines left, shield state, sector number, lives (solo), seed and version, a scale and a north arrow, a ruler along the edge of the screen that gives the distance to the barrier, the number of each wave of an arena as it is announced, a caption over a life on the floor (solo), a numbered square for each teammate's state, a tag with the number of each player over their tank and what to do about a wreck (multiplayer). Rounds, reload and mines are also on an arc under the player's own tank. |
+| Heads-up display | Rounds and reload progress, mines left, shield state, sector number, lives (solo), seed and version, a scale and a north arrow, a ruler along the edge of the screen that gives the distance to the barrier, the number of each wave of an arena as it is announced, a caption over a life on the floor (solo), a numbered square for each teammate's state, a tag with the number of each player over their tank, a marker at the screen edge for each teammate out of view and what to do about a wreck (multiplayer). Rounds, reload and mines are also on an arc under the player's own tank. |
 | Menu | Resume, settings, quit, and the seed with its version. In multiplayer, the host goes back to the lobby or closes the game, and the others leave it. |
 | Game over | Sectors cleared, time, kills, seed and version, the tank that ended the run with its class and the list of its parts, retry, new run. In multiplayer, the choice is the host's. |
 | Settings | Controls, video, audio, accessibility |

@@ -99,6 +99,21 @@ struct PlayerTag(u8);
 const TAG_RISE: f32 = 1.9;
 const TAG_WIDTH: f32 = 30.0;
 
+/// The marker at the edge of the screen that points to the tank of the player of a seat while
+/// it is out of view, among several players.
+#[derive(Component)]
+struct MateMarker(u8);
+
+/// How far inside the edge of the screen the middle of a marker stands, in pixels: between the
+/// line that frames the sheet and the panels, and clear of what is written at the bottom of
+/// the screen.
+const EDGE_MARGIN: f32 = 28.0;
+/// The size of the marker of an enemy on screen: a square on its corner.
+const ENEMY_MARKER: f32 = 16.0;
+/// The size of the marker of a teammate on screen, and the least gap between two markers.
+const MATE_MARKER: Vec2 = Vec2::new(TAG_WIDTH, 20.0);
+const MARKER_GAP: f32 = 3.0;
+
 /// How a player is named for short: by the number of their seat.
 pub fn short_name(seat: u8) -> String {
     format!("P{}", seat + 1)
@@ -140,7 +155,7 @@ pub fn plugin(app: &mut App) {
                 status,
                 weapons,
                 toasts,
-                mark_enemies,
+                (mark_enemies, mark_mates).chain(),
                 tag_players,
                 instruments,
                 (attach_dial, turn_dial, light_dial).chain(),
@@ -634,14 +649,35 @@ fn build(mut commands: Commands) {
             children![theme::label(short_name(seat), 12.0, theme::TEXT)],
         ));
     }
+    for seat in 0..MAX_PLAYERS as u8 {
+        let (fill, _) = mate_look(false);
+        commands.spawn((
+            DespawnOnExit(Screen::Playing),
+            MateMarker(seat),
+            Node {
+                position_type: PositionType::Absolute,
+                width: px(MATE_MARKER.x),
+                height: px(MATE_MARKER.y),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                border: UiRect::all(px(1)),
+                display: Display::None,
+                ..default()
+            },
+            BackgroundColor(fill),
+            BorderColor::all(theme::PLAYER),
+            Pickable::IGNORE,
+            children![theme::label(short_name(seat), 12.0, theme::TEXT_ON_ACCENT)],
+        ));
+    }
     for index in 0..MARKED_ENEMIES {
         commands.spawn((
             DespawnOnExit(Screen::Playing),
             EnemyMarker(index),
             Node {
                 position_type: PositionType::Absolute,
-                width: px(16),
-                height: px(16),
+                width: px(ENEMY_MARKER),
+                height: px(ENEMY_MARKER),
                 border: UiRect::all(px(1)),
                 display: Display::None,
                 ..default()
@@ -910,7 +946,7 @@ fn mark_enemies(
     ui_scale: Res<UiScale>,
     camera: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
     enemies: Query<(&Tank, &Position), With<Enemy>>,
-    mut markers: Query<(&EnemyMarker, &mut Node)>,
+    mut markers: Query<(&EnemyMarker, &mut Node), Without<MateMarker>>,
 ) {
     let (camera, camera_transform) = *camera;
     let sector = run.map_or(0, |run| run.sector);
@@ -922,7 +958,6 @@ fn mark_enemies(
     let Some(size) = camera.logical_viewport_size() else {
         return;
     };
-    let margin = Vec2::splat(28.0);
     for (marker, mut node) in &mut markers {
         let on_screen = left
             .get(marker.0)
@@ -934,15 +969,147 @@ fn mark_enemies(
             });
         // An enemy behind the camera has no place on the screen, but that never happens when
         // looking down from above.
-        let Some(at) = on_screen.filter(|at| at.cmplt(Vec2::ZERO).any() || at.cmpgt(size).any())
-        else {
+        let Some(edge) = on_screen.and_then(|at| edge_place(at, size, EDGE_MARGIN)) else {
             node.display = Display::None;
             continue;
         };
-        let edge = at.clamp(margin, size - margin) - Vec2::splat(8.0);
+        let edge = edge - Vec2::splat(ENEMY_MARKER / 2.0);
         node.display = Display::Flex;
         node.left = px(edge.x / ui_scale.0);
         node.top = px(edge.y / ui_scale.0);
+    }
+}
+
+/// Where the marker of something that is out of view goes on the screen: on its edge, a margin
+/// inside, on the side where the thing is. What is in view has no marker.
+fn edge_place(at: Vec2, size: Vec2, margin: f32) -> Option<Vec2> {
+    let out_of_view = at.cmplt(Vec2::ZERO).any() || at.cmpgt(size).any();
+    out_of_view.then(|| at.clamp(Vec2::splat(margin), size - margin))
+}
+
+/// The fill of the marker of a teammate and the color of its number: full for a tank that
+/// runs and hollow for a wreck, as the squares of the team are in the corner of the screen.
+fn mate_look(wreck: bool) -> (Color, Color) {
+    if wreck {
+        (theme::SURFACE, theme::TEXT)
+    } else {
+        (theme::PLAYER, theme::TEXT_ON_ACCENT)
+    }
+}
+
+/// Whether a tank gets a marker when it is out of view. The tanks of the other players do. The
+/// tank of the player at this screen is in view for as long as it runs: it gets one as a
+/// wreck, when the view follows a teammate.
+fn is_marked(own: bool, wreck: bool) -> bool {
+    !own || wreck
+}
+
+/// The way the edge of the screen runs where the marker of something out of view stands:
+/// across for the top and the bottom edges, and down for the two sides.
+fn edge_run(at: Vec2, size: Vec2) -> Vec2 {
+    if at.y < 0.0 || at.y > size.y {
+        Vec2::X
+    } else {
+        Vec2::Y
+    }
+}
+
+/// A place for a marker of this size next to where it wants to be on the edge of the screen,
+/// clear of the markers that stand there already. It steps along the edge, to one side and
+/// to the other, until it is clear, and stays on the screen. Each marker that stands already
+/// is given by its middle and its size.
+fn clear_place(
+    wanted: Vec2,
+    marker: Vec2,
+    along: Vec2,
+    screen: Vec2,
+    taken: &[(Vec2, Vec2)],
+) -> Vec2 {
+    let clear = |at: &Vec2| {
+        taken.iter().all(|(other, size)| {
+            let (apart, room) = ((*at - *other).abs(), (marker + *size) / 2.0 + MARKER_GAP);
+            apart.x >= room.x || apart.y >= room.y
+        })
+    };
+    let on_screen = |at: &Vec2| {
+        let margin = Vec2::splat(EDGE_MARGIN);
+        at.cmpge(margin).all() && at.cmple(screen - margin).all()
+    };
+    let step = (marker * along).length() + MARKER_GAP;
+    let steps = (0..=8).flat_map(|far| [far as f32, -(far as f32)]);
+    let mut places = steps.map(|far| wanted + along * step * far);
+    places
+        .find(|at| on_screen(at) && clear(at))
+        .unwrap_or(wanted)
+}
+
+/// Among several players, points to the tanks of the players that are out of view, each by
+/// the number of its player. Markers that would hide each other, or the marker of an enemy,
+/// stand side by side instead.
+fn mark_mates(
+    run: Option<Res<Run>>,
+    ui_scale: Res<UiScale>,
+    camera: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
+    tanks: Query<(&Player, &Position, Has<Own>, Has<Wreck>)>,
+    enemies: Query<&Node, (With<EnemyMarker>, Without<MateMarker>)>,
+    mut markers: Query<(&MateMarker, &mut Node, &mut BackgroundColor, &Children)>,
+    mut numbers: Query<&mut TextColor>,
+) {
+    let (camera, camera_transform) = *camera;
+    let several = run.is_some_and(|run| !run.solo);
+    // The screen, in the pixels of the interface.
+    let screen = camera.logical_viewport_size().filter(|_| several);
+    let screen = screen.map(|size| size / ui_scale.0);
+    // The markers of the enemies stand where they are.
+    let mut taken: Vec<(Vec2, Vec2)> = Vec::new();
+    for node in enemies.iter().filter(|node| node.display != Display::None) {
+        if let (Val::Px(left), Val::Px(top)) = (node.left, node.top) {
+            // A square on its corner is as wide as it is long from corner to corner.
+            let size = Vec2::splat(ENEMY_MARKER * std::f32::consts::SQRT_2);
+            taken.push((Vec2::new(left, top) + ENEMY_MARKER / 2.0, size));
+        }
+    }
+    // The tanks that are out of view, in the order of their seats, each with its place.
+    let mut marked: Vec<(u8, Vec2, bool)> = Vec::new();
+    let mut seats: Vec<_> = tanks.iter().collect();
+    seats.sort_by_key(|(player, ..)| player.seat);
+    for (player, position, own, wreck) in seats {
+        let Some(screen) = screen.filter(|_| is_marked(own, wreck)) else {
+            continue;
+        };
+        let middle = scene::to_world(position.0, 0.5);
+        let Ok(at) = camera.world_to_viewport(camera_transform, middle) else {
+            continue;
+        };
+        let at = at / ui_scale.0;
+        let Some(edge) = edge_place(at, screen, EDGE_MARGIN) else {
+            continue;
+        };
+        let place = clear_place(edge, MATE_MARKER, edge_run(at, screen), screen, &taken);
+        taken.push((place, MATE_MARKER));
+        marked.push((player.seat, place, wreck));
+    }
+    for (marker, mut node, mut fill, children) in &mut markers {
+        let Some(&(_, place, wreck)) = marked.iter().find(|(seat, ..)| *seat == marker.0) else {
+            if node.display != Display::None {
+                node.display = Display::None;
+            }
+            continue;
+        };
+        let corner = (place - MATE_MARKER / 2.0).round();
+        node.display = Display::Flex;
+        (node.left, node.top) = (px(corner.x), px(corner.y));
+        let (wanted, ink) = mate_look(wreck);
+        if fill.0 != wanted {
+            fill.0 = wanted;
+        }
+        for child in children.iter() {
+            if let Ok(mut color) = numbers.get_mut(child)
+                && color.0 != ink
+            {
+                color.0 = ink;
+            }
+        }
     }
 }
 
@@ -1132,6 +1299,80 @@ fn light_dial(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_marker_stands_at_the_edge_of_the_screen_toward_what_is_out_of_view() {
+        let (size, margin) = (Vec2::new(1920.0, 1080.0), EDGE_MARGIN);
+        // What is in view has no marker, up to the very edge.
+        for at in [
+            Vec2::new(960.0, 540.0),
+            Vec2::new(0.0, 0.0),
+            Vec2::new(1920.0, 1080.0),
+        ] {
+            assert_eq!(edge_place(at, size, margin), None, "{at}");
+        }
+        // What is past an edge has one a margin inside that edge, level with it.
+        let below = edge_place(Vec2::new(700.0, 1500.0), size, margin);
+        assert_eq!(below, Some(Vec2::new(700.0, 1080.0 - margin)));
+        let left = edge_place(Vec2::new(-300.0, 400.0), size, margin);
+        assert_eq!(left, Some(Vec2::new(margin, 400.0)));
+        // Past a corner, it stands in the corner.
+        let corner = edge_place(Vec2::new(2500.0, -90.0), size, margin);
+        assert_eq!(corner, Some(Vec2::new(1920.0 - margin, margin)));
+        // Just past an edge near a corner, it keeps clear of the other edge too.
+        let near = edge_place(Vec2::new(10.0, 1100.0), size, margin);
+        assert_eq!(near, Some(Vec2::new(margin, 1080.0 - margin)));
+    }
+
+    #[test]
+    fn the_marker_of_a_teammate_tells_a_tank_that_runs_from_a_wreck() {
+        // Full for a tank that runs, in the color of the players, and hollow for a wreck.
+        let ((runs, on_full), (wreck, on_hollow)) = (mate_look(false), mate_look(true));
+        assert_eq!(runs, theme::PLAYER);
+        assert_ne!(wreck, runs);
+        assert_ne!(on_full, on_hollow);
+        // Every other player's tank is pointed to, and one's own once it is a wreck.
+        assert!(is_marked(false, false) && is_marked(false, true));
+        assert!(is_marked(true, true) && !is_marked(true, false));
+        // A marker fits between the line that frames the sheet and the panels.
+        let half = MATE_MARKER.y / 2.0;
+        assert!(EDGE_MARGIN - half >= SHEET_EDGE && EDGE_MARGIN + half <= MARGIN);
+    }
+
+    #[test]
+    fn markers_that_would_hide_each_other_stand_side_by_side() {
+        let screen = Vec2::new(1920.0, 1080.0);
+        let (marker, across) = (MATE_MARKER, Vec2::X);
+        let wanted = Vec2::new(900.0, 1080.0 - EDGE_MARGIN);
+        let place = |taken: &[(Vec2, Vec2)]| clear_place(wanted, marker, across, screen, taken);
+        // Alone, a marker stands where its tank is.
+        assert_eq!(place(&[]), wanted);
+        // Three wrecks that lie together behind the player: three markers in a row along
+        // the bottom edge, the first in its place and the others on either side of it.
+        let step = Vec2::X * (marker.x + MARKER_GAP);
+        let mut taken = vec![(wanted, marker)];
+        assert_eq!(place(&taken), wanted + step);
+        taken.push((wanted + step, marker));
+        assert_eq!(place(&taken), wanted - step);
+        // The marker of an enemy in the same direction is left to show too.
+        let diamond = Vec2::splat(ENEMY_MARKER * std::f32::consts::SQRT_2);
+        let beside = place(&[(wanted + Vec2::X * 4.0, diamond)]);
+        assert!((beside.x - wanted.x - 4.0).abs() >= (marker.x + diamond.x) / 2.0);
+        assert_eq!(beside.y, wanted.y);
+        // One that is far enough is no matter.
+        assert_eq!(place(&[(wanted + Vec2::X * 60.0, marker)]), wanted);
+
+        // Along a side of the screen, markers step up and down, and stay on the screen.
+        let corner = Vec2::new(EDGE_MARGIN, 1080.0 - EDGE_MARGIN);
+        let down = clear_place(corner, marker, Vec2::Y, screen, &[(corner, marker)]);
+        assert_eq!(down, corner - Vec2::Y * (marker.y + MARKER_GAP));
+        // The top and the bottom edges run across, and the two sides run down.
+        assert_eq!(edge_run(Vec2::new(500.0, 1300.0), screen), Vec2::X);
+        assert_eq!(edge_run(Vec2::new(500.0, -20.0), screen), Vec2::X);
+        assert_eq!(edge_run(Vec2::new(-20.0, 500.0), screen), Vec2::Y);
+        assert_eq!(edge_run(Vec2::new(2000.0, 500.0), screen), Vec2::Y);
+        assert_eq!(edge_run(Vec2::new(2000.0, 1300.0), screen), Vec2::X);
+    }
 
     #[test]
     fn a_tag_stands_over_its_tank_and_names_its_player_by_number() {
