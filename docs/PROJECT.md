@@ -28,7 +28,7 @@ All numbers in this document are starting values to tune in playtests.
 
 ### Non-goals
 
-Tanku has no player-versus-player mode, no loot, no upgrades during a run, no story and no meta-progression. What players unlock adds ways to play and never makes a run easier.
+Tanku has no player-versus-player mode, no loot, no upgrades during a run, no story and no meta-progression. What players unlock adds ways to play and never makes the ways they had easier.
 
 ### Inspirations
 
@@ -57,6 +57,8 @@ Tanku has no player-versus-player mode, no loot, no upgrades during a run, no st
 | Leader | The tank with the largest share of its group's budget: up to 1.5 times the sector budget |
 | Class | What an enemy favors when it spends its points. Its hue tells it. |
 | Genome | A tank's full list of stat levels |
+| Standard tank | The tank that every player has outside free mode |
+| Garage | The screen where a player spends the points of their tank, in free mode |
 | Hardware | The stats of the tank itself, paid in points |
 | Software | The stats of an enemy's controller (brain and ballistics), paid as a share of its budget |
 | Experience | How well enemy brains execute, which rises with the sector number |
@@ -114,15 +116,17 @@ Enemy groups grow with the number of players (see [Progression](#progression)). 
 
 ### Modes
 
-| Mode or option | Effect | Unlocked by |
+| Mode or option | Effect | Unlocked in solo by |
 |---|---|---|
 | Normal | The rules of this document | Available from the start |
-| Chosen seed | The players type a seed instead of getting a random one. | Reaching sector 10 |
-| Free mode | Each player redistributes the 59 points of the player tank before the run. | Reaching sector 20 |
+| Chosen seed | The solo player, or the host of a game, types the seed of the run instead of getting a random one. | Reaching sector 10 |
+| Free mode | Each player spends the 59 points of their tank as they like before the run (see [Garage](#garage)). | Reaching sector 20 |
 | Hard mode | Sector budgets start at 40 and are capped at 130, all software tiers are available from sector 1, and experience and the cap on Muzzle are those of 20 sectors further. | Reaching sector 30 |
 | Impossible mode | Later. Enemies adapt to the players during the run (see [Impossible mode](#impossible-mode)). | Reaching sector 20 in hard mode |
 
 Normal, hard and impossible are the three difficulties. Chosen seed and free mode are options that combine with any of them.
+
+The locks are solo's. A solo player sets the difficulty and the options of a run on the solo screen, where each one that is locked says what unlocks it. The host of a game of several players sets them in the lobby, and has all of them from the start (see [Lobby](#lobby)).
 
 ### Playtest
 
@@ -227,7 +231,7 @@ A wreck lies in a circle in dashes and keeps the number of its player over it: a
 
 ## Tanks
 
-Every tank, player or enemy, is described by a genome: one level per stat. Levels are bought with the tank's budget of points. Players and enemies follow the same rules with four differences. Player tanks have a fixed appearance, a fixed genome outside free mode, no software stats, because the player is the brain, and no class.
+Every tank, player or enemy, is described by a genome: one level per stat. Levels are bought with the tank's budget of points. Players and enemies follow the same rules with four differences. Player tanks have a color of their own, a fixed genome outside free mode, no software stats, because the player is the brain, and no class.
 
 ### Hardware stats
 
@@ -286,7 +290,7 @@ Prices are right when two enemy tanks of equal budget are about equally dangerou
 
 ### Player tank
 
-The player tank spends 59 points. Free mode lets each player redistribute them over every hardware stat except Turret.
+Outside free mode, every player has the same tank: the standard tank, which spends 59 points.
 
 | Stat | Level | Value | Cost |
 |---|---|---|---|
@@ -299,6 +303,20 @@ The player tank spends 59 points. Free mode lets each player redistribute them o
 | Mines | 2 | 2 mines | 6 |
 | Shield | 2 | 9 s cooldown | 9 |
 | **Total** | | | **59** |
+
+### Garage
+
+In free mode, each player spends the 59 points as they like, in the garage, before the run. The garage lists every hardware stat except Turret, each with its level, what that level gives and its price, and the points that are left. Next to them it shows the tank as it will look, and that drawing follows every change at once (see [Appearance](#appearance)).
+
+A tank from the garage follows the rules of every tank, with three of its own:
+
+1. It needs Engine 1 at least. A tank that can't drive would never come within reach of a barrier, and the barrier would stay locked.
+2. It has no Turret stat: its turret follows the cursor, as on the standard tank.
+3. It can leave points unspent, and it can't spend more than 59.
+
+What holds an enemy back doesn't hold a player. The cap on Muzzle and the stats kept for a class are for enemies only, and Mines and Shield need no brain. A player can have the fastest gun, piercing bullets and three bounces, at their price.
+
+The garage opens on the tank that the player built last, which is the standard tank the first time, and a button brings the standard tank back. In a game of several players, each player has their own garage and their own tank, and the others see that tank in the run as its player built it.
 
 ### Classes
 
@@ -381,7 +399,7 @@ An enemy's model is assembled from its genome, so players can read a tank before
 
 The lenses of the sight and the pointed tip of the barrel are a pale tint of the tank's own hue.
 
-Player tanks have one fixed model in one blue, which no enemy uses. Among several players, a tag over each of their tanks bears the number of its player, from P1 to P4. All tanks have the same size.
+A player's tank is assembled from its genome like an enemy's. The standard tank therefore always looks the same, and a tank from the garage shows what its player bought. Two things never change on a player's tank: its turret keeps the size of the standard tank's, because Turret isn't a stat of a player's tank, and it is always the same blue, which no enemy uses, however many points it spends. Among several players, a tag over each of their tanks bears the number of its player, from P1 to P4. All tanks have the same size.
 
 ## Enemy brains
 
@@ -472,20 +490,45 @@ Every game, solo included, is run by a server that has the final say on everythi
 | Session | How it works |
 |---|---|
 | Solo | The client runs its own server. Nothing goes over the network. |
-| Hosted game | One player's client hosts up to three others. The game is announced on the local network, where the join screen of the others lists it. A game that isn't listed is joined by the address of the host's machine, which the lobby shows. A browser joins by a link, which the lobby shows too. From the internet, the host's UDP port 28405 must be reachable, and port 28406 for browsers. An optional password protects it. |
+| Hosted game | One player's client hosts up to three others. The game is announced on the local network, where the join screen of the others lists it. A game that isn't listed is joined by the address of the host's machine, which the lobby shows. A browser joins by a link, which the lobby shows too. From the internet, the host's UDP port 28405 must be reachable, and port 28406 for browsers. The host can give the game a name and a password. |
 | Official server | Later. Dedicated servers run by the project, which also remove the need to open a port. |
 
 Players in a browser can play solo and join games. They can't host, because a browser can't accept connections.
 
-A browser doesn't join as a desktop game does. It can't look for games on a network, and it only speaks to a game that shows it a certificate. Nobody vouches for the certificate that a hosted game makes for itself, so a browser takes it by its print alone. The host therefore hands out a link: the address of the game's page, followed by where the game is and by the print of its certificate. A page that is opened by that link joins the game at once. What a host hands out stays the same from one game to the next, until the host quits. A browser only joins from a page that it loaded from a secure address, or from the player's own machine.
+### Hosting and joining
 
-Players gather in a lobby, where the host picks the mode and the seed, and the run starts for everyone at once. Nobody can join a run in progress. A host who starts alone plays a solo run, with its lives and its checkpoints.
+A host opens a game from the host screen, and can give it two things first:
 
-The join screen lists the games of the local network, each with the address of its host and its number of players, and a click joins one. A game whose run is in progress, a full one and one of another version are listed for what they are, and can't be joined. A game is gone from the list a few seconds after its host closed it.
+- **A name** of up to 24 characters, which the join screen and the lobby show. A game without a name is listed by the address of its host alone.
+- **A password** of up to 24 characters. A game that has one only lets in a player who types it, whichever way they join. A wrong password is refused, and the player is told so. The password itself never goes over the network, and the game doesn't keep it: the host types it again for the next game.
+
+Both stay as they are until the host closes the game.
+
+The join screen lists the games of the local network, each with its name, the address of its host and its number of players, and a click joins one. A game that has a password is listed as locked, and joining it asks for the password. A game whose run is in progress, a full one and one of another version are listed for what they are, and can't be joined. A game is gone from the list a few seconds after its host closed it.
+
+A browser doesn't join as a desktop game does. It can't look for games on a network, and it only speaks to a game that shows it a certificate. Nobody vouches for the certificate that a hosted game makes for itself, so a browser takes it by its print alone. The host therefore hands out a link: the address of the game's page, followed by where the game is and by the print of its certificate. A page that is opened by that link joins the game at once, or asks for the password first: the link never carries it. What a host hands out stays the same from one game to the next, until the host quits. A browser only joins from a page that it loaded from a secure address, or from the player's own machine.
+
+### Lobby
+
+Players gather in a lobby before a run. Nobody can join a run in progress.
 
 Each player has a seat, which gives them their number, from P1 to P4. Every player's tank is the same blue, and the number tells them apart. The host has the first seat, and the others take the next ones in the order they joined. When a player leaves the lobby, those behind them move up. Seats don't change during a run: they move up again when the next one starts.
 
-When a run is over, the host decides what comes next: the same seed again, a new run, or the lobby. The host can also end a run from the menu, which brings everyone back to the lobby.
+The host sets what the run is, and the others see it. Nothing is locked for a host (see [Modes](#modes)):
+
+| Option | Choices |
+|---|---|
+| Difficulty | Normal or hard, and impossible once it exists |
+| Seed | One that the game draws, and draws again when the host asks, or one that the host types, which makes it a chosen seed |
+| Free mode | On or off. When it is on, each player builds their tank in their own garage (see [Garage](#garage)). |
+
+A run starts once every player has said that they are ready, the host included. It then starts by itself after a countdown of 3 s, which the lobby shows. A player can take their word back at any time, which stops the countdown. Two changes take it back for them: a player who changes their tank in the garage is no longer ready, and when the host changes an option, nobody is. A player who joins isn't ready either.
+
+A host who starts alone plays a solo run, with its lives, its checkpoints and its locks: a host who is alone can't be ready while the difficulty or an option is one that they haven't unlocked for solo.
+
+When a run is over, the host decides what comes next: the same seed again, a new run, or the lobby. The first two start at once for everyone, with the same options and the same tanks: only the lobby asks who is ready. The host can also end a run from the menu, which brings everyone back to the lobby. Nobody is ready there until they say so again.
+
+### Connection and latency
 
 A player who disconnects loses their tank, and later sectors are generated for the remaining number of players. A player whose machine stays silent for 5 s has disconnected. If the host leaves, the run ends, and the other players are back at their main menu. All players must run the same game version: a game of another version doesn't answer.
 
@@ -497,7 +540,7 @@ The game must stay playable up to a round trip of 120 ms. What the host tells co
 
 ## Determinism
 
-Players get a random seed, or type their own once that option is unlocked. A seed is a short text. Together with the game version, it identifies a level.
+Players get a random seed, or type their own: a solo player once that option is unlocked, and a host from the start. A seed is a short text. Together with the game version, it identifies a level.
 
 | What | Depends on | Guarantee |
 |---|---|---|
@@ -540,8 +583,11 @@ The interface is the margin of the drawing: ruled panels with square corners, la
 | Screen | Content |
 |---|---|
 | Main menu | Solo, host, join, achievements, settings, quit |
-| Join | The games of the local network, the address of the host, join. In a browser: how to join by the link of a host, and that link again once it was followed. |
-| Lobby | Players, mode, seed, the address to join at or the link for browsers with a button that copies it (host), start (host) |
+| Solo | Difficulty, seed, free mode with its garage, what unlocks each of them while it is locked, start |
+| Host | The name of the game, its password, open |
+| Join | The games of the local network with their names and which of them have a password, the address of the host, the password of a game that has one, join. In a browser: how to join by the link of a host, and that link again once it was followed. |
+| Lobby | The name of the game, the players with who is ready, the difficulty, the seed and free mode, which the host sets, the garage in free mode, ready and the countdown to the run, the address to join at or the link for browsers with a button that copies it (host) |
+| Garage | Every stat of the player's tank with its level, what it gives and its price, the points that are left, the tank as it will look, back to the standard tank |
 | Heads-up display | Rounds and reload progress, mines left, shield state, sector number, lives (solo), seed and version, a scale and a north arrow, a ruler along the edge of the screen that gives the distance to the barrier, the number of each wave of an arena as it is announced, a caption over a life on the floor (solo), a numbered square for each teammate's state, a tag with the number of each player over their tank, a marker at the screen edge for each teammate out of view and what to do about a wreck (multiplayer). Rounds, reload and mines are also on an arc under the player's own tank. |
 | Menu | Resume, settings, quit, and the seed with its version. In multiplayer, the host goes back to the lobby or closes the game, and the others leave it. |
 | Game over | Sectors cleared, time, kills, seed and version, the tank that ended the run with its class and the list of its parts, retry, new run. In multiplayer, the choice is the host's. |
@@ -561,9 +607,14 @@ Color is never the only carrier of information. Camera shake can be turned off, 
 
 ## Achievements and persistence
 
-Achievements unlock modes, and their conditions are listed under [Modes](#modes). An unlocked mode is another way to play, not an advantage: nothing a player unlocks makes a run easier. An achievement earned by a team is awarded to each member. Runs on a chosen seed don't count toward achievements, so a seed can't be practiced to unlock them.
+Achievements unlock modes and options for solo, and their conditions are listed under [Modes](#modes). A game of several players needs none of them: its host has every difficulty and every option from the start. An unlocked mode is another way to play, not an advantage: nothing a player unlocks makes the next achievement easier to earn. Two kinds of run therefore earn none:
 
-The game stores settings, bindings, unlocks and records on the player's machine, or in the browser's storage on the web. Records keep the best sector reached per mode and number of players, with the seed and the version. The number of players is the one at the start of the run, and each player keeps the record on their own machine.
+- A run on a chosen seed, so that a seed can't be practiced to unlock them.
+- A run in free mode, so that a tank can't be built to unlock them.
+
+Every other run earns them, alone or as a team, and an achievement earned by a team is awarded to each member. A difficulty that is unlocked unlocks the ones below it: a team can reach sector 20 in hard mode before any of its members has unlocked hard mode.
+
+The game stores settings, bindings, unlocks, records and the tank of the garage on the player's machine, or in the browser's storage on the web. It also keeps what a solo player and a host chose last: the difficulty, free mode and the name of the game, and never the password. Records keep the best sector reached for each difficulty and number of players, with the seed and the version, and apart for the runs in free mode. The number of players is the one at the start of the run, and each player keeps the record on their own machine.
 
 ## Technical requirements
 
@@ -589,7 +640,7 @@ Each milestone is playable and answers a question. From M1 on, the game runs as 
 | M3, Genome | Stats, budgets, enemy generation, generated models, brain tiers 0 to 2 | Can players read a tank at a glance? Does equal budget mean equal danger? |
 | M4, Solo loop | Lives, checkpoints, progression curves, heads-up display, main menu, settings, game over, records, basic sound cues, first web build | Is a 20-minute run fun? This is the first real playtest. |
 | M5, Co-op | Lobby, hosting, joining, local discovery, repair, enemy scaling, joining from a browser | Is it fun with friends at 100 ms of latency? |
-| M6, Modes | Achievements, chosen seed, free mode, hard mode, the options of a host for a game of several players with its password, brain tiers 3 and 4 | Do the unlocks give reasons to come back? |
+| M6, Modes | Achievements, the solo screen, chosen seed, free mode with its garage, hard mode, the name, the password and the options of a hosted game, the ready check of its lobby, brain tiers 3 and 4 | Do the unlocks give reasons to come back? |
 | M7, Impossible mode | An experiment: enemies bred from the tanks that did best against the players | Do players feel the enemies adapting to them, and is it fun? |
 
 The question of M5 waits for more players than the project has now. An early access release will bring them. It needs two things that the game doesn't have yet: a way for players to update the game, and a way for them to report bugs and feedback.
@@ -604,3 +655,4 @@ Later, in no fixed order: controller support, local co-op on one screen (split s
 - From about sector 20, some leaders have more points than they can spend: a tank without a brain buys neither mines nor a shield, and most classes buy neither Piercing nor a second bounce. Should a leader's share stop at what its tank can buy, or should what is left over raise its software?
 - How is the game distributed, at which secure address is its page published, and is the name free to use?
 - How do the players of an early access release update the game, and how do they report bugs and feedback?
+- Is a tank from the garage so much better than the standard tank, in the hands of a good player, that free mode becomes the easy way through? Its runs earn no achievement and keep records of their own, which limits the harm. The prices were set for enemies, whose danger also depends on their brains.
