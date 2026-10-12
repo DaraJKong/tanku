@@ -207,6 +207,7 @@ pub fn skirmish(asked: &Asked) -> Report {
                     difficulty: asked.difficulty,
                     player: asked.player,
                     limit: asked.limit,
+                    make: None,
                 });
                 of.push(row);
             }

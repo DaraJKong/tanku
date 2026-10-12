@@ -15,12 +15,15 @@ use tanku_core::{
     modes::Difficulty,
     rules::{BLAST_RADIUS, BULLET_RADIUS, RESPAWN_DELAY, TANK_RADIUS, TICK},
     sim::{
-        Barrier, Bullet, Enemy, Kind, Player, Playtest, Position, Protected, Run, RunRequest,
-        Shield, SimEvent, Tank, TankCommand, Team,
+        Barrier, Bullet, Enemy, Gun, Kind, Motion, Player, Playtest, Position, PreviousPosition,
+        Protected, Run, RunRequest, Shield, SimEvent, Tank, TankCommand, Team,
     },
     stats::Genome,
 };
-use tanku_server::{ServerPlugin, field::Field};
+use tanku_server::{
+    ServerPlugin,
+    field::{Field, InSector},
+};
 
 use crate::reference::{Pilot, Reference, Sight};
 
@@ -33,6 +36,18 @@ pub struct Setup {
     pub player: Reference,
     /// How long the fight lasts at most, in seconds.
     pub limit: f32,
+    /// The tanks that stand in for the group of the sector, if it is not fought as it is.
+    pub make: Option<Make>,
+}
+
+/// Tanks of one make that stand in for the group of a sector, at the places of some of its
+/// tanks and with the brains that the sector gives them.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Make {
+    pub genome: Genome,
+    pub count: usize,
+    /// The first of the tanks of the group whose places they take.
+    pub spot: usize,
 }
 
 /// What a loss is to.
@@ -122,7 +137,48 @@ fn ticks(seconds: f32) -> u32 {
     (seconds / TICK).ceil() as u32
 }
 
-/// Fights the group of a sector of a corridor as the game makes it, from the moment the
+/// Puts tanks of one make in the place of the group of a sector, which waits there.
+fn stand_in(
+    world: &mut World,
+    sector: u32,
+    group: &[(Entity, Genome)],
+    make: Make,
+) -> Vec<(Entity, Genome)> {
+    let stood: Vec<(usize, Vec2, Motion)> = (make.spot..make.spot + make.count)
+        .map(|number| {
+            let (entity, _) = group[number % group.len()];
+            let at = world.get::<Position>(entity).unwrap().0;
+            (number, at, *world.get::<Motion>(entity).unwrap())
+        })
+        .collect();
+    for &(entity, _) in group {
+        world.despawn(entity);
+    }
+    let genome = make.genome;
+    let tanks = stood.into_iter().map(|(number, at, motion)| {
+        let (brain, _) = world.resource::<Field>().brain(sector, number as u32);
+        let tank = Tank {
+            genome,
+            team: Team::Enemies,
+            sector,
+        };
+        let enemy = (
+            tank,
+            Enemy { awake: false },
+            Position(at),
+            PreviousPosition(at),
+            motion,
+            Gun::loaded(&genome),
+            brain,
+            InSector(sector),
+        );
+        (world.spawn(enemy).id(), genome)
+    });
+    tanks.collect()
+}
+
+/// Fights the group of a sector of a corridor as the game makes it, or the tanks that stand
+/// in for it, from the moment the
 /// player crosses its barrier. Sectors that are no corridors hold no fight: an arena sends
 /// its group in waves, which is another trial.
 pub fn corridor(setup: &Setup) -> Option<Outcome> {
@@ -154,12 +210,15 @@ pub fn corridor(setup: &Setup) -> Option<Outcome> {
     }
 
     let world = app.world_mut();
-    let made: Vec<(Entity, Genome)> = world
+    let mut made: Vec<(Entity, Genome)> = world
         .query_filtered::<(Entity, &Tank), With<Enemy>>()
         .iter(world)
         .filter(|(_, tank)| tank.sector == sector)
         .map(|(entity, tank)| (entity, tank.genome))
         .collect();
+    if let Some(make) = setup.make {
+        made = stand_in(world, sector, &made, make);
+    }
     let entity = world
         .query_filtered::<Entity, With<Player>>()
         .single(world)
@@ -298,6 +357,7 @@ mod tests {
             difficulty: Difficulty::Normal,
             player,
             limit: 20.0,
+            make: None,
         }
     }
 
@@ -312,6 +372,29 @@ mod tests {
         let (first, again) = (fights(Reference::Regular), fights(Reference::Regular));
         assert!(!first.is_empty());
         assert_eq!(first, again);
+    }
+
+    #[test]
+    fn tanks_of_one_make_stand_in_for_the_group() {
+        let mut genome = Genome::empty(40);
+        genome.set(tanku_core::stats::Stat::Muzzle, 3);
+        let make = Make {
+            genome,
+            count: 2,
+            spot: 1,
+        };
+        let duels = (5..=8).filter_map(|sector| {
+            corridor(&Setup {
+                make: Some(make),
+                ..setup(sector, Reference::Regular)
+            })
+        });
+        let duels: Vec<Outcome> = duels.collect();
+        assert!(!duels.is_empty());
+        for duel in duels {
+            assert_eq!(duel.tanks(), 2);
+            assert!(duel.group.iter().all(|tank| tank.genome == genome));
+        }
     }
 
     #[test]

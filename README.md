@@ -366,7 +366,7 @@ TANKU_DEV_SCRIPT="tape run.wav; wait 4; start TANKU; wait 4; play 0 1 0 0 4; wai
 
 ## Trials of the balance
 
-The trials measure what the rules of the game make, without anyone at the keyboard, and tell it in reports that can be compared from one change to the next. They are a tool of their own, `tanku_trials`, with a command for each kind of trial. The census counts what the seeds generate, the comparison of the reference players says what the yardstick of every fight is worth, and the skirmishes say what each stretch of sectors costs and which tanks the cost comes from.
+The trials measure what the rules of the game make, without anyone at the keyboard, and tell it in reports that can be compared from one change to the next. They are a tool of their own, `tanku_trials`, with a command for each kind of trial. The census counts what the seeds generate, the comparison of the reference players says what the yardstick of every fight is worth, the skirmishes say what each stretch of sectors costs and which tanks the cost comes from, and the duels say what each level of a stat adds to the danger of a tank next to what it adds to its price.
 
 ### Census
 
@@ -461,6 +461,31 @@ Each table of the tanks tells how many there were, the points that they spent, h
 | `--each` | One row for each sector, in place of one for each stretch of sectors |
 | `--threads N` | How many fights run side by side |
 | `--out DIRECTORY` | Writes the report there as `skirmish.md` and `skirmish.csv` |
+
+### Duels
+
+The duels answer whether a stat is priced right, without a group around the tank. They start from one tank, the base, and try one stat at a time at each of its levels, with everything else as it is. Each of these tanks is fought in the corridors of some sectors, with the brains of those sectors, in the places of tanks of their groups. It takes about a minute on 24 cores:
+
+```bash
+cargo run --release -p tanku_trials -- duels
+```
+
+The player fights three tanks of the same make at once: one alone falls within seconds, and tells little. A stat that needs another raises it, and one that is needed by another lowers that one when it is tried lower: ballistics 3 comes with two bounces, a tank without an engine has no tracks, and a tank whose bullets explode has no ricochet. Each row tells what its tank is made of.
+
+There is a table for the base, one for each stat, and one for the types of bullet. Each row tells the points of the tank, the duels, those that the tank lost in time, how long it lasted, the tanks that the player lost in all, the losses in a duel and in a minute, the losses in a duel for each hundred points of the tank, and the slope from the base to the tank: the losses in a duel that each hundred points of difference made. Prices are right when the slope is about the same for every stat. A row is as sure as it has tanks lost: 25 are known to a fifth, and 100 to a tenth.
+
+| Option | Effect |
+|---|---|
+| `--tank TANK` | The base, as its stats with their levels: `engine=3,tracks=3,turret=3,muzzle=2,magazine=2,loader=3,ricochet=1,brain=2,ballistics=1` unless told. A stat that isn't named is at level 0. |
+| `--stat NAME` | A stat to try. It can be given several times, and every stat is tried without it. |
+| `--sectors 11-14` | The sectors that the duels are fought in: their corridors, and the experience of their brains |
+| `--seeds 60` | How many seeds to fight on |
+| `--count 3` | How many tanks of the make the player fights at once, from 1 to 6 |
+| `--difficulty normal` | `normal` or `hard`, which sets the experience of the brains |
+| `--player regular` | The player who fights |
+| `--limit 40` | How long a duel lasts at most, in seconds |
+| `--threads N` | How many duels run side by side |
+| `--out DIRECTORY` | Writes the report there as `duels.md` and `duels.csv` |
 
 ## Listening to the music
 

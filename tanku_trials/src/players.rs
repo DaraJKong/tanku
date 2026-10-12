@@ -114,6 +114,7 @@ pub fn players(asked: &Asked) -> Report {
                         difficulty: asked.difficulty,
                         player,
                         limit: asked.limit,
+                        make: None,
                     });
                     of.push((stretch, player));
                 }
@@ -202,6 +203,7 @@ mod tests {
                 difficulty: Difficulty::Normal,
                 player: Reference::Regular,
                 limit: 10.0,
+                make: None,
             })
             .collect();
         assert_eq!(run(&setups, 4), run(&setups, 1));

@@ -6,15 +6,19 @@
 //! many seeds. `players` puts the reference players, whose hands hold the players' tank in
 //! every fight of a trial, against the same groups, to tell what that yardstick is worth.
 //! `skirmish` puts one of them against the group of every sector, and tells what each
-//! stretch of sectors costs and which tanks the cost comes from.
+//! stretch of sectors costs and which tanks the cost comes from. `duels` puts one of them
+//! against tanks of one make, with one stat at a time at each of its levels, and tells what
+//! a level adds to the danger of a tank next to what it adds to its price.
 //!
 //! ```text
 //! cargo run --release -p tanku_trials -- census --sectors 1-30 --seeds 300 --out target/trials
 //! cargo run --release -p tanku_trials -- players --sectors 1-30 --seeds 40 --out target/trials
 //! cargo run --release -p tanku_trials -- skirmish --sectors 1-30 --seeds 40 --out target/trials
+//! cargo run --release -p tanku_trials -- duels --stat muzzle --stat loader --out target/trials
 //! ```
 
 mod census;
+mod duels;
 mod fight;
 mod players;
 mod reference;
@@ -24,7 +28,10 @@ mod skirmish;
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
-use tanku_core::modes::Difficulty;
+use tanku_core::{
+    modes::Difficulty,
+    stats::{Genome, Stat},
+};
 
 use crate::{reference::Reference, report::Report};
 
@@ -51,6 +58,10 @@ enum Command {
     /// what each stretch of sectors costs, and which tanks the cost comes from. It takes
     /// seconds on every core of the machine.
     Skirmish(SkirmishArgs),
+    /// Fights tanks of one make, with one stat at a time at each of its levels: what a
+    /// level adds to the danger of a tank, next to what it adds to its price. It takes
+    /// about a minute on every core of the machine.
+    Duels(DuelsArgs),
 }
 
 #[derive(Args)]
@@ -127,6 +138,45 @@ struct SkirmishArgs {
     threads: Option<u32>,
     /// A directory to write the report to, as skirmish.md and skirmish.csv. It is printed
     /// either way.
+    #[arg(long)]
+    out: Option<PathBuf>,
+}
+
+#[derive(Args)]
+struct DuelsArgs {
+    /// The tank that every duel starts from, as its stats with their levels. A stat that
+    /// isn't named is at level 0.
+    #[arg(long, default_value = duels::BASE, value_parser = duels::tank)]
+    tank: Genome,
+    /// A stat to try at each of its levels. It can be given several times, and every stat
+    /// is tried without it.
+    #[arg(long = "stat", value_parser = duels::stat)]
+    stats: Vec<Stat>,
+    /// The sectors that the duels are fought in, as FIRST-LAST: their corridors, and the
+    /// experience of their brains.
+    #[arg(long, default_value = "11-14", value_parser = sectors)]
+    sectors: (u32, u32),
+    /// How many seeds to fight on: TRIAL0, TRIAL1 and so on.
+    #[arg(long, default_value_t = 60, value_parser = clap::value_parser!(u32).range(1..))]
+    seeds: u32,
+    /// How many tanks of the make the player fights at once. One alone falls too fast to
+    /// tell much.
+    #[arg(long, default_value_t = 3, value_parser = clap::value_parser!(u32).range(1..=6))]
+    count: u32,
+    /// The difficulty: normal or hard. It sets the experience of the brains.
+    #[arg(long, default_value = "normal", value_parser = difficulty)]
+    difficulty: Difficulty,
+    /// The player who fights: novice, regular or expert.
+    #[arg(long, default_value = "regular", value_parser = player)]
+    player: Reference,
+    /// How long a duel lasts at most, in seconds.
+    #[arg(long, default_value_t = 40.0)]
+    limit: f32,
+    /// How many duels run side by side: as many as the machine has cores, unless told.
+    #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
+    threads: Option<u32>,
+    /// A directory to write the report to, as duels.md and duels.csv. It is printed either
+    /// way.
     #[arg(long)]
     out: Option<PathBuf>,
 }
@@ -210,6 +260,20 @@ fn main() {
                 threads: threads(args.threads),
             };
             tell(&skirmish::skirmish(&asked), args.out, "skirmish");
+        }
+        Command::Duels(args) => {
+            let asked = duels::Asked {
+                base: args.tank,
+                stats: args.stats,
+                sectors: args.sectors,
+                seeds: args.seeds,
+                count: args.count as usize,
+                difficulty: args.difficulty,
+                player: args.player,
+                limit: args.limit,
+                threads: threads(args.threads),
+            };
+            tell(&duels::duels(&asked), args.out, "duels");
         }
     }
 }
@@ -304,5 +368,37 @@ mod tests {
             (args.player, args.difficulty),
             (Reference::Novice, Difficulty::Hard)
         );
+    }
+
+    #[test]
+    fn the_duels_take_a_tank_and_the_stats_to_try() {
+        let line = [
+            "tanku_trials",
+            "duels",
+            "--tank",
+            "engine=2,brain=1",
+            "--stat",
+            "muzzle",
+            "--stat",
+            "Loader",
+            "--count",
+            "2",
+        ];
+        let Command::Duels(args) = Cli::try_parse_from(line).unwrap().command else {
+            panic!("no duels");
+        };
+        assert_eq!(duels::written(&args.tank), "engine=2,brain=1");
+        assert_eq!(
+            (args.stats, args.count),
+            (vec![Stat::Muzzle, Stat::Loader], 2)
+        );
+        let Command::Duels(args) = Cli::try_parse_from(["tanku_trials", "duels"])
+            .unwrap()
+            .command
+        else {
+            panic!("no duels");
+        };
+        assert_eq!(duels::written(&args.tank), duels::BASE);
+        assert!(Cli::try_parse_from(["tanku_trials", "duels", "--stat", "wheels"]).is_err());
     }
 }
