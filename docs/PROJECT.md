@@ -356,6 +356,9 @@ Each tank then spends its budget, from the seed, its sector and its index in the
 2. Draw its software tiers within the sector's tier caps and what its class allows, and pay their shares. A Ballistics tier whose bounces the tank can't pay for drops until it can.
 3. Buy one level of each stat that its class favors.
 4. Spend the remaining points one level at a time, at random, respecting prerequisites, the sector's cap on Muzzle and what its class allows, until nothing affordable is left. The favorite stats weigh 20 together, and every other stat weighs 1.
+5. If points are left, raise its brain by a tier, or else its ballistics with the bounce that the tier needs, within the sector's tier caps and what its class allows, and go back to step 4: a first brain opens mines and a shield. The tank is done when what is left pays for neither.
+
+The last step is for the tanks that have more points than their hardware can take. A tank without a brain has neither mines nor a shield, and most classes have neither piercing bullets nor a second bounce, which leaves it 89 points of hardware to buy. A leader of a late sector can have more than that, and in hard mode so can the others. What such a tank has left makes it smarter, and what stays unspent is less than a tier costs it.
 
 Specialization matters more than balance. A tank with a few strong stats has a recognizable shape and asks the players a clear question. In a group of six, four or five classes stand side by side.
 
@@ -417,7 +420,7 @@ The sector budget is the measure of an enemy's budget in sector $n$. No tank has
 
 $$B(n) = B_{\max} - (B_{\max} - B_0)\, e^{-(n-1)/15}$$
 
-with $B_0 = 10$ and $B_{\max} = 100$ in normal mode. It rises fast at first and flattens toward the cap. The cap stays below the 135 points of a fully equipped tank, so even late enemies must specialize. Only a leader can have more than the cap, and some leaders then have more points than they can spend (see [Open questions](#open-questions)). Every stat also stops at its own highest level.
+with $B_0 = 10$ and $B_{\max} = 100$ in normal mode. It rises fast at first and flattens toward the cap. The cap stays below the 135 points of a fully equipped tank, so even late enemies must specialize. Only a leader can have more than the cap. A tank that has more points than its hardware can take raises its software with the rest (see [Enemy generation](#enemy-generation)). Every stat also stops at its own highest level.
 
 The number of enemies in a sector is $N(n) = \min(6,\ 1 + \lfloor n/3 \rfloor)$ in solo and $\lceil N(n)\,(1 + 0.5\,(P - 1)) \rceil$ with $P$ players. Arenas hold 1.5 times as many, in three waves (see [Arenas](#arenas)). The group of a sector is set when the sector is loaded, one sector ahead of the players. A sector that is too small for its whole group holds as many enemies as fit. That happens in the smallest arenas: to about one in a thousand with four players, and almost never with fewer.
 
@@ -652,7 +655,6 @@ Later, in no fixed order: controller support, local co-op on one screen (split s
 - How do internet games connect for hosts who can't open a port, before the official server exists?
 - In impossible mode, how exactly are enemies scored, and can brains learn fast enough within one run to matter?
 - Which exact shades do the hues of the classes take? The players' blue and the white of the bullets are settled.
-- From about sector 20, some leaders have more points than they can spend: a tank without a brain buys neither mines nor a shield, and most classes buy neither Piercing nor a second bounce. Should a leader's share stop at what its tank can buy, or should what is left over raise its software?
 - How is the game distributed, at which secure address is its page published, and is the name free to use?
 - How do the players of an early access release update the game, and how do they report bugs and feedback?
 - Is a tank from the garage so much better than the standard tank, in the hands of a good player, that free mode becomes the easy way through? Its runs earn no achievement and keep records of their own, which limits the harm. The prices were set for enemies, whose danger also depends on their brains. The check comes before the garage is built: a playtest that takes its tank from the command line, and the same seed played with the standard tank and with two or three extreme ones.
