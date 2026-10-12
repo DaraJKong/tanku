@@ -18,6 +18,7 @@ Co-op has been played by two players. With three or four, it is checked by tests
 | `tanku_client` | The game: rendering, input, interface and sound |
 | `tanku_audio` | The sound that the game computes: the music and the waveforms of the sound cues, which the client plays |
 | `music_editor` | A window that changes the music: it opens the file of the piece, plays it as the game does and saves it. The game doesn't need it. |
+| `tanku_trials` | The trials of the balance: a tool that counts and measures what the rules make, and tells it in reports. The game doesn't need it. |
 
 ## Playing
 
@@ -362,6 +363,40 @@ The command `tape` keeps the music that the run would have played from there on.
 ```bash
 TANKU_DEV_SCRIPT="tape run.wav; wait 4; start TANKU; wait 4; play 0 1 0 0 4; wait 8; clear; wait 8; quit" cargo run -p tanku_client
 ```
+
+## Trials of the balance
+
+The trials measure what the rules of the game make, without anyone at the keyboard, and tell it in reports that can be compared from one change to the next. They are a tool of their own, `tanku_trials`, with a command for each kind of trial. The census is the first one, and the only one so far.
+
+### Census
+
+The census fights nothing. It draws the corridor and the groups of many seeds as the game does, and counts what each stretch of sectors holds. It takes seconds:
+
+```bash
+cargo run --release -p tanku_trials -- census
+```
+
+| Table | What it counts |
+|---|---|
+| Levers | What the progression gives each sector: the budget, the tanks of a group, the highest tiers of software, the fastest gun, the reaction and the aiming error of the brains, the terrain |
+| Groups | The tanks and the points of a group, how the points are shared, what its leader has |
+| Classes | The share of each class, and the points that its tanks spend |
+| Classes that show | The share of the tanks of a class that have every stat that their color announces |
+| Bullets | The types of bullet that fly, the groups that hold a special one, the bounces and the speeds |
+| Software | The tiers of brain and of ballistics |
+| Hardware | The tanks that can't move, the speeds, the magazines, the mines and the shields |
+| Terrain | The floor of a corridor, its blocks and its crates as the seeds draw them |
+
+| Option | Effect |
+|---|---|
+| `--sectors 1-50` | The sectors to count |
+| `--seeds 200` | How many seeds to count them on: `CENSUS0`, `CENSUS1` and so on, which the game takes too |
+| `--players 1` | The number of players that the groups are made for, from 1 to 4 |
+| `--difficulty normal` | `normal` or `hard` |
+| `--each` | One row for each sector, in place of one for each stretch of sectors |
+| `--out DIRECTORY` | Writes the report there as `census.md` and `census.csv`. It is printed either way. |
+
+The CSV file holds one cell on each line, with its table, its row and its column, for whatever compares two reports. The same command gives the same report.
 
 ## Listening to the music
 

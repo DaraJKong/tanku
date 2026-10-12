@@ -1,0 +1,12 @@
+[package]
+name = "tanku_trials"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+clap.workspace = true
+tanku_core.workspace = true

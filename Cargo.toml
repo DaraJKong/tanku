@@ -1,5 +1,12 @@
 [workspace]
-members = ["music_editor", "tanku_audio", "tanku_client", "tanku_core", "tanku_server"]
+members = [
+    "music_editor",
+    "tanku_audio",
+    "tanku_client",
+    "tanku_core",
+    "tanku_server",
+    "tanku_trials",
+]
 resolver = "3"
 
 [workspace.package]
@@ -31,8 +38,8 @@ web-sys = "0.3"
 
 criterion = "0.8"
 
-# Approved, to add back when the client gets its headless mode for benchmarks:
-# clap = { version = "4.6", features = ["derive"] }
+# Reads the command line of the trials.
+clap = { version = "4.6", features = ["derive"] }
 
 # Bevy systems take many parameters and queries have long types by nature.
 [workspace.lints.clippy]
