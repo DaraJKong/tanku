@@ -366,7 +366,7 @@ TANKU_DEV_SCRIPT="tape run.wav; wait 4; start TANKU; wait 4; play 0 1 0 0 4; wai
 
 ## Trials of the balance
 
-The trials measure what the rules of the game make, without anyone at the keyboard, and tell it in reports that can be compared from one change to the next. They are a tool of their own, `tanku_trials`, with a command for each kind of trial. The census counts what the seeds generate, the comparison of the reference players says what the yardstick of every fight is worth, the skirmishes say what each stretch of sectors costs and which tanks the cost comes from, the duels say what each level of a stat adds to the danger of a tank next to what it adds to its price, and the trial of the classes draws the curve of the danger of each class over its points. A comparison tells what a change to the game moved between two reports.
+The trials measure what the rules of the game make, without anyone at the keyboard, and tell it in reports that can be compared from one change to the next. They are a tool of their own, `tanku_trials`, with a command for each kind of trial. The census counts what the seeds generate, the comparison of the reference players says what the yardstick of every fight is worth, the skirmishes say what each stretch of sectors costs and which tanks the cost comes from, the duels say what each level of a stat adds to the danger of a tank next to what it adds to its price, and the trial of the classes draws the curve of the danger of each class over its points, and the runs say how far a player gets with three lives. A comparison tells what a change to the game moved between two reports.
 
 ### Census
 
@@ -508,6 +508,35 @@ Every table has a row for each class and a column for each budget: the losses of
 | `--limit 40` | How long a fight lasts at most, in seconds |
 | `--threads N` | How many fights run side by side |
 | `--out DIRECTORY` | Writes the report there as `classes.md` and `classes.csv` |
+
+### Runs
+
+The runs are whole runs of a single player: from the start bay, with three lives, the checkpoints, the arenas with their waves and the lives that they leave, until the last life is lost. Here the tank of the reference player is destroyed as any other. It takes about a minute on 24 cores:
+
+```bash
+cargo run --release -p tanku_trials -- runs
+```
+
+The player fights and doesn't drive the corridor: once a sector is cleared, the tank is put through its barrier, over the life of an arena if one is missing. The length of a run is therefore the time of its fights, and the drive between them is an estimate, the way from one barrier to the next in a straight line at the speed of the standard tank. A run whose fight lasts longer than the patience of the trial is stopped and counted apart: it is mostly a lone ace that retreats from a player who doesn't corner it, and its score is then a lower bound.
+
+| Table | What it tells |
+|---|---|
+| Runs | For each player: the sectors cleared, as a mean, at five points of their spread and at best, how the runs ended, and the median of their length |
+| Sectors cleared | The runs that cleared sectors 5, 10, 15, 20, 30, 40 and 50, among them the four that unlock something |
+| Where the tanks are lost | For each stretch of sectors: the sectors entered, the tanks lost, and the runs that ended there |
+| Corridors and arenas | The tanks lost for each sector entered, by the kind of the sector |
+| What destroyed the player | The tanks lost, by the weapon and the type of bullet |
+| Whose doing it was | The tanks lost, by the class of the enemy behind it |
+
+| Option | Effect |
+|---|---|
+| `--seeds 100` | How many seeds to play: `TRIAL0`, `TRIAL1` and so on |
+| `--difficulty normal` | `normal` or `hard` |
+| `--player NAME` | A player to play them. It can be given several times, and all three play without it. |
+| `--last 50` | The sector at which a run is stopped if it gets there |
+| `--patience 180` | How long a fight may last, in seconds, before its run is stopped |
+| `--threads N` | How many runs go side by side |
+| `--out DIRECTORY` | Writes the report there as `runs.md` and `runs.csv` |
 
 ### Comparing two reports
 

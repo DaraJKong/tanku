@@ -10,7 +10,8 @@
 //! against tanks of one make, with one stat at a time at each of its levels, and tells what
 //! a level adds to the danger of a tank next to what it adds to its price. `classes` puts
 //! one of them against the tanks of each class alone, made as the game makes them with a
-//! budget that grows. `compare` tells what changed between two reports of the same trial.
+//! budget that grows. `runs` plays whole runs, with their lives, their checkpoints and their
+//! arenas, and tells how far each player gets. `compare` tells what changed between two reports of the same trial.
 //!
 //! ```text
 //! cargo run --release -p tanku_trials -- census --sectors 1-30 --seeds 300 --out target/trials
@@ -18,6 +19,7 @@
 //! cargo run --release -p tanku_trials -- skirmish --sectors 1-30 --seeds 40 --out target/trials
 //! cargo run --release -p tanku_trials -- duels --stat muzzle --stat loader --out target/trials
 //! cargo run --release -p tanku_trials -- classes --budgets 20,40,60,80,100,120 --out target/trials
+//! cargo run --release -p tanku_trials -- runs --seeds 100 --out target/trials
 //! cargo run --release -p tanku_trials -- compare before/skirmish.csv after/skirmish.csv
 //! ```
 
@@ -29,6 +31,7 @@ mod fight;
 mod players;
 mod reference;
 mod report;
+mod runs;
 mod skirmish;
 
 use std::path::PathBuf;
@@ -72,6 +75,10 @@ enum Command {
     /// that grows: the curve of the danger of a class over its points. It takes about a
     /// minute on every core of the machine.
     Classes(ClassesArgs),
+    /// Plays whole runs of a single player, with the lives, the checkpoints and the arenas
+    /// of the game: how far each reference player gets, where the tanks are lost and to
+    /// what. It takes minutes on every core of the machine.
+    Runs(RunsArgs),
     /// Tells what changed between two reports of the same trial, from their CSV files.
     Compare(CompareArgs),
 }
@@ -227,6 +234,34 @@ struct ClassesArgs {
 }
 
 #[derive(Args)]
+struct RunsArgs {
+    /// How many seeds to play: TRIAL0, TRIAL1 and so on, which the game takes too.
+    #[arg(long, default_value_t = 100, value_parser = clap::value_parser!(u32).range(1..))]
+    seeds: u32,
+    /// The difficulty: normal or hard.
+    #[arg(long, default_value = "normal", value_parser = difficulty)]
+    difficulty: Difficulty,
+    /// A player to play them: novice, regular or expert. It can be given several times,
+    /// and all three play without it.
+    #[arg(long = "player", value_parser = player)]
+    players: Vec<Reference>,
+    /// The sector at which a run is stopped if it gets there.
+    #[arg(long, default_value_t = 50, value_parser = clap::value_parser!(u32).range(1..=500))]
+    last: u32,
+    /// How long a player may stay in a sector without clearing it or falling, in seconds.
+    /// A run that does is stopped.
+    #[arg(long, default_value_t = 180.0)]
+    patience: f32,
+    /// How many runs go side by side: as many as the machine has cores, unless told.
+    #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
+    threads: Option<u32>,
+    /// A directory to write the report to, as runs.md and runs.csv. It is printed either
+    /// way.
+    #[arg(long)]
+    out: Option<PathBuf>,
+}
+
+#[derive(Args)]
 struct CompareArgs {
     /// The CSV file of the report from before the change.
     before: PathBuf,
@@ -351,6 +386,20 @@ fn main() {
                 threads: threads(args.threads),
             };
             tell(&classes::classes(&asked), args.out, "classes");
+        }
+        Command::Runs(args) => {
+            let asked = runs::Asked {
+                seeds: args.seeds,
+                difficulty: args.difficulty,
+                players: match args.players.is_empty() {
+                    true => Reference::ALL.to_vec(),
+                    false => args.players,
+                },
+                last: args.last,
+                patience: args.patience,
+                threads: threads(args.threads),
+            };
+            tell(&runs::runs(&asked), args.out, "runs");
         }
         Command::Compare(args) => {
             let asked = compare::Asked {
@@ -518,5 +567,19 @@ mod tests {
             (10.0, vec!["Sectors".to_string()])
         );
         assert!(Cli::try_parse_from(["tanku_trials", "compare", "a.csv"]).is_err());
+    }
+
+    #[test]
+    fn the_runs_are_played_by_every_player_unless_some_are_named() {
+        let Command::Runs(args) = Cli::try_parse_from(["tanku_trials", "runs"])
+            .unwrap()
+            .command
+        else {
+            panic!("no runs");
+        };
+        assert!(args.players.is_empty());
+        assert_eq!((args.seeds, args.last, args.patience), (100, 50, 180.0));
+        let line = ["tanku_trials", "runs", "--player", "regular", "--last", "0"];
+        assert!(Cli::try_parse_from(line).is_err());
     }
 }

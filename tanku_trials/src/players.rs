@@ -38,26 +38,37 @@ pub fn seed_text(number: u32) -> String {
     format!("TRIAL{number}")
 }
 
-/// Runs fights side by side, and gives their outcomes in the order of the fights. A fight
-/// depends on nothing but what it is, so the order they run in changes nothing.
-pub fn run(setups: &[Setup], threads: usize) -> Vec<Option<Outcome>> {
+/// Does one thing for each of some items, many side by side, and gives what came of each in
+/// the order of the items. Each depends on nothing but its item, so the order they are done
+/// in changes nothing.
+pub fn side_by_side<Item: Sync, Done: Send>(
+    items: &[Item],
+    threads: usize,
+    work: impl Fn(&Item) -> Done + Sync,
+) -> Vec<Done> {
     let next = AtomicUsize::new(0);
-    let done = Mutex::new(vec![None; setups.len()]);
+    let done: Mutex<Vec<Option<Done>>> = Mutex::new(items.iter().map(|_| None).collect());
     thread::scope(|scope| {
-        for _ in 0..threads.clamp(1, setups.len().max(1)) {
+        for _ in 0..threads.clamp(1, items.len().max(1)) {
             scope.spawn(|| {
                 loop {
                     let number = next.fetch_add(1, Ordering::Relaxed);
-                    let Some(setup) = setups.get(number) else {
+                    let Some(item) = items.get(number) else {
                         break;
                     };
-                    let outcome = fight::corridor(setup);
-                    done.lock().unwrap()[number] = outcome;
+                    let made = work(item);
+                    done.lock().unwrap()[number] = Some(made);
                 }
             });
         }
     });
-    done.into_inner().unwrap()
+    let done = done.into_inner().unwrap();
+    done.into_iter().map(Option::unwrap).collect()
+}
+
+/// Runs fights side by side, and gives their outcomes in the order of the fights.
+pub fn run(setups: &[Setup], threads: usize) -> Vec<Option<Outcome>> {
+    side_by_side(setups, threads, fight::corridor)
 }
 
 /// A number with so many decimals, or a dash where there is nothing to divide by.

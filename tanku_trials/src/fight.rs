@@ -123,16 +123,16 @@ impl Outcome {
     }
 }
 
-fn tick(app: &mut App) {
+pub fn tick(app: &mut App) {
     app.world_mut().run_schedule(FixedUpdate);
 }
 
-fn events(app: &mut App) -> Vec<SimEvent> {
+pub fn events(app: &mut App) -> Vec<SimEvent> {
     let mut events = app.world_mut().resource_mut::<Messages<SimEvent>>();
     events.drain().collect()
 }
 
-fn ticks(seconds: f32) -> u32 {
+pub fn ticks(seconds: f32) -> u32 {
     (seconds / TICK).ceil() as u32
 }
 
