@@ -28,8 +28,9 @@ use crate::{
 
 /// Seconds a message stays on screen.
 const TOAST_TIME: f32 = 2.5;
-/// The last seconds of a lull of arena mode that a message counts down.
-const LULL_COUNTED: u8 = 3;
+/// The last seconds of a lull of arena mode that a message counts down. The first one is left
+/// to the message that says that a group is cleared.
+const LULL_COUNTED: u8 = 2;
 /// Markers point to the last enemies of a sector when this many remain, or fewer.
 const MARKED_ENEMIES: usize = 2;
 /// Distance between the panels and the edge of the screen, and between that edge and the
@@ -1633,7 +1634,7 @@ mod tests {
         assert_eq!(told(&run(false, 7, None)), "SECTOR 7");
         // In arena mode, the group that is on. During a lull, the one that comes next: the
         // first one when the run starts.
-        assert_eq!(told(&run(true, 0, Some(5))), "NEXT GROUP 1");
+        assert_eq!(told(&run(true, 0, Some(3))), "NEXT GROUP 1");
         assert_eq!(told(&run(true, 1, None)), "GROUP 1");
         assert_eq!(told(&run(true, 7, Some(2))), "NEXT GROUP 8");
         assert_eq!(told(&run(true, 8, None)), "GROUP 8");
@@ -1653,15 +1654,15 @@ mod tests {
             "Group 8 - wave 1 of 2"
         );
 
-        // The last seconds of a lull are counted down, each of them once.
+        // The last seconds of a lull are counted down, each of them once. Its first second
+        // is left to the message that says that a group is cleared.
         let lull = |left: u8| run(true, 7, Some(left));
-        assert_eq!(lull_words(&lull(5), None), None);
-        assert_eq!(lull_words(&lull(4), Some(5)), None);
+        assert_eq!(lull_words(&lull(3), None), None);
         assert_eq!(
-            lull_words(&lull(3), Some(4)),
-            Some("Group 8 in 3".to_string())
+            lull_words(&lull(2), Some(3)),
+            Some("Group 8 in 2".to_string())
         );
-        assert_eq!(lull_words(&lull(3), Some(3)), None);
+        assert_eq!(lull_words(&lull(2), Some(2)), None);
         assert_eq!(
             lull_words(&lull(1), Some(2)),
             Some("Group 8 in 1".to_string())

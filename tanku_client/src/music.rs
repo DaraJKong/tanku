@@ -339,7 +339,7 @@ mod tests {
         // The lull before the first group, then a group that is on, then the lull after it.
         app.insert_resource(Run {
             arena: true,
-            lull: Some(5),
+            lull: Some(3),
             ..run(0, RunPhase::Playing)
         });
         app.update();
@@ -350,7 +350,7 @@ mod tests {
         app.update();
         assert_eq!(told(&app), (Place::Arena, true, 2));
         app.world_mut().entity_mut(soldier).despawn();
-        app.world_mut().resource_mut::<Run>().lull = Some(5);
+        app.world_mut().resource_mut::<Run>().lull = Some(3);
         app.update();
         assert_eq!(told(&app), (Place::Arena, false, 0));
     }

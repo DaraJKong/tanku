@@ -81,7 +81,7 @@ Arena mode is an option of a run, as free mode is. A single player unlocks it by
 A run in arena mode has no corridor. It is fought in one room, which the seed draws, against one group after another:
 
 - **Groups.** A group is the group of the sector of its number, for as many players. It comes in two waves, each as large as a wave of an arena of the corridor: the second one when the last tank of the first is destroyed. The place of each tank is marked for a second before the tank appears, as in an arena. A tank whose place has a player within 4 m takes another place that has room, so that a wave never waits for a player to move.
-- **The lull and the reserve.** Between two groups, and before the first one, there is a lull of 5 s. The tanks that have not come yet wait in reserve south of the room, as outlines in dashes with every part that tells a stat, so that the next group is read as a group is through a barrier. A tank leaves the reserve when its place in the room is marked: during a fight, the reserve holds the second wave.
+- **The lull and the reserve.** Between two groups, and before the first one, there is a lull of 3 s. The tanks that have not come yet wait in reserve south of the room, as outlines in dashes with every part that tells a stat, so that the next group is read as a group is through a barrier. A tank leaves the reserve when its place in the room is marked: during a fight, the reserve holds the second wave.
 - **The room.** It is laid out anew for each group, with the cover and the crates of the sector of that number. The place of each block and of each crate is inked in on the floor for 2 s first, and one that has a tank or a mine in its place waits. The marks that a fight left on the floor go with the old layout.
 - **Lives.** A single player gets a life back for every fifth group that is cleared, up to three. A tank that is destroyed comes back in the middle of the room, and what was left of the group goes back into reserve and comes again. Several players repair each other, as in the corridor.
 - **The view** stays on the room: on a wide screen, all of it and the reserve show at once.
@@ -317,7 +317,7 @@ TANKU_DEV_SCRIPT="start TANKU; wait 1; warp 12; wait 1; peek 0; wait 1; shot sec
 A run starts in arena mode with `arena` after the difficulty. There, `warp 14` goes to the lull before group 15, and `clear` destroys the tanks that are in the room:
 
 ```bash
-TANKU_DEV_SCRIPT="start TANKU 1 normal arena; warp 14; wait 2; shot reserve.png; wait 5; shot wave.png; quit" cargo run -p tanku_client
+TANKU_DEV_SCRIPT="start TANKU 1 normal arena; warp 14; wait 2; shot reserve.png; wait 3; shot wave.png; quit" cargo run -p tanku_client
 ```
 
 Two scripted games can play together: one hosts on a port, and the other joins it. A game that hosts on a port of its own takes browsers on the port after it, and the words after the port are the name of the game, as in `host 28999 Friday night`. `password sesame` before it gives the game a password, and `join 127.0.0.1:28999 sesame` joins with one. A script can also go through the menus as a player does: `press` presses a button by its label, `type` writes a text and `key` presses `enter`, `tab` or `backspace`. Where two rows of a menu hold buttons with the same label, `press` names the row first, as in `press Arena mode: On`.

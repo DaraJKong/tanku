@@ -414,6 +414,13 @@ fn the_room_is_laid_out_anew_between_two_groups() {
         colliders.iter().filter(|c| obstacle(&c.solid)).count()
     };
     assert_eq!(solid(&app), 0);
+    // The tanks of the next group will appear among what is laid out for them.
+    let field = app.world().resource::<Field>();
+    let state = field.room.as_ref().unwrap();
+    assert_eq!((&state.blocks, &state.crates), (&blocks, &crates));
+    let wanted = room.places(2, &blocks, &crates);
+    let next: Vec<Vec2> = state.next.iter().flatten().map(|tank| tank.at).collect();
+    assert_eq!(next, [wanted[0].as_vec2()]);
 
     // A tank stands on one of the places, and a bullet flies over another.
     let own = player(&mut app).unwrap();
@@ -444,14 +451,6 @@ fn the_room_is_laid_out_anew_between_two_groups() {
     tick(&mut app, 2);
     assert_eq!(standing(&mut app).0, centers(&blocks));
     assert!(planned(&mut app).is_empty());
-
-    // The tanks of the next group appear among what was laid out for them.
-    let field = app.world().resource::<Field>();
-    let state = field.room.as_ref().unwrap();
-    assert_eq!((&state.blocks, &state.crates), (&blocks, &crates));
-    let wanted = room.places(2, &blocks, &crates);
-    let next: Vec<Vec2> = state.next.iter().flatten().map(|tank| tank.at).collect();
-    assert_eq!(next, [wanted[0].as_vec2()]);
 }
 
 #[test]

@@ -72,7 +72,7 @@ pub const APPEAR_ROOM: f32 = 4.0;
 pub const ROOM_WAVES: u32 = 2;
 /// In arena mode, the time between the end of a group and the warning of the first wave of
 /// the next one, and the time before the first group of a run.
-pub const LULL: f32 = 5.0;
+pub const LULL: f32 = 3.0;
 /// In arena mode, a single player who is short of a life gets one back for every this many
 /// groups that are cleared.
 pub const LIFE_GROUPS: u32 = 5;
