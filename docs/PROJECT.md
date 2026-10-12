@@ -41,13 +41,17 @@ Tanku has no player-versus-player mode, no loot, no upgrades during a run, no st
 
 | Term | Meaning |
 |---|---|
-| Run | One attempt, from the start bay to game over |
+| Run | One attempt, from its start to game over |
 | Seed | The text that determines a run's map and enemies |
 | North | The direction of progress along the corridor |
 | Sector | One stretch of corridor holding one group of enemies |
 | Barrier | The energy wall that closes the end of a sector |
 | Arena | A wide sector whose enemies come in waves |
-| Wave | One part of the group of an arena. It appears when the part before it is destroyed. |
+| Wave | One part of the group of an arena, or of a group of arena mode. It appears when the part before it is destroyed. |
+| Arena mode | An option of a run: one room in place of the corridor, and one group after another |
+| Room | The place of a run in arena mode: a closed arena that the run never leaves |
+| Lull | In arena mode, the time before a group comes |
+| Reserve | In arena mode, the tanks of a group that have not come yet. They wait outside the room. |
 | Checkpoint | The last sector cleared. A solo player respawns in front of its barrier. |
 | Life | What a solo player loses with their tank. A cleared arena leaves one to pick up. |
 | Wreck | A destroyed player tank, which a teammate can repair |
@@ -66,7 +70,7 @@ Tanku has no player-versus-player mode, no loot, no upgrades during a run, no st
 
 ## Run structure
 
-A run starts in the start bay, an empty sector, and continues until game over. All progress of the run is then lost. Only unlocked modes and records persist. The score is the number of sectors cleared.
+A run starts in the start bay, an empty sector, and continues until game over. All progress of the run is then lost. Only unlocked modes and records persist. The score is the number of sectors cleared. A run in [arena mode](#arena-mode) has neither bay nor corridor, and its score is the number of groups cleared.
 
 ### Sectors and barriers
 
@@ -114,17 +118,34 @@ Multiplayer has no lives and no checkpoints, and an arena leaves nothing on its 
 
 Enemy groups grow with the number of players (see [Progression](#progression)). The map doesn't change.
 
+### Arena mode
+
+A run in arena mode has no corridor. It is fought in one room, a closed arena that the seed draws, against one group after another, without end. What this document says of a run holds there, with what follows in place of sectors and barriers.
+
+**Groups.** The groups come in the order of their numbers. Group $n$ is the group of sector $n$ for as many players: its tanks, their budgets and their brains are those of that sector (see [Progression](#progression)), and it has the number of tanks of a corridor, not the 1.5 times of an arena. It comes in two waves of the same size, give or take one tank, by the rules of an arena: the first wave is announced when the lull is over and the second when the last tank of the first is destroyed, and the place of each tank is marked for 1 s before the tank appears, awake. No tank appears within 4 m of a player's tank. In an arena of the corridor, its mark waits for the player to move. In the room, where nobody could tell why a wave doesn't come, the tank takes another place that has room, and waits only if there is none. A wave is then as large as a wave of an arena of the corridor.
+
+**The lull and the reserve.** A lull of 5 s comes before the first group and after each group that is cleared. The tanks that have not come yet wait in reserve: they stand outside the south wall of the room, as outlines in dashes with every part that tells a stat, and nothing reaches them there. During a lull, the reserve holds the whole next group. During a fight, it holds the wave that has not come. A tank leaves it when its place in the room is marked. The players read a group there as they read one through a barrier, and the places of its tanks are not told before their marks.
+
+**The room.** It is laid out anew for each group. What the first group is fought among stands when the run starts. When a group is cleared, the blocks and the crates that are left go, with the marks that the fight left on the floor, and those of the next group are planned: the place of each is drawn on the floor for 2 s, and the block or the crate stands there once that time is over and no tank, no wreck and no mine is in its place. A bullet that flies there at that moment ends. The room of group $n$ is as bare and as explosive as sector $n$ (see [Progression](#progression)), and the tanks of a group appear at places that are drawn for that group.
+
+**Lives and wrecks.** A single player has three lives, and gets one back for every fifth group that is cleared, never more than three. A tank that is destroyed comes back in the middle of the room 1.5 s later. The room keeps what was done to it, as a sector does: the tanks that were destroyed stay destroyed, the blocks that were destroyed and the crates that went off stay gone, and every bullet and every mine is removed. The tanks that are left go back into reserve, and come again 2 s after the player, after their marks. A lull waits for a player who fell. Several players have wrecks and repairs, as in the corridor.
+
+**Score.** The score is the number of groups cleared. Arena mode has records of its own, and its runs earn no achievement (see [Achievements and persistence](#achievements-and-persistence)).
+
+The second pillar holds there: the reserve is to a group what a barrier is to a sector. What a run in arena mode gives up is the choice of the moment. The next group comes when the lull is over, whether the players are ready or not.
+
 ### Modes
 
 | Mode or option | Effect | Unlocked in solo by |
 |---|---|---|
 | Normal | The rules of this document | Available from the start |
 | Chosen seed | The solo player, or the host of a game, types the seed of the run instead of getting a random one. | Clearing sector 10 |
+| Arena mode | The run is fought in one room, against one group after another (see [Arena mode](#arena-mode)). | Clearing sector 5 |
 | Free mode | Each player spends the 59 points of their tank as they like before the run (see [Garage](#garage)). | Clearing sector 20 |
 | Hard mode | Sector budgets start at 40 and are capped at 130, all software tiers are available from sector 1, and experience and the cap on Muzzle are those of 20 sectors further. | Clearing sector 30 |
 | Impossible mode | Later. Enemies adapt to the players during the run (see [Impossible mode](#impossible-mode)). | Clearing sector 20 in hard mode |
 
-Normal, hard and impossible are the three difficulties. Chosen seed and free mode are options that combine with any of them.
+Normal, hard and impossible are the three difficulties. Chosen seed, arena mode and free mode are options that combine with any of them, and with each other.
 
 The locks are solo's. A solo player sets the difficulty and the options of a run on the solo screen, where each one that is locked says what unlocks it. The host of a game of several players sets them in the lobby, and has all of them from the start (see [Lobby](#lobby)).
 
@@ -133,7 +154,7 @@ The locks are solo's. A solo player sets the difficulty and the options of a run
 A playtest is a way to test the game faster, not a mode for players. It starts with the `--playtest` option on the command line and lets the solo player cheat from the menu in two ways:
 
 - **Infinite lives.** The tank comes back as often as it is destroyed. This is on at the start and can be turned off.
-- **Skipping to a sector.** The player picks any sector and comes back in front of the barrier of the one before it, as if that sector had just been cleared.
+- **Skipping to a sector.** The player picks any sector and comes back in front of the barrier of the one before it, as if that sector had just been cleared. In arena mode, the player picks a group, and the run goes on with the lull before it.
 
 A playtest can also choose its seed without unlocking that option: `--seed` followed by a seed starts every run on it, which brings back a situation that a player reported.
 
@@ -230,6 +251,9 @@ A wreck lies in a circle in dashes and keeps the number of its player over it: a
 | Waves of an arena | 3, the first announced 2 s after the first player has crossed |
 | Mark of a tank that is about to appear | 1 s, once no player's tank is within 4 m of the place |
 | Repair | 2 s within 3 m |
+| Group of arena mode | 2 waves, after a lull of 5 s |
+| Life of arena mode | 1 for every fifth group cleared, and never more than 3 |
+| Block or crate of arena mode | Its place is drawn for 2 s before it stands there |
 
 ## Tanks
 
@@ -416,7 +440,7 @@ Brains are hand-written, one set of behavior per tier. In normal and hard mode t
 
 ## Progression
 
-Difficulty depends only on the sector number $n$, the mode and the number of players $P$. Six things grow with $n$: the enemies' budget, their number, their software tiers, the speed of their fastest bullets, their experience and the harshness of the terrain.
+Difficulty depends only on the sector number $n$, the mode and the number of players $P$. Six things grow with $n$: the enemies' budget, their number, their software tiers, the speed of their fastest bullets, their experience and the harshness of the terrain. In arena mode, the number of a group stands for the sector number.
 
 The sector budget is the measure of an enemy's budget in sector $n$. No tank has more, except the leader of its group, which can have up to 1.5 times as much (see [Enemy generation](#enemy-generation)):
 
@@ -456,6 +480,8 @@ The terrain gets harsher along four levers:
 | Explosive crates per sector | 0–1 | 3–6 |
 | Angled walls | Rare | Common |
 
+The room of arena mode follows the two levers that are about what stands on the floor: for group $n$, it has the crates of sector $n$, and half as much cover again as that sector, because it has more floor. Its walls don't change.
+
 ## Impossible mode
 
 Impossible mode comes later and starts as an experiment. In this mode, enemies adapt to the players during the run. A seed still fixes the map, but it no longer fixes the enemies, which makes this the one mode that sets the third pillar aside.
@@ -473,6 +499,7 @@ The map is an endless corridor that winds its way north. It usually heads north,
 | Corridor | Most sectors | 40–80 m long, 8–20 m wide | Straight or bending |
 | Switchback | Rare | Same as a corridor | Runs south, for one sector at most |
 | Arena | Every 5 to 8 sectors | 32–36 m long, up to 36 m wide | Holds 1.5 times the enemies, in three waves |
+| Room | The whole run, in arena mode only | 36–42 m wide, 22–24 m deep | Closed all around. Holds one group after another, each in two waves. |
 
 | Element | Tanks | Bullets | Blasts |
 |---|---|---|---|
@@ -487,6 +514,8 @@ The generator guarantees five things:
 3. **Net progress.** The corridor never runs more than 60 m south of the northernmost point it has reached.
 4. **A fair start.** Enemies start at least 15 m from the barrier the players come through, and at least 3 m from the barrier that ends their sector. In an arena, these are the places where the tanks of its waves appear.
 5. **Exact geometry.** Every wall vertex lies on a 1 m lattice. This gives walls at 0°, 45° and 90° plus the slopes 1:2 and 2:1, and it keeps generation identical on every platform.
+
+The room of arena mode is one closed sector, small enough to fit on a screen with its reserve. Its corners are cut on the slopes of the lattice, and each of its two long walls has, one time in two, a stretch that stands out into the room. It has no entry and no barrier, so the first and the fourth guarantee read differently there: nothing stands within 5 m of the middle of the room, where the players appear, and every place where a tank appears is reached from there along a path at least 3 m wide, without destroying anything. A tank appears no closer to a player's tank than its mark allows.
 
 ## Multiplayer
 
@@ -527,6 +556,7 @@ The host sets what the run is, and the others see it. Nothing is locked for a ho
 |---|---|
 | Difficulty | Normal or hard, and impossible once it exists |
 | Seed | One that the game draws, and draws again when the host asks, or one that the host types, which makes it a chosen seed |
+| Arena mode | On or off (see [Arena mode](#arena-mode)) |
 | Free mode | On or off. When it is on, each player builds their tank in their own garage (see [Garage](#garage)). |
 
 A run starts once every player has said that they are ready, the host included. A player says so with a button of the lobby, or with Enter. The run then starts by itself after a countdown of 3 s, which the lobby shows. A player can take their word back at any time, which stops the countdown. Two changes take it back for them: a player who changes their tank in the garage is no longer ready, and when the host changes an option, nobody is. A player who joins isn't ready either.
@@ -554,12 +584,13 @@ Players get a random seed, or type their own: a solo player once that option is 
 | What | Depends on | Guarantee |
 |---|---|---|
 | Map: walls, blocks, crates, barriers | Seed, version | Identical on every platform |
+| Room of arena mode: its walls, and the blocks, the crates and the places of the tanks of each group | Seed, version | Identical on every platform |
 | Enemies: number, genomes, positions | Seed, version, mode, number of players | Identical on every platform |
 | Enemy behavior | All of the above and the players' actions | Not guaranteed to repeat |
 | Music: notes, patterns, sounds | Version | Identical on every platform |
 | Effects: particles, camera shake | Nothing | Random |
 
-Solo and co-op players on the same seed therefore drive through the same map, on a desktop or in a browser. A new game version may change what a seed generates, so seeds and records always show their version.
+Solo and co-op players on the same seed therefore drive through the same map, on a desktop or in a browser. A new game version may change what a seed generates, so seeds and records always show their version. In arena mode, a seed gives one room, and group $n$ there is drawn as the group of sector $n$ of that seed is, for as many players and with the number of tanks of a corridor: where that sector is a corridor, it is the same group, tank for tank.
 
 Impossible mode keeps the first row of this table and gives up the second: its enemies depend on how the run has gone.
 
@@ -575,13 +606,15 @@ Once a sector has no enemy left and none of their bullets in flight, the view of
 
 North is at the top of the screen by default. A player can rotate their own view a quarter turn at a time, for instance to put north on the right and see further ahead on a wide screen. The view never rotates on its own, and the movement keys always follow the screen.
 
+In arena mode, the view doesn't follow the tank: it holds on the room and on its reserve, which fit on a wide screen together, so that a single player sees all of the fight and the next group at once. Where the screen is too narrow, the view follows the tank as far as the walls. Among several players, whose groups take two rows in reserve, the view shows the reserve whole unless the tank is far in the north of the room.
+
 ### Visual style
 
 The game is drawn as a technical drawing on a dark sheet, and nothing is lit: a solid shows its height by its darker sides. The floor carries a grid with a line every meter and a heavier one every 5 m. Walls are bands between two pale lines, destructible blocks are hatched and explosive crates are crossed in red. Tanks are assembled from parts by the game, not modeled by hand: the body is in the tank's color, and the other parts are dark and edged in pale lines. Bullets are the brightest objects on screen. They are white whoever fired them, because any bullet can destroy a player's tank, and each casts a patch of light on the floor. A bullet is an elongated shell with one dark stripe for each bounce it has left: it loses a stripe at every bounce, and a plain bullet won't bounce again. The void outside the corridor is empty and dark.
 
-A line in dashes stands for what isn't there. A dormant enemy is the outline of its tank in dashes, flat on the floor and in its color, with every part that tells a stat. A bullet that is destroyed leaves a short burst of white strokes. A life that the player can't take is the outline of itself in dashes.
+A line in dashes stands for what isn't there. A dormant enemy is the outline of its tank in dashes, flat on the floor and in its color, with every part that tells a stat. A bullet that is destroyed leaves a short burst of white strokes. A life that the player can't take is the outline of itself in dashes. A tank in reserve is the outline of its tank in dashes too, on the void outside the room.
 
-The floor of an arena bears two circles in dashes around its middle, in a dull red. The place where a tank is about to appear is marked by a red circle that closes in on it. A life on the floor is a square in the players' blue, like those that count the lives on the display, inside the circle within which it is taken.
+The floor of an arena bears two circles in dashes around its middle, in a dull red. The place where a tank is about to appear is marked by a red circle that closes in on it. A life on the floor is a square in the players' blue, like those that count the lives on the display, inside the circle within which it is taken. The room of arena mode bears no circles: nothing else is there to tell it from. The place of a block or of a crate that is about to stand there is drawn flat on the floor: its outline, with the hatching of the block or the cross of the crate.
 
 A fight leaves marks on the floor: a scalloped outline where a blast went off, a square in dashes where it took a block away, and a cross where a tank was destroyed. They last as long as their sector is loaded.
 
@@ -591,15 +624,15 @@ The interface is the margin of the drawing: ruled panels with square corners, la
 
 | Screen | Content |
 |---|---|
-| Main menu | Solo, host, join, achievements, settings, quit, and the best runs of one difficulty at a time, in the standard tank or in free mode |
-| Solo | Difficulty, seed, free mode with its garage, what unlocks each of them while it is locked, a note when the run will earn no achievement, start |
+| Main menu | Solo, host, join, achievements, settings, quit, and the best runs of one difficulty at a time, in the corridor or in arena mode, in the standard tank or in free mode |
+| Solo | Difficulty, seed, arena mode, free mode with its garage, what unlocks each of them while it is locked, a note when the run will earn no achievement, start |
 | Host | The name of the game, its password, open |
 | Join | The games of the local network with their names and which of them have a password, the address of the host, the password of a game that has one, join. In a browser: how to join by the link of a host, and that link again once it was followed. |
-| Lobby | The name of the game, the players with who is ready, the difficulty, the seed and free mode, which the host sets, the garage in free mode, a note when the run will earn no achievement, ready and the countdown to the run, the address to join at or the link for browsers with a button that copies it (host) |
+| Lobby | The name of the game, the players with who is ready, the difficulty, the seed, arena mode and free mode, which the host sets, the garage in free mode, a note when the run will earn no achievement, ready and the countdown to the run, the address to join at or the link for browsers with a button that copies it (host) |
 | Garage | Every stat of the player's tank with its level, what it gives, its price and the price of one more level, the points that are spent and those that are left, the tank as it will look, back to the standard tank |
-| Heads-up display | Rounds and reload progress, mines left, shield state, sector number, lives (solo), seed, difficulty and version, a note on a run that earns no achievement, a scale and a north arrow, a ruler along the edge of the screen that gives the distance to the barrier, the number of each wave of an arena as it is announced, a caption over a life on the floor (solo), a numbered square for each teammate's state, a tag with the number of each player over their tank, a marker at the screen edge for each teammate out of view and what to do about a wreck (multiplayer). Rounds, reload and mines are also on an arc under the player's own tank. |
+| Heads-up display | Rounds and reload progress, mines left, shield state, sector number, lives (solo), seed, difficulty and version, a note on a run that earns no achievement, a scale and a north arrow, a ruler along the edge of the screen that gives the distance to the barrier, the number of each wave of an arena as it is announced, a caption over a life on the floor (solo), a numbered square for each teammate's state, a tag with the number of each player over their tank, a marker at the screen edge for each teammate out of view and what to do about a wreck (multiplayer). Rounds, reload and mines are also on an arc under the player's own tank. In arena mode: the number of the group in place of the sector number, the next one during a lull with its last three seconds counted down, and no ruler. |
 | Menu | Resume, settings, quit, and the seed with its version and the difficulty of a run that isn't in normal mode. In multiplayer, the host goes back to the lobby or closes the game, and the others leave it. |
-| Game over | Sectors cleared, time, kills, seed and version, the difficulty of a run that isn't in normal mode, the tank that ended the run with its class and the list of its parts, a note on a run that earned no achievement, retry with a note that it will earn none, new run. In multiplayer, the choice is the host's. |
+| Game over | Sectors cleared, or groups in arena mode, time, kills, seed and version, the difficulty of a run that isn't in normal mode, the tank that ended the run with its class and the list of its parts, a note on a run that earned no achievement, retry with a note that it will earn none, new run. In multiplayer, the choice is the host's. |
 | Settings | Controls, video, audio, accessibility |
 
 The game opens in full screen the first time. After that, it opens the way the player left it.
@@ -616,14 +649,15 @@ Color is never the only carrier of information. Camera shake can be turned off, 
 
 ## Achievements and persistence
 
-Achievements unlock modes and options for solo, and their conditions are listed under [Modes](#modes). A game of several players needs none of them: its host has every difficulty and every option from the start. An unlocked mode is another way to play, not an advantage: nothing a player unlocks makes the next achievement easier to earn. Two kinds of run therefore earn none:
+Achievements unlock modes and options for solo, and their conditions are listed under [Modes](#modes). A game of several players needs none of them: its host has every difficulty and every option from the start. An unlocked mode is another way to play, not an advantage: nothing a player unlocks makes the next achievement easier to earn. Three kinds of run therefore earn none:
 
 - A run on a seed that the game didn't just draw for it: a chosen seed, or the seed of an earlier run that is played again. A seed can't be practiced to unlock them.
 - A run in free mode, so that a tank can't be built to unlock them.
+- A run in arena mode. The achievements are earned in the corridor: the groups of a room are fought without the way to them, and are no sectors cleared.
 
-Every other run earns them, alone or as a team, and an achievement earned by a team is awarded to each member. A run that earns none says so on screen: before it starts, while it lasts and when it is over. The game over screen says it of a retry before the player picks one. A difficulty that is unlocked unlocks the ones below it: a team can clear sector 20 in hard mode before any of its members has unlocked hard mode.
+Every other run earns them, alone or as a team, and an achievement earned by a team is awarded to each member. A run that earns none says so on screen: before it starts, while it lasts and when it is over. The game over screen says it of a retry before the player picks one. A difficulty that is unlocked unlocks the ones below it: a team can clear sector 20 in hard mode before any of its members has unlocked hard mode. Arena mode came to the game after the other achievements: a player who has any of them has cleared its sector, and has it.
 
-The game stores settings, bindings, unlocks, records and the tank of the garage on the player's machine, or in the browser's storage on the web. It also keeps what a solo player and a host chose last: the difficulty, free mode and the name of the game, and never the password. Records keep the most sectors cleared for each difficulty and number of players, with the seed and the version, and apart for the runs in free mode. The number of players is the one at the start of the run, and each player keeps the record on their own machine.
+The game stores settings, bindings, unlocks, records and the tank of the garage on the player's machine, or in the browser's storage on the web. It also keeps what a solo player and a host chose last: the difficulty, arena mode, free mode and the name of the game, and never the password. Records keep the most sectors cleared for each difficulty and number of players, with the seed and the version, and apart for the runs in free mode. The runs of arena mode have records of their own in the same way, which keep the most groups cleared. The number of players is the one at the start of the run, and each player keeps the record on their own machine.
 
 ## Technical requirements
 
@@ -654,6 +688,8 @@ Each milestone is playable and answers a question. From M1 on, the game runs as 
 
 The question of M5 waits for more players than the project has now. An early access release will bring them. It needs two things that the game doesn't have yet: a way for players to update the game, and a way for them to report bugs and feedback.
 
+Arena mode came after M6 and is on no milestone: it is an experiment, which answers whether the fights of the game hold a run without the corridor between them. It is also where M7 can be tried first, since what changes there from one group to the next is the enemies alone.
+
 Later, in no fixed order: controller support, local co-op on one screen (split screen, or one camera that follows all players), the full sound pass, interface polish and more options, a performance pass, the official server, new bullet types (splitting, seeking, exploding), and brains that learn (see [Impossible mode](#impossible-mode)).
 
 ## Open questions
@@ -664,3 +700,4 @@ Later, in no fixed order: controller support, local co-op on one screen (split s
 - How is the game distributed, at which secure address is its page published, and is the name free to use?
 - How do the players of an early access release update the game, and how do they report bugs and feedback?
 - Is a tank from the garage so much better than the standard tank, in the hands of a good player, that free mode becomes the easy way through? Its runs earn no achievement and keep records of their own, which limits the harm. The prices were set for enemies, whose danger also depends on their brains. The check comes before the garage is built: a playtest that takes its tank from the command line, and the same seed played with the standard tank and with two or three extreme ones.
+- In arena mode, does a group come in two waves or all at once, and is the room laid out anew between two groups or do its blocks and crates come back a while after they are destroyed? The first of each is the rule, and a playtest has a switch for the other. Is a life for every fifth group enough, and are 5 s of lull enough to read six tanks?
