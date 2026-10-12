@@ -9,6 +9,7 @@ use bevy::{
 };
 use tanku_core::{
     discovery::Standing,
+    modes::Unlock,
     protocol::{Lobby, Member},
     rules::{MAX_PLAYERS, PLAYTEST_LAST_SECTOR, TICK_RATE},
     seed::{self, VERSION},
@@ -24,9 +25,10 @@ use crate::{
     exhibit::{self, Exhibit, Show},
     net, report,
     scene::Paints,
-    session::{Found, Game, Invitation, Notice, Session, SessionRequest},
+    session::{Drawn, Found, Game, Invitation, Notice, Session, SessionRequest},
     settings::{Action, Binding, Records, Settings},
     theme,
+    unlocks::{self, Unlocks},
 };
 
 /// The only mode there is so far, as records name it.
@@ -39,11 +41,19 @@ const EXHIBIT_SPAN: f32 = 7.5;
 const EXHIBIT_PLACE: Vec2 = Vec2::new(3.2, 0.2);
 /// The longest address that the join screen takes.
 const ADDRESS_LENGTH: usize = 64;
+/// The longest seed that a player types: as many letters as the screens have room for.
+const SEED_LENGTH: usize = 10;
 
 /// What a button does.
 #[derive(Component, Clone, Copy, PartialEq)]
 enum Press {
+    /// Opens the screen where a single player sets up a run.
     Solo,
+    /// On that screen: starts the run.
+    Begin,
+    /// On that screen: draws another seed.
+    Redraw,
+    OpenAchievements,
     /// Opens a game on this machine for others to join.
     Host,
     /// Opens the screen where the address of a game is typed.
@@ -99,9 +109,16 @@ struct SettingsRoot;
 #[derive(Component)]
 struct LobbyRoot;
 
+#[derive(Component)]
+struct SoloRoot;
+
 /// The text that shows the address being typed.
 #[derive(Component)]
 struct AddressField;
+
+/// The text that shows the seed of the solo screen, which the player may type.
+#[derive(Component)]
+struct SeedField;
 
 /// The line that says how a game of several players goes: that joining is under way, or why
 /// it failed.
@@ -115,6 +132,14 @@ struct FoundList;
 /// The address that the player types to join a game.
 #[derive(Resource, Default)]
 struct Address(String);
+
+/// What a single player has set for their next run.
+#[derive(Resource, Default)]
+struct Setup {
+    seed: String,
+    /// Whether the player typed the seed. The game drew it otherwise.
+    typed: bool,
+}
 
 /// The players whom the lobby of a host tells how to join: those at a desktop game, or
 /// those in a browser.
@@ -161,18 +186,25 @@ struct Outcome {
 pub fn plugin(app: &mut App) {
     // The player's tank stands behind the menus that come before a run.
     let before_a_run = in_state(Screen::Menu)
+        .or_else(in_state(Screen::Solo))
+        .or_else(in_state(Screen::Achievements))
         .or_else(in_state(Screen::Join))
         .or_else(in_state(Screen::Lobby));
     app.init_resource::<Capture>()
         .init_resource::<Outcome>()
         .init_resource::<Address>()
+        .init_resource::<Setup>()
         .init_resource::<Way>()
         .init_resource::<Copied>()
         .insert_resource(Destination(1))
         .add_systems(OnEnter(Screen::Menu), main_menu)
+        .add_systems(OnEnter(Screen::Solo), draw_a_seed_for_one)
+        .add_systems(OnEnter(Screen::Achievements), achievements_screen)
         .add_systems(OnEnter(Screen::Join), join_screen)
         .add_systems(OnEnter(Screen::Lobby), draw_a_seed)
         .add_systems(OnExit(Screen::Menu), put_the_exhibit_away)
+        .add_systems(OnExit(Screen::Solo), put_the_exhibit_away)
+        .add_systems(OnExit(Screen::Achievements), put_the_exhibit_away)
         .add_systems(OnExit(Screen::Join), put_the_exhibit_away)
         .add_systems(OnExit(Screen::Lobby), put_the_exhibit_away)
         .add_systems(OnEnter(Screen::GameOver), game_over)
@@ -188,7 +220,8 @@ pub fn plugin(app: &mut App) {
         .add_systems(
             Update,
             (
-                (capture_binding, type_address, press, escape).chain(),
+                (capture_binding, type_address, type_seed, press, escape).chain(),
+                (solo_screen.run_if(in_state(Screen::Solo)), show_seed).chain(),
                 refresh_pause
                     .run_if(in_state(Overlay::Pause).and_then(resource_exists::<Playtest>)),
                 refresh_settings.run_if(in_state(Overlay::Settings)),
@@ -342,19 +375,6 @@ fn primary(parent: &mut ChildSpawnerCommands, content: impl Into<String>, press:
     ));
 }
 
-/// A button for something that isn't there yet.
-fn placeholder(parent: &mut ChildSpawnerCommands, content: &str) {
-    parent.spawn((
-        button_node(Val::Auto),
-        BorderColor::all(theme::RULE_DIM),
-        children![theme::title(
-            format!("{content} (later)"),
-            20.0,
-            theme::TEXT_DIM
-        )],
-    ));
-}
-
 /// A label followed by its controls.
 fn row(
     parent: &mut ChildSpawnerCommands,
@@ -503,7 +523,7 @@ fn main_menu(
                     button(parent, "Host a game", Press::Host);
                 }
                 button(parent, "Join a game", Press::OpenJoin);
-                placeholder(parent, "Achievements");
+                button(parent, "Achievements", Press::OpenAchievements);
                 button(parent, "Settings", Press::OpenSettings);
                 // A browser tab is closed by the browser.
                 if cfg!(not(target_arch = "wasm32")) {
@@ -719,6 +739,240 @@ fn tell_how_it_goes(
         }
         shade.set_if_neq(TextColor(color));
     }
+}
+
+/// Draws a seed for the run that a single player sets up.
+fn draw_a_seed_for_one(options: Res<Options>, time: Res<Time<Real>>, mut setup: ResMut<Setup>) {
+    *setup = Setup {
+        seed: new_seed(&options, time.elapsed().as_nanos() as u64),
+        typed: false,
+    };
+}
+
+/// Whether a mode or an option is open to a single player. A playtest has them all.
+fn open(unlocks: &Unlocks, options: &Options, unlock: Unlock) -> bool {
+    options.playtest || unlocks.has(unlock)
+}
+
+/// What a key does to the seed being typed. A seed is made of letters and digits, and reads
+/// the same in small letters and in capitals.
+fn typed_seed(seed: &mut String, key: &Key, text: Option<&str>) {
+    if *key == Key::Backspace {
+        seed.pop();
+        return;
+    }
+    let letters = text.unwrap_or_default().chars();
+    for letter in letters.filter(char::is_ascii_alphanumeric) {
+        if seed.len() < SEED_LENGTH {
+            seed.push(letter.to_ascii_uppercase());
+        }
+    }
+}
+
+/// Starts the run that a single player set up. A run needs a seed.
+fn begin(setup: &Setup, requests: &mut MessageWriter<RunRequest>, screen: &mut NextState<Screen>) {
+    if setup.seed.is_empty() {
+        return;
+    }
+    requests.write(RunRequest::Start {
+        seed: setup.seed.clone(),
+        players: 1,
+        drawn: !setup.typed,
+    });
+    screen.set(Screen::Playing);
+}
+
+/// Takes what the player types on the solo screen: the seed of the run, once typing one is
+/// unlocked. Enter starts the run.
+fn type_seed(
+    mut keys: MessageReader<KeyboardInput>,
+    screen: Res<State<Screen>>,
+    unlocks: Res<Unlocks>,
+    options: Res<Options>,
+    mut setup: ResMut<Setup>,
+    mut requests: MessageWriter<RunRequest>,
+    mut next_screen: ResMut<NextState<Screen>>,
+) {
+    let setting_up = *screen.get() == Screen::Solo;
+    let typing = setting_up && open(&unlocks, &options, Unlock::ChosenSeed);
+    for key in keys.read() {
+        if !setting_up || key.state != ButtonState::Pressed {
+            continue;
+        }
+        if key.logical_key == Key::Enter {
+            begin(&setup, &mut requests, &mut next_screen);
+        } else if typing {
+            // The first key takes the place of a seed that the game drew.
+            let mut seed = String::new();
+            if setup.typed {
+                seed.clone_from(&setup.seed);
+            }
+            typed_seed(&mut seed, &key.logical_key, key.text.as_deref());
+            if seed != setup.seed {
+                *setup = Setup { seed, typed: true };
+            }
+        }
+    }
+}
+
+/// Shows the seed of the solo screen, with a mark that blinks where the next letter goes
+/// when the player may type one.
+fn show_seed(
+    time: Res<Time<Real>>,
+    unlocks: Res<Unlocks>,
+    options: Res<Options>,
+    setup: Res<Setup>,
+    mut fields: Query<&mut Text, With<SeedField>>,
+) {
+    // A seed that is as long as it gets takes no further letter.
+    let typing = open(&unlocks, &options, Unlock::ChosenSeed) && setup.seed.len() < SEED_LENGTH;
+    let blinks = typing && time.elapsed_secs() % 1.0 < 0.5;
+    let wanted = format!("{}{}", setup.seed, if blinks { "_" } else { "" });
+    for mut text in &mut fields {
+        if text.0 != wanted {
+            text.0 = wanted.clone();
+        }
+    }
+}
+
+/// The screen where a single player sets up a run: its difficulty, its seed and its options.
+/// What is locked says what unlocks it.
+fn solo_screen(
+    mut commands: Commands,
+    setup: Res<Setup>,
+    unlocks: Res<Unlocks>,
+    options: Res<Options>,
+    roots: Query<Entity, With<SoloRoot>>,
+) {
+    if !roots.is_empty() && !setup.is_changed() && !unlocks.is_changed() {
+        return;
+    }
+    for root in &roots {
+        commands.entity(root).despawn();
+    }
+    // Neither mode is in the game yet: an unlocked one says so.
+    let waits = |unlock: Unlock| {
+        if open(&unlocks, &options, unlock) {
+            "Not in the game yet".to_string()
+        } else {
+            unlocks::condition(unlock)
+        }
+    };
+    let types = open(&unlocks, &options, Unlock::ChosenSeed);
+    commands
+        .spawn((
+            SoloRoot,
+            DespawnOnExit(Screen::Solo),
+            Node {
+                width: percent(100),
+                height: percent(100),
+                ..default()
+            },
+            GlobalZIndex(10),
+            children![sheet_edge()],
+        ))
+        .with_children(|root| {
+            margin(root, 460.0, |parent| {
+                parent.spawn(theme::label(
+                    "Run of a single player",
+                    13.0,
+                    theme::TEXT_DIM,
+                ));
+                parent.spawn(theme::title("Solo", 84.0, theme::TEXT));
+                section(parent, "Run");
+                row(parent, "Difficulty", |row| {
+                    row.spawn(theme::text("Normal", 16.0, theme::TEXT));
+                });
+                row(parent, "Hard mode", |row| {
+                    row.spawn(theme::text(waits(Unlock::HardMode), 16.0, theme::TEXT_DIM));
+                });
+                row(parent, "Free mode", |row| {
+                    row.spawn(theme::text(waits(Unlock::FreeMode), 16.0, theme::TEXT_DIM));
+                });
+                row(parent, "Seed", |row| {
+                    row.spawn((
+                        Node {
+                            min_width: px(130),
+                            ..default()
+                        },
+                        children![(
+                            SeedField,
+                            theme::code(setup.seed.clone(), 16.0, theme::TEXT)
+                        )],
+                    ));
+                    small(row, "New seed", 110.0, Press::Redraw);
+                });
+                let hint = if types {
+                    "Type a seed of your own, in letters and digits.".to_string()
+                } else {
+                    let unlock = unlocks::condition(Unlock::ChosenSeed).to_lowercase();
+                    format!("To type a seed of your own: {unlock}.")
+                };
+                line(parent, hint, theme::TEXT_DIM);
+                // A playtest earns nothing either way, and says what it is elsewhere.
+                if setup.typed && unlocks.wanting() && !options.playtest {
+                    line(
+                        parent,
+                        "A run on a typed seed earns no achievement.",
+                        theme::TEXT,
+                    );
+                }
+                primary(parent, "Start", Press::Begin);
+                button(parent, "Back", Press::Abandon);
+            });
+        });
+}
+
+/// The screen that lists what runs unlock for solo, and what those of the player have.
+fn achievements_screen(mut commands: Commands, unlocks: Res<Unlocks>) {
+    commands
+        .spawn((
+            DespawnOnExit(Screen::Achievements),
+            Node {
+                width: percent(100),
+                height: percent(100),
+                ..default()
+            },
+            GlobalZIndex(10),
+            children![sheet_edge()],
+        ))
+        .with_children(|root| {
+            margin(root, 460.0, |parent| {
+                parent.spawn(theme::label(
+                    "What a run unlocks for solo",
+                    13.0,
+                    theme::TEXT_DIM,
+                ));
+                parent.spawn(theme::title("Achievements", 64.0, theme::TEXT));
+                for unlock in Unlock::ALL {
+                    let (state, color) = if unlocks.has(unlock) {
+                        ("Unlocked", theme::GOOD)
+                    } else {
+                        ("Locked", theme::TEXT_DIM)
+                    };
+                    parent
+                        .spawn(ruled(Node {
+                            align_self: AlignSelf::Stretch,
+                            flex_direction: FlexDirection::Column,
+                            row_gap: px(2),
+                            padding: UiRect::axes(px(12), px(8)),
+                            ..default()
+                        }))
+                        .with_children(|entry| {
+                            entry.spawn(theme::title(unlocks::name(unlock), 20.0, theme::TEXT));
+                            let condition = unlocks::condition(unlock);
+                            entry.spawn(theme::text(condition, 16.0, theme::TEXT_DIM));
+                            entry.spawn(theme::label(state, 13.0, color));
+                        });
+                }
+                line(
+                    parent,
+                    "A run earns them on a seed that the game drew for it, alone or with others.",
+                    theme::TEXT_DIM,
+                );
+                button(parent, "Back", Press::Abandon);
+            });
+        });
 }
 
 /// The screen where the player types the address of a game to join.
@@ -1008,9 +1262,11 @@ fn draw_a_seed(
     options: Res<Options>,
     time: Res<Time<Real>>,
     mut lobbies: Query<&mut Lobby>,
+    mut drawn: ResMut<Drawn>,
 ) {
     if let (Session::Host, Ok(mut lobby)) = (*session, lobbies.single_mut()) {
         lobby.seed = new_seed(&options, time.elapsed().as_nanos() as u64);
+        drawn.0 = true;
     }
 }
 
@@ -1264,6 +1520,7 @@ fn game_over(
     records: Res<Records>,
     outcome: Res<Outcome>,
     session: Res<Session>,
+    unlocks: Res<Unlocks>,
 ) {
     let (playtest, team) = run
         .as_ref()
@@ -1342,6 +1599,22 @@ fn game_over(
                 } else {
                     line(parent, record_line(&records, team), theme::TEXT_DIM);
                 }
+                for &unlock in &unlocks.new {
+                    let name = unlocks::name(unlock);
+                    line(parent, format!("Unlocked: {name}"), theme::GOOD);
+                }
+                // A player who has everything is not told what they miss.
+                let wanting = unlocks.wanting() && !playtest;
+                if wanting && run.as_ref().is_some_and(|run| !run.earns) {
+                    let why = "This run earned no achievement: its seed was typed or played again.";
+                    line(parent, why, theme::TEXT_DIM);
+                }
+                let retry = |buttons: &mut ChildSpawnerCommands| {
+                    primary(buttons, "Retry this seed", Press::Retry);
+                    if wanting {
+                        line(buttons, "A retry earns no achievement.", theme::TEXT_DIM);
+                    }
+                };
                 parent
                     .spawn(Node {
                         width: px(400),
@@ -1352,12 +1625,12 @@ fn game_over(
                     })
                     .with_children(|buttons| match *session {
                         Session::Solo => {
-                            primary(buttons, "Retry this seed", Press::Retry);
+                            retry(buttons);
                             button(buttons, "New run", Press::NewRun);
                             button(buttons, "Menu", Press::Abandon);
                         }
                         Session::Host => {
-                            primary(buttons, "Retry this seed", Press::Retry);
+                            retry(buttons);
                             button(buttons, "New run", Press::NewRun);
                             button(buttons, "Back to the lobby", Press::Regroup);
                         }
@@ -1508,6 +1781,7 @@ fn press(
     mut destination: ResMut<Destination>,
     (options, run, time): (Res<Options>, Option<Res<Run>>, Res<Time<Real>>),
     (session, mut address, mut notice): (Res<Session>, ResMut<Address>, ResMut<Notice>),
+    (mut setup, mut drawn): (ResMut<Setup>, ResMut<Drawn>),
     (found, mut way, invitation, mut clipboard, mut copied): (
         Res<Found>,
         ResMut<Way>,
@@ -1531,15 +1805,32 @@ fn press(
             continue;
         }
         match *press {
-            Press::Solo | Press::NewRun | Press::Retry => {
-                let seed = match (*press, &run) {
-                    (Press::Retry, Some(run)) => run.seed_text.clone(),
-                    _ => fresh_seed(),
+            Press::Solo => {
+                notice.0 = None;
+                next_screen.set(Screen::Solo);
+            }
+            Press::Begin => begin(&setup, &mut requests, &mut next_screen),
+            Press::Redraw => {
+                *setup = Setup {
+                    seed: fresh_seed(),
+                    typed: false,
+                };
+            }
+            Press::OpenAchievements => next_screen.set(Screen::Achievements),
+            Press::NewRun | Press::Retry => {
+                // A seed that is played again was not drawn for the run: it can be practiced.
+                let (seed, fresh) = match (*press, &run) {
+                    (Press::Retry, Some(run)) => (run.seed_text.clone(), false),
+                    _ => (fresh_seed(), true),
                 };
                 notice.0 = None;
                 match *session {
                     Session::Solo => {
-                        requests.write(RunRequest::Start { seed, players: 1 });
+                        requests.write(RunRequest::Start {
+                            seed,
+                            players: 1,
+                            drawn: fresh,
+                        });
                         next_screen.set(Screen::Playing);
                         next_overlay.set(Overlay::None);
                     }
@@ -1548,6 +1839,7 @@ fn press(
                         if let Ok(mut lobby) = lobbies.single_mut() {
                             lobby.seed = seed;
                         }
+                        drawn.0 = fresh;
                         session_requests.write(SessionRequest::Start);
                     }
                     Session::Guest => {}
@@ -1584,6 +1876,7 @@ fn press(
             Press::Reseed => {
                 if let Ok(mut lobby) = lobbies.single_mut() {
                     lobby.seed = fresh_seed();
+                    drawn.0 = true;
                 }
             }
             Press::Show(wanted) => *way = wanted,
@@ -1672,7 +1965,12 @@ fn escape(
     if !keys.just_pressed(KeyCode::Escape) || capture.waiting.is_some() {
         return;
     }
-    // Esc leaves the join screen as its button "Back" does.
+    // Esc leaves the screens that come before a run as their button "Back" does.
+    let before = matches!(*screen.get(), Screen::Solo | Screen::Achievements);
+    if before && *overlay.get() == Overlay::None {
+        next_screen.set(Screen::Menu);
+        return;
+    }
     if *screen.get() == Screen::Join && *overlay.get() == Overlay::None {
         if *session == Session::Guest {
             session_requests.write(SessionRequest::Leave);
@@ -1796,6 +2094,8 @@ mod tests {
                                shows now.";
     /// The longest address that a machine has on a network.
     const LONG_ADDRESS: &str = "192.168.100.200";
+    /// The longest seed that a player types, in the widest letter.
+    const LONG_SEED: &str = "WWWWWWWWWW";
     /// A name as long as the join screen takes, which fills two lines of its field.
     const LONG_NAME: &str = "a-machine-with-the-longest-name-of-its-network.example.org:28405";
 
@@ -1828,6 +2128,7 @@ mod tests {
                 team: Team::Enemies,
             }),
             playtest: false,
+            earns: true,
         }
     }
 
@@ -1884,6 +2185,28 @@ mod tests {
                         seed: Some("85GVTHQA".into()),
                     });
                 build(app, main_menu);
+            }),
+            ("the solo screen", |app| {
+                app.insert_resource(Setup {
+                    seed: "85GVTHQA".into(),
+                    typed: false,
+                });
+                build(app, solo_screen);
+            }),
+            // A seed as long as one gets, typed by a player who unlocked that and nothing
+            // else: the screen then says the most.
+            ("the solo screen with a seed that was typed", |app| {
+                assert_eq!(LONG_SEED.len(), SEED_LENGTH);
+                app.insert_resource(Unlocks::of(&[Unlock::ChosenSeed]))
+                    .insert_resource(Setup {
+                        seed: LONG_SEED.into(),
+                        typed: true,
+                    });
+                build(app, solo_screen);
+            }),
+            ("the achievements", |app| {
+                app.insert_resource(Unlocks::of(&[Unlock::ChosenSeed, Unlock::HardMode]));
+                build(app, achievements_screen);
             }),
             ("the join screen", |app| {
                 let game = |id: u64, standing: Standing| Game {
@@ -1947,6 +2270,25 @@ mod tests {
                     .insert_resource(Records::of_every_team(MODE, 128, "85GVTHQA"));
                 build(app, game_over);
             }),
+            // A run on a seed that was played again, by a player who has things left to
+            // unlock: the report then says the most.
+            ("the report of a run that earned nothing", |app| {
+                let run = Run {
+                    earns: false,
+                    ..lost_run(1)
+                };
+                app.insert_resource(run)
+                    .insert_resource(Records::of_every_team(MODE, 128, "85GVTHQA"));
+                build(app, game_over);
+            }),
+            ("the report of a run that unlocked three things", |app| {
+                let mut unlocks = Unlocks::default();
+                unlocks.new = vec![Unlock::ChosenSeed, Unlock::FreeMode, Unlock::HardMode];
+                app.insert_resource(lost_run(1))
+                    .insert_resource(unlocks)
+                    .insert_resource(Records::of_every_team(MODE, 128, "85GVTHQA"));
+                build(app, game_over);
+            }),
             ("the report of a run, for its host", |app| {
                 app.insert_resource(lost_run(4))
                     .insert_resource(Session::Host);
@@ -2001,6 +2343,8 @@ mod tests {
         app.init_resource::<Records>()
             .init_resource::<Options>()
             .init_resource::<Address>()
+            .init_resource::<Setup>()
+            .init_resource::<Unlocks>()
             .init_resource::<Way>()
             .init_resource::<Copied>()
             .init_resource::<Capture>()
@@ -2109,6 +2453,21 @@ mod tests {
                 WINDOWS.map(|pixels| marks(&lay_out(screen, pixels)).1),
             );
         }
+    }
+
+    #[test]
+    fn a_seed_is_typed_in_capitals_and_stops_at_its_length() {
+        let mut seed = String::new();
+        let press = |seed: &mut String, text: &str| {
+            typed_seed(seed, &Key::Character(text.into()), Some(text));
+        };
+        press(&mut seed, "ta");
+        press(&mut seed, "N-k u");
+        assert_eq!(seed, "TANKU");
+        press(&mut seed, "0123456789");
+        assert_eq!(seed, "TANKU01234");
+        typed_seed(&mut seed, &Key::Backspace, None);
+        assert_eq!(seed, "TANKU0123");
     }
 
     #[test]
@@ -2270,6 +2629,7 @@ mod tests {
             phase: RunPhase::Over,
             lost_to: None,
             playtest: true,
+            earns: false,
         };
         let mut records = Records::default();
         assert!(!keep_record(&mut records, &run));

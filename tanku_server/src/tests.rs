@@ -44,9 +44,12 @@ fn tick(app: &mut App, ticks: u32) {
 fn begin_with(seed: &str, players: u32) -> App {
     let mut app = App::new();
     app.add_plugins((MinimalPlugins, CorePlugin, ServerPlugin));
-    let seed = seed.into();
-    app.world_mut()
-        .write_message(RunRequest::Start { seed, players });
+    let (seed, drawn) = (seed.into(), true);
+    app.world_mut().write_message(RunRequest::Start {
+        seed,
+        players,
+        drawn,
+    });
     tick(&mut app, 1);
     events(&mut app);
     app
@@ -1715,6 +1718,7 @@ fn a_skip_asked_with_the_start_of_a_run_applies_to_that_run() {
     app.world_mut().write_message(RunRequest::Start {
         seed: "TEST".into(),
         players: 1,
+        drawn: true,
     });
     skip_to(&mut app, 5);
     assert_eq!((run(&app).sector, loaded(&app)), (4, vec![4, 5]));
@@ -2216,6 +2220,30 @@ fn a_veteran_lays_its_mines_where_the_player_is_likely_to_come() {
     // It lays one in the way of a player who drives at it.
     assert_eq!(lays(3, far, false, true, false), 1);
     assert_eq!(lays(2, far, false, true, false), 0);
+}
+
+#[test]
+fn a_run_earns_achievements_on_a_seed_that_was_drawn_for_it_unless_it_is_a_playtest() {
+    let earns = |drawn: bool, playtest: bool| {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, CorePlugin, ServerPlugin));
+        if playtest {
+            app.insert_resource(Playtest {
+                infinite_lives: true,
+            });
+        }
+        app.world_mut().write_message(RunRequest::Start {
+            seed: "TEST".into(),
+            players: 1,
+            drawn,
+        });
+        tick(&mut app, 1);
+        run(&app).earns
+    };
+    assert!(earns(true, false));
+    // A seed that a player chose, or plays again, can be practiced.
+    assert!(!earns(false, false));
+    assert!(!earns(true, true));
 }
 
 /// A position that changes with everything that moves.

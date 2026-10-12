@@ -33,6 +33,11 @@ pub enum SessionRequest {
     Start,
 }
 
+/// Whether the game drew the seed of a host's lobby and no run was played on it yet. A run
+/// on such a seed earns achievements: one that is played again can be practiced.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Drawn(pub bool);
+
 /// What the player is told about a game of several players: why it could not be joined, or
 /// how it ended.
 #[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]
@@ -73,6 +78,7 @@ pub struct Found(pub Vec<Game>);
 pub fn plugin(app: &mut App) {
     app.init_resource::<Session>()
         .init_resource::<Notice>()
+        .init_resource::<Drawn>()
         .init_resource::<Invitation>()
         .init_resource::<Found>()
         .add_message::<SessionRequest>()

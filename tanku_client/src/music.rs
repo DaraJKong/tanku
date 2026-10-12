@@ -144,6 +144,7 @@ mod tests {
             phase,
             lost_to: None,
             playtest: false,
+            earns: true,
         }
     }
 

@@ -126,6 +126,7 @@ pub fn handle_requests(
             RunRequest::Start {
                 seed: seed_text,
                 players,
+                drawn,
             } => {
                 clear(&mut commands, &entities, &mut casualties);
                 let seed = seed::seed_value(seed_text);
@@ -148,6 +149,7 @@ pub fn handle_requests(
                     phase: RunPhase::Playing,
                     lost_to: None,
                     playtest: playtest.is_some(),
+                    earns: *drawn && playtest.is_none(),
                 });
                 events.write(SimEvent::RunStarted);
             }

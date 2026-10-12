@@ -319,6 +319,7 @@ mod tests {
             phase: tanku_core::sim::RunPhase::Playing,
             lost_to: None,
             playtest: false,
+            earns: true,
         }
     }
 

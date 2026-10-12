@@ -14,7 +14,7 @@ use crate::{
     Overlay, Screen,
     crew::LocalSeat,
     net::{web_code, written},
-    session::{Invitation, Notice, Session, SessionRequest},
+    session::{Drawn, Invitation, Notice, Session, SessionRequest},
 };
 
 /// The port on which this machine hosts a game.
@@ -57,6 +57,7 @@ fn direct(
     mut seats: Query<&mut Seat>,
     lobbies: Query<&Lobby>,
     mut run_requests: MessageWriter<RunRequest>,
+    mut drawn: ResMut<Drawn>,
     mut next_screen: ResMut<NextState<Screen>>,
     mut next_overlay: ResMut<NextState<Overlay>>,
 ) {
@@ -111,8 +112,13 @@ fn direct(
                 });
                 if let Some((hosting, lobby)) = lobby {
                     let players = server::muster(hosting, &mut seats);
-                    let seed = lobby.seed.clone();
-                    run_requests.write(RunRequest::Start { seed, players });
+                    // The next run on this seed is one on a seed that was played.
+                    let (seed, drawn) = (lobby.seed.clone(), std::mem::take(&mut drawn.0));
+                    run_requests.write(RunRequest::Start {
+                        seed,
+                        players,
+                        drawn,
+                    });
                     next_screen.set(Screen::Playing);
                     next_overlay.set(Overlay::None);
                 }

@@ -23,6 +23,7 @@ use crate::{
     repair, scene,
     settings::{Action, Settings},
     theme,
+    unlocks::{self, Unlocked},
 };
 
 /// Seconds a message stays on screen.
@@ -73,6 +74,8 @@ enum Readout {
     /// What stands for the lives when a playtest doesn't count them.
     Lives,
     Seed,
+    /// Says that the run earns no achievement, when it earns none.
+    Earning,
     Shield,
     Hint,
     /// What to do about a wreck, among several players.
@@ -461,6 +464,7 @@ fn title_block() -> impl Bundle {
                         children![
                             caption("SEED"),
                             (Readout::Seed, theme::code("", 16.0, theme::TEXT)),
+                            (Readout::Earning, theme::label("", 11.0, theme::TEXT_DIM)),
                         ],
                     ),
                     (
@@ -754,6 +758,9 @@ fn status(
             Readout::Lives if infinite_lives && run.solo => "INFINITE".to_string(),
             Readout::Lives => String::new(),
             Readout::Seed => run.seed_text.clone(),
+            // A playtest says what it is next to the name of the game.
+            Readout::Earning if !run.earns && !run.playtest => "NO ACHIEVEMENTS".to_string(),
+            Readout::Earning => String::new(),
             // The controls are shown where a run starts. Several players have one more.
             Readout::Hint if run.sector == 0 => {
                 let repair = if run.solo {
@@ -877,7 +884,9 @@ fn toasts(
     run: Option<Res<Run>>,
     playtest: Option<Res<Playtest>>,
     mut events: MessageReader<SimEvent>,
+    mut unlocked: MessageReader<Unlocked>,
     mut toast: Single<(&mut Toast, &mut Text, &mut TextColor)>,
+    mut shown: Local<u8>,
 ) {
     let (toast, text, color) = &mut *toast;
     let infinite_lives = playtest.is_some_and(|playtest| playtest.infinite_lives);
@@ -932,9 +941,18 @@ fn toasts(
             news = Some((weight, message));
         }
     }
-    if let Some((_, message)) = news {
+    // Nothing matters more than what a run has just unlocked.
+    if let Some(Unlocked(unlock)) = unlocked.read().last() {
+        news = Some((4, format!("Unlocked - {}", unlocks::name(*unlock))));
+    }
+    // A message stays until its time is over, unless one that matters as much comes.
+    if toast.0 == 0.0 {
+        *shown = 0;
+    }
+    if let Some((weight, message)) = news.filter(|(weight, _)| *weight >= *shown) {
         text.0 = message.to_uppercase();
         toast.0 = TOAST_TIME;
+        *shown = weight;
     }
     toast.0 = (toast.0 - time.delta_secs()).max(0.0);
     color.0 = theme::TEXT.with_alpha((toast.0 / 0.5).min(1.0));

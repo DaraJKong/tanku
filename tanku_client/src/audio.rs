@@ -157,6 +157,7 @@ mod tests {
                 phase: RunPhase::Playing,
                 lost_to: None,
                 playtest: false,
+                earns: true,
             })
             .add_message::<SimEvent>()
             .add_systems(Startup, setup)

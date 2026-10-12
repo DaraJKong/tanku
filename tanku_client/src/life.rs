@@ -255,6 +255,7 @@ mod tests {
             phase: tanku_core::sim::RunPhase::Playing,
             lost_to: None,
             playtest: false,
+            earns: true,
         };
         assert!(!within_reach(&run));
         assert_eq!(words(&run).0, "LIFE \u{b7} YOU HAVE ALL 3");

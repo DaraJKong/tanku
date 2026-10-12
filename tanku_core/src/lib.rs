@@ -4,6 +4,7 @@ pub mod discovery;
 pub mod enemy;
 pub mod geom;
 pub mod map;
+pub mod modes;
 pub mod progression;
 pub mod protocol;
 pub mod rng;

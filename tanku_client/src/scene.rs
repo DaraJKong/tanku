@@ -1379,6 +1379,7 @@ mod tests {
             phase: tanku_core::sim::RunPhase::Playing,
             lost_to: None,
             playtest: false,
+            earns: true,
         };
         assert!(is_dormant(5, Some(&run(4))));
         assert!(!is_dormant(5, Some(&run(5))));

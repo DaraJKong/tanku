@@ -4,9 +4,9 @@ A cooperative top-down tank game for one to four players, built with Rust and Be
 
 The solo game and co-op are playable, on Linux, on Windows and in a browser:
 
-- **Solo:** the corridor, the generated enemies with their classes and their brains, arenas and their waves, lives and checkpoints, the menus, the sound cues and the music.
+- **Solo:** the corridor, the generated enemies with their classes and their brains, arenas and their waves, lives and checkpoints, the menus, the sound cues and the music. Runs unlock achievements, and the first one lets the player type the seed of a run.
 - **Co-op:** up to four players. One of them hosts a game, which the others find on the local network or join by its address, from a desktop build or from a browser. A destroyed tank is a wreck that a teammate repairs.
-- **Not in yet:** achievements, the other modes with the garage, what a host sets for a game (its name, its password, its difficulty, free mode), and the ready check of the lobby.
+- **Not in yet:** hard mode, free mode with its garage, what a host sets for a game (its name, its password, its difficulty, free mode), and the ready check of the lobby.
 
 Co-op has been played by two players. With three or four, it is checked by tests and by scripted runs only. The build for Windows is checked under wine, not yet on Windows itself. The specification is in [docs/PROJECT.md](docs/PROJECT.md).
 
@@ -36,7 +36,7 @@ cargo run -p tanku_client
 | Turn the view | Q and E |
 | Menu | Esc |
 
-Settings and records are kept in the user's configuration directory, under `tanku`.
+Settings, records and what the player has unlocked are kept in the user's configuration directory, under `tanku`.
 
 The interface is drawn for a window of 1600 by 900 pixels or more. A smaller window shows all of it smaller, so that every menu is whole from 1280 by 720 pixels on. The size that the settings give the interface comes on top of that.
 
@@ -80,6 +80,7 @@ cargo run -p tanku_client -- --playtest
 | Infinite lives | On from the start. The pause menu turns them off and on. |
 | Skip to a sector | The pause menu picks any sector up to 999. The tank comes back at the end of the sector before it, in front of its barrier, as it does after clearing that sector. |
 | Choose the seed | `--seed TEXT` after `--playtest` starts every run on that seed instead of a random one. |
+| Nothing locked | The solo screen takes a typed seed whatever the player has unlocked. |
 
 With both, a seed and a sector from a report are a few clicks away:
 
@@ -87,7 +88,7 @@ With both, a seed and a sector from a report are a few clicks away:
 cargo run -p tanku_client -- --playtest --seed 85GVTHQA
 ```
 
-A playtest sets no record. The web build has none, because a page has no command line.
+A playtest sets no record and earns no achievement. The web build has none, because a page has no command line.
 
 ## Building
 

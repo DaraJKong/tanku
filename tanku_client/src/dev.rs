@@ -3,7 +3,8 @@
 //!
 //! `TANKU_DEV_SCRIPT` holds commands separated by semicolons, run one after the other:
 //! `start SEED PLAYERS`, `seat NUMBER`, `repair SECONDS` and `shield SECONDS`, which hold the
-//! key of that name for so long, `wait SECONDS`, `warp SECTOR`,
+//! key of that name for so long, `wait SECONDS`, `warp SECTOR`, `unlock`, which unlocks every
+//! mode and option,
 //! `host PORT`, which opens a game for others to join, and takes browsers on the port after
 //! that one, `join ADDRESS`, which joins a game by its address or by what its host hands out
 //! for browsers,
@@ -53,6 +54,7 @@ use bevy::{
     winit::WinitPlugin,
 };
 use tanku_core::{
+    modes::Unlock,
     sim::{
         Barrier, Blow, Bullet, Enemy, Life, Mine, MineState, Motion, Position, PreviousPosition,
         Run, RunPhase, RunRequest, Shield, ShieldState, SimEvent, Tank, TankCommand, Team, Weapon,
@@ -74,6 +76,7 @@ use crate::{
     music::Baton,
     session::SessionRequest,
     storage,
+    unlocks::Unlocks,
 };
 
 /// Size of the image that a scripted run draws into, until the script gives it another.
@@ -376,7 +379,12 @@ fn run_script(
         ResMut<Assets<Image>>,
         Single<(Entity, &RenderTarget, &mut Projection), With<MainCamera>>,
     ),
-    (baton, tape, mut seat): (Res<Baton>, Option<Res<Tape>>, ResMut<LocalSeat>),
+    (baton, tape, mut seat, mut unlocks): (
+        Res<Baton>,
+        Option<Res<Tape>>,
+        ResMut<LocalSeat>,
+        ResMut<Unlocks>,
+    ),
     (mut session_requests, mut keys, mut port, mut web): (
         MessageWriter<SessionRequest>,
         MessageWriter<KeyboardInput>,
@@ -401,10 +409,13 @@ fn run_script(
             requests.write(RunRequest::Start {
                 seed: word(1).to_string(),
                 players: (number(2) as u32).max(1),
+                drawn: true,
             });
             screen.set(Screen::Playing);
         }
         "wait" => script.wait = number(1),
+        // Unlocks every mode and option, as a player has who earned them all.
+        "unlock" => *unlocks = Unlocks::of(&Unlock::ALL),
         // Opens a game for others to join, on a port of its own if one is given. Browsers
         // are then taken on the port after it.
         "host" => {

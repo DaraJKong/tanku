@@ -30,6 +30,7 @@ mod sheet;
 mod storage;
 mod tags;
 mod theme;
+mod unlocks;
 
 use bevy::prelude::*;
 use tanku_core::{CorePlugin, sim::Playtest};
@@ -40,6 +41,10 @@ use tanku_server::ServerPlugin;
 pub enum Screen {
     #[default]
     Menu,
+    /// Where a single player sets up a run.
+    Solo,
+    /// Where the player sees what runs unlock, and what theirs have.
+    Achievements,
     /// Where a player types the address of a game to join.
     Join,
     /// Where the players of a game wait for its host to start a run.
@@ -87,7 +92,7 @@ fn main() {
         .init_state::<Screen>()
         .init_state::<Overlay>()
         .add_plugins((crew::plugin, session::plugin, life::plugin))
-        .add_plugins((settings::plugin, sheet::plugin))
+        .add_plugins((settings::plugin, sheet::plugin, unlocks::plugin))
         .add_plugins((
             theme::plugin,
             input::plugin,

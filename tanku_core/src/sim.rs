@@ -267,6 +267,9 @@ pub struct Run {
     pub lost_to: Option<Blow>,
     /// Whether the run is the one of a playtest, which sets no record.
     pub playtest: bool,
+    /// Whether the run earns achievements: it is the first on a seed that the game drew for
+    /// it, and no playtest. A seed that a player chose or plays again can be practiced.
+    pub earns: bool,
 }
 
 /// Present when the game was started as a playtest, which lets the player cheat. The runs of
@@ -285,6 +288,9 @@ pub enum RunRequest {
         seed: String,
         /// How many players the run has, from 1 to 4.
         players: u32,
+        /// Whether the game has just drawn that seed for this run, which then earns
+        /// achievements unless it is a playtest.
+        drawn: bool,
     },
     Abandon,
     /// A player leaves a run of several players, and their tank goes with them.

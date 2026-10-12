@@ -15,6 +15,7 @@ fn fight(sector: u32) -> App {
     app.world_mut().write_message(RunRequest::Start {
         seed: "BENCH".into(),
         players: 1,
+        drawn: true,
     });
     app.world_mut().run_schedule(FixedUpdate);
 
