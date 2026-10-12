@@ -366,7 +366,7 @@ TANKU_DEV_SCRIPT="tape run.wav; wait 4; start TANKU; wait 4; play 0 1 0 0 4; wai
 
 ## Trials of the balance
 
-The trials measure what the rules of the game make, without anyone at the keyboard, and tell it in reports that can be compared from one change to the next. They are a tool of their own, `tanku_trials`, with a command for each kind of trial. The census counts what the seeds generate, the comparison of the reference players says what the yardstick of every fight is worth, the skirmishes say what each stretch of sectors costs and which tanks the cost comes from, and the duels say what each level of a stat adds to the danger of a tank next to what it adds to its price.
+The trials measure what the rules of the game make, without anyone at the keyboard, and tell it in reports that can be compared from one change to the next. They are a tool of their own, `tanku_trials`, with a command for each kind of trial. The census counts what the seeds generate, the comparison of the reference players says what the yardstick of every fight is worth, the skirmishes say what each stretch of sectors costs and which tanks the cost comes from, and the duels say what each level of a stat adds to the danger of a tank next to what it adds to its price. A comparison tells what a change to the game moved between two reports.
 
 ### Census
 
@@ -486,6 +486,30 @@ There is a table for the base, one for each stat, and one for the types of bulle
 | `--limit 40` | How long a duel lasts at most, in seconds |
 | `--threads N` | How many duels run side by side |
 | `--out DIRECTORY` | Writes the report there as `duels.md` and `duels.csv` |
+
+### Comparing two reports
+
+A change to the game is judged by the same trial before and after it, each written to a directory of its own:
+
+```bash
+cargo run --release -p tanku_trials -- skirmish --out target/trials/before
+```
+
+```bash
+cargo run --release -p tanku_trials -- skirmish --out target/trials/after
+```
+
+```bash
+cargo run --release -p tanku_trials -- compare target/trials/before/skirmish.csv target/trials/after/skirmish.csv
+```
+
+The comparison lists every cell that changed by 10% or more, table by table, with its value before and after, and the rows that came or went. It says so when the two reports were not asked for the same thing. It knows nothing of noise: a cell that rests on few losses moves by itself from one set of seeds to another, so the same seeds are compared, and a small change of a small number is no finding.
+
+| Option | Effect |
+|---|---|
+| `--least 10` | The least change that is told, in percent of the value before |
+| `--table NAME` | A table to compare. It can be given several times, and every table is compared without it. |
+| `--out DIRECTORY` | Writes the comparison there as `compare.md` and `compare.csv` |
 
 ## Listening to the music
 

@@ -8,16 +8,19 @@
 //! `skirmish` puts one of them against the group of every sector, and tells what each
 //! stretch of sectors costs and which tanks the cost comes from. `duels` puts one of them
 //! against tanks of one make, with one stat at a time at each of its levels, and tells what
-//! a level adds to the danger of a tank next to what it adds to its price.
+//! a level adds to the danger of a tank next to what it adds to its price. `compare`
+//! tells what changed between two reports of the same trial.
 //!
 //! ```text
 //! cargo run --release -p tanku_trials -- census --sectors 1-30 --seeds 300 --out target/trials
 //! cargo run --release -p tanku_trials -- players --sectors 1-30 --seeds 40 --out target/trials
 //! cargo run --release -p tanku_trials -- skirmish --sectors 1-30 --seeds 40 --out target/trials
 //! cargo run --release -p tanku_trials -- duels --stat muzzle --stat loader --out target/trials
+//! cargo run --release -p tanku_trials -- compare before/skirmish.csv after/skirmish.csv
 //! ```
 
 mod census;
+mod compare;
 mod duels;
 mod fight;
 mod players;
@@ -62,6 +65,8 @@ enum Command {
     /// level adds to the danger of a tank, next to what it adds to its price. It takes
     /// about a minute on every core of the machine.
     Duels(DuelsArgs),
+    /// Tells what changed between two reports of the same trial, from their CSV files.
+    Compare(CompareArgs),
 }
 
 #[derive(Args)]
@@ -181,6 +186,25 @@ struct DuelsArgs {
     out: Option<PathBuf>,
 }
 
+#[derive(Args)]
+struct CompareArgs {
+    /// The CSV file of the report from before the change.
+    before: PathBuf,
+    /// The CSV file of the report of the same trial from after it.
+    after: PathBuf,
+    /// The least change that is told, in percent of the value before.
+    #[arg(long, default_value_t = 10.0)]
+    least: f64,
+    /// A table to compare. It can be given several times, and every table is compared
+    /// without it.
+    #[arg(long = "table")]
+    tables: Vec<String>,
+    /// A directory to write the comparison to, as compare.md and compare.csv. It is printed
+    /// either way.
+    #[arg(long)]
+    out: Option<PathBuf>,
+}
+
 /// Reads a stretch of sectors as the command line writes it: `6-10`, or `6` for one sector.
 fn sectors(text: &str) -> Result<(u32, u32), String> {
     let number = |text: &str| {
@@ -274,6 +298,19 @@ fn main() {
                 threads: threads(args.threads),
             };
             tell(&duels::duels(&asked), args.out, "duels");
+        }
+        Command::Compare(args) => {
+            let asked = compare::Asked {
+                least: args.least,
+                tables: args.tables,
+            };
+            match compare::compare(&args.before, &args.after, &asked) {
+                Ok(report) => tell(&report, args.out, "compare"),
+                Err(error) => {
+                    eprintln!("The reports were not compared: {error}");
+                    std::process::exit(1);
+                }
+            }
         }
     }
 }
@@ -400,5 +437,25 @@ mod tests {
         };
         assert_eq!(duels::written(&args.tank), duels::BASE);
         assert!(Cli::try_parse_from(["tanku_trials", "duels", "--stat", "wheels"]).is_err());
+    }
+
+    #[test]
+    fn a_comparison_takes_two_reports() {
+        let line = [
+            "tanku_trials",
+            "compare",
+            "a.csv",
+            "b.csv",
+            "--table",
+            "Sectors",
+        ];
+        let Command::Compare(args) = Cli::try_parse_from(line).unwrap().command else {
+            panic!("no comparison");
+        };
+        assert_eq!(
+            (args.least, args.tables),
+            (10.0, vec!["Sectors".to_string()])
+        );
+        assert!(Cli::try_parse_from(["tanku_trials", "compare", "a.csv"]).is_err());
     }
 }
