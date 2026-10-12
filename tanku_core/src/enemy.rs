@@ -784,4 +784,25 @@ mod tests {
             assert!(tank.cost() <= 80);
         }
     }
+
+    #[test]
+    fn the_balance_file_holds_the_numbers_of_the_groups() {
+        let group = crate::balance::BALANCE.group;
+        assert_eq!(group.mean, GROUP_SHARE);
+        assert_eq!((group.least, group.leader), (LEAST_SHARE, LEADER_SHARE));
+        assert_eq!(group.weights(), WEIGHTS);
+        assert_eq!(group.favorite, FAVORITE_WEIGHT);
+        // A class that is drawn by its weight is the one that was picked, while every class
+        // weighs 1.
+        let rules = crate::balance::BALANCE.classes;
+        let weights: Vec<u32> = rules.iter().map(|rule| rule.weight).collect();
+        for seed in 0..300 {
+            let mut picked = Stream::new(seed, Purpose::Enemy, 7, 2);
+            let mut drawn = Stream::new(seed, Purpose::Enemy, 7, 2);
+            for _ in 0..20 {
+                let class = Class::ALL[drawn.weighted(&weights)];
+                assert_eq!(class, picked.pick(&Class::ALL));
+            }
+        }
+    }
 }

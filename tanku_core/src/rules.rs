@@ -104,3 +104,50 @@ pub const SPAWN_FIRE_DELAY: f32 = 0.5;
 
 /// The furthest sector a playtest can skip to.
 pub const PLAYTEST_LAST_SECTOR: u32 = 999;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::balance::BALANCE;
+
+    #[test]
+    fn the_balance_file_holds_the_numbers_of_the_rules() {
+        let balance = BALANCE;
+        assert_eq!(balance.tank.speed_up, TANK_ACCELERATION_TIME);
+        assert_eq!(balance.tank.pivot, PIVOT_ANGLE);
+        assert_eq!(balance.tank.turret, PLAYER_TURRET_RATE);
+        assert_eq!(balance.tank.hold_fire, SPAWN_FIRE_DELAY);
+        assert_eq!(balance.gun.bullet, BULLET_RADIUS);
+        assert_eq!(balance.gun.cooldown, FIRE_COOLDOWN);
+        assert_eq!(balance.mine.arm, MINE_ARMING_TIME);
+        assert_eq!(balance.mine.every, MINE_COOLDOWN);
+        assert_eq!(balance.mine.fuse, MINE_FUSE);
+        assert_eq!(balance.mine.trigger, MINE_TRIGGER_RADIUS);
+        assert_eq!(balance.mine.warn, MINE_WARNING);
+        assert_eq!(balance.blast, BLAST_RADIUS);
+        assert_eq!(balance.split.after, SPLIT_TIME);
+        assert_eq!(balance.split.angle, SPLIT_ANGLE);
+        assert_eq!(balance.mark, MARK_TIME);
+        assert_eq!(balance.shield.lasts, SHIELD_DURATION);
+        assert_eq!(balance.shield.radius, SHIELD_RADIUS);
+        assert_eq!(balance.arena.reach, LIFE_REACH);
+        assert_eq!(balance.repair.within, REPAIR_RADIUS);
+        assert_eq!(balance.repair.takes, REPAIR_TIME);
+        assert_eq!(balance.repair.safe, REPAIR_PROTECTION);
+        assert_eq!(balance.arena.waves, ARENA_WAVES);
+        assert_eq!(balance.arena.wait, ARENA_DELAY);
+        assert_eq!(balance.arena.mark, APPEAR_TIME);
+        assert_eq!(balance.arena.clear, APPEAR_ROOM);
+        assert_eq!(balance.room.apart, APPEAR_APART);
+        assert_eq!(balance.room.lull, LULL);
+        assert_eq!(balance.room.life_every, LIFE_GROUPS);
+        assert_eq!(balance.room.rise, RISE_TIME);
+        assert_eq!(balance.solo.lives, SOLO_LIVES);
+        assert_eq!(balance.solo.respawn, RESPAWN_DELAY);
+        // The share of a group that the room holds is one tank in so many.
+        for count in 0..=60u32 {
+            let held = (count * balance.room.at_once).div_ceil(100);
+            assert_eq!(held, count.div_ceil(ROOM_SHARE), "{count} tanks");
+        }
+    }
+}

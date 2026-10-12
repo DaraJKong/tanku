@@ -1544,6 +1544,21 @@ mod tests {
         assert!(early.0 > late.0, "blocks: {early:?} then {late:?}");
         assert!(early.1 < late.1, "crates: {early:?} then {late:?}");
     }
+
+    #[test]
+    fn the_balance_file_holds_the_numbers_of_the_map() {
+        let balance = crate::balance::BALANCE;
+        assert_eq!(balance.terrain.spawn, (SPAWN_DISTANCE, SPAWN_CLEARANCE));
+        assert_eq!(balance.corridor, Spec::corridor(Exit::Ahead, 0).length);
+        // An arena comes every 5 to 8 sectors: the two places that draw it say so.
+        assert_eq!(balance.arena.every, (5, 8));
+        assert_eq!(balance.arena.life, LIFE_DEPTH);
+        assert_eq!(balance.room.width, ROOM_WIDTH);
+        assert_eq!(balance.room.depth, ROOM_DEPTH);
+        for cover in 0..=40u32 {
+            assert_eq!(cover * balance.room.cover / 100, cover * ROOM_COVER / 2);
+        }
+    }
 }
 
 #[cfg(test)]

@@ -1,0 +1,92 @@
+# The balance of Tanku: the numbers that decide how hard the game is. docs/BALANCE.md says
+# what each line means. The game is compiled with this file.
+tanku-balance 1
+
+# What each level of a stat gives, from level 0 on, and what the level costs in all.
+# Speeds are in m/s, turns in degrees per second and times in seconds.
+stat engine      speed 0 2 3 4 5 6 7 8               cost 0 2 4 6 8 11 14 17
+stat tracks      turn 90 135 180 225 270 315 360     cost 0 1 2 3 4 5 6
+stat turret      turn 45 60 90 120 180 270 360       cost 0 1 2 3 5 7 10
+stat muzzle      speed 6 7.5 9 11 13 15 17 19        cost 0 1 3 6 9 12 16 21
+stat magazine                                        cost 0 3 6 9 12 15
+stat loader      reload 4 3.2 2.5 2 1.6 1.25 1 0.8   cost 0 1 2 4 6 9 12 16
+stat ricochet                                        cost 0 4 10 18
+stat mines                                           cost 0 4 6 8 10
+stat shield      cooldown - 10 9 8 7 6               cost 0 6 9 12 15 18
+stat piercing                                        cost 0 4
+stat seeking                                         cost 0 4
+stat splitting                                       cost 0 6
+stat exploding                                       cost 0 8
+# Software is paid as a share of the budget of its tank, in percent.
+stat brain                                           share 0 8 16 24 32
+stat ballistics                                      share 0 5 10 15
+
+# The players: the standard tank, the points of a tank of the garage, the lives of a single
+# player, and what a tank does whatever its stats.
+player  engine=4 tracks=5 muzzle=2 magazine=4 loader=6 ricochet=1 mines=2 shield=2
+garage  59
+solo    lives 3  respawn 1.5s
+tank    turret 720deg/s  speed-up 0.15s  pivot 45deg  hold-fire 0.5s
+
+# Weapons.
+gun     cooldown 0.25s  bullet 0.225m
+mine    arm 1s  fuse 10s  warn 0.6s  trigger 2m  every 0.5s
+blast   3m
+shield  lasts 0.5s  radius 1.4m
+split   after 1s  angle 30deg
+mark    1.5s
+repair  within 3m  takes 2s  safe 1s
+
+# How the sectors get harder. The budget of a sector goes from its first value toward its
+# cap, and the experience of the brains from 0 toward 1: by 63% of what is left every so
+# many sectors. Experience takes the reaction and the aiming error from their first value
+# to their last.
+budget      10 to 100  every 15
+experience  every 20  reaction 0.5s to 0.12s  aim 8deg to 1deg
+# What grows by steps: its value in sector 1, then each sector where it goes up by one.
+step tanks       1  3 6 9 12 15
+step brain       1  6 11 16
+step ballistics  0  3 8 13
+step muzzle      2  4 9 14 19 24
+# What each player after the first adds to the tanks of a group.
+team    +50%
+# Hard mode: more points for every sector, and the experience and the guns of later sectors.
+hard    budget +30  ahead 20
+
+# How a group shares its points, in percent of the budget of its sector.
+group   mean 70%..90%  least 30%  leader 150%  weights 1 1 2 2 3 8  favorite 20
+
+# A class: its weight when a tank draws its class, the stats that it favors, the one it
+# takes first in front, and the most that it has of ricochet and of ballistics.
+class all-rounder  1                      ricochet<=1  ballistics<=2
+class sniper       1  muzzle turret       ricochet<=1  ballistics<=2
+class scout        1  engine tracks       ricochet<=1  ballistics<=2
+class tactician    1  brain ballistics    ricochet<=3  ballistics<=3
+class trickster    1  ricochet            ricochet<=3  ballistics<=3
+class lancer       1  piercing            ricochet<=1  ballistics<=2
+class sapper       1  mines shield        ricochet<=1  ballistics<=2
+class gunner       1  magazine loader     ricochet<=1  ballistics<=2
+class seeker       1  ricochet seeking    ricochet<=3  ballistics<=1
+class flanker      1  splitting           ricochet<=1  ballistics<=1
+class grenadier    1  exploding           ricochet<=0  ballistics<=1
+
+# The terrain, from sector 1 to the sector from which it is as harsh as it gets.
+terrain harshest 30
+terrain width    14m to 8m  spread 6m
+terrain cover    9 to 3
+terrain crates   0..1 to 3..6
+terrain angled   10% to 70%
+terrain spawn    entry 15m  barrier 3m
+corridor 40m..80m
+
+# Arenas, and arena mode.
+arena   every 5..8  tanks 150%  waves 3  wait 2s  mark 1s  clear 4m  life 4m  reach 1.5m
+room    at-once 50%  lull 3s  life-every 5  rise 2s  apart 2m  cover 150%  size 36m..42m 22m..24m
+
+# How the brains fight.
+enemy keep   8m..14m  hold 1.25  foresight 1s  last-moment 0.2s  room 0.15m  parry 0.3m
+enemy mines  reflex 6m  range 20m  apart 5m  charge 3m/s
+enemy ace    bait 11m..14m  press 5m..8m  until 3  retreat 16m..22m  crossfire 90deg
+
+# What a run must clear to unlock each mode.
+unlock  arena 5  seed 10  free 20  hard 30  impossible 20

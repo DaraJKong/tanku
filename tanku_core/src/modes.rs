@@ -191,4 +191,14 @@ mod tests {
         keys.dedup();
         assert_eq!(keys.len(), Unlock::ALL.len());
     }
+
+    #[test]
+    fn the_balance_file_holds_the_sectors_that_unlock() {
+        let unlock = crate::balance::BALANCE.unlock;
+        assert_eq!(unlock.arena, Unlock::ArenaMode.sector());
+        assert_eq!(unlock.seed, Unlock::ChosenSeed.sector());
+        assert_eq!(unlock.free, Unlock::FreeMode.sector());
+        assert_eq!(unlock.hard, Unlock::HardMode.sector());
+        assert_eq!(unlock.impossible, Unlock::ImpossibleMode.sector());
+    }
 }

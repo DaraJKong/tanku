@@ -1261,4 +1261,36 @@ mod tests {
         let around = steer(&field, &tank, from, Vec2::X);
         assert!(around != Vec2::X && around != Vec2::ZERO);
     }
+
+    #[test]
+    fn the_balance_file_holds_the_numbers_of_the_brains() {
+        let enemy = tanku_core::balance::BALANCE.enemy;
+        assert_eq!(enemy.keep, (NEAR, FAR));
+        assert_eq!(enemy.hold, TARGET_HOLD);
+        assert_eq!(enemy.foresight, FORESIGHT);
+        assert_eq!(enemy.last_moment, LAST_MOMENT);
+        assert_eq!(enemy.room, DODGE_ROOM);
+        assert_eq!(enemy.parry, PARRY_AIM);
+        assert_eq!(enemy.mine_reflex, MINE_REFLEX);
+        assert_eq!(enemy.mine_range, MINING_RANGE);
+        assert_eq!(enemy.mine_apart, MINE_SPACING);
+        assert_eq!(enemy.charge, CHARGE_SPEED);
+        assert_eq!(enemy.bait, BAIT);
+        assert_eq!(enemy.press, PRESS);
+        assert_eq!(enemy.until, PRESS_UNTIL);
+        assert_eq!(enemy.retreat, RETREAT);
+        assert_eq!(enemy.crossfire, CROSSFIRE);
+        // What experience makes of the reaction and of the aim, at every experience.
+        let (reaction, aim) = {
+            let experience = tanku_core::balance::BALANCE.experience;
+            (experience.reaction, experience.aim)
+        };
+        for step in 0..=1000 {
+            let experience = step as f32 / 1000.0;
+            let delay = reaction.0 - (reaction.0 - reaction.1) * experience;
+            assert_eq!(delay, 0.50 - 0.38 * experience, "{experience}");
+            let error = (aim.0 - (aim.0 - aim.1) * experience).to_radians();
+            assert_eq!(error, (8.0 - 7.0 * experience).to_radians(), "{experience}");
+        }
+    }
 }

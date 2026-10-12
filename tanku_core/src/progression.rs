@@ -3,6 +3,8 @@
 //! Everything that feeds generation is an integer formula or a lookup table, so that a seed
 //! gives the same enemies on every platform.
 
+#[cfg(test)]
+use crate::balance::Budget;
 use crate::{modes::Difficulty, rules::ROOM_SHARE};
 
 /// What hard mode adds to the budget of every sector: its budgets go from 40 to 130.
@@ -18,6 +20,48 @@ const SECTOR_BUDGETS: [u8; 79] = [
     96, 97, 97, 97, 97, 97, 98, 98, 98, 98, 98, 98, 98, 98, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99,
     99, 99, 99, 99, 99, 99, 100,
 ];
+
+/// How many sectors have a budget of their own. The sectors after them have the last one.
+#[cfg(test)]
+const TABLED: usize = 256;
+
+/// `exp(-x)` for a number that isn't negative. It is worked out while the game is compiled,
+/// for the table of the budgets, so its result is the same whatever machine compiles it.
+#[cfg(test)]
+const fn decay(x: f64) -> f64 {
+    // The power is halved until a short series is exact, and squared back as often.
+    let (mut small, mut halvings) = (x, 0);
+    while small > 0.5 {
+        small /= 2.0;
+        halvings += 1;
+    }
+    let (mut sum, mut term, mut index) = (1.0, 1.0, 1);
+    while index <= 20 {
+        term *= small / index as f64;
+        sum += term;
+        index += 1;
+    }
+    while halvings > 0 {
+        sum *= sum;
+        halvings -= 1;
+    }
+    1.0 / sum
+}
+
+/// The budget of each sector, from the first one on: it goes from its first value toward its
+/// cap, by 63% of what is left every so many sectors.
+#[cfg(test)]
+const fn budgets(budget: Budget) -> [u16; TABLED] {
+    let mut table = [0; TABLED];
+    let mut index = 0;
+    while index < TABLED {
+        let left = (budget.cap - budget.first) as f64 * decay(index as f64 / budget.every as f64);
+        // Rounded to the nearest point.
+        table[index] = (budget.cap as f64 - left + 0.5) as u16;
+        index += 1;
+    }
+    table
+}
 
 /// Sector from which the terrain is as harsh as it gets.
 const HARSHEST_SECTOR: u32 = 30;
@@ -271,5 +315,60 @@ mod tests {
         assert_eq!(crate_count(30), (3, 6));
         assert!(cover_groups(1) > cover_groups(30));
         assert!(angled_wall_chance(1) < angled_wall_chance(30));
+    }
+
+    #[test]
+    fn the_balance_file_holds_the_numbers_of_the_progression() {
+        let balance = crate::balance::BALANCE;
+        // The table that is worked out from the three numbers of the budget is the one that
+        // was written by hand.
+        let table = budgets(balance.budget);
+        for (index, budget) in table.iter().enumerate() {
+            let written = SECTOR_BUDGETS[index.min(SECTOR_BUDGETS.len() - 1)];
+            assert_eq!(*budget, written as u16, "sector {}", index + 1);
+        }
+        assert_eq!(
+            (balance.hard.budget, balance.hard.ahead),
+            (HARD_BUDGET, HARD_LEAD)
+        );
+        assert_eq!(balance.terrain.harshest, HARSHEST_SECTOR);
+        let (steps, terrain) = (balance.steps, balance.terrain);
+        for sector in 0..=300 {
+            // What grows by steps.
+            let solo = steps.tanks.at(sector);
+            assert_eq!(solo, enemy_count(sector, 1, false), "sector {sector}");
+            assert_eq!(steps.brain.at(sector) as u8, brain_cap(sector, Normal));
+            let ballistics = steps.ballistics.at(sector) as u8;
+            assert_eq!(ballistics, ballistics_cap(sector, Normal));
+            assert_eq!(steps.muzzle.at(sector) as u8, muzzle_cap(sector, Normal));
+            let ahead = steps.muzzle.at(sector + balance.hard.ahead) as u8;
+            assert_eq!(ahead, muzzle_cap(sector, Hard));
+            // What the players and an arena add.
+            for players in 1..=4 {
+                let team = (solo * (100 + balance.team * (players - 1))).div_ceil(100);
+                assert_eq!(team, enemy_count(sector, players, false));
+                let arena = (team * balance.arena.tanks).div_ceil(100);
+                assert_eq!(arena, enemy_count(sector, players, true));
+            }
+            // The terrain.
+            let slope = |(easy, harsh): (i32, i32)| harshness(sector, easy, harsh);
+            let narrowest = slope(terrain.width);
+            let width = (narrowest, narrowest + terrain.spread);
+            assert_eq!(width, corridor_width(sector));
+            assert_eq!(slope(terrain.cover) as u32, cover_groups(sector));
+            let (first, last) = terrain.crates;
+            let crates = (slope((first.0, last.0)), slope((first.1, last.1)));
+            assert_eq!(crates, crate_count(sector));
+            assert_eq!(slope(terrain.angled) as u32, angled_wall_chance(sector));
+        }
+        // Hard mode has every tier at once, which is where the steps end.
+        assert_eq!(steps.brain.last() as u8, brain_cap(1, Hard));
+        assert_eq!(steps.ballistics.last() as u8, ballistics_cap(1, Hard));
+        // Experience.
+        let every = balance.experience.every as f32;
+        for sector in 1..=200u32 {
+            let written = 1.0 - (-(sector as f32 - 1.0) / every).exp();
+            assert_eq!(written, experience(sector, Normal), "sector {sector}");
+        }
     }
 }
