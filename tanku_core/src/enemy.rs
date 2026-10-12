@@ -6,26 +6,44 @@
 //! software.
 
 use crate::{
+    balance::{BALANCE, Group},
     modes::Difficulty,
     progression,
     rng::{Purpose, Stream},
     stats::{Class, Genome, Stat},
 };
 
+/// How a group shares its points, as the balance says it. Its weights are those by which a
+/// group shares what is left once every tank has the least: each tank draws one. Most are
+/// light, and now and then one is heavy.
+static GROUP: Group = BALANCE.group;
 /// How much likelier the stats that a class favors are to receive the next point, all of
 /// them together: a class with one favorite stat is as set on it as another on its two.
-const FAVORITE_WEIGHT: u32 = 20;
+const FAVORITE_WEIGHT: u32 = GROUP.favorite;
 /// What a tank of a group has on average, in percent of the sector budget: a group draws
 /// its own between these two.
-const GROUP_SHARE: (i32, i32) = (70, 90);
+const GROUP_SHARE: (i32, i32) = GROUP.mean;
 /// The least a tank has, in percent of the sector budget.
-const LEAST_SHARE: u32 = 30;
+const LEAST_SHARE: u32 = GROUP.least;
 /// The most that the strongest tank of a group can have, in percent of the sector budget.
 /// The others stop at the sector budget.
-const LEADER_SHARE: u32 = 150;
-/// The weights by which a group shares what is left once every tank has the least: each tank
-/// draws one. Most are light, and now and then one is heavy.
-const WEIGHTS: [u32; 6] = [1, 1, 2, 2, 3, 8];
+const LEADER_SHARE: u32 = GROUP.leader;
+
+/// The weight of each class when a tank draws its class, in the order of [`Class::ALL`].
+const CLASS_WEIGHTS: [u32; Class::ALL.len()] = {
+    let mut weights = [0; Class::ALL.len()];
+    let mut index = 0;
+    while index < weights.len() {
+        weights[index] = BALANCE.classes[index].weight;
+        index += 1;
+    }
+    weights
+};
+
+/// The class that a tank draws.
+fn draw_class(rng: &mut Stream) -> Class {
+    Class::ALL[rng.weighted(&CLASS_WEIGHTS)]
+}
 
 /// The highest level of a stat that an enemy of a class can have in a sector.
 fn highest_level(stat: Stat, difficulty: Difficulty, sector: u32, class: Class) -> u8 {
@@ -54,12 +72,12 @@ pub fn budgets(seed: u64, difficulty: Difficulty, sector: u32, count: u32) -> Ve
     if count <= 1 {
         return vec![total.max(least); count as usize];
     }
-    let weights: Vec<u32> = (0..count).map(|_| rng.pick(&WEIGHTS)).collect();
+    let weights: Vec<u32> = (0..count).map(|_| rng.pick(GROUP.weights())).collect();
     let sum: u32 = weights.iter().sum();
     // The first of the heaviest leads the group.
     let heaviest = weights.iter().copied().max().unwrap_or(0);
     let leader = weights.iter().position(|&weight| weight == heaviest);
-    let left = total - count * least;
+    let left = total.saturating_sub(count * least);
     let mut budgets: Vec<u32> = weights
         .iter()
         .map(|weight| least + left * weight / sum)
@@ -127,7 +145,7 @@ fn smarter(genome: &Genome, highest: impl Fn(Stat) -> u8) -> Option<Genome> {
 /// whatever the difficulty.
 fn build(seed: u64, difficulty: Difficulty, sector: u32, index: u32, budget: u32) -> Genome {
     let mut rng = Stream::new(seed, Purpose::Enemy, sector, index);
-    let class = rng.pick(&Class::ALL);
+    let class = draw_class(&mut rng);
     spend(rng, difficulty, sector, class, budget)
 }
 
@@ -144,7 +162,7 @@ pub fn of_class(
 ) -> Genome {
     let mut rng = Stream::new(seed, Purpose::Enemy, sector, index);
     // The draw of the class is made and set aside, so that the rest is drawn as in a group.
-    rng.pick(&Class::ALL);
+    draw_class(&mut rng);
     spend(rng, difficulty, sector, class, budget)
 }
 
@@ -782,27 +800,6 @@ mod tests {
             let tank = of_class(7, Difficulty::Normal, 30, 0, class, 80);
             assert_eq!(tank.class, class);
             assert!(tank.cost() <= 80);
-        }
-    }
-
-    #[test]
-    fn the_balance_file_holds_the_numbers_of_the_groups() {
-        let group = crate::balance::BALANCE.group;
-        assert_eq!(group.mean, GROUP_SHARE);
-        assert_eq!((group.least, group.leader), (LEAST_SHARE, LEADER_SHARE));
-        assert_eq!(group.weights(), WEIGHTS);
-        assert_eq!(group.favorite, FAVORITE_WEIGHT);
-        // A class that is drawn by its weight is the one that was picked, while every class
-        // weighs 1.
-        let rules = crate::balance::BALANCE.classes;
-        let weights: Vec<u32> = rules.iter().map(|rule| rule.weight).collect();
-        for seed in 0..300 {
-            let mut picked = Stream::new(seed, Purpose::Enemy, 7, 2);
-            let mut drawn = Stream::new(seed, Purpose::Enemy, 7, 2);
-            for _ in 0..20 {
-                let class = Class::ALL[drawn.weighted(&weights)];
-                assert_eq!(class, picked.pick(&Class::ALL));
-            }
         }
     }
 }

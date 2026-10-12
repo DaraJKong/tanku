@@ -1,33 +1,25 @@
 //! How difficulty grows with the sector number, in normal mode and in hard mode.
 //!
 //! Everything that feeds generation is an integer formula or a lookup table, so that a seed
-//! gives the same enemies on every platform.
+//! gives the same enemies on every platform. The numbers are those of `game.balance`.
 
-#[cfg(test)]
-use crate::balance::Budget;
-use crate::{modes::Difficulty, rules::ROOM_SHARE};
+use crate::{
+    balance::{BALANCE, Budget, Steps, Terrain},
+    modes::Difficulty,
+    rules::ROOM_AT_ONCE,
+};
 
-/// What hard mode adds to the budget of every sector: its budgets go from 40 to 130.
-const HARD_BUDGET: u32 = 30;
+/// What hard mode adds to the budget of every sector.
+const HARD_BUDGET: u32 = BALANCE.hard.budget;
 /// In hard mode, brains are as experienced and the fastest guns as fast as they are this
 /// many sectors further in normal mode.
-const HARD_LEAD: u32 = 20;
-
-/// `round(100 - 90 * exp(-(n - 1) / 15))` for sectors 1 to 79. It stays at 100 afterward.
-const SECTOR_BUDGETS: [u8; 79] = [
-    10, 16, 21, 26, 31, 36, 40, 44, 47, 51, 54, 57, 60, 62, 65, 67, 69, 71, 73, 75, 76, 78, 79, 81,
-    82, 83, 84, 85, 86, 87, 88, 89, 89, 90, 91, 91, 92, 92, 93, 93, 94, 94, 95, 95, 95, 96, 96, 96,
-    96, 97, 97, 97, 97, 97, 98, 98, 98, 98, 98, 98, 98, 98, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99,
-    99, 99, 99, 99, 99, 99, 100,
-];
+const HARD_LEAD: u32 = BALANCE.hard.ahead;
 
 /// How many sectors have a budget of their own. The sectors after them have the last one.
-#[cfg(test)]
 const TABLED: usize = 256;
 
 /// `exp(-x)` for a number that isn't negative. It is worked out while the game is compiled,
 /// for the table of the budgets, so its result is the same whatever machine compiles it.
-#[cfg(test)]
 const fn decay(x: f64) -> f64 {
     // The power is halved until a short series is exact, and squared back as often.
     let (mut small, mut halvings) = (x, 0);
@@ -50,7 +42,6 @@ const fn decay(x: f64) -> f64 {
 
 /// The budget of each sector, from the first one on: it goes from its first value toward its
 /// cap, by 63% of what is left every so many sectors.
-#[cfg(test)]
 const fn budgets(budget: Budget) -> [u16; TABLED] {
     let mut table = [0; TABLED];
     let mut index = 0;
@@ -63,8 +54,17 @@ const fn budgets(budget: Budget) -> [u16; TABLED] {
     table
 }
 
+/// The budget of normal mode in each of the first sectors, which is
+/// `round(cap - (cap - first) * exp(-(n - 1) / every))` with the three numbers of the balance.
+/// The compiler works the table out, and generation reads whole numbers.
+static SECTOR_BUDGETS: [u16; TABLED] = budgets(BALANCE.budget);
+
+/// What grows by steps along the corridor, and what the terrain is made of.
+static STEPS: Steps = BALANCE.steps;
+const TERRAIN: Terrain = BALANCE.terrain;
+
 /// Sector from which the terrain is as harsh as it gets.
-const HARSHEST_SECTOR: u32 = 30;
+const HARSHEST_SECTOR: u32 = TERRAIN.harshest;
 
 /// The sector of normal mode whose experience and whose fastest gun the enemies of a sector
 /// have.
@@ -76,8 +76,8 @@ fn ahead(sector: u32, difficulty: Difficulty) -> u32 {
 }
 
 /// The most points an enemy of this sector can have, unless it leads its group. Sectors start
-/// at 1. In hard mode, the budgets follow the same curve from 40 to 130: each is 30 above the
-/// one of normal mode.
+/// at 1. In hard mode, the budgets follow the same curve, each so many points above the one
+/// of normal mode.
 pub fn sector_budget(sector: u32, difficulty: Difficulty) -> u32 {
     let index = (sector.max(1) as usize - 1).min(SECTOR_BUDGETS.len() - 1);
     let more = match difficulty {
@@ -87,12 +87,16 @@ pub fn sector_budget(sector: u32, difficulty: Difficulty) -> u32 {
     SECTOR_BUDGETS[index] as u32 + more
 }
 
-/// Number of enemies in a sector.
+/// Number of enemies in a sector: those of a single player, with what each player after the
+/// first adds and what an arena adds, each rounded up.
 pub fn enemy_count(sector: u32, players: u32, arena: bool) -> u32 {
-    let solo = (1 + sector / 3).min(6);
-    // `solo * (1 + 0.5 * (players - 1))`, rounded up.
-    let team = (solo * (players + 1)).div_ceil(2);
-    if arena { (team * 3).div_ceil(2) } else { team }
+    let solo = STEPS.tanks.at(sector);
+    let team = (solo * (100 + BALANCE.team * (players.max(1) - 1))).div_ceil(100);
+    if arena {
+        (team * BALANCE.arena.tanks).div_ceil(100)
+    } else {
+        team
+    }
 }
 
 /// How many tanks each wave of a group has, for a group of this size that comes in this many
@@ -106,72 +110,76 @@ pub fn wave_sizes(count: u32, waves: u32) -> Vec<u32> {
 }
 
 /// How many tanks of a group of arena mode come with it, and how many wait in reserve, each
-/// to take the place of one that is destroyed. The first are half of the group, rounded up:
-/// the room holds no more of a group at once, which is as many tanks as a wave of an arena
-/// has.
+/// to take the place of one that is destroyed. The first are a share of the group, rounded
+/// up: the room holds no more of a group at once.
 pub fn room_parts(count: u32) -> (u32, u32) {
-    let first = count.div_ceil(ROOM_SHARE);
+    let first = (count * ROOM_AT_ONCE).div_ceil(100);
     (first, count - first)
 }
 
-/// Highest brain tier an enemy of this sector can have. Hard mode has every tier from the
-/// first sector.
+/// Highest brain tier an enemy of this sector can have. Hard mode has every tier that the
+/// corridor gets to from the first sector.
 pub fn brain_cap(sector: u32, difficulty: Difficulty) -> u8 {
     match difficulty {
-        Difficulty::Normal => (1 + (sector.max(1) - 1) / 5).min(4) as u8,
-        Difficulty::Hard => 4,
+        Difficulty::Normal => STEPS.brain.at(sector) as u8,
+        Difficulty::Hard => STEPS.brain.last() as u8,
     }
 }
 
-/// Highest ballistics tier an enemy of this sector can have. Hard mode has every tier from
-/// the first sector.
+/// Highest ballistics tier an enemy of this sector can have. Hard mode has every tier that
+/// the corridor gets to from the first sector.
 pub fn ballistics_cap(sector: u32, difficulty: Difficulty) -> u8 {
     match difficulty {
-        Difficulty::Normal => ((sector + 2) / 5).min(3) as u8,
-        Difficulty::Hard => 3,
+        Difficulty::Normal => STEPS.ballistics.at(sector) as u8,
+        Difficulty::Hard => STEPS.ballistics.last() as u8,
     }
 }
 
-/// Highest level of Muzzle an enemy of this sector can have: the level of the players' own
-/// tank at first, then one more every five sectors. Hard mode has the guns of twenty sectors
-/// further.
+/// Highest level of Muzzle an enemy of this sector can have: it goes up by steps along the
+/// corridor. Hard mode has the guns of some sectors further.
 pub fn muzzle_cap(sector: u32, difficulty: Difficulty) -> u8 {
-    (2 + (ahead(sector, difficulty) + 1) / 5).min(7) as u8
+    STEPS.muzzle.at(ahead(sector, difficulty)) as u8
 }
 
 /// How well brains execute, from 0 for a novice toward 1 for a flawless brain. In hard mode,
-/// they execute as they do twenty sectors further.
+/// they execute as they do some sectors further.
 ///
 /// Experience drives behavior only, never generation, so floating point is fine here.
 pub fn experience(sector: u32, difficulty: Difficulty) -> f32 {
-    1.0 - (-(ahead(sector.max(1), difficulty) as f32 - 1.0) / 20.0).exp()
+    let every = BALANCE.experience.every as f32;
+    1.0 - (-(ahead(sector.max(1), difficulty) as f32 - 1.0) / every).exp()
 }
 
-/// A value that goes from `easy` in sector 1 to `harsh` in sector 30 and stays there.
-fn harshness(sector: u32, easy: i32, harsh: i32) -> i32 {
+/// A value that goes from the first of two in sector 1 to the second in the harshest
+/// sector, and stays there.
+fn harshness(sector: u32, (easy, harsh): (i32, i32)) -> i32 {
     let step = (sector.clamp(1, HARSHEST_SECTOR) - 1) as i32;
     easy + (harsh - easy) * step / (HARSHEST_SECTOR as i32 - 1)
 }
 
 /// Narrowest and widest the corridor gets in this sector, in meters.
 pub fn corridor_width(sector: u32) -> (i32, i32) {
-    let narrowest = harshness(sector, 14, 8);
-    (narrowest, narrowest + 6)
+    let narrowest = harshness(sector, TERRAIN.width);
+    (narrowest, narrowest + TERRAIN.spread)
 }
 
 /// Groups of cover blocks placed in a sector.
 pub fn cover_groups(sector: u32) -> u32 {
-    harshness(sector, 9, 3) as u32
+    harshness(sector, TERRAIN.cover) as u32
 }
 
 /// Fewest and most explosive crates in a sector.
 pub fn crate_count(sector: u32) -> (i32, i32) {
-    (harshness(sector, 0, 3), harshness(sector, 1, 6))
+    let (first, last) = TERRAIN.crates;
+    (
+        harshness(sector, (first.0, last.0)),
+        harshness(sector, (first.1, last.1)),
+    )
 }
 
 /// Chance, in percent, that a change of corridor width is an angled wall and not a square step.
 pub fn angled_wall_chance(sector: u32) -> u32 {
-    harshness(sector, 10, 70) as u32
+    harshness(sector, TERRAIN.angled) as u32
 }
 
 #[cfg(test)]
@@ -315,60 +323,5 @@ mod tests {
         assert_eq!(crate_count(30), (3, 6));
         assert!(cover_groups(1) > cover_groups(30));
         assert!(angled_wall_chance(1) < angled_wall_chance(30));
-    }
-
-    #[test]
-    fn the_balance_file_holds_the_numbers_of_the_progression() {
-        let balance = crate::balance::BALANCE;
-        // The table that is worked out from the three numbers of the budget is the one that
-        // was written by hand.
-        let table = budgets(balance.budget);
-        for (index, budget) in table.iter().enumerate() {
-            let written = SECTOR_BUDGETS[index.min(SECTOR_BUDGETS.len() - 1)];
-            assert_eq!(*budget, written as u16, "sector {}", index + 1);
-        }
-        assert_eq!(
-            (balance.hard.budget, balance.hard.ahead),
-            (HARD_BUDGET, HARD_LEAD)
-        );
-        assert_eq!(balance.terrain.harshest, HARSHEST_SECTOR);
-        let (steps, terrain) = (balance.steps, balance.terrain);
-        for sector in 0..=300 {
-            // What grows by steps.
-            let solo = steps.tanks.at(sector);
-            assert_eq!(solo, enemy_count(sector, 1, false), "sector {sector}");
-            assert_eq!(steps.brain.at(sector) as u8, brain_cap(sector, Normal));
-            let ballistics = steps.ballistics.at(sector) as u8;
-            assert_eq!(ballistics, ballistics_cap(sector, Normal));
-            assert_eq!(steps.muzzle.at(sector) as u8, muzzle_cap(sector, Normal));
-            let ahead = steps.muzzle.at(sector + balance.hard.ahead) as u8;
-            assert_eq!(ahead, muzzle_cap(sector, Hard));
-            // What the players and an arena add.
-            for players in 1..=4 {
-                let team = (solo * (100 + balance.team * (players - 1))).div_ceil(100);
-                assert_eq!(team, enemy_count(sector, players, false));
-                let arena = (team * balance.arena.tanks).div_ceil(100);
-                assert_eq!(arena, enemy_count(sector, players, true));
-            }
-            // The terrain.
-            let slope = |(easy, harsh): (i32, i32)| harshness(sector, easy, harsh);
-            let narrowest = slope(terrain.width);
-            let width = (narrowest, narrowest + terrain.spread);
-            assert_eq!(width, corridor_width(sector));
-            assert_eq!(slope(terrain.cover) as u32, cover_groups(sector));
-            let (first, last) = terrain.crates;
-            let crates = (slope((first.0, last.0)), slope((first.1, last.1)));
-            assert_eq!(crates, crate_count(sector));
-            assert_eq!(slope(terrain.angled) as u32, angled_wall_chance(sector));
-        }
-        // Hard mode has every tier at once, which is where the steps end.
-        assert_eq!(steps.brain.last() as u8, brain_cap(1, Hard));
-        assert_eq!(steps.ballistics.last() as u8, ballistics_cap(1, Hard));
-        // Experience.
-        let every = balance.experience.every as f32;
-        for sector in 1..=200u32 {
-            let written = 1.0 - (-(sector as f32 - 1.0) / every).exp();
-            assert_eq!(written, experience(sector, Normal), "sector {sector}");
-        }
     }
 }

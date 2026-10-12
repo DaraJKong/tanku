@@ -4,8 +4,17 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-/// Total budget of the player tank.
-pub const PLAYER_BUDGET: u16 = 59;
+use crate::balance::{BALANCE, ClassRule, LEVELS};
+
+/// Total budget of the player tank: the points of a tank of the garage.
+pub const PLAYER_BUDGET: u16 = BALANCE.garage;
+
+/// What each level of a stat gives, where that isn't the level itself, and what it costs:
+/// both by stat, then by level.
+const GIVES: &[[f32; LEVELS]; Stat::COUNT] = &BALANCE.stats.gives;
+const COSTS: &[[u8; LEVELS]; Stat::COUNT] = &BALANCE.stats.costs;
+/// What the balance says of each class.
+const CLASSES: &[ClassRule; Class::ALL.len()] = &BALANCE.classes;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Stat {
@@ -142,45 +151,26 @@ impl Class {
 
     /// The stats that a tank of this class favors, the one it takes first in front.
     pub const fn favorites(self) -> &'static [Stat] {
-        match self {
-            Class::None => &[],
-            Class::Sniper => &[Stat::Muzzle, Stat::Turret],
-            Class::Scout => &[Stat::Engine, Stat::Tracks],
-            Class::Tactician => &[Stat::Brain, Stat::Ballistics],
-            Class::Trickster => &[Stat::Ricochet],
-            Class::Lancer => &[Stat::Piercing],
-            Class::Sapper => &[Stat::Mines, Stat::Shield],
-            Class::Gunner => &[Stat::Magazine, Stat::Loader],
-            // A bullet seeks at its bounces, so the bounce comes first.
-            Class::Seeker => &[Stat::Ricochet, Stat::Seeking],
-            Class::Flanker => &[Stat::Splitting],
-            Class::Grenadier => &[Stat::Exploding],
-        }
+        CLASSES[self as usize].favorites()
     }
 
     /// The highest level of a stat that a tank of this class can have. Some things are kept
-    /// for the classes that are about them. Each special bullet is one class's alone. Only a
-    /// trickster's bullets bounce more than once, or a tactician's, whose bank shots need it,
-    /// or a seeker's, which seek at each bounce.
+    /// for the classes that are about them. Each special bullet is the one of the class that
+    /// favors it, and of no other. And the balance says how much each class has of ricochet
+    /// and of ballistics: bullets that bounce twice and the bank shots that need them are
+    /// for a few.
     pub const fn highest(self, stat: Stat) -> u8 {
-        match (stat, self) {
-            (Stat::Piercing, Class::Lancer)
-            | (Stat::Seeking, Class::Seeker)
-            | (Stat::Splitting, Class::Flanker)
-            | (Stat::Exploding, Class::Grenadier) => stat.max_level(),
-            (Stat::Piercing | Stat::Seeking | Stat::Splitting | Stat::Exploding, _) => 0,
-            // A bullet that explodes never bounces.
-            (Stat::Ricochet, Class::Grenadier) => 0,
-            (Stat::Ricochet, Class::Trickster | Class::Tactician | Class::Seeker) => {
-                stat.max_level()
+        let rule = &CLASSES[self as usize];
+        match stat {
+            Stat::Piercing | Stat::Seeking | Stat::Splitting | Stat::Exploding => {
+                if rule.favors(stat) {
+                    stat.max_level()
+                } else {
+                    0
+                }
             }
-            (Stat::Ricochet, _) => 1,
-            // A bank shot off two walls needs a bullet that bounces twice.
-            (Stat::Ballistics, Class::Trickster | Class::Tactician) => stat.max_level(),
-            // The bank shots of the higher tiers are no use to these: a seeker's bullet
-            // finds its own way off a wall, and the bullets of the other two don't bounce.
-            (Stat::Ballistics, Class::Seeker | Class::Flanker | Class::Grenadier) => 1,
-            (Stat::Ballistics, _) => 2,
+            Stat::Ricochet => rule.ricochet,
+            Stat::Ballistics => rule.ballistics,
             _ => stat.max_level(),
         }
     }
@@ -262,31 +252,18 @@ impl Stat {
 
     /// Cumulative price of each hardware level. Software is priced by [`Stat::share`].
     const fn prices(self) -> &'static [u8] {
-        match self {
-            Stat::Engine => &[0, 2, 4, 6, 8, 11, 14, 17],
-            Stat::Tracks => &[0, 1, 2, 3, 4, 5, 6],
-            Stat::Turret => &[0, 1, 2, 3, 5, 7, 10],
-            Stat::Muzzle => &[0, 1, 3, 6, 9, 12, 16, 21],
-            Stat::Magazine => &[0, 3, 6, 9, 12, 15],
-            Stat::Loader => &[0, 1, 2, 4, 6, 9, 12, 16],
-            Stat::Ricochet => &[0, 4, 10, 18],
-            Stat::Mines => &[0, 4, 6, 8, 10],
-            Stat::Shield => &[0, 6, 9, 12, 15, 18],
-            Stat::Piercing => &[0, 4],
-            Stat::Seeking => &[0, 4],
-            Stat::Splitting => &[0, 6],
-            Stat::Exploding => &[0, 8],
-            Stat::Brain | Stat::Ballistics => &[],
+        if self.is_software() {
+            return &[];
         }
+        COSTS[self as usize].split_at(self.levels()).0
     }
 
     /// Share of the budget, in percent, that each software tier costs.
     const fn shares(self) -> &'static [u8] {
-        match self {
-            Stat::Brain => &[0, 8, 16, 24, 32],
-            Stat::Ballistics => &[0, 5, 10, 15],
-            _ => &[],
+        if !self.is_software() {
+            return &[];
         }
+        COSTS[self as usize].split_at(self.levels()).0
     }
 
     pub const fn is_software(self) -> bool {
@@ -307,12 +284,7 @@ impl Stat {
     }
 
     pub const fn max_level(self) -> u8 {
-        let levels = if self.is_software() {
-            self.shares().len()
-        } else {
-            self.prices().len()
-        };
-        levels as u8 - 1
+        self.levels() as u8 - 1
     }
 
     /// Total price of a hardware level.
@@ -381,10 +353,10 @@ pub struct Genome {
 }
 
 impl Genome {
-    /// The fixed tank of a player: 59 points and no software.
+    /// The fixed tank of a player, which the balance calls the standard tank. It has no
+    /// software.
     pub const PLAYER: Genome = Genome {
-        //       Eng Trk Tur Muz Mag Ldr Ric Min Shd Prc Sek Spl Exp Brn Bal
-        levels: [4, 5, 0, 2, 4, 6, 1, 2, 2, 0, 0, 0, 0, 0, 0],
+        levels: BALANCE.standard,
         budget: PLAYER_BUDGET,
         class: Class::None,
     };
@@ -474,26 +446,30 @@ impl Genome {
         self.hardware_cost() + self.software_cost()
     }
 
+    /// What the level of a stat gives this tank, for a stat whose levels give something
+    /// else than themselves.
+    fn gives(&self, stat: Stat) -> f32 {
+        GIVES[stat as usize][..stat.levels()][self.level(stat) as usize]
+    }
+
     /// Top speed in m/s.
     pub fn top_speed(&self) -> f32 {
-        [0.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0][self.level(Stat::Engine) as usize]
+        self.gives(Stat::Engine)
     }
 
     /// Hull turn rate in rad/s.
     pub fn hull_turn_rate(&self) -> f32 {
-        (90.0 + 45.0 * self.level(Stat::Tracks) as f32).to_radians()
+        self.gives(Stat::Tracks).to_radians()
     }
 
     /// Turret turn rate in rad/s. Player turrets ignore this stat.
     pub fn turret_turn_rate(&self) -> f32 {
-        let degrees: f32 =
-            [45.0, 60.0, 90.0, 120.0, 180.0, 270.0, 360.0][self.level(Stat::Turret) as usize];
-        degrees.to_radians()
+        self.gives(Stat::Turret).to_radians()
     }
 
-    /// Bullet speed in m/s. Each level above the one of the players' tank adds as much.
+    /// Bullet speed in m/s.
     pub fn bullet_speed(&self) -> f32 {
-        [6.0, 7.5, 9.0, 11.0, 13.0, 15.0, 17.0, 19.0][self.level(Stat::Muzzle) as usize]
+        self.gives(Stat::Muzzle)
     }
 
     /// Rounds the magazine holds.
@@ -503,7 +479,7 @@ impl Genome {
 
     /// Seconds needed to reload one round.
     pub fn reload_time(&self) -> f32 {
-        [4.0, 3.2, 2.5, 2.0, 1.6, 1.25, 1.0, 0.8][self.level(Stat::Loader) as usize]
+        self.gives(Stat::Loader)
     }
 
     /// Times a bullet bounces before the next impact destroys it.
@@ -520,7 +496,7 @@ impl Genome {
     pub fn shield_cooldown(&self) -> Option<f32> {
         match self.level(Stat::Shield) {
             0 => None,
-            level => Some(11.0 - level as f32),
+            _ => Some(self.gives(Stat::Shield)),
         }
     }
 
@@ -933,72 +909,6 @@ mod tests {
                     && muzzle_cap(*sector, Normal) >= genome.level(Muzzle)
             };
             assert_eq!((1..).find(possible), Some(sector), "{name}");
-        }
-    }
-
-    #[test]
-    fn the_balance_file_holds_the_numbers_of_the_stats() {
-        let balance = crate::balance::BALANCE;
-        for stat in Stat::ALL {
-            let levels = stat.levels();
-            assert_eq!(levels, stat.max_level() as usize + 1, "{}", stat.name());
-            let costs = &balance.stats.costs[stat as usize];
-            let written = if stat.is_software() {
-                stat.shares()
-            } else {
-                stat.prices()
-            };
-            assert_eq!(&costs[..levels], written, "{}", stat.name());
-            assert!(costs[levels..].iter().all(|cost| *cost == 0));
-        }
-        // What the levels give.
-        let gives = |stat: Stat, level: u8| balance.stats.gives[stat as usize][level as usize];
-        let tank = |stat: Stat, level: u8| build(0, &[(stat, level)]);
-        for level in 0..=Stat::Engine.max_level() {
-            let speed = tank(Stat::Engine, level).top_speed();
-            assert_eq!(speed, gives(Stat::Engine, level));
-        }
-        for level in 0..=Stat::Tracks.max_level() {
-            let turn = tank(Stat::Tracks, level).hull_turn_rate();
-            assert_eq!(turn, gives(Stat::Tracks, level).to_radians());
-        }
-        for level in 0..=Stat::Turret.max_level() {
-            let turn = tank(Stat::Turret, level).turret_turn_rate();
-            assert_eq!(turn, gives(Stat::Turret, level).to_radians());
-        }
-        for level in 0..=Stat::Muzzle.max_level() {
-            let speed = tank(Stat::Muzzle, level).bullet_speed();
-            assert_eq!(speed, gives(Stat::Muzzle, level));
-        }
-        for level in 0..=Stat::Loader.max_level() {
-            let reload = tank(Stat::Loader, level).reload_time();
-            assert_eq!(reload, gives(Stat::Loader, level));
-        }
-        assert_eq!(tank(Stat::Shield, 0).shield_cooldown(), None);
-        for level in 1..=Stat::Shield.max_level() {
-            let cooldown = tank(Stat::Shield, level).shield_cooldown();
-            assert_eq!(cooldown, Some(gives(Stat::Shield, level)));
-        }
-        // The standard tank, and the points of the garage.
-        assert_eq!(balance.standard, Genome::PLAYER.levels);
-        assert_eq!(balance.garage, PLAYER_BUDGET);
-        // The classes.
-        for class in Class::ALL {
-            let rule = balance.classes[class as usize];
-            assert_eq!(rule.weight, 1);
-            assert_eq!(rule.favorites(), class.favorites(), "{}", class.name());
-            for stat in Stat::ALL {
-                let highest = match stat {
-                    Stat::Piercing | Stat::Seeking | Stat::Splitting | Stat::Exploding => {
-                        rule.favors(stat) as u8
-                    }
-                    Stat::Ricochet => rule.ricochet,
-                    Stat::Ballistics => rule.ballistics,
-                    _ => stat.max_level(),
-                };
-                let told = (class.name(), stat.name());
-                assert_eq!(highest, class.highest(stat), "{told:?}");
-            }
         }
     }
 }

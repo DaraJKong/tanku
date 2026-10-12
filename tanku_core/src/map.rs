@@ -9,6 +9,7 @@ use std::collections::{HashSet, VecDeque};
 use bevy::math::{IVec2, Vec2};
 
 use crate::{
+    balance::BALANCE,
     progression,
     rng::{Purpose, Stream},
 };
@@ -18,9 +19,11 @@ pub const SECTOR_GAP: i32 = 6;
 /// The corridor never runs further south of its northernmost point than this.
 pub const MAX_DESCENT: i32 = 60;
 /// Enemies are placed at least this far from the entry of their sector.
-pub const SPAWN_DISTANCE: i32 = 15;
+pub const SPAWN_DISTANCE: i32 = BALANCE.terrain.spawn.0;
 /// Enemies are placed at least this far from the barrier of their sector.
-pub const SPAWN_CLEARANCE: i32 = 3;
+pub const SPAWN_CLEARANCE: i32 = BALANCE.terrain.spawn.1;
+/// An arena comes every so many sectors: the fewest and the most.
+const ARENA_EVERY: (i32, i32) = BALANCE.arena.every;
 /// Spawn points prepared per sector, enough for an arena with four players.
 pub const MAX_SPAWNS: usize = 24;
 
@@ -35,7 +38,7 @@ const APRON: i32 = 4;
 /// An arena is deep enough for a group to start far from the entry and clear of the barrier.
 const ARENA_MIN_LENGTH: i32 = 32;
 /// An arena that is cleared leaves a life this far inside its barrier.
-const LIFE_DEPTH: i32 = 4;
+const LIFE_DEPTH: i32 = BALANCE.arena.life;
 
 /// Squared distances below are in half meters, so that the centers of blocks stay integers.
 /// 1.8 m: a lattice path with this clearance is more than 3 m wide everywhere.
@@ -47,8 +50,8 @@ const GATE_CLEARANCE_2: i64 = 196;
 
 /// Narrowest and widest the room of arena mode gets, and how deep it gets from south to
 /// north. With the tanks that wait in reserve south of it, it fits on one screen.
-const ROOM_WIDTH: (i32, i32) = (36, 42);
-const ROOM_DEPTH: (i32, i32) = (22, 24);
+const ROOM_WIDTH: (i32, i32) = BALANCE.room.width;
+const ROOM_DEPTH: (i32, i32) = BALANCE.room.depth;
 /// How far a corner of the room is cut: along the wall that runs east, and along the one
 /// that runs north. The cuts follow the slopes of the lattice.
 const ROOM_CORNERS: [(i32, i32); 9] = [
@@ -64,9 +67,9 @@ const ROOM_CORNERS: [(i32, i32); 9] = [
 ];
 /// 5 m between the center of an obstacle and the place where the players appear in the room.
 const START_CLEARANCE_2: i64 = 100;
-/// The room has more floor than a sector of the corridor: it takes this many groups of cover
-/// for two of a sector.
-const ROOM_COVER: u32 = 3;
+/// The room has more floor than a sector of the corridor: its groups of cover are this many
+/// percent of those of a sector.
+const ROOM_COVER: u32 = BALANCE.room.cover;
 /// How far outside the south wall of the room the first row of the tanks that wait in
 /// reserve stands, how far behind it the next row does, and how far apart the tanks of a row
 /// are.
@@ -207,7 +210,7 @@ impl Spec {
         Self {
             kind: SectorKind::Corridor,
             exit,
-            length: (40, 80),
+            length: BALANCE.corridor,
             climb: false,
             drift,
         }
@@ -677,7 +680,8 @@ impl Corridor {
             plans: vec![plan_sector(seed, 0, frame, BAY_WIDTH, &spec)],
             maneuvers: 0,
             // The streams of the maneuvers have 0 as their second number.
-            arena_in: Stream::new(seed, Purpose::Maneuver, 0, 1).range(5, 8) as u32,
+            arena_in: Stream::new(seed, Purpose::Maneuver, 0, 1).range(ARENA_EVERY.0, ARENA_EVERY.1)
+                as u32,
         }
     }
 
@@ -704,7 +708,7 @@ impl Corridor {
         let straight = vec![Spec::corridor(Exit::Ahead, DRIFT)];
         let mut options = Vec::new();
         if self.arena_in == 0 {
-            self.arena_in = rng.range(5, 8) as u32;
+            self.arena_in = rng.range(ARENA_EVERY.0, ARENA_EVERY.1) as u32;
             options.push(vec![Spec {
                 kind: SectorKind::Arena,
                 ..straight[0]
@@ -1117,7 +1121,7 @@ impl Room {
         let mut rng = Stream::new(self.seed, Purpose::Room, level, 1);
         let start = self.start();
         let counts = (
-            progression::cover_groups(level) * ROOM_COVER / 2,
+            progression::cover_groups(level) * ROOM_COVER / 100,
             progression::crate_count(level),
         );
         let open = [((start, start), START_CLEARANCE_2)];
@@ -1543,21 +1547,6 @@ mod tests {
         let (early, late) = (count(1..=5), count(40..=44));
         assert!(early.0 > late.0, "blocks: {early:?} then {late:?}");
         assert!(early.1 < late.1, "crates: {early:?} then {late:?}");
-    }
-
-    #[test]
-    fn the_balance_file_holds_the_numbers_of_the_map() {
-        let balance = crate::balance::BALANCE;
-        assert_eq!(balance.terrain.spawn, (SPAWN_DISTANCE, SPAWN_CLEARANCE));
-        assert_eq!(balance.corridor, Spec::corridor(Exit::Ahead, 0).length);
-        // An arena comes every 5 to 8 sectors: the two places that draw it say so.
-        assert_eq!(balance.arena.every, (5, 8));
-        assert_eq!(balance.arena.life, LIFE_DEPTH);
-        assert_eq!(balance.room.width, ROOM_WIDTH);
-        assert_eq!(balance.room.depth, ROOM_DEPTH);
-        for cover in 0..=40u32 {
-            assert_eq!(cover * balance.room.cover / 100, cover * ROOM_COVER / 2);
-        }
     }
 }
 

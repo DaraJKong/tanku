@@ -638,6 +638,16 @@ pub const fn read(text: &str) -> Result<Balance, Fault> {
         let (line, about) = (found.player, "");
         return Err(Fault { line, what, about });
     }
+    // A tank draws its class by the weights of the classes.
+    let (mut weight, mut index) = (0, 0);
+    while index < balance.classes.len() {
+        weight += balance.classes[index].weight;
+        index += 1;
+    }
+    if weight == 0 {
+        let (what, about) = ("one class at least has a weight that isn't 0", "");
+        return Err(Fault { line, what, about });
+    }
     Ok(balance)
 }
 
@@ -1926,6 +1936,18 @@ mod tests {
         let dear = fault("garage  59", "garage  58");
         assert_eq!((dear.line, dear.about), (line_of(FILE, "player"), ""));
         assert!(dear.what.contains("more points than the garage has"));
+        // A tank must draw a class.
+        let classes = FILE.lines().filter(|text| starts(text, "class")).count();
+        let weightless: Vec<String> = FILE
+            .lines()
+            .map(|text| match text.split_once("  1  ") {
+                Some((class, rest)) if starts(text, "class") => format!("{class}  0  {rest}"),
+                _ => text.to_string(),
+            })
+            .collect();
+        assert_eq!(classes, Class::ALL.len());
+        let none = read(&weightless.join("\n")).unwrap_err();
+        assert!(none.what.contains("a weight that isn't 0"), "{none}");
         // A line that is missing is named.
         for (line, what, about) in [
             ("stat seeking", "no `stat` line for", "seeking"),

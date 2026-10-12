@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::sim::Run;
+use crate::{balance::BALANCE, sim::Run};
 
 /// How hard the enemies of a run are. The map of a seed is the same for all of them, and so
 /// are the number of its enemies, their classes and their places.
@@ -70,11 +70,13 @@ impl Unlock {
 
     /// The sector that a run must clear to earn it.
     pub const fn sector(self) -> u32 {
+        let unlock = BALANCE.unlock;
         match self {
-            Unlock::ArenaMode => 5,
-            Unlock::ChosenSeed => 10,
-            Unlock::FreeMode | Unlock::ImpossibleMode => 20,
-            Unlock::HardMode => 30,
+            Unlock::ArenaMode => unlock.arena,
+            Unlock::ChosenSeed => unlock.seed,
+            Unlock::FreeMode => unlock.free,
+            Unlock::HardMode => unlock.hard,
+            Unlock::ImpossibleMode => unlock.impossible,
         }
     }
 
@@ -190,15 +192,5 @@ mod tests {
         let mut keys: Vec<&str> = Unlock::ALL.iter().map(|unlock| unlock.key()).collect();
         keys.dedup();
         assert_eq!(keys.len(), Unlock::ALL.len());
-    }
-
-    #[test]
-    fn the_balance_file_holds_the_sectors_that_unlock() {
-        let unlock = crate::balance::BALANCE.unlock;
-        assert_eq!(unlock.arena, Unlock::ArenaMode.sector());
-        assert_eq!(unlock.seed, Unlock::ChosenSeed.sector());
-        assert_eq!(unlock.free, Unlock::FreeMode.sector());
-        assert_eq!(unlock.hard, Unlock::HardMode.sector());
-        assert_eq!(unlock.impossible, Unlock::ImpossibleMode.sector());
     }
 }
