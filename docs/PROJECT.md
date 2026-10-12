@@ -612,7 +612,7 @@ A host whom the others have left by then would go on alone, in a solo run. The l
 
 ### Connection and latency
 
-A player who disconnects loses their tank, and later sectors are generated for the remaining number of players. A player whose machine stays silent for 5 s has disconnected. If the host leaves, the run ends, and the other players are back at their main menu. All players must run the same game version: a game of another version doesn't answer.
+A player who disconnects loses their tank, and later sectors are generated for the remaining number of players. A player whose machine stays silent for 5 s has disconnected. If the host leaves, the run ends, and the other players are back at their main menu. All players must run the same game version, compiled with the same balance (see [BALANCE.md](BALANCE.md)): a game of another one doesn't answer, and the join screen lists it as one of another version.
 
 The game must stay playable up to a round trip of 120 ms. What the host tells comes late, so a player who joined a game is shown three things in three ways:
 
