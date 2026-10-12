@@ -573,7 +573,7 @@ With `?probe` after its address, the page shows how long its frames are, how far
 
 | Tab | Shows | Changes |
 |---|---|---|
-| Motifs | A motif on a grid of nine degrees, with its skeleton, its ornaments and its turn | The notes of a motif and of its turn, and its number of bars |
+| Motifs | A motif on a grid of nine degrees, with its skeleton, its ornaments, its answer and its turn, and where the arrangement plays each of the three | The notes of a motif and of its turn, and its number of bars |
 | Patterns | Every pattern on one grid of sixteen steps, and the notes that one of them gives over a chord | The steps of a pattern, its levels, its echo and its name |
 | Sections | The eight bars of a section, the arrangement and the lines of the threats | The chords, the motifs that the melody states, the tempo of a section, and what each instrument plays in each scene and at each threat |
 | Transitions | The roll and the connection, with every way that a connection can go | The numbers of the `roll` and `link` lines |
@@ -584,7 +584,7 @@ With `?probe` after its address, the page shows how long its frames are, how far
 Three rules shape it:
 
 - **The document is the lines of the file.** A change rewrites words of a line and hands the text to the reader of `tanku_audio`. A change that the reader refuses is not made, and the window shows the reader's own sentence. The editor therefore holds no piece that it could write wrong. The lines that no change touched stay as they were written, comments and columns included, and what it saves is what the game builds with.
-- **A control only for what a line holds.** What the rules derive is drawn in dashes and can't be changed: the skeleton, the ornaments, the ways of a connection, the hits of a roll. What is in the code is told and tagged as such: what an instrument is made of, how many notes it sounds at once, when a connection starts.
+- **A control only for what a line holds.** What the rules derive is drawn in dashes and can't be changed: the skeleton, the ornaments, the answer, the ways of a connection, the hits of a roll. What is in the code is told and tagged as such: what an instrument is made of, how many notes it sounds at once, when a connection starts.
 - **Heard as the game plays it.** The play button plays the thing of the tab alone, or the piece as in the game, in the place, the fight and the threat that the transport is set to. What is played alone is a few lines of the file written again for the occasion, and read by the same reader. A change is heard from the next step on: the music takes the new piece where it is.
 
 The checks that [hold for any piece](#tests-and-benchmarks) run after every change: at once for those that only read the piece, and on a thread of their own for those that listen to it. The editor adds six. Four are about the game: the timings of its rules against the tempo, steps that are whole numbers of half frames, the notes of the cues against the key, and the music 12 dB under a shot. One measures the cost of a second of music. The last says whether the piece still sounds as the saved file does, which tells that a change will move the stored values of the tests.

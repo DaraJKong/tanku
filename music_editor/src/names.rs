@@ -1,8 +1,9 @@
 //! The names that the window gives to what the file writes as numbers and symbols: a note, a
-//! chord, an instrument, where a pattern is played, and what a step of it sounds over a chord.
+//! chord, an instrument, where a pattern or a line of the melody is played, and what a step of
+//! a pattern sounds over a chord.
 
 use tanku_audio::{
-    notation::{Instrument, Layer, Part, Piece, Rhythm, STEPS, Scene, Source, THREATS},
+    notation::{Form, Instrument, Layer, Part, Piece, Rhythm, STEPS, Scene, Source, THREATS},
     score::{Mode, Score, bass_root, triad},
 };
 
@@ -180,6 +181,54 @@ pub fn played_in(piece: &Piece, instrument: Instrument, name: &str) -> String {
     first.into_iter().chain(letters).collect()
 }
 
+/// Where the arrangement plays a line of the melody, in the few words that the margin of a
+/// drawing has room for: the scenes whose line gives it to an instrument, then the threats
+/// whose line does. The reader lets a threat name only what a scene leaves to it.
+pub fn form_played(piece: &Piece, form: Form) -> String {
+    let plays = |layer: Layer| {
+        let is =
+            |source: Source| matches!(source, Source::Tune { form: other, .. } if other == form);
+        is(layer.first) || layer.second.is_some_and(is)
+    };
+    let in_scene = |scene: Scene| {
+        let mut parts = Instrument::ALL
+            .into_iter()
+            .map(|instrument| piece.play(scene).part(instrument));
+        parts.any(|part| matches!(part, Part::Plays(layer) if plays(layer)))
+    };
+    let at_threat = |threat: &u8| {
+        let mut layers = Instrument::ALL
+            .into_iter()
+            .filter_map(|instrument| piece.threat(*threat, instrument));
+        layers.any(plays)
+    };
+    let mut places: Vec<String> = Vec::new();
+    for (scene, name) in [(Scene::Menu, "menu"), (Scene::Calm, "calm")] {
+        if in_scene(scene) {
+            places.push(name.to_string());
+        }
+    }
+    match (in_scene(Scene::Corridor), in_scene(Scene::Arena)) {
+        (true, true) => places.push("fights".to_string()),
+        (true, false) => places.push("corridor".to_string()),
+        (false, true) => places.push("arena".to_string()),
+        (false, false) => {}
+    }
+    let threats: Vec<u8> = (0..THREATS as u8).filter(at_threat).collect();
+    if !threats.is_empty() {
+        let name = if threats.len() == 1 {
+            "threat"
+        } else {
+            "threats"
+        };
+        places.push(format!("{name} {}", listed(&threats)));
+    }
+    if places.is_empty() {
+        return "not played".to_string();
+    }
+    places.join(", ")
+}
+
 /// The pitch that each step of a pattern starts over a chord, as the game plays it: `written`
 /// is the chord of a bar as its section writes it. A drum has no pitch.
 pub fn heard(score: &Score, rhythm: &Rhythm, mode: Mode, written: u8) -> [Option<u8>; STEPS] {
@@ -264,6 +313,37 @@ mod tests {
         assert_eq!(uses(&PIECE, Instrument::Pluck, "tick").octave, Some(2));
         assert_eq!(uses(&PIECE, Instrument::Bass, "pair").octave, Some(1));
         assert_eq!(uses(&PIECE, Instrument::Kick, "fight").octave, None);
+    }
+
+    #[test]
+    fn a_line_of_the_melody_says_where_it_is_played() {
+        assert_eq!(form_played(&PIECE, Form::Skeleton), "threat 1");
+        assert_eq!(form_played(&PIECE, Form::Ornate), "threats 3 and 4");
+        assert_eq!(form_played(&PIECE, Form::Answer), "calm");
+        assert_eq!(form_played(&PIECE, Form::Melody), "menu, calm, threat 2");
+        // A scene that names a line counts with the threats that do, and a line that is
+        // under another counts like one that is over it.
+        let file = crate::fixture::FILE;
+        let text = file
+            .replace(
+                "hat=corridor bass=* pluck=* lead=*",
+                "hat=corridor bass=* pluck=* lead=skeleton@4/answer@4",
+            )
+            .replace("pluck=melody@4", "pluck=tick@2/ornate@4");
+        assert!(
+            text.contains("lead=skeleton@4/answer@4") && text.contains("pluck=tick@2/ornate@4")
+        );
+        let piece = tanku_audio::notation::read(&text).unwrap();
+        assert_eq!(form_played(&piece, Form::Skeleton), "corridor, threat 1");
+        assert_eq!(form_played(&piece, Form::Answer), "calm, corridor");
+        assert_eq!(form_played(&piece, Form::Ornate), "menu, threats 3 and 4");
+        assert_eq!(form_played(&piece, Form::Melody), "calm, threat 2");
+        // A line that nothing plays says so.
+        let text = text
+            .replace(" lead=answer@4:150", "")
+            .replace("skeleton@4/answer@4", "skeleton@4");
+        let piece = tanku_audio::notation::read(&text).unwrap();
+        assert_eq!(form_played(&piece, Form::Answer), "not played");
     }
 
     #[test]

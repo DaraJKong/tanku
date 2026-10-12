@@ -1,13 +1,13 @@
 //! The tab of the motifs: the few bars of melody that every tune of the piece is made of.
 //!
 //! A motif is drawn on a grid of nine degrees. What is written by hand is solid, and the
-//! lines that the rules derive from it, its skeleton and its ornaments, are in dashes under
-//! it. Its turn, which is written too, is solid.
+//! lines that the rules derive from it, its skeleton, its ornaments and its answer, are in
+//! dashes under it. Its turn, which is written too, is solid.
 
 use bevy::prelude::*;
 use tanku_audio::{
-    notation::{Line, Motif, Piece, STEPS},
-    score::{FIVE, ornaments, skeleton},
+    notation::{Form, Line, Motif, Piece, STEPS},
+    score::{FIVE, answer, ornaments, skeleton},
 };
 
 use super::{
@@ -237,7 +237,7 @@ pub fn center(parent: &mut ChildSpawnerCommands, doc: &Doc, view: &View) {
 
     grid(parent, piece, view, &shown, step);
     as_written(parent, &shown, step, turn.is_some(), letter);
-    derived(parent, &motif, view, step);
+    derived(parent, piece, &motif, view, step);
     parent
         .spawn(Node {
             padding: UiRect::horizontal(px(14)),
@@ -546,8 +546,14 @@ fn as_written(
 
 /// The lines that the rules derive from the motif, in dashes, and its turn, which is
 /// written.
-fn derived(parent: &mut ChildSpawnerCommands, motif: &Motif, view: &View, step: f32) {
-    const HEIGHT: f32 = 62.0;
+fn derived(
+    parent: &mut ChildSpawnerCommands,
+    piece: &Piece,
+    motif: &Motif,
+    view: &View,
+    step: f32,
+) {
+    const HEIGHT: f32 = 48.0;
     let bars = motif.bars();
     // While the grid shows the turn, a step is as wide as for a motif of one bar: the lines
     // under it keep the width of the motif.
@@ -556,22 +562,20 @@ fn derived(parent: &mut ChildSpawnerCommands, motif: &Motif, view: &View, step: 
     } else {
         step
     };
-    let rows: [(&str, &str, Vec<Line>); 2] = [
-        (
-            "Skeleton",
-            "threat 1",
-            bars.iter().map(|line| skeleton(*line)).collect(),
-        ),
-        (
-            "Ornaments",
-            "threats 3, 4",
-            bars.iter().map(|line| ornaments(*line)).collect(),
-        ),
+    // Each line that a rule derives, with the rule and with where the arrangement plays it.
+    let row = |name: &'static str, form: Form, derive: fn(Line) -> Line| {
+        let lines: Vec<Line> = bars.iter().map(|line| derive(*line)).collect();
+        (name, names::form_played(piece, form), lines)
+    };
+    let rows = [
+        row("Skeleton", Form::Skeleton, skeleton),
+        row("Ornaments", Form::Ornate, ornaments),
+        row("Answer", Form::Answer, answer),
     ];
     // A thin bar for each note, as high in its row as its degree.
     let mark = |start: usize, cell: &tanku_audio::notation::Cell| {
         let left = GUTTER + start as f32 * step + 1.0;
-        let top = 46.0 - (cell.degree.min(9) - 1) as f32 * 5.0;
+        let top = 36.0 - (cell.degree.min(9) - 1) as f32 * 4.0;
         (left, top, cell.steps as f32 * step - 2.0)
     };
     parent
@@ -596,7 +600,7 @@ fn derived(parent: &mut ChildSpawnerCommands, motif: &Motif, view: &View, step: 
                     BorderColor::all(theme::RULE_DIM),
                 ))
                 .with_children(|row| {
-                    labels(row, name, when);
+                    labels(row, name, &when);
                     for (bar, line) in lines.iter().enumerate() {
                         for (start, cell) in
                             line.iter().enumerate().filter(|(_, cell)| cell.degree != 0)
@@ -670,6 +674,7 @@ fn labels(parent: &mut ChildSpawnerCommands, name: &str, when: &str) {
                 justify_content: JustifyContent::Center,
                 row_gap: px(3),
                 border: UiRect::right(px(1)),
+                overflow: Overflow::clip(),
                 ..default()
             },
             BorderColor::all(theme::RULE),
