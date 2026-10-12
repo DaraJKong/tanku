@@ -15,7 +15,9 @@
 //!
 //! All three keep 8 to 14 m from the nearest enemy and drive around it, lead their shots,
 //! find a shot off a wall at an enemy that they don't see, and fire as fast as the gun does.
-//! None lays a mine, takes cover or picks the moment of a fight. They use nothing of the
+//! They find their way around what hides an enemy. They hold a shot that would come back to
+//! their own tank off a wall, or go off within reach of it, and those who see bullets coming
+//! know where their own go. None lays a mine, takes cover or picks the moment of a fight. They use nothing of the
 //! brains of the enemies but how to aim and how to steer around a wall, so that a change to
 //! how a brain dodges doesn't move the yardstick.
 
@@ -30,7 +32,7 @@ use tanku_core::{
 use tanku_server::{
     brain,
     bullets::{self, Flight, Quarry},
-    field::{Collider, Field},
+    field::{Collider, Field, Solid},
     tanks,
 };
 
@@ -42,6 +44,15 @@ const VIEW: f32 = 20.0;
 const MARGIN: f32 = 0.25;
 /// A player raises the shield when what can't be dodged is this many ticks away or fewer.
 const SHIELD_AHEAD: usize = 12;
+/// How far a player follows a shot before firing it, in ticks: three seconds.
+const SHOT_AHEAD: usize = 180;
+/// The room that a player wants around the tank from a shot of their own that comes back or
+/// goes off, in meters.
+const SHOT_ROOM: f32 = 1.0;
+/// How far around the tank and its enemy a way between them is looked for, in meters.
+const ROUTE_MARGIN: f32 = 25.0;
+/// A way ends this close to the enemy, in meters: in sight of it, as a rule.
+const ROUTE_REACH: f32 = 1.5;
 /// The ways that a player tries around the one that was meant, in degrees.
 const WAYS: [f32; 7] = [45.0, -45.0, 90.0, -90.0, 135.0, -135.0, 180.0];
 
@@ -274,6 +285,10 @@ pub struct Pilot {
     turned: f32,
     bank_shot: Option<f32>,
     bank_shot_timer: f32,
+    /// Where it drives to get around what hides its enemy, and the time before it looks for
+    /// the way again.
+    waypoint: Option<Vec2>,
+    route_timer: f32,
     seen: Vec<Seen>,
 }
 
@@ -287,6 +302,8 @@ impl Pilot {
             turned: 0.0,
             bank_shot: None,
             bank_shot_timer: 0.0,
+            waypoint: None,
+            route_timer: 0.0,
             seen: Vec::new(),
         }
     }
@@ -315,8 +332,12 @@ impl Pilot {
             let rounds = world.get::<Gun>(entity).unwrap().rounds;
             let aim = self.aim(field, tank, me, motion.turret, foe, foe_velocity);
             command.aim = me + Vec2::from_angle(aim.0) * 10.0;
-            command.fire = aim.1 && rounds > 0 && self.since_shot >= self.pace;
-            meant = brain::steer(field, tank, me, self.around(field, me, foe));
+            // A player holds a shot that would come back, or go off too close.
+            command.fire = aim.1
+                && rounds > 0
+                && self.since_shot >= self.pace
+                && sound_shot(field, entity, tank, me, motion.turret, foe, &sight.quarry);
+            meant = brain::steer(field, tank, me, self.around(field, tank, me, foe));
         }
         self.since_shot = if command.fire {
             0.0
@@ -329,9 +350,10 @@ impl Pilot {
         // A player who never sees a bullet coming minds no mine either.
         let minds = self.skill.notice.is_some();
         if minds && (!known.is_empty() || !sight.mines.is_empty()) {
-            let follows = self.skill.follows;
             let mut tracks = Vec::new();
             for &(_, bullet, at) in &known {
+                // Where their own shot goes off a wall is news to no player.
+                let follows = self.skill.follows || bullet.team == Team::Players;
                 Track::follow(field, bullet, at, 0, &sight.quarry, follows, &mut tracks);
             }
             let hazards: Vec<Hazard> = sight.mines.iter().filter_map(hazard).collect();
@@ -375,7 +397,7 @@ impl Pilot {
 
     /// The way that it means to drive: toward an enemy that it doesn't see or that is far,
     /// away from one that is close, and around it otherwise, one way and then the other.
-    fn around(&mut self, field: &Field, me: Vec2, foe: Vec2) -> Vec2 {
+    fn around(&mut self, field: &Field, tank: &Tank, me: Vec2, foe: Vec2) -> Vec2 {
         self.turned += TICK;
         if self.turned >= 2.0 {
             self.turned = 0.0;
@@ -383,7 +405,15 @@ impl Pilot {
         }
         let distance = me.distance(foe);
         let toward = (foe - me) / distance.max(0.01);
-        if !field.sees(me, foe) || distance > 14.0 {
+        if !field.sees(me, foe) {
+            // It goes around what hides the enemy, and looks for the way again now and then.
+            self.route_timer -= TICK;
+            if self.route_timer <= 0.0 {
+                self.route_timer = 0.5;
+                self.waypoint = route(field, tank, me, foe);
+            }
+            self.waypoint.map_or(toward, |waypoint| waypoint - me)
+        } else if distance > 14.0 {
             toward
         } else if distance < 8.0 {
             -toward
@@ -418,17 +448,128 @@ impl Pilot {
             // Where a bullet goes off a wall is news to a player who didn't follow it there.
             if seen.bounces_left != bullet.bounces_left {
                 seen.bounces_left = bullet.bounces_left;
-                if !self.skill.follows {
+                if !self.skill.follows && bullet.team != Team::Players {
                     seen.since = 0.0;
                 }
             }
-            if seen.since >= notice {
+            if seen.since >= notice || bullet.team == Team::Players {
                 known.push((entity, bullet, at));
             }
             seen.since += TICK;
         }
         known
     }
+}
+
+/// Whether a shot that a tank fires now is one that a player would fire: it gets to the enemy
+/// before it comes back to the tank off a wall, and doesn't go off within reach of the tank,
+/// in a crate or by itself.
+fn sound_shot(
+    field: &Field,
+    entity: Entity,
+    tank: &Tank,
+    me: Vec2,
+    turret: f32,
+    foe: Vec2,
+    quarry: &[Quarry],
+) -> bool {
+    let reach = TANK_RADIUS + BULLET_RADIUS;
+    let mut bullet = Bullet::fired(
+        entity,
+        tank,
+        Vec2::from_angle(turret) * tank.genome.bullet_speed(),
+    );
+    let step = bullet.velocity.length() * TICK;
+    let mut at = me;
+    for _ in 0..SHOT_AHEAD {
+        let flight = bullets::fly_past_walls(field, &mut at, &mut bullet, step, quarry);
+        if at.distance(foe) < reach {
+            return true;
+        }
+        if let Flight::Stopped(solid) = flight.end {
+            let blast = matches!(solid, Solid::Crate(_)) || bullet.kind == Kind::Exploding;
+            return !(blast && at.distance(me) < BLAST_RADIUS + SHOT_ROOM);
+        }
+        if bullet.bounced && at.distance(me) < reach + SHOT_ROOM {
+            return false;
+        }
+    }
+    true
+}
+
+/// Where a tank drives to get to a place that it doesn't see: the furthest point that it
+/// can drive straight to on the shortest way there, around what is solid. The way is found
+/// on a grid of one meter, among the squares that a tank fits in.
+fn route(field: &Field, tank: &Tank, from: Vec2, to: Vec2) -> Option<Vec2> {
+    let low = (from.min(to) - Vec2::splat(ROUTE_MARGIN)).floor();
+    let size = ((from.max(to) + Vec2::splat(ROUTE_MARGIN)).ceil() - low).as_uvec2();
+    let (width, height) = (size.x as usize, size.y as usize);
+    let center = |cell: usize| low + Vec2::new((cell % width) as f32, (cell / width) as f32) + 0.5;
+    let cell = |at: Vec2| {
+        let within = (at - low).floor().clamp(Vec2::ZERO, (size - 1).as_vec2());
+        within.x as usize + within.y as usize * width
+    };
+    // The squares that a tank doesn't fit in: those too close to something solid.
+    let room = TANK_RADIUS + 0.05;
+    let mut solid = vec![false; width * height];
+    for collider in field
+        .colliders
+        .iter()
+        .filter(|collider| collider.solid.stops(tank))
+    {
+        let first = (collider.a.min(collider.b) - low - room)
+            .floor()
+            .max(Vec2::ZERO);
+        let last = (collider.a.max(collider.b) - low + room)
+            .ceil()
+            .min(size.as_vec2());
+        for y in first.y as usize..last.y.max(0.0) as usize {
+            for x in first.x as usize..last.x.max(0.0) as usize {
+                let at = low + Vec2::new(x as f32, y as f32) + 0.5;
+                if geom::distance_to_segment(at, collider.a, collider.b) < room {
+                    solid[x + y * width] = true;
+                }
+            }
+        }
+    }
+    let (start, goal) = (cell(from), to);
+    let mut before: Vec<Option<usize>> = vec![None; width * height];
+    let mut open = std::collections::VecDeque::from([start]);
+    before[start] = Some(start);
+    let mut end = None;
+    while let Some(here) = open.pop_front() {
+        if center(here).distance(goal) < ROUTE_REACH {
+            end = Some(here);
+            break;
+        }
+        let (x, y) = (here % width, here / width);
+        let next = [
+            (x > 0).then(|| here - 1),
+            (x + 1 < width).then(|| here + 1),
+            (y > 0).then(|| here - width),
+            (y + 1 < height).then(|| here + width),
+        ];
+        for next in next.into_iter().flatten() {
+            if !solid[next] && before[next].is_none() {
+                before[next] = Some(here);
+                open.push_back(next);
+            }
+        }
+    }
+    // Back from the end of the way to the first square that the tank can drive straight to.
+    let mut here = end?;
+    let mut first = here;
+    while here != start {
+        let stopped = field
+            .cast(from, center(here) - from, TANK_RADIUS)
+            .is_some_and(|(_, solid)| solid.stops(tank));
+        if !stopped {
+            return Some(center(here));
+        }
+        first = here;
+        here = before[here]?;
+    }
+    Some(center(first))
 }
 
 /// A mine as a player minds it: one of the enemies, which a player's tank sets off.
@@ -517,7 +658,7 @@ mod tests {
         field.colliders.push(Collider {
             a: Vec2::new(-30.0, 10.0),
             b: Vec2::new(30.0, 10.0),
-            solid: tanku_server::field::Solid::Wall,
+            solid: Solid::Wall,
         });
         field
     }
@@ -642,6 +783,53 @@ mod tests {
         Track::follow(&field, shot, Vec2::new(2.5, 0.0), 0, &[], false, &mut close);
         let (_, hit) = way_out(&field, &tank, Vec2::ZERO, &motion, Vec2::ZERO, &close, &[]);
         assert!(hit.is_some());
+    }
+
+    #[test]
+    fn a_player_holds_a_shot_that_would_come_back() {
+        let field = field();
+        let tank = player();
+        let me = Vec2::new(0.0, 4.0);
+        let north = std::f32::consts::FRAC_PI_2;
+        let fired = |turret: f32, foe: Vec2| {
+            sound_shot(&field, Entity::PLACEHOLDER, &tank, me, turret, foe, &[])
+        };
+        // Straight at the wall, the shot comes straight back, unless the enemy is in its way.
+        assert!(!fired(north, Vec2::new(20.0, 4.0)));
+        assert!(fired(north, Vec2::new(0.0, 8.0)));
+        // At an angle, it comes down far from the tank.
+        assert!(fired(north / 2.0, Vec2::new(20.0, 4.0)));
+    }
+
+    #[test]
+    fn a_player_finds_the_way_around_a_wall() {
+        // A wall from west to east, with its east end at x = 6: the enemy is behind it.
+        let mut field = Field::new(1, 1, tanku_core::modes::Difficulty::Normal);
+        field.colliders.push(Collider {
+            a: Vec2::new(-30.0, 10.0),
+            b: Vec2::new(6.0, 10.0),
+            solid: Solid::Wall,
+        });
+        let (me, foe) = (Vec2::new(0.0, 5.0), Vec2::new(0.0, 15.0));
+        assert!(!field.sees(me, foe));
+        let waypoint = route(&field, &player(), me, foe).unwrap();
+        // The way goes east, around the end of the wall, and the tank can drive there.
+        assert!(waypoint.x > 6.0 + TANK_RADIUS, "{waypoint:?}");
+        assert!(field.cast(me, waypoint - me, TANK_RADIUS).is_none());
+        // No way leads into a place that is closed all around.
+        for (a, b) in [
+            ((-3.0, 12.0), (3.0, 12.0)),
+            ((3.0, 12.0), (3.0, 18.0)),
+            ((3.0, 18.0), (-3.0, 18.0)),
+            ((-3.0, 18.0), (-3.0, 12.0)),
+        ] {
+            field.colliders.push(Collider {
+                a: a.into(),
+                b: b.into(),
+                solid: Solid::Wall,
+            });
+        }
+        assert_eq!(route(&field, &player(), me, foe), None);
     }
 
     #[test]

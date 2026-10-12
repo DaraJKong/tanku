@@ -408,7 +408,7 @@ A fight of a trial is the real simulation, without a window, with a reference pl
 | Follows a bullet off a wall | No | No | Yes |
 | Shield | Never | When the bullet can't be dodged | The same |
 
-With the time that the standard tank takes to get out of the way, the regular player reacts in about the 0.55 s that the specification counts for a player who keeps moving. All three keep 8 to 14 m from the nearest enemy and drive around it, lead their shots, find a shot off a wall at an enemy that they don't see, and fire as fast as the gun does. Those who see bullets coming keep out of the reach of mines and of the blasts that are marked. None lays a mine, takes cover or picks the moment of a fight.
+With the time that the standard tank takes to get out of the way, the regular player reacts in about the 0.55 s that the specification counts for a player who keeps moving. All three keep 8 to 14 m from the nearest enemy and drive around it, lead their shots, find a shot off a wall at an enemy that they don't see, and fire as fast as the gun does. They find their way around what hides an enemy, and they hold a shot that would come back to their own tank off a wall or go off within reach of it. Those who see bullets coming keep out of the reach of mines and of the blasts that are marked, and know where their own shots go. None lays a mine, takes cover or picks the moment of a fight.
 
 Nothing destroys the tank of a reference player. What would have is counted as a loss, so that every fight lasts until the group has fallen or the time is up. The losses are the one measure of what a group costs. What hits the tank within 1.5 s of a loss is no other one, since a tank that is destroyed is gone for that long.
 
