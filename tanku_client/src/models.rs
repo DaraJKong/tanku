@@ -9,10 +9,12 @@
 //! A tank that isn't there is an outline instead: its plan in dashes, flat on the sheet, in
 //! its color. A dormant enemy isn't there yet, and is inked in when it wakes up.
 
+use std::f32::consts::FRAC_PI_2;
+
 use bevy::prelude::*;
 use tanku_core::{
     rules::SHIELD_RADIUS,
-    sim::{Enemy, Motion, Player, Run, Shield, Tank, Wreck},
+    sim::{Enemy, Motion, Player, Position, Reserve, Run, Shield, Tank, Wreck},
     stats::{Class, Genome, Stat},
 };
 
@@ -111,7 +113,9 @@ struct Glass {
 pub fn plugin(app: &mut App) {
     app.add_systems(Startup, setup).add_systems(
         Update,
-        (build, ink_in, (pose, shield)).chain().before(scene::place),
+        (build, hold_in_reserve, ink_in, (pose, shield))
+            .chain()
+            .before(scene::place),
     );
 }
 
@@ -688,6 +692,41 @@ fn build(
     }
 }
 
+/// A tank that waits in reserve isn't there yet: it is the outline of itself, as a dormant
+/// enemy is, with every part that tells a stat. It stands outside the room, on the void, and
+/// faces the room, which lies north of it.
+fn hold_in_reserve(
+    mut commands: Commands,
+    reserves: Query<(Entity, &Reserve, &Position), Added<Reserve>>,
+    paints: Res<Paints>,
+    mut meshes: ResMut<Assets<Mesh>>,
+) {
+    for (entity, reserve, position) in &reserves {
+        let genome = &reserve.genome;
+        let outline = Outline::dormant(enemy_color(genome), theme::VOID);
+        let motion = Motion {
+            hull: FRAC_PI_2,
+            turret: FRAC_PI_2,
+            ..default()
+        };
+        let drawings = [
+            (
+                meshes.add(hull_outline(genome, &outline).build()),
+                OUTLINE_HEIGHT,
+            ),
+            (
+                meshes.add(turret_outline(genome, &outline).build()),
+                OUTLINE_HEIGHT + OUTLINE_TURRET,
+            ),
+        ];
+        commands.entity(entity).insert((
+            Transform::from_translation(scene::to_world(position.0, 0.0)),
+            Visibility::default(),
+        ));
+        draw(&mut commands, entity, &motion, drawings, &paints.ink);
+    }
+}
+
 /// Draws a tank again when its look changes. An enemy that wakes up is inked in: its outline
 /// gives way to the tank itself. A player's tank that is destroyed among several players
 /// leaves its outline, and is inked in again once it is repaired.
@@ -993,7 +1032,7 @@ mod tests {
             .init_resource::<Assets<Image>>()
             .add_systems(PreStartup, scene::setup)
             .add_systems(Startup, setup)
-            .add_systems(Update, (build, ink_in, pose).chain());
+            .add_systems(Update, (build, hold_in_reserve, ink_in, pose).chain());
         app
     }
 
@@ -1038,6 +1077,39 @@ mod tests {
         app.update();
         assert_eq!(app.world().get::<Look>(enemy), Some(&Look::Solid));
         assert_eq!(parts(&mut app, enemy), ((1, 1), (0.0, TURRET_HEIGHT)));
+    }
+
+    #[test]
+    fn a_tank_in_reserve_is_an_outline_that_faces_the_room() {
+        let mut app = drawing_world();
+        let at = Vec2::new(-3.0, -2.2);
+        let reserve = Reserve {
+            genome: full(),
+            group: 4,
+            number: 1,
+        };
+        let waiting = app.world_mut().spawn((reserve, Position(at))).id();
+        app.update();
+        // It lies flat where it waits, as a dormant enemy does, and it is no tank: nothing
+        // fights it and nothing hits it.
+        let flat = (OUTLINE_HEIGHT, OUTLINE_HEIGHT + OUTLINE_TURRET);
+        assert_eq!(parts(&mut app, waiting), ((1, 1), flat));
+        assert!(app.world().get::<Tank>(waiting).is_none());
+        let stands = app.world().get::<Transform>(waiting).unwrap().translation;
+        assert_eq!(stands, scene::to_world(at, 0.0));
+        // Its hull and its turret point north, at the room.
+        let world = app.world_mut();
+        let children: Vec<Entity> = world.get::<Children>(waiting).unwrap().iter().collect();
+        for part in children {
+            let points = world.get::<Transform>(part).unwrap().rotation * Vec3::X;
+            assert!(
+                points.distance(scene::to_world(Vec2::Y, 0.0)) < 1e-4,
+                "{points}"
+            );
+        }
+        // It is drawn once.
+        app.update();
+        assert_eq!(parts(&mut app, waiting), ((1, 1), flat));
     }
 
     #[test]

@@ -10,7 +10,7 @@ use tanku_core::{
     modes::Difficulty,
     progression,
     rng::{Purpose, Stream},
-    rules::{BLOCK_SIZE, MAX_PLAYERS, TANK_RADIUS},
+    rules::{ARENA_WAVES, BLOCK_SIZE, MAX_PLAYERS, TANK_RADIUS},
     sim::{
         Barrier, Block, Enemy, ExplosiveCrate, Gun, Motion, Position, PreviousPosition, Sector,
         SectorIndex, Tank, Team,
@@ -18,7 +18,7 @@ use tanku_core::{
     stats::Genome,
 };
 
-use crate::brain::Brain;
+use crate::{brain::Brain, room::RoomState};
 
 /// What a collider belongs to.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -134,8 +134,11 @@ pub struct Field {
     pub loaded: BTreeSet<u32>,
     /// Sectors whose enemies are all destroyed.
     pub cleared: BTreeSet<u32>,
-    /// What the loaded arenas still hold back, by sector.
+    /// What the loaded arenas still hold back, by sector. In arena mode, what the group that
+    /// is on still holds back, by its number.
     pub arenas: BTreeMap<u32, Arena>,
+    /// The room of a run in arena mode, which has no corridor.
+    pub room: Option<RoomState>,
 }
 
 impl Field {
@@ -152,6 +155,15 @@ impl Field {
             loaded: BTreeSet::new(),
             cleared: BTreeSet::new(),
             arenas: BTreeMap::new(),
+            room: None,
+        }
+    }
+
+    /// The same for a run in arena mode: it is fought in the room of its seed.
+    pub fn in_a_room(seed: u64, players: u32, difficulty: Difficulty) -> Self {
+        Self {
+            room: Some(RoomState::new(seed)),
+            ..Self::new(seed, players, difficulty)
         }
     }
 
@@ -234,7 +246,7 @@ impl Field {
                 at: spawn.as_vec2(),
             });
             if arena {
-                let sizes = progression::wave_sizes(group.len() as u32);
+                let sizes = progression::wave_sizes(group.len() as u32, ARENA_WAVES);
                 let waves = sizes
                     .iter()
                     .map(|&size| group.by_ref().take(size as usize).collect());
@@ -248,8 +260,9 @@ impl Field {
                     },
                 );
             } else {
+                let toward = way_in(&layout.plan);
                 for recruit in group {
-                    self.enlist(commands, &layout.plan, recruit, false);
+                    self.enlist(commands, (index, toward), recruit, false);
                 }
             }
         } else {
@@ -258,24 +271,32 @@ impl Field {
         commands.spawn((Sector { layout }, SectorIndex(index), InSector(index)));
     }
 
-    /// Puts an enemy in its sector: asleep until the players come in, or awake at once when it
-    /// appears in an arena that they are in.
+    /// Where the players come into a sector from: the middle of its entry, or the middle of
+    /// the room in arena mode. Its enemies start with their turret that way.
+    pub fn way_in(&mut self, sector: u32) -> Vec2 {
+        match &self.room {
+            Some(state) => state.room.start().as_vec2(),
+            None => way_in(self.corridor.plan(sector)),
+        }
+    }
+
+    /// Puts an enemy in a sector, with its turret toward a point: asleep until the players
+    /// come in, or awake at once when it appears in an arena that they are in.
     pub fn enlist(
         &self,
         commands: &mut Commands,
-        plan: &SectorPlan,
+        (sector, toward): (u32, Vec2),
         recruit: Recruit,
         awake: bool,
     ) {
         let Recruit { number, genome, at } = recruit;
-        let entry = (plan.entry.0 + plan.entry.1).as_vec2() / 2.0;
-        let (brain, hull) = self.brain(plan.index, number);
-        let turret = (entry - at).to_angle();
+        let (brain, hull) = self.brain(sector, number);
+        let turret = (toward - at).to_angle();
         commands.spawn((
             Tank {
                 genome,
                 team: Team::Enemies,
-                sector: plan.index,
+                sector,
             },
             Enemy { awake },
             Home {
@@ -293,7 +314,7 @@ impl Field {
             },
             Gun::loaded(&genome),
             brain,
-            InSector(plan.index),
+            InSector(sector),
         ));
     }
 
@@ -354,10 +375,14 @@ fn spawn_barrier(commands: &mut Commands, plan: &SectorPlan) {
     ));
 }
 
+/// The middle of the entry of a sector.
+fn way_in(plan: &SectorPlan) -> Vec2 {
+    (plan.entry.0 + plan.entry.1).as_vec2() / 2.0
+}
+
 /// Where a player starts in a sector: a few meters behind its entry.
 pub fn entry_position(plan: &SectorPlan) -> Vec2 {
-    let middle = (plan.entry.0 + plan.entry.1).as_vec2() / 2.0;
-    middle + plan.heading.forward().as_vec2() * 5.0
+    way_in(plan) + plan.heading.forward().as_vec2() * 5.0
 }
 
 pub fn rebuild_colliders(

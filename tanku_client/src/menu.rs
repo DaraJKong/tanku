@@ -49,6 +49,9 @@ const GARAGE_COLUMNS: [f32; 5] = [104.0, 106.0, 134.0, 52.0, 44.0];
 /// What the solo screen says of hard mode when it is chosen.
 const HARD_MODE: &str = "In hard mode, enemies have more points, every brain from the first \
                          sector, and the guns and the experience of twenty sectors further.";
+/// What the solo screen and the lobby say of arena mode when it is chosen.
+const ARENA_MODE: &str = "In arena mode, the run stays in one room. The groups of the sectors \
+                          come there one after another, and the next one waits outside.";
 
 /// What a button does.
 #[derive(Component, Clone, Copy, PartialEq)]
@@ -63,6 +66,8 @@ enum Press {
     Difficulty(Difficulty),
     /// On that screen: turns free mode on or off.
     Free(bool),
+    /// On that screen: turns arena mode on or off.
+    Arena(bool),
     /// On that screen: opens the garage.
     OpenGarage,
     /// In the garage: gives the tank a level more or less of a stat.
@@ -118,6 +123,8 @@ enum Press {
     ResetBindings,
     /// In a playtest: turns the infinite lives on or off.
     InfiniteLives,
+    /// In a playtest of arena mode: sends a group all at once, or in waves again.
+    WholeGroups,
     /// In a playtest: moves the sector to skip to by this many.
     Destination(i32),
     /// In a playtest: skips to that sector.
@@ -228,6 +235,8 @@ struct Setup {
     difficulty: Difficulty,
     /// Whether the run is in free mode, in the tank of the player's garage.
     free: bool,
+    /// Whether the run is in arena mode: in one room, against one group after another.
+    arena: bool,
 }
 
 /// The players whom the lobby of a host tells how to join: those at a desktop game, or
@@ -619,8 +628,11 @@ fn record_line(records: &Records, league: League, players: u32) -> String {
     };
     match records.best(league, players) {
         Some(record) => format!(
-            "{best}: sector {}, seed {}, v{}",
-            record.sector, record.seed, record.version
+            "{best}: {} {}, seed {}, v{}",
+            league.unit(),
+            record.sector,
+            record.seed,
+            record.version
         ),
         None => none,
     }
@@ -636,21 +648,27 @@ fn records_of(records: &Records, league: League) -> Vec<String> {
             players => format!("{players} players"),
         };
         Some(format!(
-            "{whose}: sector {}, seed {}, v{}",
-            record.sector, record.seed, record.version
+            "{whose}: {} {}, seed {}, v{}",
+            league.unit(),
+            record.sector,
+            record.seed,
+            record.version
         ))
     });
     teams.collect()
 }
 
 /// The seed of a run with the version of the game and, in hard mode, the difficulty: what
-/// tells one level from another.
+/// tells one level from another. The seed of a run in arena mode is that of a room.
 fn level_line(run: &Run) -> String {
-    let level = format!("Seed {}, v{VERSION}", run.seed_text);
-    match run.difficulty {
-        Difficulty::Normal => level,
-        Difficulty::Hard => format!("{level}, hard mode"),
+    let mut level = format!("Seed {}, v{VERSION}", run.seed_text);
+    if run.difficulty == Difficulty::Hard {
+        level.push_str(", hard mode");
     }
+    if run.arena {
+        level.push_str(", arena mode");
+    }
+    level
 }
 
 /// A line that tells the player how a game of several players goes.
@@ -669,9 +687,11 @@ fn remember_the_last_run(
 ) {
     setup.difficulty = last_difficulty(&settings, &unlocks, &options);
     setup.free = last_free(&settings, &unlocks, &options);
+    setup.arena = last_arena(&settings, &unlocks, &options);
     listed.0 = League {
         difficulty: setup.difficulty,
         free: setup.free,
+        arena: setup.arena,
     };
 }
 
@@ -704,8 +724,8 @@ fn league_switch(parent: &mut ChildSpawnerCommands, name: &str, to: League, lit:
 }
 
 /// Lists the best runs of a league on the main menu, again whenever there is a new one or
-/// the player asks for those of another league. Hard mode and free mode each have a switch,
-/// once the player has a run in them.
+/// the player asks for those of another league. Hard mode, arena mode and free mode each
+/// have a switch, once the player has a run in them.
 fn list_records(
     mut commands: Commands,
     records: Res<Records>,
@@ -725,6 +745,7 @@ fn list_records(
                 .any(|league| !records_of(&records, league).is_empty())
         };
         let offers_hard = hard || played(|league| league.difficulty == Difficulty::Hard);
+        let offers_arena = league.arena || played(|league| league.arena);
         let offers_free = league.free || played(|league| league.free);
         let mut lines = records_of(&records, league);
         if lines.is_empty() {
@@ -761,6 +782,13 @@ fn list_records(
                             ..league
                         };
                         league_switch(header, "Hard mode", to, hard);
+                    }
+                    if offers_arena {
+                        let to = League {
+                            arena: !league.arena,
+                            ..league
+                        };
+                        league_switch(header, "Arena mode", to, league.arena);
                     }
                     if offers_free {
                         let to = League {
@@ -1120,6 +1148,7 @@ fn draw_a_seed_for_one(
         typed: false,
         difficulty: last_difficulty(&settings, &unlocks, &options),
         free: last_free(&settings, &unlocks, &options),
+        arena: last_arena(&settings, &unlocks, &options),
     };
 }
 
@@ -1146,6 +1175,12 @@ fn last_difficulty(settings: &Settings, unlocks: &Unlocks, options: &Options) ->
 /// to choose.
 fn last_free(settings: &Settings, unlocks: &Unlocks, options: &Options) -> bool {
     settings.solo_free && open(unlocks, options, Unlock::FreeMode)
+}
+
+/// Whether the player chose arena mode for the last run of their own, if it is still theirs
+/// to choose.
+fn last_arena(settings: &Settings, unlocks: &Unlocks, options: &Options) -> bool {
+    settings.solo_arena && open(unlocks, options, Unlock::ArenaMode)
 }
 
 /// Whether the next run of a single player is in free mode: they chose it, or a playtest
@@ -1195,6 +1230,7 @@ fn solo_run(
         drawn,
         difficulty: league.difficulty,
         free: league.free,
+        arena: league.arena,
         tanks,
     }
 }
@@ -1204,6 +1240,7 @@ fn league_of(setup: &Setup, options: &Options) -> League {
     League {
         difficulty: setup.difficulty,
         free: is_free(setup, options),
+        arena: setup.arena,
     }
 }
 
@@ -1336,6 +1373,7 @@ fn solo_screen(
     // A playtest that brought a tank plays every run in it: it has no garage to open.
     let (free, brought) = (is_free(&setup, &options), options.tank.is_some());
     let frees = open(&unlocks, &options, Unlock::FreeMode);
+    let rooms = open(&unlocks, &options, Unlock::ArenaMode);
     commands
         .spawn((
             SoloRoot,
@@ -1376,6 +1414,19 @@ fn solo_screen(
                     });
                 } else if setup.difficulty == Difficulty::Hard {
                     line(parent, HARD_MODE, theme::TEXT_DIM);
+                }
+                row(parent, "Arena mode", |row| {
+                    if rooms {
+                        for (name, on) in [("Off", false), ("On", true)] {
+                            choice(row, name, 90.0, Press::Arena(on), setup.arena == on);
+                        }
+                    } else {
+                        let unlock = unlocks::condition(Unlock::ArenaMode);
+                        row.spawn(theme::text(unlock, 16.0, theme::TEXT_DIM));
+                    }
+                });
+                if setup.arena {
+                    line(parent, ARENA_MODE, theme::TEXT_DIM);
                 }
                 row(parent, "Free mode", |row| {
                     if brought {
@@ -1425,10 +1476,11 @@ fn solo_screen(
                 };
                 line(parent, hint, theme::TEXT_DIM);
                 // A playtest earns nothing either way, and says what it is elsewhere.
-                let unearned = match (free, setup.typed) {
-                    (true, _) => Some("A run in free mode earns no achievement."),
-                    (false, true) => Some("A run on a typed seed earns no achievement."),
-                    (false, false) => None,
+                let unearned = match (setup.arena, free, setup.typed) {
+                    (true, ..) => Some("A run in arena mode earns no achievement."),
+                    (false, true, _) => Some("A run in free mode earns no achievement."),
+                    (false, false, true) => Some("A run on a typed seed earns no achievement."),
+                    (false, false, false) => None,
                 };
                 if let Some(why) = unearned.filter(|_| unlocks.wanting() && !options.playtest) {
                     line(parent, why, theme::TEXT);
@@ -1701,6 +1753,7 @@ fn ask_to_host(
         password: opening.password.text.clone(),
         difficulty: settings.host_difficulty,
         free: settings.host_free,
+        arena: settings.host_arena,
     }));
 }
 
@@ -2296,6 +2349,7 @@ fn draw_a_seed(
 fn locked_alone(lobby: &Lobby, unlocks: &Unlocks, options: &Options) -> Option<Unlock> {
     let needed = [
         lobby.difficulty.unlock(),
+        lobby.arena.then_some(Unlock::ArenaMode),
         lobby.typed.then_some(Unlock::ChosenSeed),
         lobby.free.then_some(Unlock::FreeMode),
     ];
@@ -2345,6 +2399,8 @@ fn held_back_after(
 fn unearned(lobby: &Lobby) -> Option<&'static str> {
     if lobby.playtest {
         Some("A playtest of the host: its runs set no record and earn no achievement.")
+    } else if lobby.arena {
+        Some("A run in arena mode earns no achievement.")
     } else if lobby.free {
         Some("A run in free mode earns no achievement.")
     } else if lobby.typed {
@@ -2537,6 +2593,15 @@ fn lobby_screen(
                         choice(row, name, 90.0, Press::Difficulty(difficulty), chosen);
                     }
                 });
+                row(parent, "Arena mode", |row| {
+                    if !host {
+                        row.spawn(theme::text(on_off(lobby.arena), 16.0, theme::TEXT));
+                        return;
+                    }
+                    for (name, on) in [("Off", false), ("On", true)] {
+                        choice(row, name, 90.0, Press::Arena(on), lobby.arena == on);
+                    }
+                });
                 row(parent, "Free mode", |row| {
                     if !host {
                         row.spawn(theme::text(on_off(lobby.free), 16.0, theme::TEXT));
@@ -2630,6 +2695,17 @@ fn offer_the_next_sector(run: Option<Res<Run>>, mut destination: ResMut<Destinat
     }
 }
 
+/// What a run counts, with a capital: the sectors of the corridor, or the groups of arena
+/// mode.
+fn unit_name(in_a_room: bool) -> &'static str {
+    if in_a_room { "Group" } else { "Sector" }
+}
+
+/// What a group of arena mode does in a playtest, as the switch of the menu says it.
+fn group_words(whole: bool) -> &'static str {
+    if whole { "All at once" } else { "In two waves" }
+}
+
 fn pause_menu(
     mut commands: Commands,
     run: Option<Res<Run>>,
@@ -2665,13 +2741,27 @@ fn pause_menu(
                     let state = on_off(playtest.infinite_lives);
                     small(row, state, 70.0, Press::InfiniteLives);
                 });
-                row(parent, "Sector to skip to", |row| {
-                    for change in [-10, -1, 1, 10] {
-                        small(row, format!("{change:+}"), 48.0, Press::Destination(change));
-                    }
-                });
-                let skip = format!("Skip to sector {}", destination.0);
+                // A run in arena mode skips to the lull before a group.
+                let in_a_room = run.as_ref().is_some_and(|run| run.arena);
+                let unit = if in_a_room { "group" } else { "sector" };
+                row(
+                    parent,
+                    &format!("{} to skip to", unit_name(in_a_room)),
+                    |row| {
+                        for change in [-10, -1, 1, 10] {
+                            small(row, format!("{change:+}"), 48.0, Press::Destination(change));
+                        }
+                    },
+                );
+                let skip = format!("Skip to {unit} {}", destination.0);
                 button(parent, skip, Press::Skip);
+                // What a playtest tries in arena mode, from the next group on.
+                if in_a_room {
+                    row(parent, "A group comes", |row| {
+                        let state = group_words(playtest.whole_groups);
+                        small(row, state, 170.0, Press::WholeGroups);
+                    });
+                }
             }
             if let Some(run) = run {
                 line(parent, level_line(&run), theme::TEXT_DIM);
@@ -2711,11 +2801,15 @@ fn keep_record(records: &mut Records, run: &Run) -> bool {
     !run.playtest && records.submit(League::of(run), run.team, run.cleared, &run.seed_text)
 }
 
-/// Where a run ended, as the stamp of the game over screen tells it.
-fn ending(sector: u32) -> String {
-    match sector {
-        0 => "DESTROYED IN THE START BAY".to_string(),
-        sector => format!("DESTROYED IN SECTOR {sector}"),
+/// Where a run ended, as the stamp of the game over screen tells it: in a sector of the
+/// corridor, or at a group of arena mode.
+fn ending(run: &Run) -> String {
+    match (run.arena, run.sector, run.lull) {
+        (false, 0, _) => "DESTROYED IN THE START BAY".to_string(),
+        (false, sector, _) => format!("DESTROYED IN SECTOR {sector}"),
+        // Between two groups, a player has only their own shots and mines to fear.
+        (true, cleared, Some(_)) => format!("DESTROYED BEFORE GROUP {}", cleared + 1),
+        (true, group, None) => format!("DESTROYED BY GROUP {group}"),
     }
 }
 
@@ -2744,6 +2838,10 @@ fn game_over(
         team => format!("CO-OP \u{b7} {team} PLAYERS"),
     };
     let league = run.as_ref().map(|run| League::of(run)).unwrap_or_default();
+    let mode = match league.arena {
+        true => format!("{mode} \u{b7} ARENA MODE"),
+        false => mode,
+    };
     let mode = match league.free {
         true if !playtest => format!("{mode} \u{b7} FREE MODE"),
         _ => mode,
@@ -2794,7 +2892,7 @@ fn game_over(
                         BorderColor::all(theme::DANGER),
                         BackgroundColor(theme::SURFACE),
                         UiTransform::from_rotation(Rot2::degrees(-3.0)),
-                        children![theme::title(ending(run.sector), 24.0, theme::DANGER)],
+                        children![theme::title(ending(run), 24.0, theme::DANGER)],
                     ));
                     let seconds = run.ticks / TICK_RATE as u64;
                     parent
@@ -2803,7 +2901,12 @@ fn game_over(
                             ..default()
                         }))
                         .with_children(|figures| {
-                            figure(figures, "SECTORS CLEARED", run.cleared.to_string(), false);
+                            let scored = if run.arena {
+                                "GROUPS CLEARED"
+                            } else {
+                                "SECTORS CLEARED"
+                            };
+                            figure(figures, scored, run.cleared.to_string(), false);
                             let time = format!("{}:{:02}", seconds / 60, seconds % 60);
                             figure(figures, "TIME", time, false);
                             figure(figures, "KILLS", run.kills.to_string(), true);
@@ -2825,8 +2928,11 @@ fn game_over(
                 // A player who has everything is not told what they miss.
                 let wanting = unlocks.wanting() && !playtest;
                 if wanting && run.as_ref().is_some_and(|run| !run.earns) {
-                    // In free mode, the next run earns nothing either, retry or not.
-                    let why = if league.free {
+                    // In arena mode and in free mode, the next run earns nothing either,
+                    // retry or not.
+                    let why = if league.arena {
+                        "Runs in arena mode earn no achievement."
+                    } else if league.free {
                         "Runs in free mode earn no achievement."
                     } else {
                         "This run earned no achievement: its seed was typed or played again."
@@ -2835,7 +2941,7 @@ fn game_over(
                 }
                 let retry = |buttons: &mut ChildSpawnerCommands| {
                     primary(buttons, "Retry this seed", Press::Retry);
-                    if wanting && !league.free {
+                    if wanting && !league.free && !league.arena {
                         line(buttons, "A retry earns no achievement.", theme::TEXT_DIM);
                     }
                 };
@@ -3095,6 +3201,21 @@ fn press(
                 }
                 _ => {}
             },
+            Press::Arena(on) => match (*session, lobbies.single_mut()) {
+                (Session::Host, Ok(mut lobby)) => {
+                    lobby.arena = on;
+                    if settings.host_arena != on {
+                        settings.host_arena = on;
+                    }
+                }
+                (Session::Solo, _) => {
+                    setup.arena = on;
+                    if settings.solo_arena != on {
+                        settings.solo_arena = on;
+                    }
+                }
+                _ => {}
+            },
             Press::OpenGarage => next_screen.set(Screen::Garage),
             Press::Level(stat, by) => {
                 if let Some(tank) = garage.changed(stat, by) {
@@ -3254,6 +3375,11 @@ fn press(
             Press::InfiniteLives => {
                 if let Some(playtest) = &mut playtest {
                     playtest.infinite_lives = !playtest.infinite_lives;
+                }
+            }
+            Press::WholeGroups => {
+                if let Some(playtest) = &mut playtest {
+                    playtest.whole_groups = !playtest.whole_groups;
                 }
             }
             Press::Destination(change) => {
@@ -3472,11 +3598,17 @@ mod tests {
             playtest: false,
             earns: true,
             free: false,
+            arena: false,
+            lull: None,
         }
     }
 
     fn league(difficulty: Difficulty, free: bool) -> League {
-        League { difficulty, free }
+        League {
+            difficulty,
+            free,
+            arena: false,
+        }
     }
 
     /// A tank that a playtest brings: the fastest engine, the fastest gun and the fastest
@@ -3511,6 +3643,13 @@ mod tests {
             });
         }
         app.world_mut().spawn(lobby);
+    }
+
+    /// Sets the lobby of the tests to arena mode too.
+    fn in_arena_mode(app: &mut App) {
+        let world = app.world_mut();
+        let mut lobby = world.query::<&mut Lobby>().single_mut(world).unwrap();
+        lobby.arena = true;
     }
 
     /// What a host hands out, on a machine with the longest address, to players at a
@@ -3550,12 +3689,24 @@ mod tests {
                     build(app, main_menu);
                 },
             ),
+            // Every switch of the list is on, and its lines count groups.
+            ("the main menu with the records of arena mode", |app| {
+                let every = League {
+                    arena: true,
+                    ..league(Difficulty::Hard, true)
+                };
+                app.insert_resource(Records::of_every_team(128, LONG_SEED))
+                    .insert_resource(Listed(every))
+                    .insert_resource(Notice(Some(LONG_NOTICE.into())));
+                build(app, main_menu);
+            }),
             // A notice on top of this one would cross the fine line around the sheet by a
             // few pixels in the smallest windows. A playtest is a tool of the game's makers.
             ("the main menu of a playtest", |app| {
                 app.insert_resource(Records::of_every_team(128, "85GVTHQA"))
                     .insert_resource(Playtest {
                         infinite_lives: true,
+                        ..default()
                     })
                     .insert_resource(Options {
                         playtest: true,
@@ -3569,6 +3720,7 @@ mod tests {
                 app.insert_resource(Records::of_every_team(128, "85GVTHQA"))
                     .insert_resource(Playtest {
                         infinite_lives: true,
+                        ..default()
                     })
                     .insert_resource(Options {
                         playtest: true,
@@ -3583,6 +3735,7 @@ mod tests {
                     typed: false,
                     difficulty: Difficulty::Normal,
                     free: false,
+                    arena: false,
                 });
                 build(app, solo_screen);
             }),
@@ -3596,6 +3749,27 @@ mod tests {
                         typed: true,
                         difficulty: Difficulty::Normal,
                         free: false,
+                        arena: false,
+                    });
+                build(app, solo_screen);
+            }),
+            // Every mode is unlocked and chosen, on a seed that was typed: the screen then
+            // holds every row and every note that it has.
+            ("the solo screen in arena mode", |app| {
+                let unlocks = [
+                    Unlock::ArenaMode,
+                    Unlock::ChosenSeed,
+                    Unlock::FreeMode,
+                    Unlock::HardMode,
+                ];
+                app.insert_resource(Unlocks::of(&unlocks))
+                    .insert_resource(Garage { tank: racer() })
+                    .insert_resource(Setup {
+                        seed: LONG_SEED.into(),
+                        typed: true,
+                        difficulty: Difficulty::Hard,
+                        free: true,
+                        arena: true,
                     });
                 build(app, solo_screen);
             }),
@@ -3609,6 +3783,7 @@ mod tests {
                         typed: true,
                         difficulty: Difficulty::Hard,
                         free: false,
+                        arena: false,
                     });
                 build(app, solo_screen);
             }),
@@ -3623,6 +3798,7 @@ mod tests {
                         typed: true,
                         difficulty: Difficulty::Hard,
                         free: true,
+                        arena: false,
                     });
                 build(app, solo_screen);
             }),
@@ -3761,6 +3937,28 @@ mod tests {
                     .insert_resource(crew::LocalSeat(3));
                 build(app, lobby_screen);
             }),
+            // Arena mode is on too: the lobby then holds every row that it has.
+            ("the lobby of a host in arena mode", |app| {
+                gather(app, 4);
+                in_arena_mode(app);
+                app.insert_resource(Session::Host)
+                    .insert_resource(invitation());
+                build(app, lobby_screen);
+            }),
+            ("the lobby of a host who is alone in arena mode", |app| {
+                gather(app, 1);
+                in_arena_mode(app);
+                app.insert_resource(Session::Host)
+                    .insert_resource(invitation());
+                build(app, lobby_screen);
+            }),
+            ("the lobby of a guest in arena mode", |app| {
+                gather(app, 4);
+                in_arena_mode(app);
+                app.insert_resource(Session::Guest)
+                    .insert_resource(crew::LocalSeat(3));
+                build(app, lobby_screen);
+            }),
             // The game of a playtest says so to its guests, which takes the most words.
             ("the lobby of a guest of a playtest", |app| {
                 gather(app, 4);
@@ -3802,9 +4000,30 @@ mod tests {
                     .insert_resource(Records::of_every_team(128, LONG_SEED));
                 build(app, game_over);
             }),
-            ("the report of a run that unlocked three things", |app| {
+            // A run of four players in every mode, which was lost between two groups.
+            ("the report of a run in arena mode", |app| {
+                let run = Run {
+                    seed_text: LONG_SEED.into(),
+                    difficulty: Difficulty::Hard,
+                    earns: false,
+                    free: true,
+                    arena: true,
+                    lull: Some(3),
+                    ..lost_run(4)
+                };
+                app.insert_resource(run)
+                    .insert_resource(Session::Host)
+                    .insert_resource(Records::of_every_team(128, LONG_SEED));
+                build(app, game_over);
+            }),
+            ("the report of a run that unlocked four things", |app| {
                 let mut unlocks = Unlocks::default();
-                unlocks.new = vec![Unlock::ChosenSeed, Unlock::FreeMode, Unlock::HardMode];
+                unlocks.new = vec![
+                    Unlock::ArenaMode,
+                    Unlock::ChosenSeed,
+                    Unlock::FreeMode,
+                    Unlock::HardMode,
+                ];
                 app.insert_resource(lost_run(1))
                     .insert_resource(unlocks)
                     .insert_resource(Records::of_every_team(128, "85GVTHQA"));
@@ -3837,9 +4056,29 @@ mod tests {
                     .insert_resource(Session::Host)
                     .insert_resource(Playtest {
                         infinite_lives: true,
+                        ..default()
                     });
                 build(app, pause_menu);
             }),
+            // In arena mode, a playtest has one more switch, and its level a longer line.
+            (
+                "the menu of a host during a playtest of arena mode",
+                |app| {
+                    let run = Run {
+                        seed_text: LONG_SEED.into(),
+                        difficulty: Difficulty::Hard,
+                        arena: true,
+                        ..lost_run(4)
+                    };
+                    app.insert_resource(run)
+                        .insert_resource(Session::Host)
+                        .insert_resource(Playtest {
+                            infinite_lives: true,
+                            whole_groups: true,
+                        });
+                    build(app, pause_menu);
+                },
+            ),
         ]
     }
 
@@ -3899,7 +4138,7 @@ mod tests {
     }
 
     /// Presses the button of a screen that does this, as a click does, and lets the menus
-    /// do what follows.
+    /// do what follows. The button is let go afterward, so that the next click is one press.
     fn click(app: &mut App, wanted: Press) {
         let world = app.world_mut();
         let mut buttons = world.query::<(&Press, &mut Interaction)>();
@@ -3907,6 +4146,10 @@ mod tests {
         let (_, mut interaction) = pressed.expect("a button that does it");
         *interaction = Interaction::Pressed;
         build(app, press);
+        let world = app.world_mut();
+        for (_, mut interaction) in buttons.iter_mut(world) {
+            *interaction = Interaction::None;
+        }
     }
 
     /// What the buttons of a screen of the menus do.
@@ -4240,6 +4483,7 @@ mod tests {
             password: "sesame".into(),
             difficulty: Difficulty::Hard,
             free: true,
+            arena: false,
         };
         assert_eq!(asked, [SessionRequest::Host(sign)]);
         assert_eq!(world.resource::<Settings>().host_name, "Friday nights");
@@ -4474,6 +4718,275 @@ mod tests {
             level_line(&hard),
             format!("Seed 85GVTHQA, v{VERSION}, hard mode")
         );
+        // The seed of a run in arena mode is that of a room.
+        let room = Run {
+            arena: true,
+            ..hard
+        };
+        assert_eq!(
+            level_line(&room),
+            format!("Seed 85GVTHQA, v{VERSION}, hard mode, arena mode")
+        );
+    }
+
+    #[test]
+    fn a_run_in_arena_mode_has_records_of_its_own_which_count_groups() {
+        let normal = League::default();
+        let arena = League {
+            arena: true,
+            ..normal
+        };
+        let run = |arena: bool, team: u32, cleared: u32| Run {
+            arena,
+            earns: !arena,
+            cleared,
+            ..lost_run(team)
+        };
+        let mut records = Records::default();
+        assert!(keep_record(&mut records, &run(true, 1, 9)));
+        // It is no record of the corridor, however far it got, and the other way around.
+        assert!(records.best(normal, 1).is_none());
+        assert!(keep_record(&mut records, &run(false, 1, 4)));
+        assert!(!keep_record(&mut records, &run(true, 1, 9)));
+        assert!(keep_record(&mut records, &run(true, 3, 2)));
+        assert_eq!(records.best(arena, 1).unwrap().sector, 9);
+        assert_eq!(records.best(normal, 1).unwrap().sector, 4);
+        assert_eq!(
+            record_line(&records, arena, 1),
+            format!("Best run in arena mode: group 9, seed 85GVTHQA, v{VERSION}")
+        );
+        assert_eq!(
+            record_line(&records, normal, 1),
+            format!("Best run: sector 4, seed 85GVTHQA, v{VERSION}")
+        );
+        assert_eq!(record_line(&records, arena, 2), "No run in arena mode yet");
+        let listed = records_of(&records, arena);
+        assert_eq!(listed.len(), 2);
+        assert!(listed[0].starts_with("Best run: group 9"));
+        assert!(listed[1].starts_with("3 players: group 2"));
+    }
+
+    #[test]
+    fn the_report_of_a_run_in_arena_mode_counts_groups() {
+        let room = |sector: u32, lull: Option<u8>| Run {
+            arena: true,
+            earns: false,
+            sector,
+            cleared: sector.saturating_sub(lull.is_none() as u32),
+            lull,
+            ..lost_run(1)
+        };
+        // The stamp says which group ended the run, or which one was about to come.
+        assert_eq!(ending(&room(7, None)), "DESTROYED BY GROUP 7");
+        assert_eq!(ending(&room(7, Some(2))), "DESTROYED BEFORE GROUP 8");
+        assert_eq!(ending(&room(0, Some(5))), "DESTROYED BEFORE GROUP 1");
+        assert_eq!(ending(&lost_run(1)), "DESTROYED IN SECTOR 128");
+        let bay = Run {
+            sector: 0,
+            ..lost_run(1)
+        };
+        assert_eq!(ending(&bay), "DESTROYED IN THE START BAY");
+
+        const ARENA: &str = "Runs in arena mode earn no achievement.";
+        const RETRY: &str = "A retry earns no achievement.";
+        let report = texts(|app| {
+            app.insert_resource(Run {
+                arena: true,
+                earns: false,
+                sector: 7,
+                cleared: 6,
+                ..lost_run(1)
+            });
+            build(app, game_over);
+        });
+        assert!(says(&report, "RUN REPORT \u{b7} SOLO \u{b7} ARENA MODE"));
+        assert!(says(&report, "DESTROYED BY GROUP 7"));
+        assert!(says(&report, "GROUPS CLEARED") && !says(&report, "SECTORS CLEARED"));
+        assert!(says(&report, "No run in arena mode yet"));
+        // A new run in arena mode earns nothing either: the retry is not singled out.
+        assert!(says(&report, ARENA) && !says(&report, RETRY));
+        let corridor = texts(|app| {
+            app.insert_resource(lost_run(1));
+            build(app, game_over);
+        });
+        assert!(says(&corridor, "SECTORS CLEARED") && !says(&corridor, "GROUPS CLEARED"));
+    }
+
+    #[test]
+    fn the_solo_screen_offers_arena_mode_once_it_is_unlocked() {
+        let offers = |screen: fn(&mut App)| -> Vec<bool> {
+            let arena = presses(screen).into_iter().filter_map(|press| match press {
+                Press::Arena(on) => Some(on),
+                _ => None,
+            });
+            arena.collect()
+        };
+        // Locked: nothing to choose, and the screen says what unlocks it.
+        let locked = |app: &mut App| build(app, solo_screen);
+        assert_eq!(offers(locked), [] as [bool; 0]);
+        assert!(says(&texts(locked), "Clear sector 5"));
+        // Unlocked and off: it can be turned on.
+        let off = |app: &mut App| {
+            app.insert_resource(Unlocks::of(&[Unlock::ArenaMode]));
+            build(app, solo_screen);
+        };
+        assert_eq!(offers(off), [true]);
+        assert!(!says(&texts(off), ARENA_MODE));
+        // On: the screen says what it is, and that its runs earn nothing.
+        let on = |app: &mut App| {
+            app.insert_resource(Unlocks::of(&[Unlock::ArenaMode]))
+                .insert_resource(Setup {
+                    seed: "85GVTHQA".into(),
+                    arena: true,
+                    ..default()
+                });
+            build(app, solo_screen);
+        };
+        assert_eq!(offers(on), [false]);
+        let told = texts(on);
+        assert!(says(&told, ARENA_MODE));
+        assert!(says(&told, "A run in arena mode earns no achievement."));
+        // A playtest has it without unlocking it.
+        let playtest = |app: &mut App| {
+            app.insert_resource(Options {
+                playtest: true,
+                ..default()
+            });
+            build(app, solo_screen);
+        };
+        assert_eq!(offers(playtest), [true]);
+
+        // The choice is kept for the next run, and the run that starts is in arena mode.
+        let mut app = stage(off, WINDOWS[0]);
+        click(&mut app, Press::Arena(true));
+        assert!(app.world().resource::<Setup>().arena);
+        assert!(app.world().resource::<Settings>().solo_arena);
+        app.world_mut().resource_mut::<Setup>().seed = "85GVTHQA".into();
+        build(&mut app, solo_screen);
+        click(&mut app, Press::Begin);
+        let mut requests = app.world_mut().resource_mut::<Messages<RunRequest>>();
+        let started: Vec<bool> = requests
+            .drain()
+            .map(|request| match request {
+                RunRequest::Start { arena, .. } => arena,
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(started, [true]);
+        // The next visit opens on arena mode only while it is still unlocked.
+        let mut settings = Settings::default();
+        settings.solo_arena = true;
+        let options = Options::default();
+        assert!(last_arena(
+            &settings,
+            &Unlocks::of(&[Unlock::ArenaMode]),
+            &options
+        ));
+        assert!(!last_arena(&settings, &Unlocks::default(), &options));
+        assert!(!last_arena(
+            &Settings::default(),
+            &Unlocks::of(&Unlock::ALL),
+            &options
+        ));
+    }
+
+    #[test]
+    fn the_host_sets_arena_mode_in_the_lobby_and_the_guests_see_it() {
+        let mut host = in_the_lobby(Session::Host, 2);
+        assert!(buttons(&mut host).contains(&Press::Arena(true)));
+        assert!(!buttons(&mut host).contains(&Press::Arena(false)));
+        click(&mut host, Press::Arena(true));
+        assert!(lobby_of(&mut host).arena);
+        assert!(host.world().resource::<Settings>().host_arena);
+        // What a single player chose last for a run of their own is as it was.
+        assert!(!host.world().resource::<Settings>().solo_arena);
+        build(&mut host, lobby_screen);
+        assert!(buttons(&mut host).contains(&Press::Arena(false)));
+        // A guest has nothing to press about it.
+        let mut guest = in_the_lobby(Session::Guest, 2);
+        guest
+            .world_mut()
+            .spawn((Button, Press::Arena(true), Interaction::None));
+        click(&mut guest, Press::Arena(true));
+        assert!(!lobby_of(&mut guest).arena);
+
+        // A run in arena mode earns nothing, and the lobby says so before anything else
+        // but a playtest.
+        let lobby = Lobby {
+            arena: true,
+            free: true,
+            typed: true,
+            ..default()
+        };
+        assert_eq!(
+            unearned(&lobby),
+            Some("A run in arena mode earns no achievement.")
+        );
+        // A host who is alone plays under the locks of solo: arena mode is one of them.
+        let alone = Lobby {
+            seats: [Some(Member::Host), None, None, None],
+            seed: "85GVTHQA".into(),
+            arena: true,
+            ..default()
+        };
+        let options = Options::default();
+        assert_eq!(
+            held_back(&alone, &Unlocks::default(), &options),
+            Some("Locked for a single player: arena mode (clear sector 5).".to_string())
+        );
+        assert_eq!(
+            held_back(&alone, &Unlocks::of(&[Unlock::ArenaMode]), &options),
+            None
+        );
+        let together = Lobby {
+            seats: [Some(Member::Host), Some(Member::Guest(7)), None, None],
+            ..alone
+        };
+        assert_eq!(held_back(&together, &Unlocks::default(), &options), None);
+    }
+
+    #[test]
+    fn a_playtest_of_arena_mode_has_a_switch_and_skips_to_a_group() {
+        let menu = |arena: bool| {
+            move |app: &mut App| {
+                app.insert_resource(Run {
+                    arena,
+                    sector: 7,
+                    phase: RunPhase::Playing,
+                    ..lost_run(1)
+                })
+                .insert_resource(Playtest::default())
+                .insert_resource(Destination(8));
+                build(app, pause_menu);
+            }
+        };
+        let said = |app: &mut App, wanted: &str| {
+            let world = app.world_mut();
+            let mut texts = world.query::<&Text>();
+            texts
+                .iter(world)
+                .any(|text| text.0.to_lowercase() == wanted.to_lowercase())
+        };
+        // In the corridor, a playtest skips to a sector and has nothing to say of groups.
+        let mut corridor = stage(|_| {}, WINDOWS[0]);
+        menu(false)(&mut corridor);
+        let offered = buttons(&mut corridor);
+        assert!(!offered.contains(&Press::WholeGroups));
+        assert!(said(&mut corridor, "Skip to sector 8"));
+
+        let mut room = stage(|_| {}, WINDOWS[0]);
+        menu(true)(&mut room);
+        let offered = buttons(&mut room);
+        assert!(offered.contains(&Press::WholeGroups));
+        assert!(said(&mut room, "Skip to group 8"));
+        assert!(said(&mut room, "In two waves"));
+        // The switch turns its rule over, and the menu says what holds now.
+        click(&mut room, Press::WholeGroups);
+        assert!(room.world().resource::<Playtest>().whole_groups);
+        build(&mut room, refresh_pause);
+        assert!(said(&mut room, "All at once"));
+        click(&mut room, Press::WholeGroups);
+        assert!(!room.world().resource::<Playtest>().whole_groups);
     }
 
     /// The difficulties that the solo screen lets the player switch to.
@@ -4591,6 +5104,7 @@ mod tests {
                     difficulty,
                     free,
                     tanks,
+                    ..
                 } => (seed, drawn, difficulty, free, tanks),
                 other => panic!("{other:?}"),
             };
@@ -4602,6 +5116,7 @@ mod tests {
             typed: true,
             difficulty: Difficulty::Hard,
             free: false,
+            arena: false,
         };
         // A seed that was typed is not one that the game drew. Outside free mode, the
         // player has the standard tank, whatever stands in their garage.
@@ -4755,7 +5270,7 @@ mod tests {
             _ => None,
         });
         let mut listed: Vec<League> = listed.collect();
-        listed.sort_by_key(|league| (league.difficulty, league.free));
+        listed.sort_by_key(|league| (league.difficulty, league.arena, league.free));
         listed
     }
 
@@ -4775,12 +5290,28 @@ mod tests {
             build(app, main_menu);
         };
         assert_eq!(listed(plain), []);
-        // Hard mode and free mode each have a switch once there is a run of theirs.
+        // Hard mode, arena mode and free mode each have a switch once there is a run of
+        // theirs.
+        let arena = League {
+            arena: true,
+            ..normal
+        };
         let every = |app: &mut App| {
             app.insert_resource(Records::of_every_team(128, "85GVTHQA"));
             build(app, main_menu);
         };
-        assert_eq!(listed(every), [free, hard]);
+        assert_eq!(listed(every), [free, arena, hard]);
+        let arena_alone = |app: &mut App| {
+            let mut records = Records::default();
+            let arena = League {
+                arena: true,
+                ..default()
+            };
+            records.submit(arena, 1, 9, "85GVTHQA");
+            app.insert_resource(records);
+            build(app, main_menu);
+        };
+        assert_eq!(listed(arena_alone), [arena]);
         let hard_alone = |app: &mut App| {
             let mut records = Records::default();
             records.submit(league(Difficulty::Hard, false), 1, 2, "85GVTHQA");
@@ -5471,6 +6002,8 @@ mod tests {
             playtest: true,
             earns: false,
             free: false,
+            arena: false,
+            lull: None,
         };
         let mut records = Records::default();
         assert!(!keep_record(&mut records, &run));

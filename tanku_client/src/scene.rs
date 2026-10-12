@@ -17,8 +17,8 @@ use tanku_core::{
     map::SectorKind,
     rules::{BLAST_RADIUS, BLOCK_SIZE, BULLET_RADIUS, MINE_RADIUS, MINE_TRIGGER_RADIUS},
     sim::{
-        Barrier, Block, Bullet, ExplosiveCrate, Mine, MineState, Position, PreviousPosition, Run,
-        Sector,
+        Barrier, Block, Bullet, ExplosiveCrate, Mine, MineState, Planned, Position,
+        PreviousPosition, Run, Sector,
     },
     stats::Stat,
 };
@@ -37,6 +37,9 @@ const CRATE_SIZE: f32 = BLOCK_SIZE - 0.2;
 /// Width of the strips that hatch a block and of those that cross a crate.
 const HATCH_WIDTH: f32 = 0.03;
 const CROSS_WIDTH: f32 = 0.05;
+/// How strong the hatching of a block that is planned is over the floor, and the cross of a
+/// crate: a little fainter than on what will stand there.
+const PLANNED_STRENGTH: f32 = 0.7;
 const MINE_HEIGHT: f32 = 0.12;
 const BARRIER_HEIGHT: f32 = 1.5;
 /// The chain line at the foot of a barrier: a long dash, a short one, and the gap after each.
@@ -87,6 +90,8 @@ pub struct Shapes {
     disc: Handle<Mesh>,
     block: Handle<Mesh>,
     explosive: Handle<Mesh>,
+    /// The plans of a block and of a crate that are on their way, flat on the floor.
+    planned: [Handle<Mesh>; 2],
     mine: Handle<Mesh>,
     /// The circles around a mine, at their real sizes.
     trigger: Handle<Mesh>,
@@ -158,6 +163,7 @@ pub fn plugin(app: &mut App) {
                 dress_sectors,
                 dress_barriers,
                 dress_obstacles,
+                dress_planned,
                 dress_mines,
                 dress_bullets,
             ),
@@ -218,6 +224,7 @@ pub fn setup(
         disc: meshes.add(disc.build()),
         block: meshes.add(block_drawing().build()),
         explosive: meshes.add(crate_drawing().build()),
+        planned: [false, true].map(|explosive| meshes.add(planned_drawing(explosive).build())),
         mine: meshes.add(mine_drawing().build()),
         trigger,
         blast,
@@ -433,9 +440,15 @@ fn block_drawing() -> Draft {
         (theme::BLOCK, theme::BLOCK_SIDE, theme::BLOCK_LINE),
     );
     draft.corners(center, size, theme::BLOCK_LINE);
-    // The hatching: strips at 45 degrees, half a meter apart along the edges, each cut where
-    // it meets the edges of the top. Under the outline, which hides their ends.
-    let (half, top) = (BLOCK_SIZE / 2.0, BLOCK_HEIGHT + LIFT / 2.0);
+    hatch(&mut draft, BLOCK_HEIGHT + LIFT / 2.0, theme::HATCH);
+    draft
+}
+
+/// The hatching of a block at a height: strips at 45 degrees, half a meter apart along the
+/// edges, each cut where it meets the edges of the square. Under the outline, which hides
+/// their ends.
+fn hatch(draft: &mut Draft, top: f32, color: Color) {
+    let half = BLOCK_SIZE / 2.0;
     let cut = HATCH_WIDTH / std::f32::consts::SQRT_2;
     for step in 0..8 {
         // The strip runs along the line `x + z = shift`, from one edge to the next.
@@ -460,9 +473,8 @@ fn block_drawing() -> Draft {
             .zip(along_edges)
             .map(|(&(x, z), (dx, dz))| Vec3::new(x + dx, top, z + dz))
             .collect();
-        draft.face(&corners, theme::HATCH);
+        draft.face(&corners, color);
     }
-    draft
 }
 
 /// The drawing of an explosive crate: a box with a cross, in the color of danger.
@@ -478,14 +490,40 @@ fn crate_drawing() -> Draft {
         (theme::CRATE, theme::CRATE_SIDE, theme::DANGER),
     );
     draft.corners(center, size, theme::DANGER);
-    let (reach, top) = (CRATE_SIZE / 2.0 - draft::LINE, CRATE_HEIGHT + LIFT / 2.0);
+    cross(&mut draft, CRATE_HEIGHT + LIFT / 2.0, theme::DANGER);
+    draft
+}
+
+/// The cross of a crate at a height, from corner to corner.
+fn cross(draft: &mut Draft, top: f32, color: Color) {
+    let reach = CRATE_SIZE / 2.0 - draft::LINE;
     for turn in [-1.0, 1.0] {
         draft.line(
             Vec3::new(-reach, top, -reach * turn),
             Vec3::new(reach, top, reach * turn),
             CROSS_WIDTH,
-            theme::DANGER,
+            color,
         );
+    }
+}
+
+/// The plan of a block or of a crate that is on its way, flat on the floor: its outline, with
+/// the hatching of the block or the cross of the crate, a little fainter than on what will
+/// stand there.
+fn planned_drawing(explosive: bool) -> Draft {
+    let mut draft = Draft::default();
+    let (side, line, mark) = if explosive {
+        (CRATE_SIZE, theme::DANGER, theme::DANGER)
+    } else {
+        (BLOCK_SIZE, theme::BLOCK_LINE, theme::HATCH)
+    };
+    let (at, plan) = (Vec3::Y * 2.0 * LIFT, Vec2::splat(side));
+    draft.frame(at, plan, draft::LINE, line);
+    let faint = theme::over(theme::FLOOR, mark, PLANNED_STRENGTH);
+    if explosive {
+        cross(&mut draft, 1.5 * LIFT, faint);
+    } else {
+        hatch(&mut draft, 1.5 * LIFT, faint);
     }
     draft
 }
@@ -897,6 +935,23 @@ fn dress_obstacles(
     }
 }
 
+/// Draws the plan of a block or of a crate that is on its way.
+fn dress_planned(
+    mut commands: Commands,
+    planned: Query<(Entity, &Planned, &Position), Added<Planned>>,
+    shapes: Res<Shapes>,
+    paints: Res<Paints>,
+) {
+    for (entity, plan, position) in &planned {
+        let shape = &shapes.planned[plan.explosive as usize];
+        commands.entity(entity).insert((
+            Mesh3d(shape.clone()),
+            MeshMaterial3d(paints.ink.clone()),
+            Transform::from_translation(to_world(position.0, 0.0)),
+        ));
+    }
+}
+
 /// Whether a sector is still waiting for its first player: the players are in an earlier one.
 pub fn is_dormant(sector: u32, run: Option<&Run>) -> bool {
     run.is_some_and(|run| sector > run.sector)
@@ -1101,6 +1156,73 @@ mod tests {
 
     fn close(found: f32, wanted: f32) -> bool {
         (found - wanted).abs() < 1e-3
+    }
+
+    #[test]
+    fn triangles_cover_every_room_exactly() {
+        for seed in 0..400 {
+            let room = tanku_core::map::Room::new(seed);
+            let corners = room.plan().outline.iter();
+            let outline: Vec<Vec2> = corners.map(|point| point.as_vec2()).collect();
+            let triangles = triangulate(&outline);
+            let covered: f32 = triangles
+                .iter()
+                .map(|triangle| area(&triangle.map(|corner| outline[corner as usize])))
+                .sum();
+            assert!(
+                (covered - area(&outline)).abs() < 0.01,
+                "seed {seed}: {covered} of {}",
+                area(&outline)
+            );
+        }
+    }
+
+    #[test]
+    fn what_is_on_its_way_is_drawn_flat_on_the_floor() {
+        for explosive in [false, true] {
+            let plan = planned_drawing(explosive);
+            // The plan lies on the floor, within the square where the thing will stand.
+            let (low, high) = plan.bounds();
+            let half = BLOCK_SIZE / 2.0 + 1e-3;
+            assert!(low.y > 0.0 && high.y < 0.05, "{low} {high}");
+            assert!(low.x >= -half && low.z >= -half && high.x <= half && high.z <= half);
+            // Its outline is whole, with the hatching of a block or the cross of a crate
+            // inside it, fainter than on what will stand there.
+            let (line, mark) = if explosive {
+                (theme::DANGER, theme::DANGER)
+            } else {
+                (theme::BLOCK_LINE, theme::HATCH)
+            };
+            let side = if explosive { CRATE_SIZE } else { BLOCK_SIZE };
+            let whole = 4.0 * (side - draft::LINE) * draft::LINE;
+            assert!(close(plan.area(line), whole), "{}", plan.area(line));
+            assert!(plan.area(theme::over(theme::FLOOR, mark, PLANNED_STRENGTH)) > 0.1);
+        }
+    }
+
+    #[test]
+    fn a_planned_block_and_a_planned_crate_show_their_plans() {
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<StandardMaterial>>()
+            .init_resource::<Assets<Image>>()
+            .add_systems(PreStartup, setup)
+            .add_systems(Update, dress_planned);
+        let at = Vec2::new(5.0, 9.0);
+        let plan = Planned { explosive: false };
+        let block = app.world_mut().spawn((plan, Position(at))).id();
+        let other = Planned { explosive: true };
+        let explosive = app.world_mut().spawn((other, Position(at + Vec2::X * 4.0)));
+        let explosive = explosive.id();
+        app.update();
+        let shown =
+            |app: &App, entity: Entity| app.world().get::<Mesh3d>(entity).unwrap().0.clone();
+        let shapes = |app: &App| app.world().resource::<Shapes>().planned.clone();
+        assert_eq!(shown(&app, block), shapes(&app)[0]);
+        assert_eq!(shown(&app, explosive), shapes(&app)[1]);
+        assert_ne!(shapes(&app)[0], shapes(&app)[1]);
+        let stands = app.world().get::<Transform>(block).unwrap().translation;
+        assert_eq!(stands, to_world(at, 0.0));
     }
 
     #[test]
@@ -1382,6 +1504,8 @@ mod tests {
             playtest: false,
             earns: true,
             free: false,
+            arena: false,
+            lull: None,
         };
         assert!(is_dormant(5, Some(&run(4))));
         assert!(!is_dormant(5, Some(&run(5))));

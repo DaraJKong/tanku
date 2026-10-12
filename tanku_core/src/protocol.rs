@@ -22,8 +22,8 @@ use crate::{
     rules::MAX_PLAYERS,
     seed::VERSION,
     sim::{
-        Barrier, Block, Bullet, Enemy, ExplosiveCrate, Gun, Mine, Motion, Player, Position,
-        Protected, Run, SectorIndex, Shield, SimEvent, Tank, TankCommand, Wreck,
+        Barrier, Block, Bullet, Enemy, ExplosiveCrate, Gun, Mine, Motion, Planned, Player,
+        Position, Protected, Reserve, Run, SectorIndex, Shield, SimEvent, Tank, TankCommand, Wreck,
     },
     stats::Genome,
 };
@@ -31,7 +31,7 @@ use crate::{
 /// Counts the changes to what the server and its clients tell each other since the version of
 /// the game was last raised. Two builds that don't count the same don't speak the same, so
 /// they don't join each other: raise this with every such change.
-pub const REVISION: u32 = 0;
+pub const REVISION: u32 = 2;
 
 /// The port a game listens on unless it is told otherwise.
 pub const PORT: u16 = 28405;
@@ -110,6 +110,8 @@ pub struct Lobby {
     /// Whether the next run is in free mode, in which each player has the tank that they
     /// built in their own garage.
     pub free: bool,
+    /// Whether the next run is in arena mode: in one room, against one group after another.
+    pub arena: bool,
     /// Who has said that they are ready for the run, by seat.
     pub ready: [bool; MAX_PLAYERS as usize],
     /// The seconds until the run starts by itself, once everyone is ready.
@@ -223,6 +225,8 @@ impl Plugin for ProtocolPlugin {
         app.component::<Block>().replicate();
         app.component::<ExplosiveCrate>().replicate();
         app.component::<Barrier>().replicate();
+        app.component::<Reserve>().replicate();
+        app.component::<Planned>().replicate();
     }
 }
 

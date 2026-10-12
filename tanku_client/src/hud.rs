@@ -28,6 +28,9 @@ use crate::{
 
 /// Seconds a message stays on screen.
 const TOAST_TIME: f32 = 2.5;
+/// The last seconds of a lull of arena mode that a message counts down. The first one is left
+/// to the message that says that a group is cleared.
+const LULL_COUNTED: u8 = 2;
 /// Markers point to the last enemies of a sector when this many remain, or fewer.
 const MARKED_ENEMIES: usize = 2;
 /// Distance between the panels and the edge of the screen, and between that edge and the
@@ -70,6 +73,9 @@ enum Readout {
     Mode,
     /// What the squares next to it count: the lives of a single player, or the team.
     Crew,
+    /// What the number next to it counts: the sectors of the corridor, or the groups of
+    /// arena mode.
+    Unit,
     Sector,
     /// What stands for the lives when a playtest doesn't count them.
     Lives,
@@ -86,6 +92,39 @@ enum Readout {
 
 #[derive(Component)]
 struct Toast(f32);
+
+/// What the display tells the player in the middle of the screen: what to do about a wreck,
+/// and the controls where a run starts.
+#[derive(Component)]
+struct Notes;
+
+/// Where those notes stand: at the bottom of the screen, or under the messages at its top
+/// in arena mode, where the tanks in reserve stand at the bottom.
+fn notes(in_a_room: bool) -> Node {
+    let (top, bottom) = if in_a_room {
+        (px(MARGIN + 28.0), auto())
+    } else {
+        (auto(), px(MARGIN))
+    };
+    Node {
+        position_type: PositionType::Absolute,
+        top,
+        bottom,
+        width: percent(100),
+        flex_direction: FlexDirection::Column,
+        align_items: AlignItems::Center,
+        row_gap: px(10),
+        ..default()
+    }
+}
+
+/// Keeps the notes clear of the tanks in reserve.
+fn seat_notes(run: Option<Res<Run>>, mut held: Single<&mut Node, With<Notes>>) {
+    let wanted = notes(run.is_some_and(|run| run.arena));
+    if (held.top, held.bottom) != (wanted.top, wanted.bottom) {
+        (held.top, held.bottom) = (wanted.top, wanted.bottom);
+    }
+}
 
 #[derive(Component)]
 struct EnemyMarker(usize);
@@ -158,6 +197,7 @@ pub fn plugin(app: &mut App) {
             Update,
             (
                 status,
+                seat_notes,
                 weapons,
                 toasts,
                 (mark_enemies, mark_mates).chain(),
@@ -429,7 +469,7 @@ fn title_block() -> impl Bundle {
                     (
                         cell(1.0, false),
                         children![
-                            caption("SECTOR"),
+                            (Readout::Unit, caption("")),
                             (Readout::Sector, theme::figure("", 40.0, theme::TEXT)),
                         ],
                     ),
@@ -627,15 +667,8 @@ fn build(mut commands: Commands) {
                 children![instruments_row(), title_block()],
             ),
             (
-                Node {
-                    position_type: PositionType::Absolute,
-                    bottom: px(MARGIN),
-                    width: percent(100),
-                    flex_direction: FlexDirection::Column,
-                    align_items: AlignItems::Center,
-                    row_gap: px(10),
-                    ..default()
-                },
+                Notes,
+                notes(false),
                 children![
                     (Readout::Repair, theme::title("", 18.0, theme::TEXT)),
                     (Readout::Hint, theme::text("", 15.0, theme::TEXT_DIM)),
@@ -722,18 +755,57 @@ fn shown(visible: bool) -> Display {
 }
 
 /// How a run is played, as the display says it under the name of the game: alone or with
-/// others, and in free mode. A playtest says that it is one, because it sets no record.
+/// others, in arena mode, and in free mode. A playtest says that it is one, because it sets
+/// no record.
 fn mode(run: &Run) -> String {
-    let players = match (run.playtest, run.solo) {
-        (true, _) => return "PLAYTEST".to_string(),
+    let mut told = match (run.playtest, run.solo) {
+        (true, _) => "PLAYTEST",
         (false, true) => "SOLO",
         (false, false) => "CO-OP",
-    };
-    if run.free {
-        format!("{players} \u{b7} FREE")
-    } else {
-        players.to_string()
     }
+    .to_string();
+    if run.arena {
+        told.push_str(" \u{b7} ARENA");
+    }
+    if run.free && !run.playtest {
+        told.push_str(" \u{b7} FREE");
+    }
+    told
+}
+
+/// The group of arena mode that a run is at: the one that is on, or the next one during the
+/// lull before it.
+fn group(run: &Run) -> u32 {
+    run.sector + run.lull.is_some() as u32
+}
+
+/// What the display counts, and the number that it shows: the sector that the players have
+/// reached, or the start bay. In arena mode, the group that is on, or the next one during
+/// the lull before it.
+fn place(run: &Run) -> (&'static str, String) {
+    match (run.arena, run.lull, run.sector) {
+        (true, Some(_), _) => ("NEXT GROUP", group(run).to_string()),
+        (true, None, _) => ("GROUP", group(run).to_string()),
+        (false, _, 0) => ("SECTOR", "BAY".to_string()),
+        (false, _, sector) => ("SECTOR", sector.to_string()),
+    }
+}
+
+/// What a message says of a wave that is on its way: in an arena of the corridor, which
+/// wave of how many. In arena mode, the group too, and a group that comes at once has no
+/// waves to count.
+fn wave_words(run: Option<&Run>, wave: u32, of: u32) -> String {
+    match run.filter(|run| run.arena) {
+        Some(run) if of > 1 => format!("Group {} - wave {wave} of {of}", group(run)),
+        Some(run) => format!("Group {}", group(run)),
+        None => format!("Wave {wave} of {of}"),
+    }
+}
+
+/// What a message says of the group that a lull is about to end with, for its last seconds.
+fn lull_words(run: &Run, shown: Option<u8>) -> Option<String> {
+    let left = run.lull.filter(|left| *left <= LULL_COUNTED)?;
+    (run.arena && Some(left) != shown).then(|| format!("Group {} in {left}", group(run)))
 }
 
 /// What the start bay tells of the controls, with the keys of the player: of mines and of a
@@ -802,8 +874,8 @@ fn status(
             Readout::Mode => mode(&run),
             Readout::Crew if run.solo => "LIVES".to_string(),
             Readout::Crew => "TEAM".to_string(),
-            Readout::Sector if run.sector == 0 => "BAY".to_string(),
-            Readout::Sector => run.sector.to_string(),
+            Readout::Unit => place(&run).0.to_string(),
+            Readout::Sector => place(&run).1,
             Readout::Lives if infinite_lives && run.solo => "INFINITE".to_string(),
             Readout::Lives => String::new(),
             Readout::Seed => run.seed_text.clone(),
@@ -922,14 +994,26 @@ fn toasts(
     mut unlocked: MessageReader<Unlocked>,
     mut toast: Single<(&mut Toast, &mut Text, &mut TextColor)>,
     mut shown: Local<u8>,
+    mut counted: Local<Option<u8>>,
 ) {
     let (toast, text, color) = &mut *toast;
     let infinite_lives = playtest.is_some_and(|playtest| playtest.infinite_lives);
     // Several things can happen at once, such as clearing a sector and unlocking its barrier.
     // The message that matters most is shown.
     let mut news: Option<(u8, String)> = None;
+    // The last seconds of a lull of arena mode are counted down.
+    if let Some(run) = &run {
+        if let Some(message) = lull_words(run, *counted) {
+            news = Some((1, message));
+        }
+        *counted = run.lull;
+    }
+    let in_a_room = run.as_ref().is_some_and(|run| run.arena);
     for event in events.read() {
         let (weight, message) = match *event {
+            SimEvent::SectorCleared { sector } if sector > 0 && in_a_room => {
+                (1, format!("Group {sector} cleared"))
+            }
             SimEvent::SectorCleared { sector } if sector > 0 => {
                 (1, format!("Sector {sector} cleared"))
             }
@@ -969,7 +1053,7 @@ fn toasts(
             }
             SimEvent::TankRepaired { .. } => (2, "Tank repaired".to_string()),
             // The waves of an arena are counted, so that the players know when it ends.
-            SimEvent::WaveIncoming { wave, of } => (2, format!("Wave {wave} of {of}")),
+            SimEvent::WaveIncoming { wave, of } => (2, wave_words(run.as_deref(), wave, of)),
             _ => continue,
         };
         if news.as_ref().is_none_or(|(shown, _)| weight >= *shown) {
@@ -1496,6 +1580,8 @@ mod tests {
             playtest,
             earns: !free && !playtest,
             free,
+            arena: false,
+            lull: None,
         };
         assert_eq!(mode(&run(true, false, false)), "SOLO");
         assert_eq!(mode(&run(false, false, false)), "CO-OP");
@@ -1504,6 +1590,92 @@ mod tests {
         // A playtest says that it is one, in a tank of its own or not.
         assert_eq!(mode(&run(true, false, true)), "PLAYTEST");
         assert_eq!(mode(&run(true, true, true)), "PLAYTEST");
+        // A run in arena mode says so, whoever plays it.
+        let in_a_room = |solo: bool, free: bool, playtest: bool| Run {
+            arena: true,
+            ..run(solo, free, playtest)
+        };
+        assert_eq!(mode(&in_a_room(true, false, false)), "SOLO \u{b7} ARENA");
+        assert_eq!(
+            mode(&in_a_room(false, true, false)),
+            "CO-OP \u{b7} ARENA \u{b7} FREE"
+        );
+        assert_eq!(mode(&in_a_room(true, true, true)), "PLAYTEST \u{b7} ARENA");
+    }
+
+    #[test]
+    fn the_display_counts_sectors_in_the_corridor_and_groups_in_arena_mode() {
+        let run = |arena: bool, sector: u32, lull: Option<u8>| Run {
+            seed_text: "TEST".into(),
+            seed: 1,
+            difficulty: default(),
+            players: 1,
+            team: 1,
+            solo: true,
+            sector,
+            cleared: sector.saturating_sub(1),
+            checkpoint: sector.saturating_sub(1),
+            lives: 3,
+            kills: 0,
+            ticks: 0,
+            phase: tanku_core::sim::RunPhase::Playing,
+            lost_to: None,
+            playtest: false,
+            earns: !arena,
+            free: false,
+            arena,
+            lull,
+        };
+        let told = |run: &Run| {
+            let (unit, number) = place(run);
+            format!("{unit} {number}")
+        };
+        assert_eq!(told(&run(false, 0, None)), "SECTOR BAY");
+        assert_eq!(told(&run(false, 7, None)), "SECTOR 7");
+        // In arena mode, the group that is on. During a lull, the one that comes next: the
+        // first one when the run starts.
+        assert_eq!(told(&run(true, 0, Some(3))), "NEXT GROUP 1");
+        assert_eq!(told(&run(true, 1, None)), "GROUP 1");
+        assert_eq!(told(&run(true, 7, Some(2))), "NEXT GROUP 8");
+        assert_eq!(told(&run(true, 8, None)), "GROUP 8");
+
+        // A wave of an arena of the corridor is counted. One of arena mode names its group
+        // too, and a group that comes at once has no waves to count.
+        let corridor = run(false, 7, None);
+        assert_eq!(wave_words(Some(&corridor), 2, 3), "Wave 2 of 3");
+        assert_eq!(wave_words(None, 1, 3), "Wave 1 of 3");
+        let room = run(true, 8, None);
+        assert_eq!(wave_words(Some(&room), 1, 2), "Group 8 - wave 1 of 2");
+        assert_eq!(wave_words(Some(&room), 2, 2), "Group 8 - wave 2 of 2");
+        assert_eq!(wave_words(Some(&room), 1, 1), "Group 8");
+        // A guest may hear of the wave before it hears that the lull is over.
+        assert_eq!(
+            wave_words(Some(&run(true, 7, Some(1))), 1, 2),
+            "Group 8 - wave 1 of 2"
+        );
+
+        // The last seconds of a lull are counted down, each of them once. Its first second
+        // is left to the message that says that a group is cleared.
+        let lull = |left: u8| run(true, 7, Some(left));
+        assert_eq!(lull_words(&lull(3), None), None);
+        assert_eq!(
+            lull_words(&lull(2), Some(3)),
+            Some("Group 8 in 2".to_string())
+        );
+        assert_eq!(lull_words(&lull(2), Some(2)), None);
+        assert_eq!(
+            lull_words(&lull(1), Some(2)),
+            Some("Group 8 in 1".to_string())
+        );
+        assert_eq!(lull_words(&run(true, 8, None), Some(1)), None);
+        assert_eq!(lull_words(&run(false, 7, None), None), None);
+
+        // The notes stand at the bottom of the screen, and under the messages at its top in
+        // arena mode, where the tanks in reserve stand at the bottom.
+        assert_eq!(notes(false).bottom, px(MARGIN));
+        assert_eq!(notes(false).top, auto());
+        assert_eq!(notes(true).bottom, auto());
+        assert_ne!(notes(true).top, auto());
     }
 
     #[test]

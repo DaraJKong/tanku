@@ -72,7 +72,7 @@ pub fn plugin(app: &mut App) {
 #[derive(Default)]
 struct Known {
     /// What the run was set to.
-    set: Option<(Difficulty, String, bool, bool)>,
+    set: Option<(Difficulty, String, bool, bool, bool)>,
     /// The tank that the host had for a run in free mode.
     tank: Option<Genome>,
 }
@@ -99,6 +99,7 @@ fn settle(
         lobby.seed.clone(),
         lobby.typed,
         lobby.free,
+        lobby.arena,
     );
     if known.set.as_ref().is_some_and(|known| *known != set) {
         ready = default();
@@ -190,6 +191,7 @@ fn direct(
                     name: sign.name.clone(),
                     difficulty: sign.difficulty,
                     free: sign.free,
+                    arena: sign.arena,
                     playtest: options.playtest,
                     ..default()
                 };
@@ -266,6 +268,7 @@ fn direct(
                         drawn: fresh && !lobby.typed,
                         difficulty: lobby.difficulty,
                         free: lobby.free || options.tank.is_some(),
+                        arena: lobby.arena,
                         tanks,
                     });
                     next_screen.set(Screen::Playing);

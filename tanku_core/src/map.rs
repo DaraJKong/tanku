@@ -1,11 +1,12 @@
-//! Generation of the corridor: an endless chain of sectors.
+//! Generation of the corridor: an endless chain of sectors. And of the room of arena mode,
+//! which a run never leaves.
 //!
 //! Every vertex lies on a 1 m lattice and all arithmetic is on integers, so a seed gives the same
 //! map on every platform. North is `+y` and east is `+x`.
 
 use std::collections::{HashSet, VecDeque};
 
-use bevy::math::IVec2;
+use bevy::math::{IVec2, Vec2};
 
 use crate::{
     progression,
@@ -43,6 +44,53 @@ const PATH_CLEARANCE_2: i64 = 13;
 const OBSTACLE_CLEARANCE_2: i64 = 25;
 /// 7 m between the center of an obstacle and a gate.
 const GATE_CLEARANCE_2: i64 = 196;
+
+/// Narrowest and widest the room of arena mode gets, and how deep it gets from south to
+/// north. With the tanks that wait in reserve south of it, it fits on one screen.
+const ROOM_WIDTH: (i32, i32) = (36, 42);
+const ROOM_DEPTH: (i32, i32) = (22, 24);
+/// How far a corner of the room is cut: along the wall that runs east, and along the one
+/// that runs north. The cuts follow the slopes of the lattice.
+const ROOM_CORNERS: [(i32, i32); 9] = [
+    (0, 0),
+    (2, 2),
+    (3, 3),
+    (4, 4),
+    (5, 5),
+    (4, 2),
+    (6, 3),
+    (2, 4),
+    (3, 6),
+];
+/// 5 m between the center of an obstacle and the place where the players appear in the room.
+const START_CLEARANCE_2: i64 = 100;
+/// The room has more floor than a sector of the corridor: it takes this many groups of cover
+/// for two of a sector.
+const ROOM_COVER: u32 = 3;
+/// How far outside the south wall of the room the first row of the tanks that wait in
+/// reserve stands, how far behind it the next row does, and how far apart the tanks of a row
+/// are.
+const RESERVE_ROW: f32 = 2.2;
+const RESERVE_ROWS_APART: f32 = 2.6;
+const RESERVE_SPACING: f32 = 3.0;
+/// The most tanks that a row of the reserve holds, and how far apart its two ends are at
+/// most: it stands between the two panels at the bottom of the display.
+const RESERVE_ROW_MOST: u32 = 8;
+const RESERVE_SPAN: f32 = 20.0;
+/// How far south of the room the ground that one row of the reserve takes reaches, and the
+/// ground that two rows take.
+const RESERVE_DEPTH: (f32, f32) = (4.2, 6.5);
+
+/// How far south of the room of arena mode the ground that the tanks in reserve take
+/// reaches. The largest group of a single player stands in one row. Several players call
+/// for groups that take two.
+pub const fn reserve_depth(solo: bool) -> f32 {
+    if solo {
+        RESERVE_DEPTH.0
+    } else {
+        RESERVE_DEPTH.1
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Heading {
@@ -97,6 +145,8 @@ pub enum SectorKind {
     Bay,
     Corridor,
     Arena,
+    /// The room of arena mode: it has no way in and no way out.
+    Room,
 }
 
 /// The local frame of a sector: `u` runs to the right along the entry and `v` runs forward.
@@ -484,6 +534,7 @@ fn plan_sector(seed: u64, index: u32, frame: Frame, entry: i32, spec: &Spec) -> 
         SectorKind::Bay => bay_shape(),
         SectorKind::Arena => arena_shape(&mut rng, index, entry),
         SectorKind::Corridor => corridor_shape(&mut rng, index, entry, spec),
+        SectorKind::Room => unreachable!("a corridor has no room"),
     };
     let (length, gate) = (shape.length, shape.gate);
     let (left_end, right_end) = (shape.left.last().unwrap().0, shape.right.last().unwrap().0);
@@ -783,68 +834,19 @@ impl SectorLayout {
         layout
     }
 
-    /// Draws groups of obstacles on a 2 m grid. The flag of a group tells crates from blocks.
+    /// Draws the groups of obstacles of a sector of the corridor: clear of its walls, and well
+    /// clear of its entry and of its barrier.
     fn place_obstacles(&self, rng: &mut Stream) -> Vec<(bool, Vec<IVec2>)> {
         let plan = &self.plan;
-        let edges = |ends: (IVec2, IVec2)| (ends.0 * 2, ends.1 * 2);
-        let mut free: Vec<IVec2> = Vec::new();
-        for y in (plan.min.y.div_euclid(2) * 2..plan.max.y).step_by(2) {
-            for x in (plan.min.x.div_euclid(2) * 2..plan.max.x).step_by(2) {
-                let center = IVec2::new(x, y) * 2 + IVec2::splat(2);
-                let clear = plan.contains_half(center)
-                    && plan.walls.iter().all(|&wall| {
-                        let (a, b) = edges(wall);
-                        far_from_segment(center, a, b, OBSTACLE_CLEARANCE_2)
-                    })
-                    && [plan.entry, plan.gate].into_iter().all(|gate| {
-                        let (a, b) = edges(gate);
-                        far_from_segment(center, a, b, GATE_CLEARANCE_2)
-                    });
-                if clear {
-                    free.push(IVec2::new(x, y));
-                }
-            }
-        }
-
-        const SHAPES: [&[(i32, i32)]; 6] = [
-            &[(0, 0)],
-            &[(0, 0), (2, 0)],
-            &[(0, 0), (0, 2)],
-            &[(0, 0), (2, 0), (0, 2)],
-            &[(0, 0), (2, 0), (4, 0)],
-            &[(0, 0), (0, 2), (0, 4)],
+        let open = [
+            (plan.entry, GATE_CLEARANCE_2),
+            (plan.gate, GATE_CLEARANCE_2),
         ];
-        let crates = progression::crate_count(plan.index);
-        let crates = rng.range(crates.0, crates.1) as u32;
-        let covers = progression::cover_groups(plan.index);
-        let mut groups: Vec<(bool, Vec<IVec2>)> = Vec::new();
-        for group in 0..covers + crates {
-            if free.is_empty() {
-                break;
-            }
-            let is_crate = group >= covers;
-            let anchor = free[rng.below(free.len() as u32) as usize];
-            let shape = if is_crate {
-                SHAPES[0]
-            } else {
-                rng.pick(&SHAPES)
-            };
-            let cells: Vec<IVec2> = shape
-                .iter()
-                .map(|&(dx, dy)| anchor + IVec2::new(dx, dy))
-                .collect();
-            if !cells.iter().all(|cell| free.contains(cell)) {
-                continue;
-            }
-            // Different groups keep two free cells between them, which a tank can drive through.
-            free.retain(|cell| {
-                cells
-                    .iter()
-                    .all(|taken| (*cell - *taken).abs().max_element() > 4)
-            });
-            groups.push((is_crate, cells));
-        }
-        groups
+        let counts = (
+            progression::cover_groups(plan.index),
+            progression::crate_count(plan.index),
+        );
+        scatter(plan, rng, &open, counts)
     }
 
     /// Lattice points a tank can reach from the entry along a path more than 3 m wide.
@@ -897,22 +899,7 @@ impl SectorLayout {
             .collect();
         // A hash set has no order of its own.
         candidates.sort_by_key(|point| (point.y, point.x));
-
-        // Enemies start 4 m apart where there is room, closer where there isn't.
-        for spacing in [4, 3, 2] {
-            let mut left = candidates.clone();
-            left.retain(|point| self.spawns.iter().all(|spawn| spawn != point));
-            while self.spawns.len() < MAX_SPAWNS && !left.is_empty() {
-                let spawn = left.swap_remove(rng.below(left.len() as u32) as usize);
-                let spaced = self
-                    .spawns
-                    .iter()
-                    .all(|other| (*other - spawn).length_squared() >= spacing * spacing);
-                if spaced {
-                    self.spawns.push(spawn);
-                }
-            }
-        }
+        self.spawns = spaced(rng, &candidates);
     }
 
     /// A number that changes whenever anything in the layout does.
@@ -934,6 +921,266 @@ impl SectorLayout {
             }
         }
         hash
+    }
+}
+
+/// Draws groups of obstacles on a 2 m grid inside a plan: this many groups of blocks, then
+/// between this few and this many crates. They keep clear of the walls, and of each line that
+/// must stay open by the distance that goes with it, squared and in half meters. The flag of
+/// a group tells crates from blocks.
+fn scatter(
+    plan: &SectorPlan,
+    rng: &mut Stream,
+    open: &[((IVec2, IVec2), i64)],
+    (covers, crates): (u32, (i32, i32)),
+) -> Vec<(bool, Vec<IVec2>)> {
+    let edges = |ends: (IVec2, IVec2)| (ends.0 * 2, ends.1 * 2);
+    let mut free: Vec<IVec2> = Vec::new();
+    for y in (plan.min.y.div_euclid(2) * 2..plan.max.y).step_by(2) {
+        for x in (plan.min.x.div_euclid(2) * 2..plan.max.x).step_by(2) {
+            let center = IVec2::new(x, y) * 2 + IVec2::splat(2);
+            let clear = plan.contains_half(center)
+                && plan.walls.iter().all(|&wall| {
+                    let (a, b) = edges(wall);
+                    far_from_segment(center, a, b, OBSTACLE_CLEARANCE_2)
+                })
+                && open.iter().all(|&(line, clearance_2)| {
+                    let (a, b) = edges(line);
+                    far_from_segment(center, a, b, clearance_2)
+                });
+            if clear {
+                free.push(IVec2::new(x, y));
+            }
+        }
+    }
+
+    const SHAPES: [&[(i32, i32)]; 6] = [
+        &[(0, 0)],
+        &[(0, 0), (2, 0)],
+        &[(0, 0), (0, 2)],
+        &[(0, 0), (2, 0), (0, 2)],
+        &[(0, 0), (2, 0), (4, 0)],
+        &[(0, 0), (0, 2), (0, 4)],
+    ];
+    let crates = rng.range(crates.0, crates.1) as u32;
+    let mut groups: Vec<(bool, Vec<IVec2>)> = Vec::new();
+    for group in 0..covers + crates {
+        if free.is_empty() {
+            break;
+        }
+        let is_crate = group >= covers;
+        let anchor = free[rng.below(free.len() as u32) as usize];
+        let shape = if is_crate {
+            SHAPES[0]
+        } else {
+            rng.pick(&SHAPES)
+        };
+        let cells: Vec<IVec2> = shape
+            .iter()
+            .map(|&(dx, dy)| anchor + IVec2::new(dx, dy))
+            .collect();
+        if !cells.iter().all(|cell| free.contains(cell)) {
+            continue;
+        }
+        // Different groups keep two free cells between them, which a tank can drive through.
+        free.retain(|cell| {
+            cells
+                .iter()
+                .all(|taken| (*cell - *taken).abs().max_element() > 4)
+        });
+        groups.push((is_crate, cells));
+    }
+    groups
+}
+
+/// Picks places for tanks among these: 4 m apart where there is room, closer where there
+/// isn't, and no more than a sector prepares.
+fn spaced(rng: &mut Stream, candidates: &[IVec2]) -> Vec<IVec2> {
+    let mut picked: Vec<IVec2> = Vec::new();
+    for spacing in [4, 3, 2] {
+        let mut left = candidates.to_vec();
+        left.retain(|point| picked.iter().all(|taken| taken != point));
+        while picked.len() < MAX_SPAWNS && !left.is_empty() {
+            let place = left.swap_remove(rng.below(left.len() as u32) as usize);
+            let apart = picked
+                .iter()
+                .all(|other| (*other - place).length_squared() >= spacing * spacing);
+            if apart {
+                picked.push(place);
+            }
+        }
+    }
+    picked
+}
+
+/// The room of arena mode: a closed room that a run never leaves. Its walls come from the
+/// seed. What stands in it is laid out for a level of the terrain, and the places where tanks
+/// appear are drawn for each group.
+#[derive(Clone, Debug)]
+pub struct Room {
+    seed: u64,
+    plan: SectorPlan,
+}
+
+impl Room {
+    pub fn new(seed: u64) -> Self {
+        let mut rng = Stream::new(seed, Purpose::Room, 0, 0);
+        // Even sizes keep the middle of the room on the lattice.
+        let width = rng.range(ROOM_WIDTH.0 / 2, ROOM_WIDTH.1 / 2) * 2;
+        let depth = rng.range(ROOM_DEPTH.0 / 2, ROOM_DEPTH.1 / 2) * 2;
+        let (west, east) = (-width / 2, width / 2);
+        let [sw, nw, ne, se] = [(); 4].map(|_| rng.pick(&ROOM_CORNERS));
+        // One time in two, a stretch of a long wall stands out into the room between two
+        // slanted sides: where it is along the wall, and how far out. The cuts of the corners
+        // at both ends of the wall leave it room.
+        let mut buttress = |left: i32, right: i32| -> Vec<(i32, i32)> {
+            if !rng.chance(50) {
+                return Vec::new();
+            }
+            let (span, out) = (rng.pick(&[6, 8, 10]), rng.pick(&[2, 3]));
+            let from = rng.range(west + left + 3, east - right - 3 - span);
+            vec![
+                (from, 0),
+                (from + out, out),
+                (from + span - out, out),
+                (from + span, 0),
+            ]
+        };
+        let (north, south) = (buttress(nw.0, ne.0), buttress(sw.0, se.0));
+
+        // The outline starts at the south end of the west wall and runs north, as the outline
+        // of a sector does from the left end of its entry.
+        let mut corners = vec![(west, sw.1), (west, depth - nw.1), (west + nw.0, depth)];
+        corners.extend(north.iter().map(|&(x, out)| (x, depth - out)));
+        corners.extend([
+            (east - ne.0, depth),
+            (east, depth - ne.1),
+            (east, se.1),
+            (east - se.0, 0),
+        ]);
+        corners.extend(south.iter().rev());
+        corners.push((west + sw.0, 0));
+        let corners: Vec<IVec2> = corners.iter().map(|&(x, y)| IVec2::new(x, y)).collect();
+        let outline = simplify(&corners, &[]);
+        let walls = (0..outline.len())
+            .map(|i| (outline[i], outline[(i + 1) % outline.len()]))
+            .collect();
+
+        let start = IVec2::new(0, depth / 2);
+        let plan = SectorPlan {
+            index: 0,
+            kind: SectorKind::Room,
+            heading: Heading::North,
+            outline,
+            walls,
+            // The room has neither: what is measured from them is measured from its middle.
+            entry: (start, start),
+            gate: (start, start),
+            entry_point: start,
+            gate_point: start,
+            life_point: start,
+            min: IVec2::new(west, 0),
+            max: IVec2::new(east, depth),
+            next_frame: Frame {
+                origin: start,
+                heading: Heading::North,
+            },
+            next_width: 0,
+        };
+        Self { seed, plan }
+    }
+
+    /// The shape of the room, which goes by the number 0. Its walls go all the way around.
+    pub fn plan(&self) -> &SectorPlan {
+        &self.plan
+    }
+
+    /// The room with nothing in it: what stands there comes and goes during a run.
+    pub fn shell(&self) -> SectorLayout {
+        SectorLayout {
+            plan: self.plan.clone(),
+            blocks: Vec::new(),
+            crates: Vec::new(),
+            spawns: Vec::new(),
+        }
+    }
+
+    /// Where the players appear: the middle of the room.
+    pub fn start(&self) -> IVec2 {
+        self.plan.entry_point
+    }
+
+    /// The blocks and the crates that stand in the room at a level of the terrain, by their
+    /// lowest corners. A level is as harsh as the sector of that number: cover gets sparse and
+    /// crates plentiful. Nothing stands where the players appear.
+    pub fn obstacles(&self, level: u32) -> (Vec<IVec2>, Vec<IVec2>) {
+        let mut rng = Stream::new(self.seed, Purpose::Room, level, 1);
+        let start = self.start();
+        let counts = (
+            progression::cover_groups(level) * ROOM_COVER / 2,
+            progression::crate_count(level),
+        );
+        let open = [((start, start), START_CLEARANCE_2)];
+        let groups = scatter(&self.plan, &mut rng, &open, counts);
+        let of = |crates: bool| -> Vec<IVec2> {
+            let kind = groups.iter().filter(|group| group.0 == crates);
+            kind.flat_map(|group| group.1.clone()).collect()
+        };
+        (of(false), of(true))
+    }
+
+    /// Where the tanks of a group appear, given what stands in the room: places that a tank
+    /// reaches from the middle of the room along a path more than 3 m wide. They are drawn
+    /// anew for each group, and a group uses as many as it has tanks, from the front.
+    pub fn places(&self, group: u32, blocks: &[IVec2], crates: &[IVec2]) -> Vec<IVec2> {
+        let layout = SectorLayout {
+            blocks: blocks.to_vec(),
+            crates: crates.to_vec(),
+            ..self.shell()
+        };
+        let mut candidates: Vec<IVec2> = layout.reachable().into_iter().collect();
+        // A hash set has no order of its own.
+        candidates.sort_by_key(|point| (point.y, point.x));
+        let mut rng = Stream::new(self.seed, Purpose::Room, group, 2);
+        spaced(&mut rng, &candidates)
+    }
+
+    /// Where each tank of a group waits in reserve, by its number, for a group whose waves
+    /// have this many tanks: outside the south wall, where the players read the tanks that
+    /// have not come yet. A small group stands in one row, in the order it comes, with a gap
+    /// between two waves. A larger one stands a wave to a row, the first wave nearest the
+    /// wall, and a wave that is too large for a row takes the next one too.
+    pub fn reserve(&self, waves: &[u32]) -> Vec<Vec2> {
+        let (min, max) = (self.plan.min.as_vec2(), self.plan.max.as_vec2());
+        // The place of a tank in a row of this many places.
+        let place = |row: u32, place: u32, places: u32| {
+            let along = place as f32 - (places - 1) as f32 / 2.0;
+            let spacing = RESERVE_SPACING.min(RESERVE_SPAN / (places.max(2) - 1) as f32);
+            let behind = RESERVE_ROW + row as f32 * RESERVE_ROWS_APART;
+            Vec2::new((min.x + max.x) / 2.0 + along * spacing, min.y - behind)
+        };
+        let tanks: u32 = waves.iter().sum();
+        let gaps = waves.len().saturating_sub(1) as u32;
+        let mut places = Vec::new();
+        if tanks + gaps <= RESERVE_ROW_MOST {
+            let mut next = 0;
+            for &wave in waves {
+                places.extend((next..next + wave).map(|at| place(0, at, tanks + gaps)));
+                next += wave + 1;
+            }
+            return places;
+        }
+        let mut row = 0;
+        for &wave in waves {
+            let mut left = wave;
+            while left > 0 {
+                let here = left.min(RESERVE_ROW_MOST);
+                places.extend((0..here).map(|at| place(row, at, here)));
+                left -= here;
+                row += 1;
+            }
+        }
+        places
     }
 }
 
@@ -1299,6 +1546,265 @@ mod tests {
 }
 
 #[cfg(test)]
+mod room_tests {
+    use super::*;
+
+    const SEEDS: [u64; 12] = [0, 1, 2, 3, 7, 42, 1234, 99_999, 0xDEAD_BEEF, 5, 6, u64::MAX];
+    /// The terrain is as harsh as it gets from level 30 on. The groups go on without end.
+    const LEVELS: u32 = 40;
+    /// The largest group there is: the one of four players in a late sector.
+    const MOST_TANKS: usize = 15;
+
+    fn distance(point: Vec2, ends: (IVec2, IVec2)) -> f32 {
+        crate::geom::distance_to_segment(point, ends.0.as_vec2(), ends.1.as_vec2())
+    }
+
+    /// Checks what the generator promises about the walls of a room.
+    fn check_walls(seed: u64, room: &Room) {
+        let plan = room.plan();
+        let at = format!("seed {seed}");
+        let size = plan.max - plan.min;
+        assert!(
+            (ROOM_WIDTH.0..=ROOM_WIDTH.1).contains(&size.x),
+            "{at}: {size}"
+        );
+        assert!(
+            (ROOM_DEPTH.0..=ROOM_DEPTH.1).contains(&size.y),
+            "{at}: {size}"
+        );
+        assert_eq!((plan.kind, plan.index), (SectorKind::Room, 0), "{at}");
+        // The walls go all the way around, on the slopes of the lattice.
+        assert_eq!(plan.walls.len(), plan.outline.len(), "{at}");
+        for &(a, b) in &plan.walls {
+            let d = (b - a).abs();
+            let on_a_slope = d.x == 0 || d.y == 0 || d.x == d.y || d.x == 2 * d.y || d.y == 2 * d.x;
+            assert!(on_a_slope && d != IVec2::ZERO, "{at}: wall {a} to {b}");
+        }
+        // No wall crosses another: the room is one piece of floor. Two walls in a row share a
+        // corner and no more.
+        for (i, &(a, b)) in plan.walls.iter().enumerate() {
+            for &(c, d) in &plan.walls[..i] {
+                if a == c || a == d || b == c || b == d {
+                    continue;
+                }
+                let [a, b, c, d] = [a, b, c, d].map(|corner| corner.as_vec2());
+                let crossing = crate::geom::segments_intersect(a, b, c, d);
+                assert!(!crossing, "{at}: {a}-{b} crosses {c}-{d}");
+            }
+        }
+        // The outline runs clockwise seen from above, as the outline of a sector does: its
+        // signed area is negative.
+        let count = plan.outline.len();
+        let doubled: i32 = (0..count)
+            .map(|i| plan.outline[i].perp_dot(plan.outline[(i + 1) % count]))
+            .sum();
+        assert!(doubled < 0, "{at}: {doubled}");
+        // The players appear in the open.
+        let start = room.start();
+        assert!(plan.contains_half(start * 2), "{at}");
+        for &wall in &plan.walls {
+            assert!(distance(start.as_vec2(), wall) >= 7.0, "{at}");
+        }
+    }
+
+    /// Checks what the generator promises about what stands in a room at a level, and about
+    /// the places where the tanks of a group appear.
+    fn check_inside(seed: u64, room: &Room, level: u32) {
+        let plan = room.plan();
+        let at = format!("seed {seed}, level {level}");
+        let (blocks, crates) = room.obstacles(level);
+        let start = room.start().as_vec2();
+        let every: Vec<IVec2> = blocks.iter().chain(&crates).copied().collect();
+        for (number, &corner) in every.iter().enumerate() {
+            let center = corner.as_vec2() + Vec2::splat(1.0);
+            assert!(plan.contains_half(corner * 2 + IVec2::splat(2)), "{at}");
+            for &wall in &plan.walls {
+                assert!(distance(center, wall) >= 2.5, "{at}: {corner} is at a wall");
+            }
+            assert!(
+                center.distance(start) >= 5.0,
+                "{at}: {corner} is in the way"
+            );
+            assert!(!every[..number].contains(&corner), "{at}: {corner} twice");
+        }
+
+        let places = room.places(level, &blocks, &crates);
+        assert!(places.len() >= MOST_TANKS, "{at}: {} places", places.len());
+        for (number, &place) in places.iter().enumerate() {
+            assert!(plan.contains_half(place * 2), "{at}: {place} is outside");
+            for &wall in &plan.walls {
+                assert!(distance(place.as_vec2(), wall) >= 1.8, "{at}: {place}");
+            }
+            for &corner in &every {
+                assert!(
+                    far_from_square(place * 2, corner, PATH_CLEARANCE_2),
+                    "{at}: {place} is in an obstacle"
+                );
+            }
+            // Two tanks side by side need 1.8 m.
+            for &other in &places[..number] {
+                assert!((other - place).length_squared() >= 4, "{at}: {place}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_same_seed_gives_the_same_room() {
+        let fingerprint = |seed: u64| -> Vec<IVec2> {
+            let room = Room::new(seed);
+            let mut points = room.plan().outline.clone();
+            for level in 1..=10 {
+                let (blocks, crates) = room.obstacles(level);
+                points.extend(room.places(level, &blocks, &crates));
+                points.extend(blocks);
+                points.extend(crates);
+            }
+            points
+        };
+        assert_eq!(fingerprint(42), fingerprint(42));
+        assert_ne!(fingerprint(42), fingerprint(43));
+    }
+
+    #[test]
+    fn room_generation_is_stable() {
+        // Golden value: it changes when a seed stops generating the same room. That is
+        // allowed between game versions, but it must never happen by accident.
+        let room = Room::new(crate::seed::seed_value("TANKU"));
+        let combined = (1..=10).fold(0u64, |hash, level| {
+            let (blocks, crates) = room.obstacles(level);
+            let layout = SectorLayout {
+                spawns: room.places(level, &blocks, &crates),
+                blocks,
+                crates,
+                ..room.shell()
+            };
+            hash.rotate_left(7) ^ layout.fingerprint()
+        });
+        assert_eq!(combined, 16_431_478_961_235_884_410);
+    }
+
+    #[test]
+    fn a_room_is_closed_and_its_walls_follow_the_lattice() {
+        let mut shapes = HashSet::new();
+        for seed in SEEDS {
+            let room = Room::new(seed);
+            check_walls(seed, &room);
+            shapes.insert(room.plan().outline.clone());
+            // The shell is the room with nothing in it.
+            let shell = room.shell();
+            assert_eq!(shell.plan.outline, room.plan().outline);
+            assert!(shell.blocks.is_empty() && shell.crates.is_empty());
+        }
+        // Seeds give rooms of their own.
+        assert!(shapes.len() >= SEEDS.len() - 1, "{} shapes", shapes.len());
+    }
+
+    #[test]
+    fn what_stands_in_a_room_leaves_room_for_the_players_and_for_every_group() {
+        for seed in SEEDS {
+            let room = Room::new(seed);
+            for level in 1..=LEVELS {
+                check_inside(seed, &room, level);
+            }
+        }
+    }
+
+    /// The same over many seeds, which takes a while:
+    /// `cargo test -p tanku_core many_seeds -- --ignored`.
+    #[test]
+    #[ignore]
+    fn rooms_hold_for_many_seeds() {
+        for seed in 1000..3000 {
+            let room = Room::new(seed);
+            check_walls(seed, &room);
+            for level in [1, 2, 5, 9, 14, 20, 29, 30, 31, 55] {
+                check_inside(seed, &room, level);
+            }
+        }
+    }
+
+    #[test]
+    fn a_room_is_laid_out_anew_for_each_group_and_gets_harsher() {
+        let (mut early, mut late) = ((0, 0), (0, 0));
+        for seed in SEEDS {
+            let room = Room::new(seed);
+            let (first, second) = (room.obstacles(1), room.obstacles(2));
+            assert_ne!(first, second, "seed {seed}");
+            // The places of a group are its own, whatever stands in the room.
+            let places = |group: u32| room.places(group, &first.0, &first.1);
+            assert_ne!(places(1), places(2), "seed {seed}");
+            assert_eq!(places(1), places(1), "seed {seed}");
+            for level in 1..=5 {
+                let (blocks, crates) = room.obstacles(level);
+                early = (early.0 + blocks.len(), early.1 + crates.len());
+                let (blocks, crates) = room.obstacles(level + 39);
+                late = (late.0 + blocks.len(), late.1 + crates.len());
+            }
+        }
+        assert!(early.0 > late.0, "blocks: {early:?} then {late:?}");
+        assert!(early.1 < late.1, "crates: {early:?} then {late:?}");
+    }
+
+    #[test]
+    fn the_reserve_stands_in_rows_outside_the_south_wall() {
+        for seed in SEEDS {
+            let room = Room::new(seed);
+            let (min, max) = (room.plan().min.as_vec2(), room.plan().max.as_vec2());
+            let middle = (min.x + max.x) / 2.0;
+            let rows = |waves: &[u32]| -> Vec<f32> {
+                let mut rows: Vec<f32> = room.reserve(waves).iter().map(|at| at.y).collect();
+                rows.dedup();
+                rows
+            };
+            for waves in [
+                vec![1],
+                vec![1, 1],
+                vec![3, 3],
+                vec![8, 7],
+                vec![6],
+                vec![15],
+            ] {
+                let places = room.reserve(&waves);
+                assert_eq!(places.len() as u32, waves.iter().sum::<u32>());
+                // The ground that the reserve takes: a single player never calls for more
+                // than one row.
+                let depth = reserve_depth(rows(&waves).len() == 1);
+                for (number, place) in places.iter().enumerate() {
+                    // Outside the room, and a tank is 2 m long.
+                    assert!(place.y <= min.y - 2.0 && place.y >= min.y - depth + 1.5);
+                    assert!((place.x - middle).abs() <= 10.0, "seed {seed}: {waves:?}");
+                    // A tank is 1.6 m wide.
+                    for other in &places[..number] {
+                        assert!(place.distance(*other) >= 2.5, "seed {seed}: {waves:?}");
+                    }
+                }
+                // A row is centered on the room.
+                let first_row: Vec<f32> = places
+                    .iter()
+                    .filter(|place| place.y == places[0].y)
+                    .map(|place| place.x)
+                    .collect();
+                let center = (first_row[0] + first_row[first_row.len() - 1]) / 2.0;
+                assert!((center - middle).abs() < 1e-3);
+            }
+            // A small group stands in one row, with a gap between its two waves.
+            let small = room.reserve(&[3, 3]);
+            assert_eq!(rows(&[3, 3]).len(), 1);
+            let step = small[1].x - small[0].x;
+            assert!((small[3].x - small[2].x - 2.0 * step).abs() < 1e-3);
+            // A larger one stands a wave to a row, the second wave behind the first, and a
+            // wave that is too large for a row takes two.
+            let two = rows(&[5, 4]);
+            assert_eq!(two.len(), 2);
+            assert!(two[1] < two[0]);
+            assert_eq!(rows(&[15]), rows(&[8, 7]));
+        }
+        // The largest group of a single player has six tanks, in two waves or all at once.
+        assert!(reserve_depth(true) < reserve_depth(false));
+    }
+}
+
+#[cfg(test)]
 mod dump {
     use super::*;
 
@@ -1322,6 +1828,44 @@ mod dump {
             println!("B {}", points(&layout.blocks));
             println!("C {}", points(&layout.crates));
             println!("E {}", points(&layout.spawns[..layout.spawns.len().min(6)]));
+        }
+    }
+
+    /// Draws the room of a seed at a level of its terrain, a letter for each meter:
+    /// `TANKU_SEED=TANKU TANKU_LEVEL=12 cargo test -p tanku_core dump_room -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn dump_room() {
+        let seed = std::env::var("TANKU_SEED").map_or(42, |text| crate::seed::seed_value(&text));
+        let level = std::env::var("TANKU_LEVEL").map_or(1, |text| text.parse().unwrap());
+        let room = Room::new(seed);
+        let (blocks, crates) = room.obstacles(level);
+        let places = room.places(level, &blocks, &crates);
+        let plan = room.plan();
+        let within = |corners: &[IVec2], x: i32, y: i32| {
+            let cell = IVec2::new(x, y);
+            corners.iter().any(|&corner| {
+                let offset = cell - corner;
+                (0..2).contains(&offset.x) && (0..2).contains(&offset.y)
+            })
+        };
+        println!("{} blocks, {} crates", blocks.len(), crates.len());
+        for y in (plan.min.y..plan.max.y).rev() {
+            let row: String = (plan.min.x..plan.max.x)
+                .map(|x| {
+                    let center = IVec2::new(x, y) * 2 + IVec2::ONE;
+                    let place = places.iter().position(|&place| place == IVec2::new(x, y));
+                    match place {
+                        _ if !plan.contains_half(center) => ' ',
+                        _ if within(&blocks, x, y) => '#',
+                        _ if within(&crates, x, y) => 'X',
+                        _ if IVec2::new(x, y) == room.start() => '@',
+                        Some(number) if number < 15 => (b'a' + number as u8) as char,
+                        _ => '.',
+                    }
+                })
+                .collect();
+            println!("|{row}|");
         }
     }
 }

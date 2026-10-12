@@ -4,6 +4,8 @@
 //! range. So an arena is empty when the players come in, and its enemies appear in waves: the
 //! first a moment after the players, each of the others when the one before it is destroyed.
 //! The place of each tank is marked for a moment before the tank is there.
+//!
+//! The groups of arena mode come the same way, one after another in the same room.
 
 use bevy::prelude::*;
 use tanku_core::{
@@ -45,13 +47,28 @@ pub fn waves(
             });
             arena.incoming = wave.into_iter().map(|recruit| (recruit, None)).collect();
         }
-        let plan = field.corridor.plan(front).clone();
+        let toward = field.way_in(front);
+        // In arena mode, a group has places to spare.
+        let mut spare = match field.room.as_mut() {
+            Some(state) => std::mem::take(&mut state.spare),
+            None => Vec::new(),
+        };
         arena.incoming.retain_mut(|(recruit, left)| {
             match *left {
-                // The place of a tank is marked once the players leave it room.
+                // The place of a tank is marked once the players leave it room. In the room
+                // of arena mode, where nobody knows that a tank waits for them to move, the
+                // tank takes a place that has room instead.
                 None => {
-                    let room = |player: &Position| player.0.distance(recruit.at) > APPEAR_ROOM;
-                    if players.iter().all(room) {
+                    let has_room = |at: Vec2| {
+                        let apart = |player: &Position| player.0.distance(at) > APPEAR_ROOM;
+                        players.iter().all(apart)
+                    };
+                    if !has_room(recruit.at)
+                        && let Some(other) = spare.iter().position(|place| has_room(*place))
+                    {
+                        std::mem::swap(&mut recruit.at, &mut spare[other]);
+                    }
+                    if has_room(recruit.at) {
                         *left = Some(APPEAR_TIME);
                         events.write(SimEvent::TankIncoming { at: recruit.at });
                     }
@@ -62,12 +79,15 @@ pub fn waves(
                     true
                 }
                 Some(_) => {
-                    field.enlist(&mut commands, &plan, *recruit, true);
+                    field.enlist(&mut commands, (front, toward), *recruit, true);
                     events.write(SimEvent::TankAppeared { at: recruit.at });
                     false
                 }
             }
         });
+        if let Some(state) = field.room.as_mut() {
+            state.spare = spare;
+        }
     }
     field.arenas.insert(front, arena);
 }

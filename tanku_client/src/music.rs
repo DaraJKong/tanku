@@ -14,7 +14,7 @@ use std::time::Duration;
 use bevy::prelude::*;
 use tanku_audio::{Conductor, Context, MUSIC_LEVEL, Place};
 use tanku_core::{
-    map::SectorKind,
+    map::{SectorKind, SectorPlan},
     sim::{Enemy, Run, RunPhase, Sector, Tank},
 };
 
@@ -69,7 +69,8 @@ fn context(
         place: match kind {
             Some(SectorKind::Bay) => Place::Bay,
             Some(SectorKind::Corridor) => Place::Corridor,
-            Some(SectorKind::Arena) => Place::Arena,
+            // The room of arena mode is an arena that a run never leaves.
+            Some(SectorKind::Arena | SectorKind::Room) => Place::Arena,
             // The sector isn't loaded yet.
             None if run.sector == 0 => Place::Bay,
             None => Place::Corridor,
@@ -98,9 +99,9 @@ pub fn tell(
     let run = run.as_deref();
     let reached = run.map_or(0, |run| run.sector);
     let mut plans = sectors.iter().map(|sector| &sector.layout.plan);
-    let kind = plans
-        .find(|plan| plan.index == reached)
-        .map(|plan| plan.kind);
+    // The room of arena mode is where the run is, whichever group it has reached.
+    let here = |plan: &&SectorPlan| plan.index == reached || plan.kind == SectorKind::Room;
+    let kind = plans.find(here).map(|plan| plan.kind);
     let awake = enemies.iter().filter(|(enemy, _)| enemy.awake);
     let smartest = awake.map(|(_, tank)| tank.genome.brain()).max();
     // A warning sounds whether or not the game is paused, so its time is that of the clock.
@@ -147,6 +148,8 @@ mod tests {
             playtest: false,
             earns: true,
             free: false,
+            arena: false,
+            lull: None,
         }
     }
 
@@ -191,6 +194,7 @@ mod tests {
         assert_eq!(place(Some(SectorKind::Bay)), Place::Bay);
         assert_eq!(place(Some(SectorKind::Corridor)), Place::Corridor);
         assert_eq!(place(Some(SectorKind::Arena)), Place::Arena);
+        assert_eq!(place(Some(SectorKind::Room)), Place::Arena);
         // Until the sector is loaded, the number of the sector tells the bay from the rest.
         assert_eq!(place(None), Place::Corridor);
         let bay = run(0, RunPhase::Playing);
@@ -313,6 +317,40 @@ mod tests {
         assert_eq!(told(&app), (Place::Corridor, false, 0));
 
         app.world_mut().resource_mut::<Run>().sector = arena;
+        app.update();
+        assert_eq!(told(&app), (Place::Arena, false, 0));
+    }
+
+    #[test]
+    fn a_run_in_arena_mode_sounds_like_an_arena_whichever_group_it_is_at() {
+        let mut app = App::new();
+        app.init_resource::<Baton>()
+            .init_resource::<DuckedUntil>()
+            .init_resource::<Time<Real>>()
+            .insert_resource(State::new(Screen::Playing))
+            .insert_resource(State::new(Overlay::None))
+            .add_systems(Update, tell);
+        let layout = tanku_core::map::Room::new(1).shell();
+        app.world_mut().spawn(Sector { layout });
+        let told = |app: &App| {
+            let context = app.world().resource::<Baton>().0.context();
+            (context.place, context.fight, context.threat)
+        };
+        // The lull before the first group, then a group that is on, then the lull after it.
+        app.insert_resource(Run {
+            arena: true,
+            lull: Some(3),
+            ..run(0, RunPhase::Playing)
+        });
+        app.update();
+        assert_eq!(told(&app), (Place::Arena, false, 0));
+        let mut state = app.world_mut().resource_mut::<Run>();
+        (state.sector, state.lull) = (7, None);
+        let soldier = app.world_mut().spawn(foe(2, 7, true)).id();
+        app.update();
+        assert_eq!(told(&app), (Place::Arena, true, 2));
+        app.world_mut().entity_mut(soldier).despawn();
+        app.world_mut().resource_mut::<Run>().lull = Some(3);
         app.update();
         assert_eq!(told(&app), (Place::Arena, false, 0));
     }
