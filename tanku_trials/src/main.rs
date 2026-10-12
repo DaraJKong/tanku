@@ -5,10 +5,13 @@
 //! `census` fights nothing: it counts what the rules produce for each stretch of sectors, on
 //! many seeds. `players` puts the reference players, whose hands hold the players' tank in
 //! every fight of a trial, against the same groups, to tell what that yardstick is worth.
+//! `skirmish` puts one of them against the group of every sector, and tells what each
+//! stretch of sectors costs and which tanks the cost comes from.
 //!
 //! ```text
 //! cargo run --release -p tanku_trials -- census --sectors 1-30 --seeds 300 --out target/trials
 //! cargo run --release -p tanku_trials -- players --sectors 1-30 --seeds 40 --out target/trials
+//! cargo run --release -p tanku_trials -- skirmish --sectors 1-30 --seeds 40 --out target/trials
 //! ```
 
 mod census;
@@ -16,6 +19,7 @@ mod fight;
 mod players;
 mod reference;
 mod report;
+mod skirmish;
 
 use std::path::PathBuf;
 
@@ -43,6 +47,10 @@ enum Command {
     /// Compares the reference players: each of them fights the same groups, on the same
     /// seeds. It takes about half a minute on every core of the machine.
     Players(PlayersArgs),
+    /// Fights the group of every sector as the game makes it, with one reference player:
+    /// what each stretch of sectors costs, and which tanks the cost comes from. It takes
+    /// seconds on every core of the machine.
+    Skirmish(SkirmishArgs),
 }
 
 #[derive(Args)]
@@ -94,6 +102,35 @@ struct PlayersArgs {
     out: Option<PathBuf>,
 }
 
+#[derive(Args)]
+struct SkirmishArgs {
+    /// The sectors whose groups are fought, as FIRST-LAST. Only corridors hold a fight.
+    #[arg(long, default_value = "1-30", value_parser = sectors)]
+    sectors: (u32, u32),
+    /// How many seeds to fight them on: TRIAL0, TRIAL1 and so on, which the game takes too.
+    #[arg(long, default_value_t = 40, value_parser = clap::value_parser!(u32).range(1..))]
+    seeds: u32,
+    /// The difficulty: normal or hard.
+    #[arg(long, default_value = "normal", value_parser = difficulty)]
+    difficulty: Difficulty,
+    /// The player who fights: novice, regular or expert.
+    #[arg(long, default_value = "regular", value_parser = player)]
+    player: Reference,
+    /// How long a fight lasts at most, in seconds.
+    #[arg(long, default_value_t = 60.0)]
+    limit: f32,
+    /// One row for each sector, in place of one for each stretch of sectors.
+    #[arg(long)]
+    each: bool,
+    /// How many fights run side by side: as many as the machine has cores, unless told.
+    #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
+    threads: Option<u32>,
+    /// A directory to write the report to, as skirmish.md and skirmish.csv. It is printed
+    /// either way.
+    #[arg(long)]
+    out: Option<PathBuf>,
+}
+
 /// Reads a stretch of sectors as the command line writes it: `6-10`, or `6` for one sector.
 fn sectors(text: &str) -> Result<(u32, u32), String> {
     let number = |text: &str| {
@@ -135,6 +172,8 @@ fn tell(report: &Report, out: Option<PathBuf>, name: &str) {
 
 fn main() {
     let cli = Cli::parse();
+    let cores = std::thread::available_parallelism().map_or(1, usize::from);
+    let threads = |asked: Option<u32>| asked.map_or(cores, |threads| threads as usize);
     match cli.command {
         Command::Census(args) => {
             let asked = census::Asked {
@@ -147,7 +186,6 @@ fn main() {
             tell(&census::census(&asked), args.out, "census");
         }
         Command::Players(args) => {
-            let cores = std::thread::available_parallelism().map_or(1, usize::from);
             let asked = players::Asked {
                 sectors: args.sectors,
                 seeds: args.seeds,
@@ -157,9 +195,21 @@ fn main() {
                     false => args.players,
                 },
                 limit: args.limit,
-                threads: args.threads.map_or(cores, |threads| threads as usize),
+                threads: threads(args.threads),
             };
             tell(&players::players(&asked), args.out, "players");
+        }
+        Command::Skirmish(args) => {
+            let asked = skirmish::Asked {
+                sectors: args.sectors,
+                seeds: args.seeds,
+                difficulty: args.difficulty,
+                player: args.player,
+                limit: args.limit,
+                each: args.each,
+                threads: threads(args.threads),
+            };
+            tell(&skirmish::skirmish(&asked), args.out, "skirmish");
         }
     }
 }
@@ -225,5 +275,34 @@ mod tests {
         assert_eq!((args.sectors, args.seeds, args.limit), ((1, 30), 2, 60.0));
         let nobody = ["tanku_trials", "players", "--player", "master"];
         assert!(Cli::try_parse_from(nobody).is_err());
+    }
+
+    #[test]
+    fn a_skirmish_is_fought_by_the_regular_player_unless_another_is_named() {
+        let Command::Skirmish(args) = Cli::try_parse_from(["tanku_trials", "skirmish"])
+            .unwrap()
+            .command
+        else {
+            panic!("not a skirmish");
+        };
+        assert_eq!(
+            (args.player, args.seeds, args.each),
+            (Reference::Regular, 40, false)
+        );
+        let line = [
+            "tanku_trials",
+            "skirmish",
+            "--player",
+            "novice",
+            "--difficulty",
+            "hard",
+        ];
+        let Command::Skirmish(args) = Cli::try_parse_from(line).unwrap().command else {
+            panic!("not a skirmish");
+        };
+        assert_eq!(
+            (args.player, args.difficulty),
+            (Reference::Novice, Difficulty::Hard)
+        );
     }
 }

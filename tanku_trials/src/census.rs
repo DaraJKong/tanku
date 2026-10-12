@@ -296,7 +296,7 @@ fn groups(stretches: &[Stretch]) -> Table {
 }
 
 /// The name of a class, as the players read it.
-fn class_name(class: Class) -> &'static str {
+pub fn class_name(class: Class) -> &'static str {
     match class {
         Class::None => "All-rounder",
         Class::Sniper => "Sniper",

@@ -14,7 +14,7 @@ use tanku_core::{modes::Difficulty, seed};
 
 use crate::{
     census::{stretch_name, stretches},
-    fight::{self, Outcome, Setup},
+    fight::{self, Cause, Outcome, Setup},
     reference::Reference,
     report::{Report, Table, percent},
 };
@@ -61,7 +61,7 @@ pub fn run(setups: &[Setup], threads: usize) -> Vec<Option<Outcome>> {
 }
 
 /// A number with so many decimals, or a dash where there is nothing to divide by.
-fn ratio(part: f64, whole: f64, decimals: usize) -> String {
+pub fn ratio(part: f64, whole: f64, decimals: usize) -> String {
     if whole == 0.0 {
         return "-".to_string();
     }
@@ -72,13 +72,14 @@ fn ratio(part: f64, whole: f64, decimals: usize) -> String {
 fn row(name: String, fights: &[Outcome]) -> Vec<String> {
     let count = fights.len();
     let sum = |of: fn(&Outcome) -> f64| fights.iter().map(of).sum::<f64>();
-    let tanks = sum(|fight| fight.tanks as f64);
-    let fallen = sum(|fight| (fight.tanks - fight.left) as f64);
+    let tanks = sum(|fight| fight.tanks() as f64);
+    let fallen = sum(|fight| (fight.tanks() - fight.left()) as f64);
     let seconds = sum(|fight| fight.lasted as f64);
-    let losses = sum(|fight| fight.losses() as f64);
+    let losses = sum(|fight| fight.losses.len() as f64);
     let mut lasted: Vec<f32> = fights.iter().map(|fight| fight.lasted).collect();
     lasted.sort_by(f32::total_cmp);
     let median = lasted.get(count / 2);
+    let blasts = |fight: &Outcome| (fight.losses.len() - fight.losses_to(Cause::Bullet)) as f64;
     vec![
         name,
         count.to_string(),
@@ -88,8 +89,12 @@ fn row(name: String, fights: &[Outcome]) -> Vec<String> {
         ratio(losses, count as f64, 2),
         ratio(losses * 60.0, seconds, 1),
         ratio(losses, fallen, 2),
-        ratio(sum(|fight| fight.bullets as f64), count as f64, 2),
-        ratio(sum(|fight| fight.blasts as f64), count as f64, 2),
+        ratio(
+            sum(|fight| fight.losses_to(Cause::Bullet) as f64),
+            count as f64,
+            2,
+        ),
+        ratio(sum(blasts), count as f64, 2),
         ratio(sum(|fight| fight.own as f64), count as f64, 2),
     ]
 }
@@ -119,7 +124,7 @@ pub fn players(asked: &Asked) -> Report {
     let fights = |stretch: usize, player: Reference| -> Vec<Outcome> {
         let fought = of.iter().zip(&outcomes);
         let wanted = fought.filter(|(of, _)| **of == (stretch, player));
-        wanted.filter_map(|(_, outcome)| *outcome).collect()
+        wanted.filter_map(|(_, outcome)| outcome.clone()).collect()
     };
 
     let mut each = Table::new(
@@ -161,7 +166,7 @@ pub fn players(asked: &Asked) -> Report {
             let fights = fights(stretch, player);
             let name = format!("{}, {}", stretch_name(sectors), player.name());
             each.row(row(name, &fights));
-            let losses: u32 = fights.iter().map(Outcome::losses).sum();
+            let losses: usize = fights.iter().map(|fight| fight.losses.len()).sum();
             cells.push(ratio(losses as f64, fights.len() as f64, 2));
         }
         side.row(cells);

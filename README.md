@@ -366,7 +366,7 @@ TANKU_DEV_SCRIPT="tape run.wav; wait 4; start TANKU; wait 4; play 0 1 0 0 4; wai
 
 ## Trials of the balance
 
-The trials measure what the rules of the game make, without anyone at the keyboard, and tell it in reports that can be compared from one change to the next. They are a tool of their own, `tanku_trials`, with a command for each kind of trial. The census counts what the seeds generate, and the comparison of the reference players says what the yardstick of every fight is worth.
+The trials measure what the rules of the game make, without anyone at the keyboard, and tell it in reports that can be compared from one change to the next. They are a tool of their own, `tanku_trials`, with a command for each kind of trial. The census counts what the seeds generate, the comparison of the reference players says what the yardstick of every fight is worth, and the skirmishes say what each stretch of sectors costs and which tanks the cost comes from.
 
 ### Census
 
@@ -429,6 +429,38 @@ cargo run --release -p tanku_trials -- players
 | `--out DIRECTORY` | Writes the report there as `players.md` and `players.csv` |
 
 The players use nothing of the brains of the enemies but how to aim and how to steer around a wall, so a change to how a brain dodges doesn't move the yardstick. A change to a reference player does: its numbers are then compared with nothing that came before.
+
+### Skirmishes
+
+A skirmish is one reference player against the group of a sector that is a corridor, as the game makes it, from the moment the barrier is crossed. Arenas, whose groups come in waves, are not fought yet. It takes seconds:
+
+```bash
+cargo run --release -p tanku_trials -- skirmish
+```
+
+A loss is told to its cause, and to the tank of the group that fired the bullet or laid the mine. The blast of a crate is nobody's.
+
+| Table | What it tells |
+|---|---|
+| Sectors | For each stretch of sectors: the fights, the groups that fell in time, how long they lasted, the losses in a fight, in a minute and for each enemy that fell, and the losses to bullets, to mines, to exploding bullets and to crates |
+| Points | The tanks by the points that they spent |
+| Classes | The tanks by their class |
+| Bullets | The tanks by the type of their bullets |
+| Brains, Ballistics | The tanks by the tiers of their software |
+| Guns, Engines | The tanks by the speed of their bullets, and by their own |
+
+Each table of the tanks tells how many there were, the points that they spent, how many fell, how long they lasted, and the losses that were their doing: for each tank, for each minute that it lasted and for each hundred points that it spent. Prices are right when that last number is about the same in every row. These tables hold every tank of the sectors asked for together, and a late sector has more tanks, with more points and better brains: a narrow `--sectors 21-30` compares like with like.
+
+| Option | Effect |
+|---|---|
+| `--sectors 1-30` | The sectors whose groups are fought |
+| `--seeds 40` | How many seeds to fight them on: `TRIAL0`, `TRIAL1` and so on |
+| `--difficulty normal` | `normal` or `hard` |
+| `--player regular` | The player who fights: `novice`, `regular` or `expert` |
+| `--limit 60` | How long a fight lasts at most, in seconds |
+| `--each` | One row for each sector, in place of one for each stretch of sectors |
+| `--threads N` | How many fights run side by side |
+| `--out DIRECTORY` | Writes the report there as `skirmish.md` and `skirmish.csv` |
 
 ## Listening to the music
 

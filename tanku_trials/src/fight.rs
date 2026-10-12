@@ -15,9 +15,10 @@ use tanku_core::{
     modes::Difficulty,
     rules::{BLAST_RADIUS, BULLET_RADIUS, RESPAWN_DELAY, TANK_RADIUS, TICK},
     sim::{
-        Barrier, Enemy, Player, Playtest, Position, Protected, Run, RunRequest, Shield, SimEvent,
-        Tank, TankCommand, Team,
+        Barrier, Bullet, Enemy, Kind, Player, Playtest, Position, Protected, Run, RunRequest,
+        Shield, SimEvent, Tank, TankCommand, Team,
     },
+    stats::Genome,
 };
 use tanku_server::{ServerPlugin, field::Field};
 
@@ -34,32 +35,77 @@ pub struct Setup {
     pub limit: f32,
 }
 
+/// What a loss is to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Cause {
+    /// A bullet of the enemies that ended on the tank.
+    Bullet,
+    /// The blast of a mine.
+    Mine,
+    /// The blast of an exploding bullet.
+    Exploding,
+    /// The blast of a crate, whoever set it off.
+    Crate,
+}
+
+impl Cause {
+    pub const ALL: [Self; 4] = [Self::Bullet, Self::Mine, Self::Exploding, Self::Crate];
+}
+
+/// A tank that the player would have lost.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Loss {
+    pub cause: Cause,
+    /// The tank of the group that fired the bullet or laid the mine, by its place in the
+    /// group. Nobody is told for a crate.
+    pub by: Option<usize>,
+}
+
+/// A tank of the group, and how it fared.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Fought {
+    pub genome: Genome,
+    /// How long it lasted, in seconds: the whole fight if it was left.
+    pub lasted: f32,
+    pub fell: bool,
+}
+
 /// How a fight went.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Outcome {
-    /// The tanks of the group.
-    pub tanks: usize,
-    /// Those that were left when the fight ended.
-    pub left: usize,
+    pub group: Vec<Fought>,
     /// How long the group lasted, in seconds: the whole fight if a tank of it was left.
     pub lasted: f32,
-    /// The losses to a bullet of the enemies that ended on the tank.
-    pub bullets: u32,
-    /// The losses to a blast that reached the tank: of a mine, a crate or an exploding bullet.
-    pub blasts: u32,
+    pub losses: Vec<Loss>,
     /// The shots of the player that came back off a wall and ended on the tank. They are
     /// no losses: they tell of the hands that fired them, not of the group.
     pub own: u32,
 }
 
 impl Outcome {
-    pub fn cleared(&self) -> bool {
-        self.left == 0
+    pub fn tanks(&self) -> usize {
+        self.group.len()
     }
 
-    /// The tanks that the player would have lost to the group.
-    pub fn losses(&self) -> u32 {
-        self.bullets + self.blasts
+    /// The tanks of the group that were left when the fight ended.
+    pub fn left(&self) -> usize {
+        self.group.iter().filter(|tank| !tank.fell).count()
+    }
+
+    pub fn cleared(&self) -> bool {
+        self.left() == 0
+    }
+
+    /// The losses to one cause.
+    pub fn losses_to(&self, cause: Cause) -> usize {
+        let to = |loss: &&Loss| loss.cause == cause;
+        self.losses.iter().filter(to).count()
+    }
+
+    /// The losses that were the doing of one tank of the group.
+    pub fn losses_by(&self, tank: usize) -> usize {
+        let by = |loss: &&Loss| loss.by == Some(tank);
+        self.losses.iter().filter(by).count()
     }
 }
 
@@ -108,11 +154,11 @@ pub fn corridor(setup: &Setup) -> Option<Outcome> {
     }
 
     let world = app.world_mut();
-    let mut foes: Vec<Entity> = world
+    let made: Vec<(Entity, Genome)> = world
         .query_filtered::<(Entity, &Tank), With<Enemy>>()
         .iter(world)
         .filter(|(_, tank)| tank.sector == sector)
-        .map(|(entity, _)| entity)
+        .map(|(entity, tank)| (entity, tank.genome))
         .collect();
     let entity = world
         .query_filtered::<Entity, With<Player>>()
@@ -136,27 +182,43 @@ pub fn corridor(setup: &Setup) -> Option<Outcome> {
     events(&mut app);
 
     let mut pilot = Pilot::new(setup.player);
+    let limit = setup.limit;
     let mut outcome = Outcome {
-        tanks: foes.len(),
-        lasted: setup.limit,
+        group: made
+            .iter()
+            .map(|&(_, genome)| Fought {
+                genome,
+                lasted: limit,
+                fell: false,
+            })
+            .collect(),
+        lasted: limit,
         ..default()
     };
+    // The tank of the group that a bullet or a mine is of.
+    let maker = |owner: Entity| made.iter().position(|(entity, _)| *entity == owner);
     // A tank that is destroyed is gone for a while: what hits it again then is no new loss.
     let mut out = 0.0f32;
-    for step in 0..ticks(setup.limit) {
+    for step in 0..ticks(limit) {
         let place = |world: &World, entity: Entity| world.get::<Position>(entity).unwrap().0;
         let me = place(app.world(), entity);
-        foes.retain(|&foe| app.world().get_entity(foe).is_ok());
-        if foes.is_empty() {
-            outcome.lasted = step as f32 * TICK;
+        let since = step as f32 * TICK;
+        for (tank, (foe, _)) in outcome.group.iter_mut().zip(&made) {
+            if !tank.fell && app.world().get_entity(*foe).is_err() {
+                (tank.fell, tank.lasted) = (true, since);
+            }
+        }
+        if outcome.cleared() {
+            outcome.lasted = since;
             break;
         }
         // The player fights the nearest enemy that is left.
+        let left = made.iter().zip(&outcome.group);
+        let left = left
+            .filter(|(_, tank)| !tank.fell)
+            .map(|((foe, _), _)| *foe);
         let far = |foe: &Entity| place(app.world(), *foe).distance(me);
-        let nearest = foes
-            .iter()
-            .min_by(|a, b| far(a).total_cmp(&far(b)))
-            .copied();
+        let nearest = left.min_by(|a, b| far(a).total_cmp(&far(b)));
         let sight = Sight::of(app.world_mut());
         let order = pilot.order(app.world(), &sight, entity, nearest);
         *app.world_mut().get_mut::<TankCommand>(entity).unwrap() = order;
@@ -164,6 +226,16 @@ pub fn corridor(setup: &Setup) -> Option<Outcome> {
 
         let me = place(app.world(), entity);
         let shielded = app.world().get::<Shield>(entity).unwrap().is_active();
+        // The bullet of a side that was, before the tick, close enough to a place to have
+        // ended there.
+        let ended = |at: Vec2, team: Team, wanted: fn(&Bullet) -> bool| {
+            let near = sight.bullets.iter().filter(|(_, bullet, from)| {
+                let flown = bullet.velocity.length() * TICK + 0.1;
+                bullet.team == team && wanted(bullet) && from.distance(at) <= flown
+            });
+            let nearest = near.min_by(|a, b| a.2.distance(at).total_cmp(&b.2.distance(at)));
+            nearest.map(|(_, bullet, _)| *bullet)
+        };
         out -= TICK;
         for event in events(&mut app) {
             let loss = match event {
@@ -173,31 +245,45 @@ pub fn corridor(setup: &Setup) -> Option<Outcome> {
                 {
                     // A shot of the player that ends in the barrel, on a wall that the tank
                     // is pressed against, ends as close: only one that has bounced comes back.
-                    let came_back = sight.bullets.iter().any(|(_, bullet, from)| {
-                        let flown = bullet.velocity.length() * TICK + 0.1;
-                        bullet.team == Team::Players && bullet.bounced && from.distance(at) <= flown
-                    });
+                    let came_back = ended(at, Team::Players, |bullet| bullet.bounced).is_some();
                     outcome.own += (team == Team::Players && came_back) as u32;
-                    (team == Team::Enemies).then_some(&mut outcome.bullets)
+                    (team == Team::Enemies).then(|| Loss {
+                        cause: Cause::Bullet,
+                        by: ended(at, team, |_| true).and_then(|bullet| maker(bullet.owner)),
+                    })
                 }
                 SimEvent::Blast { at } => {
                     let field = app.world().resource::<Field>();
                     let walled = field.blocked(at, me, |solid| solid.stops_blasts());
                     let reached = at.distance(me) <= BLAST_RADIUS && !walled && !shielded;
-                    reached.then_some(&mut outcome.blasts)
+                    // The blast is the one of the mine that lay there, or of the exploding
+                    // bullet that ended there, or else of a crate.
+                    let mine = sight.mines.iter().find(|(_, lay)| lay.distance(at) < 0.05);
+                    let exploding = |bullet: &Bullet| bullet.kind == Kind::Exploding;
+                    let shell = ended(at, Team::Enemies, exploding);
+                    let (cause, owner) = match (mine, shell) {
+                        (Some((mine, _)), _) => (Cause::Mine, Some(mine.owner)),
+                        (None, Some(bullet)) => (Cause::Exploding, Some(bullet.owner)),
+                        (None, None) => (Cause::Crate, None),
+                    };
+                    reached.then_some(Loss {
+                        cause,
+                        by: owner.and_then(maker),
+                    })
                 }
                 _ => None,
             };
-            if let Some(count) = loss
+            if let Some(loss) = loss
                 && out <= 0.0
             {
-                *count += 1;
+                outcome.losses.push(loss);
                 out = RESPAWN_DELAY;
             }
         }
     }
-    foes.retain(|&foe| app.world().get_entity(foe).is_ok());
-    outcome.left = foes.len();
+    for (tank, (foe, _)) in outcome.group.iter_mut().zip(&made) {
+        tank.fell = app.world().get_entity(*foe).is_err();
+    }
     Some(outcome)
 }
 
@@ -231,8 +317,14 @@ mod tests {
     #[test]
     fn a_fight_counts_the_tanks_of_its_group_and_those_that_fall() {
         for fight in fights(Reference::Novice) {
-            assert!(fight.tanks >= 1 && fight.left <= fight.tanks);
+            assert!(fight.tanks() >= 1 && fight.left() <= fight.tanks());
             assert_eq!(fight.cleared(), fight.lasted < 20.0);
+            for tank in &fight.group {
+                assert_eq!(tank.fell, tank.lasted < 20.0);
+            }
+            // Whoever a loss is blamed on is a tank of the group.
+            let known = |loss: &Loss| loss.by.is_none_or(|tank| tank < fight.tanks());
+            assert!(fight.losses.iter().all(known));
         }
     }
 }
