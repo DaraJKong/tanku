@@ -90,8 +90,8 @@ enum Press {
     JoinFound(u64),
     /// On the join screen: leaves the game that asks for its password for the list.
     Forget,
-    /// In a lobby: the host starts a run with everyone who is there.
-    Start,
+    /// In a lobby: the player is ready for the run, or takes that back.
+    Ready,
     /// In a lobby: the host draws another seed.
     Reseed,
     /// In a lobby: the host is shown how players of that kind join.
@@ -1245,24 +1245,35 @@ fn retyped(seed: &str, typed: bool, key: &Key, text: Option<&str>) -> Option<Str
 fn type_seed(
     mut keys: MessageReader<KeyboardInput>,
     screen: Res<State<Screen>>,
-    (session, unlocks): (Res<Session>, Res<Unlocks>),
+    (session, unlocks, seat): (Res<Session>, Res<Unlocks>, Res<LocalSeat>),
     (options, garage): (Res<Options>, Res<Garage>),
     (mut setup, mut drawn): (ResMut<Setup>, ResMut<Drawn>),
     mut lobbies: Query<&mut Lobby>,
-    mut requests: MessageWriter<RunRequest>,
+    (mut requests, mut session_requests): (
+        MessageWriter<RunRequest>,
+        MessageWriter<SessionRequest>,
+    ),
     mut next_screen: ResMut<NextState<Screen>>,
 ) {
     let setting_up = *screen.get() == Screen::Solo;
     let typing = setting_up && open(&unlocks, &options, Unlock::ChosenSeed);
-    // A playtest that was given a seed keeps it.
-    let hosting = *screen.get() == Screen::Lobby && *session == Session::Host;
-    let mut lobby = lobbies.single_mut().ok().filter(|_| hosting);
+    let gathered = *screen.get() == Screen::Lobby;
+    let hosting = gathered && *session == Session::Host;
+    let mut lobby = lobbies.single_mut().ok().filter(|_| gathered);
     for key in keys.read() {
         if key.state != ButtonState::Pressed {
             continue;
         }
         let (pressed, text) = (&key.logical_key, key.text.as_deref());
-        if let Some(lobby) = lobby.as_mut().filter(|_| options.seed.is_none()) {
+        // In a lobby, Enter says that the player is ready, or takes it back.
+        if let (Some(lobby), Key::Enter) = (&lobby, pressed) {
+            let mine = lobby.ready.get(seat.0 as usize).copied().unwrap_or(false);
+            session_requests.write(SessionRequest::Ready(!mine));
+            continue;
+        }
+        // A playtest that was given a seed keeps it.
+        let types = hosting && options.seed.is_none();
+        if let Some(lobby) = lobby.as_mut().filter(|_| types) {
             if let Some(seed) = retyped(&lobby.seed, lobby.typed, pressed, text) {
                 (lobby.seed, lobby.typed) = (seed, true);
                 // A seed that the host typed is none that the game drew.
@@ -2302,15 +2313,32 @@ fn locked_words(unlock: Unlock) -> String {
     )
 }
 
-/// Why the host of a lobby can't start its run, if they can't: the run has no seed, or the
-/// host is alone and has not unlocked what the run is set to.
-fn held_back(lobby: &Lobby, unlocks: &Unlocks, options: &Options) -> Option<String> {
+/// Why the host of a lobby can't be ready for its run, if they can't: the run has no seed, or
+/// the host is alone and has not unlocked what the run is set to.
+pub(crate) fn held_back(lobby: &Lobby, unlocks: &Unlocks, options: &Options) -> Option<String> {
     if lobby.seed.is_empty() {
         return Some("A run needs a seed: type one, or take a new one.".to_string());
     }
     let alone = lobby.players() == 1;
     let locked = locked_alone(lobby, unlocks, options).filter(|_| alone);
     locked.map(locked_words)
+}
+
+/// Why a host can't start the next run from the report of the last one, if they can't: on
+/// the same seed, or on one that the game draws for it. A host whom the others have left
+/// would play alone, under the locks of solo.
+fn held_back_after(
+    lobby: &Lobby,
+    fresh: bool,
+    unlocks: &Unlocks,
+    options: &Options,
+) -> Option<String> {
+    let next = Lobby {
+        // A seed that the game draws is none that was typed.
+        typed: lobby.typed && !fresh,
+        ..lobby.clone()
+    };
+    held_back(&next, unlocks, options)
 }
 
 /// Why the next run of a lobby will earn no achievement, if it won't.
@@ -2326,9 +2354,19 @@ fn unearned(lobby: &Lobby) -> Option<&'static str> {
     }
 }
 
-/// A seat of the lobby: its number and who sits there.
-fn seat_row(parent: &mut ChildSpawnerCommands, seat: usize, member: Option<Member>, own: bool) {
+/// A seat of the lobby: its number, who sits there, and whether they are ready for the run.
+fn seat_row(
+    parent: &mut ChildSpawnerCommands,
+    seat: usize,
+    (member, ready): (Option<Member>, bool),
+    own: bool,
+) {
     let taken = member.is_some();
+    let word = match (taken, ready) {
+        (false, _) => theme::label("", 13.0, theme::TEXT_DIM),
+        (true, false) => theme::label("Not ready", 13.0, theme::TEXT_DIM),
+        (true, true) => theme::label("Ready", 13.0, theme::GOOD),
+    };
     let color = theme::PLAYER;
     let who = match (member, own) {
         (None, _) => "Open",
@@ -2369,9 +2407,36 @@ fn seat_row(parent: &mut ChildSpawnerCommands, seat: usize, member: Option<Membe
                 },
                 children![theme::label(format!("Player {}", seat + 1), 13.0, ink)],
             ),
-            theme::text(who, 16.0, ink),
+            // The word of the player stands at the end of the row.
+            (
+                Node {
+                    flex_grow: 1.0,
+                    ..default()
+                },
+                children![theme::text(who, 16.0, ink)],
+            ),
+            word,
         ],
     ));
+}
+
+/// How the lobby stands, under the button that says a player is ready: the countdown to the
+/// run, whom the run waits for, or what starts it.
+fn lobby_words(lobby: &Lobby, own: usize) -> (String, Color) {
+    let seated = lobby.seats.iter().zip(lobby.ready);
+    let waited_for = seated.filter(|(seat, ready)| seat.is_some() && !ready);
+    let mine = lobby.ready.get(own).copied().unwrap_or(false);
+    match (lobby.countdown, waited_for.count()) {
+        (Some(seconds), _) => (format!("The run starts in {seconds}"), theme::ACCENT),
+        (None, 1) if mine => ("Waiting for 1 player".to_string(), theme::TEXT_DIM),
+        (None, others) if mine && others > 0 => {
+            (format!("Waiting for {others} players"), theme::TEXT_DIM)
+        }
+        (None, _) => {
+            let told = "The run starts once everyone is ready";
+            (told.to_string(), theme::TEXT_DIM)
+        }
+    }
 }
 
 /// A column of a menu to the right of its margin, level with what stands under its title. It
@@ -2453,8 +2518,10 @@ fn lobby_screen(
                         ..default()
                     }))
                     .with_children(|seats| {
-                        for (number, member) in lobby.seats.iter().enumerate() {
-                            seat_row(seats, number, *member, number == seat.0 as usize);
+                        let seated = lobby.seats.iter().zip(lobby.ready);
+                        for (number, (member, ready)) in seated.enumerate() {
+                            let own = number == seat.0 as usize;
+                            seat_row(seats, number, (*member, ready), own);
                         }
                     });
                 section(parent, "Run");
@@ -2523,20 +2590,24 @@ fn lobby_screen(
                 if let Some(why) = unearned(&lobby).filter(|_| told) {
                     line(parent, why, theme::TEXT);
                 }
-                if host {
-                    // A host who starts alone plays a solo run, with its locks.
-                    match held_back(&lobby, &unlocks, &options) {
-                        Some(why) => line(parent, why, theme::TEXT),
-                        None if lobby.players() == 1 => {
-                            primary(parent, "Start alone", Press::Start);
-                        }
-                        None => primary(parent, "Start", Press::Start),
-                    }
-                    button(parent, "Close the game", Press::Abandon);
-                } else {
-                    line(parent, "The host starts the run.", theme::TEXT);
-                    button(parent, "Leave the game", Press::Abandon);
+                // The run starts once everyone is ready. A host who is alone plays a solo
+                // run, with its locks: what a single player has not unlocked holds them back.
+                let own = seat.0 as usize;
+                let mine = lobby.ready.get(own).copied().unwrap_or(false);
+                let held = held_back(&lobby, &unlocks, &options).filter(|_| host);
+                match (held, mine) {
+                    (Some(why), _) => line(parent, why, theme::TEXT),
+                    (None, false) => primary(parent, "Ready", Press::Ready),
+                    (None, true) => button(parent, "Not ready", Press::Ready),
                 }
+                let (words, ink) = lobby_words(&lobby, own);
+                line(parent, words, ink);
+                let leave = if host {
+                    "Close the game"
+                } else {
+                    "Leave the game"
+                };
+                button(parent, leave, Press::Abandon);
             });
             // The host tells the others how to join, next to the lobby.
             if host {
@@ -2656,8 +2727,14 @@ fn game_over(
     records: Res<Records>,
     outcome: Res<Outcome>,
     session: Res<Session>,
-    unlocks: Res<Unlocks>,
+    (unlocks, options): (Res<Unlocks>, Res<Options>),
+    lobbies: Query<&Lobby>,
 ) {
+    // What holds a host back from the same seed again, and from a new run.
+    let held = |fresh: bool| {
+        let lobby = lobbies.single().ok();
+        lobby.and_then(|lobby| held_back_after(lobby, fresh, &unlocks, &options))
+    };
     let (playtest, team) = run
         .as_ref()
         .map_or((false, 1), |run| (run.playtest, run.team));
@@ -2776,9 +2853,19 @@ fn game_over(
                             button(buttons, "New run", Press::NewRun);
                             button(buttons, "Menu", Press::Abandon);
                         }
+                        // A host whom the others have left would go on alone: a run
+                        // that a single player has not unlocked is not offered.
                         Session::Host => {
-                            retry(buttons);
-                            button(buttons, "New run", Press::NewRun);
+                            let (again, anew) = (held(false), held(true));
+                            if again.is_none() {
+                                retry(buttons);
+                            }
+                            if anew.is_none() {
+                                button(buttons, "New run", Press::NewRun);
+                            }
+                            if let Some(why) = anew.or(again) {
+                                line(buttons, why, theme::TEXT_DIM);
+                            }
                             button(buttons, "Back to the lobby", Press::Regroup);
                         }
                         Session::Guest => {
@@ -2926,10 +3013,11 @@ fn press(
     mut capture: ResMut<Capture>,
     mut playtest: Option<ResMut<Playtest>>,
     mut destination: ResMut<Destination>,
-    (options, run, time, unlocks): (
+    (options, run, time, seat, unlocks): (
         Res<Options>,
         Option<Res<Run>>,
         Res<Time<Real>>,
+        Res<LocalSeat>,
         Res<Unlocks>,
     ),
     (session, mut address, mut notice, mut opening, mut asked, mut entry): (
@@ -3042,6 +3130,11 @@ fn press(
                     // the lobby is set and in the tanks that the players have.
                     Session::Host => {
                         if let Ok(mut lobby) = lobbies.single_mut() {
+                            // A host whom the others have left starts no run that a
+                            // single player has not unlocked.
+                            if held_back_after(&lobby, fresh, &unlocks, &options).is_some() {
+                                continue;
+                            }
                             lobby.seed = seed;
                             // A seed that the game has just drawn is none that was typed.
                             lobby.typed &= !fresh;
@@ -3092,11 +3185,11 @@ fn press(
                 notice.0 = None;
                 asked.0 = None;
             }
-            // A host who is alone starts a solo run, if what it is set to is unlocked.
-            Press::Start => {
-                let held = |lobby: &Lobby| held_back(lobby, &unlocks, &options).is_some();
-                if !lobbies.single().is_ok_and(held) {
-                    session_requests.write(SessionRequest::Start);
+            // The player says that they are ready, or takes it back.
+            Press::Ready => {
+                if let Ok(lobby) = lobbies.single() {
+                    let mine = lobby.ready.get(seat.0 as usize).copied().unwrap_or(false);
+                    session_requests.write(SessionRequest::Ready(!mine));
                 }
             }
             Press::Reseed => {
@@ -4907,7 +5000,7 @@ mod tests {
             Press::Free(false),
             Press::OpenGarage,
             Press::Reseed,
-            Press::Start,
+            Press::Ready,
         ] {
             assert!(offered.contains(&press));
         }
@@ -4919,7 +5012,10 @@ mod tests {
         // their garage is theirs to open.
         let mut guest = in_the_lobby(Session::Guest, 2);
         let offered = buttons(&mut guest);
-        assert!(offered == [Press::OpenGarage, Press::Abandon]);
+        assert_eq!(offered.len(), 3);
+        for press in [Press::OpenGarage, Press::Ready, Press::Abandon] {
+            assert!(offered.contains(&press));
+        }
         let world = guest.world_mut();
         let told: Vec<String> = world
             .query::<&Text>()
@@ -5028,8 +5124,11 @@ mod tests {
             world.init_resource::<NextState<Screen>>();
             world.init_resource::<Messages<KeyboardInput>>();
             world.init_resource::<Messages<RunRequest>>();
+            world.init_resource::<Messages<SessionRequest>>();
+            world.insert_resource(crew::LocalSeat(1));
             world.spawn(Lobby {
                 seed: "85GVTHQA".into(),
+                ready: [true, false, false, false],
                 ..default()
             });
             let mut pressed = world.resource_mut::<Messages<KeyboardInput>>();
@@ -5038,8 +5137,12 @@ mod tests {
             }
             pressed.write(stroke(Key::Enter, None));
             world.run_system_once(type_seed).unwrap();
-            // Enter starts nothing in a lobby, and a single player's run is not set up there.
+            // Enter starts nothing in a lobby: it says that the player at this screen, who
+            // has the second seat here, is ready. A single player's run is not set up there.
             assert!(world.resource::<Messages<RunRequest>>().is_empty());
+            let mut asked = world.resource_mut::<Messages<SessionRequest>>();
+            let asked: Vec<SessionRequest> = asked.drain().collect();
+            assert_eq!(asked, [SessionRequest::Ready(true)]);
             assert_eq!(world.resource::<Setup>().seed, "");
             let lobby = world.query::<&Lobby>().single(&world).unwrap().clone();
             (lobby, world.resource::<Drawn>().0)
@@ -5129,27 +5232,144 @@ mod tests {
         }
 
         // The lobby of the tests is in hard mode and in free mode on a typed seed: a host
-        // who is alone there and has unlocked nothing can't start, and is told why.
+        // who is alone there and has unlocked nothing is not offered to be ready, and is
+        // told why.
         let mut alone = in_the_lobby(Session::Host, 1);
-        assert!(!buttons(&mut alone).contains(&Press::Start));
-        alone
-            .world_mut()
-            .spawn((Button, Press::Start, Interaction::None));
-        click(&mut alone, Press::Start);
-        assert!(
-            alone
-                .world()
-                .resource::<Messages<SessionRequest>>()
-                .is_empty()
-        );
-        // With a guest, the run starts.
+        assert!(!buttons(&mut alone).contains(&Press::Ready));
+        let world = alone.world_mut();
+        let mut texts = world.query::<&Text>();
+        let told: Vec<String> = texts.iter(world).map(|text| text.0.clone()).collect();
+        assert!(says(
+            &told,
+            "Locked for a single player: hard mode (clear sector 30)."
+        ));
+        // With a guest, they are.
         let mut together = in_the_lobby(Session::Host, 2);
-        click(&mut together, Press::Start);
-        let mut asked = together
-            .world_mut()
-            .resource_mut::<Messages<SessionRequest>>();
-        let asked: Vec<SessionRequest> = asked.drain().collect();
-        assert_eq!(asked, [SessionRequest::Start]);
+        assert!(buttons(&mut together).contains(&Press::Ready));
+    }
+
+    /// What a game asked about its game of several players since the last time.
+    fn session_requests(app: &mut App) -> Vec<SessionRequest> {
+        let mut asked = app.world_mut().resource_mut::<Messages<SessionRequest>>();
+        asked.drain().collect()
+    }
+
+    #[test]
+    fn a_host_whom_the_others_left_starts_no_run_that_solo_locks() {
+        // The report of a run that a host played in hard mode, on a seed that they typed.
+        let report = |players: usize, unlocks: &[Unlock]| {
+            let mut app = stage(|_| {}, WINDOWS[0]);
+            gather(&mut app, players);
+            let world = app.world_mut();
+            let mut lobby = world.query::<&mut Lobby>().single_mut(world).unwrap();
+            lobby.free = false;
+            app.insert_resource(Session::Host)
+                .insert_resource(Unlocks::of(unlocks))
+                .insert_resource(lost_run(4));
+            build(&mut app, game_over);
+            app
+        };
+        let offered = |app: &mut App| {
+            let offered = buttons(app);
+            let has = |press: Press| offered.contains(&press);
+            (has(Press::Retry), has(Press::NewRun), has(Press::Regroup))
+        };
+        // With company, the host picks the same seed again or a new run.
+        let mut together = report(2, &[]);
+        assert_eq!(offered(&mut together), (true, true, true));
+        // Alone, with nothing unlocked, neither: hard mode is locked for a single player.
+        let mut alone = report(1, &[]);
+        assert_eq!(offered(&mut alone), (false, false, true));
+        let world = alone.world_mut();
+        let mut texts = world.query::<&Text>();
+        let told: Vec<String> = texts.iter(world).map(|text| text.0.clone()).collect();
+        assert!(says(
+            &told,
+            "Locked for a single player: hard mode (clear sector 30)."
+        ));
+        // A press that reaches the game all the same starts nothing.
+        for press in [Press::Retry, Press::NewRun] {
+            alone.world_mut().spawn((Button, press, Interaction::None));
+            click(&mut alone, press);
+        }
+        assert!(session_requests(&mut alone).is_empty());
+        // With hard mode unlocked, a new run is theirs, on a seed that the game draws. The
+        // same seed again is not: it was typed, which solo locks too.
+        let mut hard = report(1, &[Unlock::HardMode]);
+        assert_eq!(offered(&mut hard), (false, true, true));
+        click(&mut hard, Press::NewRun);
+        assert_eq!(session_requests(&mut hard), [SessionRequest::Start]);
+        let lobby = lobby_of(&mut hard);
+        assert!(!lobby.typed && lobby.seed != LONG_SEED);
+        // With both unlocked, so is the same seed again.
+        let mut both = report(1, &[Unlock::HardMode, Unlock::ChosenSeed]);
+        assert_eq!(offered(&mut both), (true, true, true));
+        click(&mut both, Press::Retry);
+        assert_eq!(session_requests(&mut both), [SessionRequest::Start]);
+    }
+
+    #[test]
+    fn a_player_says_that_they_are_ready_and_takes_it_back() {
+        // The button says the word of the player at this screen, host or guest, and takes
+        // it back once it is said.
+        for (session, own) in [(Session::Host, 0), (Session::Guest, 1)] {
+            let mut app = in_the_lobby(session, 2);
+            click(&mut app, Press::Ready);
+            assert_eq!(session_requests(&mut app), [SessionRequest::Ready(true)]);
+            let world = app.world_mut();
+            let mut lobby = world.query::<&mut Lobby>().single_mut(world).unwrap();
+            lobby.ready[own] = true;
+            // The other player being ready changes nothing to it.
+            lobby.ready[1 - own] = false;
+            build(&mut app, lobby_screen);
+            click(&mut app, Press::Ready);
+            assert_eq!(session_requests(&mut app), [SessionRequest::Ready(false)]);
+        }
+    }
+
+    #[test]
+    fn the_lobby_says_who_is_ready_and_how_long_until_the_run() {
+        let (host, guest) = (Some(Member::Host), Some(Member::Guest(7)));
+        let lobby = |ready: [bool; 4], countdown: Option<u8>| Lobby {
+            seats: [host, guest, guest, None],
+            ready,
+            countdown,
+            ..default()
+        };
+        let words = |lobby: &Lobby, own: usize| lobby_words(lobby, own).0;
+        // Whoever is not ready is told what starts the run.
+        let nobody = lobby([false; 4], None);
+        assert_eq!(words(&nobody, 0), "The run starts once everyone is ready");
+        // Whoever is ready is told how many players the run waits for.
+        let one = lobby([true, false, false, false], None);
+        assert_eq!(words(&one, 0), "Waiting for 2 players");
+        assert_eq!(words(&one, 1), "The run starts once everyone is ready");
+        let two = lobby([true, true, false, false], None);
+        assert_eq!(words(&two, 1), "Waiting for 1 player");
+        // An open seat is waited for by nobody, whatever was left on it.
+        let stale = lobby([true, true, false, true], None);
+        assert_eq!(words(&stale, 0), "Waiting for 1 player");
+        // Once everyone is ready, the lobby counts down, in the accent.
+        let all = lobby([true, true, true, false], Some(3));
+        assert_eq!(
+            lobby_words(&all, 2),
+            ("The run starts in 3".to_string(), theme::ACCENT)
+        );
+
+        // Each seat that is taken says whether its player is ready.
+        let mut app = stage(|_| {}, WINDOWS[0]);
+        app.world_mut()
+            .spawn(lobby([true, false, true, false], None));
+        app.insert_resource(Session::Guest)
+            .insert_resource(crew::LocalSeat(1));
+        build(&mut app, lobby_screen);
+        let world = app.world_mut();
+        let mut texts = world.query::<&Text>();
+        let told: Vec<String> = texts.iter(world).map(|text| text.0.clone()).collect();
+        let count = |word: &str| told.iter().filter(|text| text.as_str() == word).count();
+        // The words of a label are in capitals. The third word "READY" is the button.
+        assert_eq!((count("READY"), count("NOT READY")), (3, 1));
+        assert!(says(&told, "The run starts once everyone is ready"));
     }
 
     #[test]

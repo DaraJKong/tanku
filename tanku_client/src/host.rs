@@ -1,11 +1,16 @@
 //! Hosting a game of several players. This machine runs the simulation, as in a solo game,
 //! and its server sends it to the guests: to the games of other machines, and to browsers.
 //! A browser hosts nothing, because nothing can reach it.
+//!
+//! The host also keeps the rules of the lobby: who can be ready, what takes a player's word
+//! back, and the countdown to the run once everyone is ready.
 
 use bevy::prelude::*;
 use tanku_core::{
     discovery::{Reach, local_address},
+    modes::Difficulty,
     protocol::{Lobby, PORT, WEB_PORT},
+    rules::COUNTDOWN,
     sim::{Run, RunRequest},
     stats::Genome,
 };
@@ -16,8 +21,10 @@ use crate::{
     cli::Options,
     crew::LocalSeat,
     garage::Garage,
+    menu::held_back,
     net::{web_code, written},
     session::{Drawn, Invitation, Notice, Session, SessionRequest},
+    unlocks::Unlocks,
 };
 
 /// The port on which this machine hosts a game.
@@ -28,23 +35,121 @@ pub struct HostPort(pub u16);
 #[derive(Resource, Clone, Copy, Debug)]
 pub struct WebPort(pub Option<u16>);
 
+/// How long the lobby of a game that this machine hosts counts down, once everyone is ready,
+/// before its run starts.
+#[derive(Resource, Clone, Copy, Debug)]
+pub struct Countdown(pub f32);
+
 /// Comes after the plugins of the network library and the protocol.
 pub fn plugin(app: &mut App) {
     app.add_plugins(server::NetPlugin)
-        // A game that was given no command line brings nothing of its own to a run, and one
-        // without a garage has the standard tank in it.
+        // A game that was given no command line brings nothing of its own to a run, one
+        // without a garage has the standard tank in it, and one that keeps no achievements
+        // has unlocked nothing.
         .init_resource::<Options>()
         .init_resource::<Garage>()
+        .init_resource::<Unlocks>()
         .insert_resource(HostPort(PORT))
         .insert_resource(WebPort(Some(WEB_PORT)))
-        .add_systems(Update, direct)
+        .insert_resource(Countdown(COUNTDOWN))
+        // The run that a countdown starts is started in the same frame, so that the lobby
+        // counts down once.
+        .add_systems(
+            Update,
+            (
+                (settle, count_down).run_if(resource_exists::<Hosting>),
+                direct,
+            )
+                .chain(),
+        )
         .add_systems(
             OnEnter(Screen::Lobby),
             reopen.run_if(resource_exists::<Hosting>),
         );
 }
 
-/// Does what the menus ask of a host: to open a game, to start its run, and to close it.
+/// What a host's game knew of its lobby a frame ago, to tell what has changed since.
+#[derive(Default)]
+struct Known {
+    /// What the run was set to.
+    set: Option<(Difficulty, String, bool, bool)>,
+    /// The tank that the host had for a run in free mode.
+    tank: Option<Genome>,
+}
+
+/// Keeps who is ready as the rules of the lobby have it. Nobody is ready during a run, nor
+/// once the host has changed what the next one is set to. A host who changes their tank is
+/// no longer ready, as any player. And a host can't be ready for a run that can't start: one
+/// without a seed, or one that a single player has not unlocked while the host is alone.
+fn settle(
+    hosting: Res<Hosting>,
+    (options, garage, unlocks): (Res<Options>, Res<Garage>, Res<Unlocks>),
+    mut lobbies: Query<&mut Lobby>,
+    mut known: Local<Known>,
+) {
+    let Ok(mut lobby) = lobbies.get_mut(hosting.game()) else {
+        return;
+    };
+    let mut ready = lobby.ready;
+    if !hosting.is_open() {
+        ready = default();
+    }
+    let set = (
+        lobby.difficulty,
+        lobby.seed.clone(),
+        lobby.typed,
+        lobby.free,
+    );
+    if known.set.as_ref().is_some_and(|known| *known != set) {
+        ready = default();
+    }
+    known.set = Some(set);
+    // Outside free mode, the tank of a player is not theirs to change.
+    let tank = lobby.free.then(|| options.tank.unwrap_or(garage.tank));
+    if tank.is_some() && known.tank.is_some() && tank != known.tank {
+        ready[0] = false;
+    }
+    known.tank = tank;
+    if held_back(&lobby, &unlocks, &options).is_some() {
+        ready[0] = false;
+    }
+    if lobby.ready != ready {
+        lobby.ready = ready;
+    }
+}
+
+/// Counts down while everyone in the lobby is ready, and starts the run when the count is
+/// over. The count stops as soon as someone is not ready, and starts over the next time.
+fn count_down(
+    time: Res<Time<Real>>,
+    hosting: Res<Hosting>,
+    length: Res<Countdown>,
+    mut lobbies: Query<&mut Lobby>,
+    mut left: Local<Option<f32>>,
+    mut requests: MessageWriter<SessionRequest>,
+) {
+    let Ok(mut lobby) = lobbies.get_mut(hosting.game()) else {
+        return;
+    };
+    let counting = hosting.is_open() && lobby.all_ready();
+    *left = match (*left, counting) {
+        (_, false) => None,
+        (None, true) => Some(length.0),
+        (Some(left), true) => Some(left - time.delta_secs()),
+    };
+    if left.is_some_and(|left| left <= 0.0) {
+        *left = None;
+        requests.write(SessionRequest::Start);
+    }
+    // The lobby shows whole seconds: 3, 2, 1.
+    let shown = left.map(|left| left.ceil().max(1.0) as u8);
+    if lobby.countdown != shown {
+        lobby.countdown = shown;
+    }
+}
+
+/// Does what the menus ask of a host: to open a game, to say that they are ready for its
+/// run, to start a run, and to close the game.
 fn direct(
     mut commands: Commands,
     mut requests: MessageReader<SessionRequest>,
@@ -67,7 +172,7 @@ fn direct(
         Res<Garage>,
     ),
     mut seats: Query<(&mut Seat, Option<&Built>)>,
-    lobbies: Query<&Lobby>,
+    mut lobbies: Query<&mut Lobby>,
     mut run_requests: MessageWriter<RunRequest>,
     mut drawn: ResMut<Drawn>,
     mut next_screen: ResMut<NextState<Screen>>,
@@ -125,6 +230,15 @@ fn direct(
                 }
                 *session = Session::Solo;
                 *invitation = Invitation::default();
+            }
+            // The host is a player of the lobby as the others are. `settle` takes the
+            // word back if the run can't start.
+            (SessionRequest::Ready(ready), Session::Host) => {
+                let open = hosting.as_ref().filter(|hosting| hosting.is_open());
+                let lobby = open.and_then(|hosting| lobbies.get_mut(hosting.game()).ok());
+                if let Some(mut lobby) = lobby.filter(|lobby| lobby.ready[0] != *ready) {
+                    lobby.ready[0] = *ready;
+                }
             }
             (SessionRequest::Start, Session::Host) => {
                 let lobby = hosting.as_ref().and_then(|hosting| {

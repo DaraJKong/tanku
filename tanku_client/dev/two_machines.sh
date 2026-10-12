@@ -16,8 +16,8 @@
 # of 100 ms that loses one packet in fifty each way.
 #
 #   tanku_client/dev/two_machines.sh \
-#       "host; wait 6; press Start; wait 5; shot host.png; quit" \
-#       "wait 2; join 10.77.0.1; wait 9; shot guest.png; quit" \
+#       "host; wait 6; press Ready; wait 9; shot host.png; quit" \
+#       "wait 2; join 10.77.0.1; wait 3; press Ready; wait 9; shot guest.png; quit" \
 #       "delay 50ms 10ms loss 2%"
 #
 # WALL puts a firewall on both machines, which takes the tool `nft`. Each lets in the answers

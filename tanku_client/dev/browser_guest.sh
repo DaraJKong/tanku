@@ -19,8 +19,8 @@
 # both directions, in the words of `tc netem`.
 #
 #   tanku_client/dev/browser_guest.sh \
-#       "host; wait 30; press Start; wait 14; shot host.png; quit" \
-#       "wait:24 shot:lobby wait:14 click:683:600 key:w:2 shot:run" \
+#       "host; wait 34; press Ready; wait 7; shot host.png; wait 14; quit" \
+#       "wait:24 shot:lobby click:262:425 wait:12 click:683:600 key:w:2 shot:run wait:5" \
 #       "delay 60ms 10ms loss 2%"
 #
 # The page is 1366 by 682 pixels. What the browser shows goes to target/browser_guest, with

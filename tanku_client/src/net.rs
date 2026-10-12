@@ -397,9 +397,18 @@ fn direct(
     (mut session, mut notice, mut seat): (ResMut<Session>, ResMut<Notice>, ResMut<LocalSeat>),
     patience: Res<Patience>,
     joined: Option<Res<Joined>>,
+    mut words: Query<&mut MessageSender<Word>, With<Client>>,
 ) {
     for request in requests.read() {
         match (request, *session) {
+            // The host is told, and tells everyone who is ready.
+            (SessionRequest::Ready(ready), Session::Guest) => {
+                let client = joined.as_ref().filter(|joined| joined.seated);
+                let words = client.and_then(|joined| words.get_mut(joined.client).ok());
+                if let Some(mut words) = words {
+                    words.send::<Reliable>(Word::Ready(*ready));
+                }
+            }
             (SessionRequest::Join(text) | SessionRequest::JoinLocked(text, _), Session::Solo) => {
                 notice.0 = None;
                 // A password that holds nothing is none: the host then asks for one.
@@ -787,7 +796,7 @@ pub(crate) mod tests {
 
     use bevy::state::app::StatesPlugin;
     use lightyear::link::LinkSystems;
-    use tanku_core::modes::Difficulty;
+    use tanku_core::modes::{Difficulty, Unlock};
     use tanku_core::{
         CorePlugin,
         sim::{Position, Tank, Wreck},
@@ -803,8 +812,9 @@ pub(crate) mod tests {
     use crate::{
         cli::Options,
         crew,
-        host::{HostPort, WebPort},
+        host::{Countdown, HostPort, WebPort},
         session::{self, Sign},
+        unlocks::Unlocks,
     };
 
     /// The game without its drawings: what plays a run, alone or with others.
@@ -1443,6 +1453,246 @@ pub(crate) mod tests {
         assert_eq!(
             (run.seed_text.as_str(), run.difficulty, run.earns),
             ("DRAWN", Difficulty::Normal, true)
+        );
+    }
+
+    /// Who is ready in the lobby that a game holds or was told of, and what it counts down.
+    fn ready(game: &mut App) -> ([bool; 4], Option<u8>) {
+        let lobby = lobby(game);
+        (lobby.ready, lobby.countdown)
+    }
+
+    /// Lets the games go on for so many seconds.
+    fn a_while(games: &mut [&mut App], seconds: f32) {
+        let since = std::time::Instant::now();
+        run_until("a while", games, |_| {
+            since.elapsed().as_secs_f32() > seconds
+        });
+    }
+
+    /// Brings the players of a run back to the lobby, as the host does from its menu.
+    fn regroup(host: &mut App, guest: &mut App) {
+        host.world_mut().write_message(RunRequest::Abandon);
+        let mut next = host.world_mut().resource_mut::<NextState<Screen>>();
+        next.set(Screen::Lobby);
+        run_until("the lobby again", &mut [host, guest], |games| {
+            screen(games[0]) == Screen::Lobby && screen(games[1]) == Screen::Lobby
+        });
+    }
+
+    #[test]
+    fn a_run_starts_by_itself_once_everyone_is_ready() {
+        let port = free_port();
+        let mut host = host(port);
+        let mut guest = guest(port);
+        run_until("the lobby", &mut [&mut host, &mut guest], |games| {
+            screen(games[1]) == Screen::Lobby
+        });
+        // Nobody is ready at first. The host says that they are: everyone is told, and
+        // the run waits for the guest.
+        assert_eq!(ready(&mut guest), ([false; 4], None));
+        ask(&mut host, SessionRequest::Ready(true));
+        run_until("the host's word", &mut [&mut host, &mut guest], |games| {
+            ready(games[1]).0 == [true, false, false, false]
+        });
+        a_while(&mut [&mut host, &mut guest], 0.6);
+        assert_eq!(ready(&mut guest), ([true, false, false, false], None));
+        assert_eq!(screen(&host), Screen::Lobby);
+
+        // The guest says so too: the lobby counts down from three on both machines, and
+        // the run starts by itself when the count is over.
+        ask(&mut guest, SessionRequest::Ready(true));
+        run_until("the countdown", &mut [&mut host, &mut guest], |games| {
+            let counting = ([true, true, false, false], Some(3));
+            ready(games[0]) == counting && ready(games[1]) == counting
+        });
+        let counting_since = std::time::Instant::now();
+        run_until("the run", &mut [&mut host, &mut guest], |games| {
+            screen(games[0]) == Screen::Playing && screen(games[1]) == Screen::Playing
+        });
+        let counted = counting_since.elapsed().as_secs_f32();
+        assert!(
+            (2.5..4.0).contains(&counted),
+            "the run started {counted} s after the count did"
+        );
+        assert_eq!(guest.world().resource::<Run>().players, 2);
+
+        // Back in the lobby after the run, nobody is ready until they say so again.
+        regroup(&mut host, &mut guest);
+        a_while(&mut [&mut host, &mut guest], 0.3);
+        assert_eq!(ready(&mut host), ([false; 4], None));
+        assert_eq!(ready(&mut guest), ([false; 4], None));
+    }
+
+    #[test]
+    fn a_word_that_is_taken_back_stops_the_countdown() {
+        let port = free_port();
+        let mut host = host(port);
+        host.insert_resource(Countdown(1.0));
+        let mut guest = guest(port);
+        run_until("the lobby", &mut [&mut host, &mut guest], |games| {
+            screen(games[1]) == Screen::Lobby
+        });
+        ask(&mut host, SessionRequest::Ready(true));
+        ask(&mut guest, SessionRequest::Ready(true));
+        run_until("the countdown", &mut [&mut host, &mut guest], |games| {
+            ready(games[1]).1.is_some()
+        });
+        // The guest takes their word back before the count is over: it stops, and no run
+        // starts however long the host stays ready.
+        ask(&mut guest, SessionRequest::Ready(false));
+        run_until("the stop", &mut [&mut host, &mut guest], |games| {
+            ready(games[0]) == ([true, false, false, false], None)
+        });
+        a_while(&mut [&mut host, &mut guest], 1.5);
+        assert_eq!(screen(&host), Screen::Lobby);
+        assert!(host.world().get_resource::<Run>().is_none());
+        // The count starts over when they are ready again, and the run starts after it.
+        ask(&mut guest, SessionRequest::Ready(true));
+        let since = std::time::Instant::now();
+        until_both_play(&mut host, &mut guest);
+        assert!(since.elapsed().as_secs_f32() > 0.9);
+    }
+
+    #[test]
+    fn a_change_to_the_run_or_to_a_tank_takes_words_back() {
+        let port = free_port();
+        let mut host = host(port);
+        // A count that is never over: this test looks at who is ready.
+        host.insert_resource(Countdown(600.0));
+        let mut guest = guest(port);
+        run_until("the lobby", &mut [&mut host, &mut guest], |games| {
+            screen(games[1]) == Screen::Lobby
+        });
+        let both_ready = |host: &mut App, guest: &mut App| {
+            ask(host, SessionRequest::Ready(true));
+            ask(guest, SessionRequest::Ready(true));
+            run_until("both words", &mut [host, guest], |games| {
+                ready(games[0]).0 == [true, true, false, false]
+            });
+        };
+        let until_ready = |host: &mut App, guest: &mut App, wanted: [bool; 2]| {
+            run_until("the words", &mut [host, guest], |games| {
+                let told = |game: &mut App| ready(game).0;
+                let wanted = [wanted[0], wanted[1], false, false];
+                told(games[0]) == wanted && told(games[1]) == wanted
+            });
+        };
+        // When the host changes what the run is set to, nobody is ready any more: its
+        // difficulty, its seed, its mode.
+        let changes: [fn(&mut Lobby); 4] = [
+            |lobby| lobby.difficulty = Difficulty::Hard,
+            |lobby| lobby.seed = "OTHER".into(),
+            |lobby| lobby.typed = true,
+            |lobby| lobby.free = true,
+        ];
+        for change in changes {
+            both_ready(&mut host, &mut guest);
+            set(&mut host, change);
+            until_ready(&mut host, &mut guest, [false, false]);
+        }
+        // The run is in free mode by now. A player who changes their tank is no longer
+        // ready, and the others still are: the guest, then the host.
+        run_until("the tank", &mut [&mut host, &mut guest], |games| {
+            let world = games[0].world_mut();
+            world.query::<&Built>().iter(world).count() == 1
+        });
+        both_ready(&mut host, &mut guest);
+        guest.insert_resource(Garage { tank: racer() });
+        until_ready(&mut host, &mut guest, [true, false]);
+        both_ready(&mut host, &mut guest);
+        host.insert_resource(Garage { tank: bouncer() });
+        until_ready(&mut host, &mut guest, [false, true]);
+        // A garage that is opened and closed without a change takes nothing back, nor does
+        // a guest's game that tells of the same tank again.
+        both_ready(&mut host, &mut guest);
+        guest.insert_resource(Garage { tank: racer() });
+        host.insert_resource(Garage { tank: bouncer() });
+        guest.world_mut().resource_mut::<Joined>().told = None;
+        run_until("the tank, again", &mut [&mut host, &mut guest], |games| {
+            games[1].world().resource::<Joined>().told.is_some()
+        });
+        a_while(&mut [&mut host, &mut guest], 0.4);
+        assert_eq!(ready(&mut host).0, [true, true, false, false]);
+    }
+
+    #[test]
+    fn whoever_joins_is_not_ready_and_whoever_moves_up_still_is() {
+        let port = free_port();
+        let mut host = host(port);
+        host.insert_resource(Countdown(600.0));
+        // A host who is alone and ready is on their way to a run of their own.
+        ask(&mut host, SessionRequest::Ready(true));
+        run_until("the countdown", &mut [&mut host], |games| {
+            ready(games[0]).1.is_some()
+        });
+        // A player who joins isn't ready: the count stops.
+        let mut first = guest(port);
+        run_until("the first guest", &mut [&mut host, &mut first], |games| {
+            screen(games[1]) == Screen::Lobby
+                && ready(games[0]) == ([true, false, false, false], None)
+        });
+        // A second one comes and says that they are.
+        let mut second = guest(port);
+        let all = &mut [&mut host, &mut first, &mut second];
+        run_until("the second guest", all, |games| {
+            screen(games[2]) == Screen::Lobby
+        });
+        ask(&mut second, SessionRequest::Ready(true));
+        let all = &mut [&mut host, &mut first, &mut second];
+        run_until("their word", all, |games| {
+            ready(games[0]) == ([true, false, true, false], None)
+        });
+        // The first one leaves: the second one moves up to their seat, and is still ready.
+        // Everyone who is left is ready, so the lobby counts down.
+        ask(&mut first, SessionRequest::Leave);
+        let all = &mut [&mut host, &mut first, &mut second];
+        run_until("the move", all, |games| {
+            let told = ready(games[2]);
+            own_seat(games[2]) == 1 && told.0 == [true, true, false, false] && told.1.is_some()
+        });
+    }
+
+    #[test]
+    fn a_host_who_is_alone_plays_a_solo_run_with_its_locks() {
+        let port = free_port();
+        let mut host = host(port);
+        host.insert_resource(Countdown(0.3));
+        // A host who has unlocked nothing sets the run to hard mode: alone, they can't be
+        // ready for it.
+        set(&mut host, |lobby| lobby.difficulty = Difficulty::Hard);
+        a_while(&mut [&mut host], 0.1);
+        ask(&mut host, SessionRequest::Ready(true));
+        a_while(&mut [&mut host], 0.8);
+        assert_eq!(ready(&mut host), ([false; 4], None));
+        assert_eq!(screen(&host), Screen::Lobby);
+        // A guest comes: nothing is locked for a host who has company.
+        let mut guest = guest(port);
+        run_until("the lobby", &mut [&mut host, &mut guest], |games| {
+            screen(games[1]) == Screen::Lobby
+        });
+        ask(&mut host, SessionRequest::Ready(true));
+        run_until("the host's word", &mut [&mut host, &mut guest], |games| {
+            ready(games[1]).0 == [true, false, false, false]
+        });
+        // The guest leaves again: the host is alone, and is no longer ready.
+        ask(&mut guest, SessionRequest::Leave);
+        run_until("the lock", &mut [&mut host, &mut guest], |games| {
+            let lobby = lobby(games[0]);
+            lobby.players() == 1 && lobby.ready == [false; 4]
+        });
+        a_while(&mut [&mut host], 0.6);
+        assert_eq!(screen(&host), Screen::Lobby);
+        // Once they have unlocked hard mode, the host starts alone, and plays a solo run.
+        host.insert_resource(Unlocks::of(&[Unlock::HardMode]));
+        ask(&mut host, SessionRequest::Ready(true));
+        run_until("the run", &mut [&mut host], |games| {
+            screen(games[0]) == Screen::Playing && seats(games[0]) == [0]
+        });
+        let run = host.world().resource::<Run>();
+        assert_eq!(
+            (run.players, run.solo, run.difficulty),
+            (1, true, Difficulty::Hard)
         );
     }
 

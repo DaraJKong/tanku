@@ -44,7 +44,10 @@ pub enum SessionRequest {
     JoinLocked(String, String),
     /// Leave the game. A host closes it for everyone.
     Leave,
-    /// The host starts a run on the seed of the lobby, with everyone who is there.
+    /// The player at this screen is ready for the run of the lobby, or no longer is.
+    Ready(bool),
+    /// The host starts a run as the lobby is set, with everyone who is there. A run starts
+    /// by itself once everyone is ready: this starts the one that a host picks after a run.
     Start,
 }
 

@@ -49,6 +49,8 @@ pub const LIFE_REACH: f32 = 1.5;
 
 /// The most players a run can have.
 pub const MAX_PLAYERS: u32 = 4;
+/// A run starts by itself this long after everyone in its lobby has said that they are ready.
+pub const COUNTDOWN: f32 = 3.0;
 /// A player repairs the wreck of a teammate from this close, in this long.
 pub const REPAIR_RADIUS: f32 = 3.0;
 pub const REPAIR_TIME: f32 = 2.0;

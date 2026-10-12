@@ -482,7 +482,7 @@ fn challenge(hosting: Res<Hosting>, mut guests: Query<(&mut Knock, &mut MessageS
 /// Hears what the guests say. Those who prove that their player knows the password of the
 /// game are let in, and the others are told that they don't: a challenge takes one answer,
 /// so whoever would try another password comes back for another challenge. A guest who has
-/// a seat tells of the tank that their player built.
+/// a seat tells of the tank that their player built, and says when their player is ready.
 fn admit(
     mut commands: Commands,
     hosting: Res<Hosting>,
@@ -490,24 +490,43 @@ fn admit(
         (
             Entity,
             &RemoteId,
-            (Option<&Knock>, Has<Seat>),
+            (Option<&Knock>, Option<&Seat>, Option<&Built>),
             &mut MessageReceiver<Word>,
             &mut MessageSender<Door>,
         ),
         With<ClientOf>,
     >,
     seats: Query<&Seat>,
+    mut lobbies: Query<&mut Lobby>,
 ) {
     let mut taken: Vec<u8> = seats.iter().map(|seat| seat.0).collect();
-    for (guest, id, (knock, seated), mut words, mut door) in &mut guests {
-        let mut knock = knock;
+    // What a guest who is in the game says of being ready, while the lobby is open.
+    let mut says = |seat: &Seat, ready: bool| {
+        let lobby = lobbies.get_mut(hosting.game).ok();
+        let lobby = lobby.filter(|lobby| lobby.ready.get(seat.0 as usize) == Some(&!ready));
+        if let Some(mut lobby) = lobby.filter(|_| hosting.is_open()) {
+            lobby.ready[seat.0 as usize] = ready;
+        }
+    };
+    for (guest, id, (knock, seat, built), mut words, mut door) in &mut guests {
+        let (mut knock, mut built) = (knock, built.map(|built| built.0));
         for word in words.receive() {
             match word {
                 // A guest can say anything: only a tank that a player may build is taken,
-                // and only from a guest who is in the game.
+                // and only from a guest who is in the game. A player who changes their
+                // tank is no longer ready.
                 Word::Tank(tank) => {
-                    if seated && tank.is_a_players() {
+                    if let Some(seat) = seat.filter(|_| tank.is_a_players())
+                        && built != Some(tank)
+                    {
+                        built = Some(tank);
                         commands.entity(guest).insert(Built(tank));
+                        says(seat, false);
+                    }
+                }
+                Word::Ready(ready) => {
+                    if let Some(seat) = seat {
+                        says(seat, ready);
                     }
                 }
                 Word::Proof(proof) => {
@@ -549,7 +568,7 @@ fn close_ranks(hosting: Res<Hosting>, mut seats: Query<&mut Seat>) {
     }
 }
 
-/// Tells the guests who sits where.
+/// Tells the guests who sits where, and with it who is ready.
 fn announce(
     hosting: Res<Hosting>,
     seats: Query<(&Seat, &RemoteId)>,
@@ -565,8 +584,9 @@ fn announce(
             *place = Some(Member::Guest(id));
         }
     }
+    // Whoever was ready stays so in a new seat, and whoever has just come is not.
     if lobby.seats != wanted {
-        lobby.seats = wanted;
+        lobby.reseat(wanted);
     }
 }
 

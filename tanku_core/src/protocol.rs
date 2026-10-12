@@ -31,7 +31,7 @@ use crate::{
 /// Counts the changes to what the server and its clients tell each other since the version of
 /// the game was last raised. Two builds that don't count the same don't speak the same, so
 /// they don't join each other: raise this with every such change.
-pub const REVISION: u32 = 7;
+pub const REVISION: u32 = 8;
 
 /// The port a game listens on unless it is told otherwise.
 pub const PORT: u16 = 28405;
@@ -110,6 +110,10 @@ pub struct Lobby {
     /// Whether the next run is in free mode, in which each player has the tank that they
     /// built in their own garage.
     pub free: bool,
+    /// Who has said that they are ready for the run, by seat.
+    pub ready: [bool; MAX_PLAYERS as usize],
+    /// The seconds until the run starts by itself, once everyone is ready.
+    pub countdown: Option<u8>,
 }
 
 /// What a host tells one guest who knocks at a game that has a password.
@@ -128,6 +132,8 @@ pub enum Word {
     Proof(Proof),
     /// The tank that its player built in their garage, for a run in free mode.
     Tank(Genome),
+    /// Whether its player is ready for the run.
+    Ready(bool),
 }
 
 impl Lobby {
@@ -140,6 +146,23 @@ impl Lobby {
     pub fn seat_of(&self, member: Member) -> Option<u8> {
         let seat = self.seats.iter().position(|taken| *taken == Some(member));
         seat.map(|seat| seat as u8)
+    }
+
+    /// Whether everyone who is there has said that they are ready.
+    pub fn all_ready(&self) -> bool {
+        let mut seated = self.seats.iter().zip(self.ready);
+        self.players() > 0 && seated.all(|(seat, ready)| seat.is_none() || ready)
+    }
+
+    /// Sits everyone anew. Whoever was ready is still ready in their new seat, and whoever
+    /// has just come is not.
+    pub fn reseat(&mut self, seats: [Option<Member>; MAX_PLAYERS as usize]) {
+        let was_ready = |member: Member| {
+            let seat = self.seat_of(member);
+            seat.is_some_and(|seat| self.ready[seat as usize])
+        };
+        let ready = seats.map(|member| member.is_some_and(was_ready));
+        (self.seats, self.ready) = (seats, ready);
     }
 }
 
@@ -255,5 +278,51 @@ mod tests {
         assert_eq!(lobby.seat_of(Member::Host), Some(0));
         assert_eq!(lobby.seat_of(Member::Guest(7)), Some(2));
         assert_eq!(lobby.seat_of(Member::Guest(8)), None);
+    }
+
+    #[test]
+    fn a_lobby_knows_when_everyone_is_ready() {
+        let mut lobby = Lobby::default();
+        // Nobody is there: nobody is ready.
+        assert!(!lobby.all_ready());
+        lobby.seats[0] = Some(Member::Host);
+        lobby.seats[1] = Some(Member::Guest(7));
+        assert!(!lobby.all_ready());
+        lobby.ready[0] = true;
+        assert!(!lobby.all_ready());
+        lobby.ready[1] = true;
+        assert!(lobby.all_ready());
+        // A seat that nobody has waits for nobody, whatever was left on it.
+        lobby.ready[3] = true;
+        assert!(lobby.all_ready());
+        lobby.ready[0] = false;
+        assert!(!lobby.all_ready());
+    }
+
+    #[test]
+    fn whoever_was_ready_stays_so_in_a_new_seat_and_whoever_comes_is_not() {
+        let (host, first, second, third) = (
+            Some(Member::Host),
+            Some(Member::Guest(7)),
+            Some(Member::Guest(8)),
+            Some(Member::Guest(9)),
+        );
+        let mut lobby = Lobby {
+            seats: [host, first, second, None],
+            ready: [true, false, true, false],
+            ..default()
+        };
+        // The first guest leaves: the second one moves up, and is still ready.
+        lobby.reseat([host, second, None, None]);
+        assert_eq!(lobby.seats, [host, second, None, None]);
+        assert_eq!(lobby.ready, [true, true, false, false]);
+        // A third one comes, and takes the seat that the second one had: they are not ready.
+        lobby.reseat([host, second, third, None]);
+        assert_eq!(lobby.ready, [true, true, false, false]);
+        assert!(!lobby.all_ready());
+        // Nothing changes for those who stay where they are.
+        lobby.ready[2] = true;
+        lobby.reseat([host, second, third, None]);
+        assert_eq!(lobby.ready, [true, true, true, false]);
     }
 }

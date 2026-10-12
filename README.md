@@ -5,8 +5,7 @@ A cooperative top-down tank game for one to four players, built with Rust and Be
 The solo game and co-op are playable, on Linux, on Windows and in a browser:
 
 - **Solo:** the corridor, the generated enemies with their classes and their brains, arenas and their waves, lives and checkpoints, the menus, the sound cues and the music. Runs unlock achievements: the first one lets the player type the seed of a run. Clearing sector 20 unlocks free mode, in which the player spends the 59 points of their tank as they like, in a garage that draws the tank as they build it. Clearing sector 30 unlocks hard mode, whose enemies are stronger from the first sector.
-- **Co-op:** up to four players. One of them hosts a game, which the others find on the local network or join by its address, from a desktop build or from a browser. The host sets the run in the lobby: its difficulty, its seed, and free mode, in which each player has the tank of their own garage. Nothing is locked for a host who has company. A destroyed tank is a wreck that a teammate repairs.
-- **Not in yet:** the ready check of the lobby. Until then, the host starts the run.
+- **Co-op:** up to four players. One of them hosts a game, which the others find on the local network or join by its address, from a desktop build or from a browser. A game can have a name and a password. The host sets the run in the lobby: its difficulty, its seed, and free mode, in which each player has the tank of their own garage. Nothing is locked for a host who has company. The run starts once everyone has said that they are ready. A destroyed tank is a wreck that a teammate repairs.
 
 Co-op has been played by two players. With three or four, it is checked by tests and by scripted runs only. The build for Windows is checked under wine, not yet on Windows itself. The specification is in [docs/PROJECT.md](docs/PROJECT.md).
 
@@ -47,7 +46,9 @@ Up to four players share a run. One of them hosts the game, and the others join 
 1. The host picks "Host a game" in the main menu, gives the game a name and a password if they like, and opens it. The lobby shows the address of the machine on its network.
 2. Each of the others picks "Join a game". A game that is hosted on the same network shows there, under its name if it has one, and a click joins it. One that doesn't show is joined by typing the address of its host. A game that has a password asks for it.
 3. The host sets the run in the lobby, and the others see it: normal or hard mode, a seed that the game draws or one that the host types, and free mode. In free mode, each player opens their own garage from the lobby and builds their tank there.
-4. The host starts the run once everyone is in the lobby. Nobody joins a run in progress.
+4. Each player says that they are ready, the host too, with the button of the lobby or with Enter. Once everyone is, the lobby counts down three seconds and the run starts by itself. Nobody joins a run in progress.
+
+A player takes their word back with the same button, which stops the count. Two changes take it back for them: a player who changes their tank in the garage is no longer ready, and when the host changes what the run is set to, nobody is. A player who joins isn't ready either. After a run, the host picks the same seed again or a new run, which start at once for everyone as the lobby is set, or brings everyone back to the lobby, where nobody is ready until they say so again.
 
 A host needs none of the achievements: every difficulty and every option is theirs from the start. Only a host who starts alone plays a solo run, with its locks. A run in free mode or on a seed that the host typed earns no achievement, and the lobby says so. The game keeps what a host chose last, the difficulty and free mode, for their next game.
 
@@ -261,17 +262,19 @@ TANKU_DEV_SCRIPT="start TANKU; wait 1; warp 12; wait 1; peek 0; wait 1; shot sec
 Two scripted games can play together: one hosts on a port, and the other joins it. A game that hosts on a port of its own takes browsers on the port after it, and the words after the port are the name of the game, as in `host 28999 Friday night`. `password sesame` before it gives the game a password, and `join 127.0.0.1:28999 sesame` joins with one. A script can also go through the menus as a player does: `press` presses a button by its label, `type` writes a text and `key` presses `enter`, `tab` or `backspace`.
 
 ```bash
-TANKU_DEV_SCRIPT="host 28999; wait 6; press Start; wait 5; shot host.png; quit" cargo run -p tanku_client
+TANKU_DEV_SCRIPT="host 28999; wait 6; press Ready; wait 9; shot host.png; quit" cargo run -p tanku_client
 ```
 
 ```bash
-TANKU_DEV_SCRIPT="wait 2; join 127.0.0.1:28999; wait 9; shot guest.png; quit" cargo run -p tanku_client
+TANKU_DEV_SCRIPT="wait 2; join 127.0.0.1:28999; wait 3; press Ready; wait 9; shot guest.png; quit" cargo run -p tanku_client
 ```
+
+The run starts three seconds after both have said that they are ready.
 
 Two games on one machine talk over the loopback, where every address is the machine's own and nothing is late or lost. That hides what goes wrong between two machines. A script runs the two games as two machines on a private network, a host at `10.77.0.1` and a guest at `10.77.0.2`, and can worsen the line between them. A change to the network is checked with it:
 
 ```bash
-tanku_client/dev/two_machines.sh "host; wait 6; press Start; wait 5; shot host.png; quit" "wait 2; join 10.77.0.1; wait 9; shot guest.png; quit" "delay 50ms 10ms loss 2%"
+tanku_client/dev/two_machines.sh "host; wait 6; press Ready; wait 9; shot host.png; quit" "wait 2; join 10.77.0.1; wait 3; press Ready; wait 9; shot guest.png; quit" "delay 50ms 10ms loss 2%"
 ```
 
 It takes Linux with user namespaces and needs no privileges. The third argument is optional: here it makes a round trip of 100 ms that loses one packet in fifty each way.
@@ -281,8 +284,10 @@ The guest can also find the game as a player does, instead of being told its add
 A browser doesn't join as a desktop game does, so a second script runs a scripted host and a Firefox as two machines. The browser opens the web build with the link of the host at its end, and then does what its steps say: it waits, clicks, holds keys and saves what the page shows. The steps are listed at the top of `tanku_client/dev/firefox.py`.
 
 ```bash
-tanku_client/dev/browser_guest.sh "host; wait 30; press Start; wait 14; shot host.png; quit" "wait:24 shot:lobby wait:14 click:683:600 key:w:2 shot:run" "delay 60ms 10ms loss 2%"
+tanku_client/dev/browser_guest.sh "host; wait 34; press Ready; wait 7; shot host.png; wait 14; quit" "wait:24 shot:lobby click:262:425 wait:12 click:683:600 key:w:2 shot:run wait:5" "delay 60ms 10ms loss 2%"
 ```
+
+The click at 262, 425 is on the button "Ready" of the lobby, as the page of the script shows it, 1366 by 682 pixels, while the run is in normal mode.
 
 It takes Firefox, Python 3 and the web build in `target/web-dist`. No window opens. What the browser showed goes to `target/browser_guest`.
 
