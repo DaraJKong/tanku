@@ -137,6 +137,8 @@ A playtest is a way to test the game faster, not a mode for players. It starts w
 
 A playtest can also choose its seed without unlocking that option: `--seed` followed by a seed starts every run on it, which brings back a situation that a player reported.
 
+It can bring a tank of its own too: `--tank` followed by the stats of a tank with their levels starts every run in that tank, under the rules of the [garage](#garage). A tank of free mode is tried that way before the garage is built.
+
 A playtest says on screen that it is one. It sets no record and earns no achievement. A playtest can host a game: the cheats are the host's alone, and the run sets no record for anyone in it.
 
 ## Controls
