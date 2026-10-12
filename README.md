@@ -301,8 +301,10 @@ cargo test -p tanku_core what_the_groups_are_made_of -- --ignored --nocapture
 Benchmarks measure generation, the simulation and the music, and take under a minute:
 
 ```bash
-cargo bench -p tanku_core -p tanku_server -p tanku_audio
+cargo bench -p tanku_core -p tanku_server -p tanku_audio --features tanku_core/game-balance
 ```
+
+The feature makes them measure the game as it is compiled. Without it, they are built like the tests, with the balance of the tests (see [Changing the balance](#changing-the-balance)).
 
 ## Looking at the game without playing
 

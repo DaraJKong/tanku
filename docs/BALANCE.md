@@ -290,5 +290,7 @@ cargo test --workspace --features tanku_core/game-balance
 
 There, a test that holds a number fails where the two files differ, and the others say whether the rules still hold. The tests of the generator are among them: after a change to the terrain, those that hold no width say whether every sector still has its way through.
 
+The benchmarks are built as the tests are, so they measure the balance of the tests unless they are given the same feature: `cargo bench -p tanku_core -p tanku_server -p tanku_audio --features tanku_core/game-balance` measures the game. Whatever `cargo run` starts, the game and the trials, is compiled with the balance of the game.
+
 The balance of the tests doesn't follow the one of the game. Bringing it up to date is a change of its own, with every test that holds one of its numbers: it is worth it when the two have grown so far apart that the tests no longer look like the game.
 
