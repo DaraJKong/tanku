@@ -59,7 +59,8 @@ Tanku has no player-versus-player mode, no loot, no upgrades during a run, no st
 | Sector budget | The measure of an enemy's budget in a given sector. No tank has more, except the leader of its group. |
 | Group | The enemies of one sector, which share one budget unevenly |
 | Leader | The tank with the largest share of its group's budget: up to 1.5 times the sector budget |
-| Class | What an enemy favors when it spends its points. Its hue tells it. |
+| Class | What an enemy favors when it spends its points. Its color tells it. |
+| Type of bullet | What a tank's bullets do besides flying straight: nothing more, or pierce, seek, split or explode. A tank fires one type. |
 | Genome | A tank's full list of stat levels |
 | Standard tank | The tank that every player has outside free mode |
 | Garage | The screen where a player spends the points of their tank, in free mode |
@@ -211,6 +212,23 @@ Piercing is the exception to the third rule. A tank with the Piercing stat fires
 
 Blasts are neutral. They destroy every unshielded tank in range, whoever caused them. A tank is in range when its center is within the radius of the blast and no wall or barrier stands between them.
 
+### Special bullets
+
+A tank fires one type of bullet. A normal bullet does what the rules above say. Four types are special: each is a stat that a tank has or doesn't have, and no tank has two of them (see [Hardware stats](#hardware-stats)). A special bullet is white like any other and destroys what a normal bullet destroys. Its shape says what else it does, and so does the muzzle that it came from (see [Appearance](#appearance)).
+
+- **Piercing.** It destroys the first normal bullet that it touches and flies on, as said above.
+- **Seeking.** It flies straight, and it seeks when it bounces. Off a wall or a block, it doesn't leave at the mirror angle: it leaves toward the nearest tank in sight of that place that its side fights. A player's bullet seeks the enemies, never a teammate or the tank that fired it, and an enemy's bullet seeks the players' tanks that run. It aims at where that tank is then, not ahead of it. With no such tank in sight, it bounces as a normal bullet does. It seeks at each bounce that its tank's Ricochet gives it, and never without Ricochet.
+- **Splitting.** After 1 s of flight, it becomes two normal bullets that leave from where it is, 30° to each side of its line of flight. The two don't destroy each other as they part. The bullet itself doesn't bounce: a wall or a block that it meets before it splits ends it. The two bullets have the bounces of their tank's Ricochet.
+- **Exploding.** It never bounces, and it goes off wherever it ends: on a wall, a block, a crate, a barrier, a tank, a shield, a mine or another bullet, and in a blast that reaches it. Its blast is that of a mine, with a radius of 3 m, and it is the doing of the tank that fired the bullet. Like every blast, it is neutral: a tank that fires at a wall within 3 m destroys itself, and an enemy's bullet destroys the enemies around the place where it ends.
+
+Each of the last three says what it is about to do, in dashes (see [Visual style](#visual-style)):
+
+- From 1.5 s before a seeking bullet bounces, a line runs from the bullet to the wall, and a second one from there to the tank that it would seek: its way out, which follows that tank until the bounce.
+- Two lines ahead of a splitting bullet show its two ways, and go with the bullet. Nothing counts the time down: for the last 0.6 s before the split, as long as a mine warns, the two lines are solid and flash.
+- From 1.5 s before an exploding bullet ends on a wall, a block, a crate or a barrier, a line runs from the bullet to that place, and a circle around the place shows what the blast will reach. A tank, a mine or a bullet that gets in its way ends it sooner, and nothing marks that.
+
+A time gives every gun the same warning, whatever its Muzzle: 1.5 s is 13.5 m at 9 m/s and 28.5 m at 19 m/s, so in a corridor most of these shots are marked from the barrel.
+
 ### Mines
 
 A tank drops a mine at its own position, at most one every 0.5 s, and can have as many armed mines as its Mines stat allows. A mine arms after 1 s. It then detonates when an opposing tank comes within 2 m or when its 10 s fuse runs out, and it warns for 0.6 s first either way: the last 0.6 s of the fuse are that warning. A bullet or a blast detonates it at any time, without a warning, even before it is armed. A shot passes over a mine that lies under the barrel of the tank that fires it. The blast has a radius of 3 m. An armed mine shows the circle within which an opposing tank sets it off. A mine that warns shows the circle that its blast will reach instead. Blasts are the only way to remove destructible blocks.
@@ -244,7 +262,10 @@ A wreck lies in a circle in dashes and keeps the number of its player over it: a
 | Time between two mines of a tank | 0.5 s |
 | Mine trigger | Opposing tank within 2 m |
 | Mine warning | 0.6 s before the blast, after a tank sets the mine off and at the end of its fuse |
-| Blast radius of mines and crates | 3 m |
+| Blast radius of mines, crates and exploding bullets | 3 m |
+| Seeking bullet | At each bounce, toward the nearest tank in sight that its side fights. Its bounce is marked from 1.5 s before. |
+| Splitting bullet | Splits after 1 s, 30° to each side. Its lines flash for the last 0.6 s. |
+| Exploding bullet | Goes off where it ends. Its end on what stands still is marked from 1.5 s before. |
 | Shield duration | 0.5 s |
 | Lives of a solo player | 3 at the start, and never more |
 | Life of an arena | 4 m in front of the barrier, taken within 1.5 m |
@@ -276,8 +297,13 @@ Level 0 of each stat is free. Costs are cumulative: each number is the total pri
 | Mines | Mines armed at once | 0, 1, 2, 3, 4 | 0, 4, 6, 8, 10 |
 | Shield | Cooldown in s | none, 10, 9, 8, 7, 6 | 0, 6, 9, 12, 15, 18 |
 | Piercing | Bullets that each of its bullets pierces | 0, 1 | 0, 4 |
+| Seeking | Whether its bullets seek at their bounces | no, yes | 0, 4 |
+| Splitting | Whether its bullets split | no, yes | 0, 6 |
+| Exploding | Whether its bullets explode | no, yes | 0, 8 |
 
-Every stat stops at its highest level. These limits keep the game sound: a bullet, for instance, never gets fast enough to pass through a wall. Buying every hardware stat at its highest level costs 135 points. An enemy's Muzzle level is also limited by its sector (see [Progression](#progression)), and its Piercing and Ricochet levels by its class (see [Classes](#classes)).
+Piercing, Seeking, Splitting and Exploding are the four special types of bullet (see [Special bullets](#special-bullets)). A tank has one of them at most.
+
+Every stat stops at its highest level. These limits keep the game sound: a bullet, for instance, never gets fast enough to pass through a wall. Buying every hardware stat at its highest level, with the dearest type of bullet, costs 139 points. An enemy's Muzzle level is also limited by its sector (see [Progression](#progression)), and its type of bullet and its Ricochet level by its class (see [Classes](#classes)).
 
 ### Software stats
 
@@ -295,7 +321,7 @@ Software is the enemy's controller. Its price is a share of the tank's total bud
 | Ballistics | 2 | 10% | Finds single-bounce shots. |
 | Ballistics | 3 | 15% | Finds double-bounce shots, and shoots mines and crates near players. |
 
-Ballistics 3 is kept for the two classes whose bullets bounce twice (see [Classes](#classes)).
+Ballistics 3 is kept for two classes, and three others stop at Ballistics 1 (see [Classes](#classes)).
 
 ### Why prices differ
 
@@ -305,13 +331,15 @@ A price should reflect how much more dangerous a level makes a tank, and not eve
 |---|---|---|
 | Flat per level | Tracks, Magazine | Each level is worth about as much as the last. |
 | Rising per level | Engine above level 4, Turret, Muzzle, Loader, Ricochet | High levels cross thresholds: faster than a player tank, too fast to dodge, or enough bounces to fill a room. |
-| Entry fee | Mines, Shield, Piercing | The first level buys a new ability. Later levels, where there are any, only improve it. |
+| Entry fee | Mines, Shield, Piercing, Seeking, Splitting, Exploding | The first level buys a new ability. Later levels, where there are any, only improve it. |
 | Share of budget | Brain, Ballistics | Software multiplies the value of the hardware it drives: the same brain is worth more in a better tank. |
-| Prerequisite | Tracks, Mines, Shield, Ballistics 2 and 3 | The stat is worthless alone, so the generator never buys it alone. |
-| Cap by sector | Muzzle | A sniper puts its points into its gun, and one enemy in eight is a sniper. The cap decides how fast that gun is in each sector, and the price decides what else such a tank can afford. |
-| Kept for a class | Piercing, Ricochet above level 1, Ballistics 3 | Bullets that pierce and bullets that bounce twice are the hardest to read. They stay rare, and the hue of the tank announces them. |
+| Prerequisite | Tracks, Mines, Shield, Seeking, Ballistics 2 and 3 | The stat is worthless alone, so the generator never buys it alone. |
+| Cap by sector | Muzzle | A sniper puts its points into its gun, and one enemy in eleven is a sniper. The cap decides how fast that gun is in each sector, and the price decides what else such a tank can afford. |
+| Kept for a class | Piercing, Seeking, Splitting, Exploding, Ricochet above level 1, Ballistics 3 | The special bullets and the bullets that bounce twice are the hardest to read. Each belongs to a class, and the color of the tank announces it. |
 
-The prerequisites are: Tracks need Engine 1. On enemies, Mines and Shield need Brain 1. Ballistics 2 needs Ricochet 1, and Ballistics 3 needs Ricochet 2.
+The prerequisites are: Tracks need Engine 1. On enemies, Mines and Shield need Brain 1. Ballistics 2 needs Ricochet 1, and Ballistics 3 needs Ricochet 2. Seeking needs Ricochet 1: a bullet that doesn't bounce never seeks.
+
+The four special bullets are priced by what they add. A piercing bullet and a seeking one cost the same, a splitting one costs more, and an exploding one the most.
 
 Prices are right when two enemy tanks of equal budget are about equally dangerous. The check is a headless build that runs many fights between random genomes and a reference bot, then compares the results per budget.
 
@@ -333,7 +361,7 @@ Outside free mode, every player has the same tank: the standard tank, which spen
 
 ### Garage
 
-In free mode, each player spends the 59 points as they like, in the garage, before the run. The garage lists every hardware stat except Turret, each with its level, what that level gives, its price and the price of one more level, and the points that are spent and those that are left. Next to them it shows the tank as it will look, and that drawing follows every change at once (see [Appearance](#appearance)).
+In free mode, each player spends the 59 points as they like, in the garage, before the run. The garage lists every hardware stat except Turret, each with its level, what that level gives, its price and the price of one more level, and the points that are spent and those that are left. The four special bullets are not four lines there. They are one, the type of the bullets: a choice among normal, piercing, seeking, splitting and exploding, each with its price, because a tank fires one type. Next to the list, the garage shows the tank as it will look, and that drawing follows every change at once (see [Appearance](#appearance)).
 
 A tank from the garage follows the rules of every tank, with three of its own:
 
@@ -341,15 +369,15 @@ A tank from the garage follows the rules of every tank, with three of its own:
 2. It has no Turret stat: its turret follows the cursor, as on the standard tank.
 3. It can leave points unspent, and it can't spend more than 59.
 
-What holds an enemy back doesn't hold a player. The cap on Muzzle and the stats kept for a class are for enemies only, and Mines and Shield need no brain. A player can have the fastest gun, piercing bullets and three bounces, at their price.
+What holds an enemy back doesn't hold a player. The cap on Muzzle and the stats kept for a class are for enemies only, and Mines and Shield need no brain. A player can have the fastest gun, any type of bullet and three bounces, at their price. Two purchases buy nothing, and the garage says so: Ricochet on a tank whose bullets explode, and seeking bullets on a tank without Ricochet.
 
 The garage opens on the tank that the player built last, which is the standard tank the first time, and a button brings the standard tank back. In a game of several players, each player has their own garage and their own tank, and the others see that tank in the run as its player built it.
 
 ### Classes
 
-An enemy has a class: the stats that it favors when it spends its points. The class gives the tank its hue, so that it is read from afar, before the parts of the model are.
+An enemy has a class: the stats that it favors when it spends its points. The class gives the tank its color, so that it is read from afar, before the parts of the model are.
 
-| Class | Favors | Hue |
+| Class | Favors | Color |
 |---|---|---|
 | All-rounder | Nothing: a bit of everything | Gray |
 | Sniper | Muzzle and Turret | Teal |
@@ -357,13 +385,20 @@ An enemy has a class: the stats that it favors when it spends its points. The cl
 | Tactician | Brain and Ballistics | Green |
 | Trickster | Ricochet | Purple |
 | Lancer | Piercing | Orange |
+| Seeker | Seeking and Ricochet | Dark magenta |
+| Flanker | Splitting | Dark blue |
+| Grenadier | Exploding | Brown, almost black |
 | Sapper | Mines and Shield | Pink |
 | Gunner | Magazine and Loader | Red |
 
-Blue is the players'. Some stats are kept for the classes that are about them:
+The bright blue is the players'. The blue of a flanker is darker and of another hue. The seeker, the flanker and the grenadier are told from the other classes by how dark they are as much as by their hue: the wheel of hues had no room left for three more.
 
-- Only a lancer has Piercing.
-- Only a trickster and a tactician have Ricochet above level 1, and Ballistics 3, which needs it.
+Some stats are kept for the classes that are about them:
+
+- Each special bullet is one class's alone: only a lancer has Piercing, only a seeker Seeking, only a flanker Splitting and only a grenadier Exploding.
+- Only a trickster, a tactician and a seeker have Ricochet above level 1. Only the first two have Ballistics 3, which needs it.
+- A seeker, a flanker and a grenadier have Ballistics 1 at most. The bank shots of the higher tiers are no use to them: a seeker's bullet finds its own way off a wall, and the bullets of the other two don't bounce.
+- A grenadier has no Ricochet, which its bullets couldn't use.
 - A tactician has the highest Brain and Ballistics tiers that its sector allows.
 - A sapper has Brain 1 at least, without which it could use neither its mines nor its shield.
 
@@ -379,13 +414,13 @@ A tank that is alone in its sector has the whole budget of its group, which is l
 
 Each tank then spends its budget, from the seed, its sector and its index in the group:
 
-1. Draw its class, each of the eight with the same chance.
+1. Draw its class, each of the eleven with the same chance.
 2. Draw its software tiers within the sector's tier caps and what its class allows, and pay their shares. A Ballistics tier whose bounces the tank can't pay for drops until it can.
 3. Buy one level of each stat that its class favors.
 4. Spend the remaining points one level at a time, at random, respecting prerequisites, the sector's cap on Muzzle and what its class allows, until nothing affordable is left. The favorite stats weigh 20 together, and every other stat weighs 1.
 5. If points are left, raise its brain by a tier, or else its ballistics with the bounce that the tier needs, within the sector's tier caps and what its class allows, and go back to step 4: a first brain opens mines and a shield. The tank is done when what is left pays for neither.
 
-The last step is for the tanks that have more points than their hardware can take. A tank without a brain has neither mines nor a shield, and most classes have neither piercing bullets nor a second bounce, which leaves it 89 points of hardware to buy. A leader of a late sector can have more than that, and in hard mode so can the others. What such a tank has left makes it smarter, and what stays unspent is less than a tier costs it.
+The last step is for the tanks that have more points than their hardware can take. A tank without a brain has neither mines nor a shield, and most classes have neither a special bullet nor a second bounce, which leaves it 89 points of hardware to buy. A leader of a late sector can have more than that, and in hard mode so can the others. What such a tank has left makes it smarter, and what stays unspent is less than a tier costs it.
 
 Specialization matters more than balance. A tank with a few strong stats has a recognizable shape and asks the players a clear question. In a group of six, four or five classes stand side by side.
 
@@ -404,7 +439,7 @@ The price list can express the enemy roster of Tanks!, in roughly the order in w
 | Raider (purple) | 6 m/s, 5 rounds, 2 mines, brain 3 | 72 | 11 |
 | Hunter (black) | 8 m/s, 17 m/s bullets, 2 mines, brain 4 | 96 | 19 |
 
-A build is possible in a sector whose caps allow its tiers and its gun, and where a tank of a solo group in a corridor can have as many points. The Miner, the Raider and the Hunter first come as the leader of their group: no other tank can have their budget before sectors 7, 19 and 46. The Banker is a trickster or a tactician, the two classes whose bullets bounce twice.
+A build is possible in a sector whose caps allow its tiers and its gun, and where a tank of a solo group in a corridor can have as many points. The Miner, the Raider and the Hunter first come as the leader of their group: no other tank can have their budget before sectors 7, 19 and 46. The Banker is a trickster or a tactician, the two classes that have Ballistics 3.
 
 ### Appearance
 
@@ -422,20 +457,27 @@ An enemy's model is assembled from its genome, so players can read a tank before
 | Mines | Mine rack at the rear, one mine per slot |
 | Shield | White disk under the turret, of which only the edge shows. The edge is a little wider with level. |
 | Piercing | Pointed tip on the barrel. Its bullets have a pointed tip too, until they have pierced. |
+| Seeking | Chevrons around the muzzle, in the place of the rings: one per bounce. Its bullets have a chevron in the place of each stripe. |
+| Splitting | Short cap with a slit on the muzzle, in front of the rings. Its bullets have a seam along them and no stripe. |
+| Exploding | Muzzle that flares into a bell. Its bullets have a flat end, with a red line that cuts them near it, and a trail. |
 | Brain | Antennas, one per tier |
 | Ballistics | Sight on the turret, one lens per tier |
 | Total budget | Color intensity. Weak tanks are pale, strong ones saturated, and even the weakest shows its hue. |
-| Class | Hue: one for each class, and gray for an all-rounder (see [Classes](#classes)) |
+| Class | Color: a hue for each class, gray for an all-rounder, and a darker color for the seeker, the flanker and the grenadier (see [Classes](#classes)) |
 
-The lenses of the sight and the pointed tip of the barrel are a pale tint of the tank's own hue.
+The lenses of the sight and what marks the muzzle of a special bullet (the pointed tip, the chevrons, the slit cap and the bell) are a pale tint of the tank's own hue.
 
-A player's tank is assembled from its genome like an enemy's. The standard tank therefore always looks the same, and a tank from the garage shows what its player bought. Two things never change on a player's tank: its turret keeps the size of the standard tank's, because Turret isn't a stat of a player's tank, and it is always the same blue, which no enemy uses, however many points it spends. Among several players, a tag over each of their tanks bears the number of its player, from P1 to P4. All tanks have the same size.
+The mark of a bullet that seeks agrees with the marks of ricochet instead of standing beside them: a seeking bounce is a bounce, so a chevron is drawn where its ring and its stripe would be. A tank whose bullets seek but can't bounce has neither.
+
+A player's tank is assembled from its genome like an enemy's. The standard tank therefore always looks the same, and a tank from the garage shows what its player bought. Two things never change on a player's tank: its turret keeps the size of the standard tank's, because Turret isn't a stat of a player's tank, and it is always the same bright blue, however many points it spends. No enemy has that blue: the flanker's is darker and of another hue. Among several players, a tag over each of their tanks bears the number of its player, from P1 to P4. All tanks have the same size.
 
 ## Enemy brains
 
 A brain is the controller of one enemy tank. It observes the fight (its own state, the tanks, bullets and mines around it, the nearby walls) and issues the same commands a player has: move, aim, shoot, place a mine, shield. Brains don't cheat: their tanks obey the same hardware limits and the same rules as player tanks. Enemies in an active sector always know where the players are. What they do with that knowledge depends on their software. An enemy fights the nearest player in its sector whose tank still runs, and keeps that target until another player is clearly nearer.
 
 Two things make a brain better. Its tiers, bought with points, decide what it is able to do. Its experience, which depends only on the sector, decides how well it does it: experience shortens the reaction delay from 0.50 s to 0.12 s and shrinks the aiming error from 8° to 1°.
+
+A blast spares nobody, so the bullets that explode ask two things of the brains. A tank that fires them holds its fire, whatever its tier, while the blast of its shot would reach its own tank or another enemy. And from tier 1, a brain stays out of the circle that an exploding bullet marks, as it stays away from mines.
 
 Brains are hand-written, one set of behavior per tier. In normal and hard mode they never learn during play, because that would break the promise that a seed always gives the same challenge. Brains that learn belong to [impossible mode](#impossible-mode).
 
@@ -447,7 +489,7 @@ The sector budget is the measure of an enemy's budget in sector $n$. No tank has
 
 $$B(n) = B_{\max} - (B_{\max} - B_0)\, e^{-(n-1)/15}$$
 
-with $B_0 = 10$ and $B_{\max} = 100$ in normal mode. It rises fast at first and flattens toward the cap. The cap stays below the 135 points of a fully equipped tank, so even late enemies must specialize. Only a leader can have more than the cap. A tank that has more points than its hardware can take raises its software with the rest (see [Enemy generation](#enemy-generation)). Every stat also stops at its own highest level.
+with $B_0 = 10$ and $B_{\max} = 100$ in normal mode. It rises fast at first and flattens toward the cap. The cap stays below the 139 points of a fully equipped tank, so even late enemies must specialize. Only a leader can have more than the cap. A tank that has more points than its hardware can take raises its software with the rest (see [Enemy generation](#enemy-generation)). Every stat also stops at its own highest level.
 
 The number of enemies in a sector is $N(n) = \min(6,\ 1 + \lfloor n/3 \rfloor)$ in solo and $\lceil N(n)\,(1 + 0.5\,(P - 1)) \rceil$ with $P$ players. Arenas hold 1.5 times as many, in three waves (see [Arenas](#arenas)). The group of a sector is set when the sector is loaded, one sector ahead of the players. A sector that is too small for its whole group holds as many enemies as fit. That happens in the smallest arenas: to about one in a thousand with four players, and almost never with fewer.
 
@@ -611,9 +653,9 @@ In arena mode, the view doesn't follow the tank: it holds on the room and on its
 
 ### Visual style
 
-The game is drawn as a technical drawing on a dark sheet, and nothing is lit: a solid shows its height by its darker sides. The floor carries a grid with a line every meter and a heavier one every 5 m. Walls are bands between two pale lines, destructible blocks are hatched and explosive crates are crossed in red. Tanks are assembled from parts by the game, not modeled by hand: the body is in the tank's color, and the other parts are dark and edged in pale lines. Bullets are the brightest objects on screen. They are white whoever fired them, because any bullet can destroy a player's tank, and each casts a patch of light on the floor. A bullet is an elongated shell with one dark stripe for each bounce it has left: it loses a stripe at every bounce, and a plain bullet won't bounce again. The void outside the corridor is empty and dark.
+The game is drawn as a technical drawing on a dark sheet, and nothing is lit: a solid shows its height by its darker sides. The floor carries a grid with a line every meter and a heavier one every 5 m. Walls are bands between two pale lines, destructible blocks are hatched and explosive crates are crossed in red. Tanks are assembled from parts by the game, not modeled by hand: the body is in the tank's color, and the other parts are dark and edged in pale lines. Bullets are the brightest objects on screen. They are white whoever fired them, because any bullet can destroy a player's tank, and each casts a patch of light on the floor. A bullet is an elongated shell with one dark stripe for each bounce it has left: it loses a stripe at every bounce, and a plain bullet won't bounce again. A special bullet has a shape of its own: a pointed tip while it pierces, a chevron in the place of each stripe when it seeks, a seam along it when it will split, and a flat end, with a red line that cuts it near that end, when it explodes. The exploding bullet is the only one with a trail, a thin one. The void outside the corridor is empty and dark.
 
-A line in dashes stands for what isn't there. A dormant enemy is the outline of its tank in dashes, flat on the floor and in its color, with every part that tells a stat. A bullet that is destroyed leaves a short burst of white strokes. A life that the player can't take is the outline of itself in dashes. A tank in reserve is the outline of its tank in dashes too, on the void outside the room.
+A line in dashes stands for what isn't there. A dormant enemy is the outline of its tank in dashes, flat on the floor and in its color, with every part that tells a stat. The seeker, the flanker and the grenadier are too dark for that: dashes in their color would not show on the sheet, so their outlines are in the pale tint of it. Dashes also draw what a special bullet is about to do (see [Special bullets](#special-bullets)): white for the way that it will fly, red for the circle that a blast will reach. A bullet that is destroyed leaves a short burst of white strokes. A life that the player can't take is the outline of itself in dashes. A tank in reserve is the outline of its tank in dashes too, on the void outside the room.
 
 The floor of an arena bears two circles in dashes around its middle, in a dull red. The place where a tank is about to appear is marked by a red circle that closes in on it. A life on the floor is a square in the players' blue, like those that count the lives on the display, inside the circle within which it is taken. The room of arena mode bears no circles: nothing else is there to tell it from. The place of a block or of a crate that is about to stand there is drawn flat on the floor: its outline, with the hatching of the block or the cross of the crate.
 
@@ -630,7 +672,7 @@ The interface is the margin of the drawing: ruled panels with square corners, la
 | Host | The name of the game, its password, open |
 | Join | The games of the local network with their names and which of them have a password, the address of the host, the password of a game that has one, join. In a browser: how to join by the link of a host, and that link again once it was followed. |
 | Lobby | The name of the game, the players with who is ready, the difficulty, the seed, arena mode and free mode, which the host sets, the garage in free mode, a note when the run will earn no achievement, ready and the countdown to the run, the address to join at or the link for browsers with a button that copies it (host) |
-| Garage | Every stat of the player's tank with its level, what it gives, its price and the price of one more level, the points that are spent and those that are left, the tank as it will look, back to the standard tank |
+| Garage | Every stat of the player's tank with its level, what it gives, its price and the price of one more level, the type of its bullets as one choice among five, the points that are spent and those that are left, the tank as it will look, back to the standard tank |
 | Heads-up display | Rounds and reload progress, mines left, shield state, sector number, lives (solo), seed, difficulty and version, a note on a run that earns no achievement, a scale and a north arrow, a ruler along the edge of the screen that gives the distance to the barrier, the number of each wave of an arena as it is announced, a caption over a life on the floor (solo), a numbered square for each teammate's state, a tag with the number of each player over their tank, a marker at the screen edge for each teammate out of view and what to do about a wreck (multiplayer). Rounds, reload and mines are also on an arc under the player's own tank. In arena mode: the number of the group in place of the sector number, the next one during a lull with its last two seconds counted down, a message when a group comes, and no ruler. |
 | Menu | Resume, settings, quit, and the seed with its version and the difficulty of a run that isn't in normal mode. In multiplayer, the host goes back to the lobby or closes the game, and the others leave it. |
 | Game over | Sectors cleared, or groups in arena mode, time, kills, seed and version, the difficulty of a run that isn't in normal mode, the tank that ended the run with its class and the list of its parts, a note on a run that earned no achievement, retry with a note that it will earn none, new run. In multiplayer, the choice is the host's. |
@@ -691,13 +733,18 @@ The question of M5 waits for more players than the project has now. An early acc
 
 Arena mode came after M6 and is on no milestone: it is an experiment, which answers whether the fights of the game hold a run without the corridor between them. It is also where M7 can be tried first, since what changes there from one group to the next is the enemies alone.
 
-Later, in no fixed order: controller support, local co-op on one screen (split screen, or one camera that follows all players), the full sound pass, interface polish and more options, a performance pass, the official server, new bullet types (splitting, seeking, exploding), and brains that learn (see [Impossible mode](#impossible-mode)).
+The bullets that seek, split and explode came after M6 too, each with a class of its own, and are on no milestone either. They answer whether a group still reads when four classes in eleven fire a bullet of their own.
+
+Later, in no fixed order: controller support, local co-op on one screen (split screen, or one camera that follows all players), the full sound pass, interface polish and more options, a performance pass, the official server, and brains that learn (see [Impossible mode](#impossible-mode)).
 
 ## Open questions
 
 - How do internet games connect for hosts who can't open a port, before the official server exists?
 - In impossible mode, how exactly are enemies scored, and can brains learn fast enough within one run to matter?
 - Which exact shades do the hues of the classes take? The players' blue and the white of the bullets are settled.
+- Are four classes in eleven too many that fire a special bullet? Piercing alone was on one tank in eight. The classes could be drawn with weights.
+- Are the prices of the seeking, the splitting and the exploding bullets right? They were set by rank, before any trial: seeking as piercing, splitting above it, exploding the dearest.
+- Do the three dark classes read on the dark sheet? A dark body has a pale frame, and their outlines in dashes take a pale tint. Whether a dormant flanker in that tint is told from a teammate's wreck is to be checked in a game of several players.
 - How is the game distributed, at which secure address is its page published, and is the name free to use?
 - How do the players of an early access release update the game, and how do they report bugs and feedback?
 - Is a tank from the garage so much better than the standard tank, in the hands of a good player, that free mode becomes the easy way through? Its runs earn no achievement and keep records of their own, which limits the harm. The prices were set for enemies, whose danger also depends on their brains. The check comes before the garage is built: a playtest that takes its tank from the command line, and the same seed played with the standard tank and with two or three extreme ones.
