@@ -12,7 +12,11 @@ use std::net::{IpAddr, Ipv4Addr, UdpSocket};
 
 use bevy::prelude::*;
 
-use crate::{protocol::REVISION, rules::MAX_PLAYERS, seed::VERSION};
+use crate::{
+    protocol::{REVISION, named},
+    rules::MAX_PLAYERS,
+    seed::VERSION,
+};
 
 /// The kind of service that a game is on the local network.
 pub const SERVICE: &str = "_tanku._udp.local.";
@@ -33,6 +37,8 @@ pub struct Announcement {
     pub players: u8,
     /// Whether the game takes players now: nobody joins a run in progress.
     pub open: bool,
+    /// The name that its host gave it, or nothing.
+    pub name: String,
 }
 
 /// What a player can do about a game that was found.
@@ -58,6 +64,7 @@ impl Announcement {
             port,
             players,
             open,
+            name: String::new(),
         }
     }
 
@@ -76,7 +83,7 @@ impl Announcement {
 
     /// The text of the announcement, as names and what goes by them. The port is not in it:
     /// an announcement carries the port of its service apart.
-    pub fn text(&self) -> [(&'static str, String); 5] {
+    pub fn text(&self) -> [(&'static str, String); 6] {
         let door = if self.open { "open" } else { "closed" };
         [
             ("game", format!("{:x}", self.game)),
@@ -84,20 +91,22 @@ impl Announcement {
             ("revision", self.revision.to_string()),
             ("players", self.players.to_string()),
             ("door", door.to_string()),
+            ("name", self.name.clone()),
         ]
     }
 
     /// Reads what a host says of its game, from the port of its service and from what its
     /// text has by each name. Anything can announce itself on a network: what doesn't read
-    /// as a game is none. A later build may say more, which is left unread.
+    /// as a game is none. A later build may say more, which is left unread, and an earlier
+    /// one gave its game no name.
     pub fn read<'a>(port: u16, said: impl Fn(&str) -> Option<&'a str>) -> Option<Self> {
-        let named = |version: &&str| {
+        let told = |version: &&str| {
             (1..=VERSION_LENGTH).contains(&version.len())
                 && version.chars().all(|letter| letter.is_ascii_graphic())
         };
         Some(Self {
             game: u64::from_str_radix(said("game")?, 16).ok()?,
-            version: said("version").filter(named)?.to_string(),
+            version: said("version").filter(told)?.to_string(),
             revision: said("revision")?.parse().ok()?,
             port: Some(port).filter(|port| *port != 0)?,
             players: said("players")?.parse().ok()?,
@@ -106,6 +115,7 @@ impl Announcement {
                 "closed" => false,
                 _ => return None,
             },
+            name: named(said("name").unwrap_or_default()),
         })
     }
 }
@@ -350,6 +360,7 @@ mod tests {
     use std::collections::HashMap;
 
     use super::*;
+    use crate::protocol::NAME_LENGTH;
 
     fn game() -> Announcement {
         Announcement::of(0xFEED_5EED, 28405, 2, true)
@@ -383,18 +394,35 @@ mod tests {
         };
         assert_eq!(read_with(&closed, &[]), Some(closed));
         // A later build may say more.
-        assert_eq!(read_with(&told, &[("mode", Some("hard"))]), Some(told));
-        // A name and what goes by it fit the 255 letters that an announcement gives them.
+        assert_eq!(
+            read_with(&told, &[("mode", Some("hard"))]),
+            Some(told.clone())
+        );
+        // A game goes by the name that its host gave it, and an earlier build gave none.
+        let friday = Announcement {
+            name: "Friday night".into(),
+            ..told.clone()
+        };
+        assert_eq!(read_with(&friday, &[]), Some(friday.clone()));
+        assert_eq!(read_with(&friday, &[("name", None)]), Some(told));
+        // Anything can claim a name: what is read of it is what a host could have typed.
+        let claimed = format!(" {}\n", "W".repeat(NAME_LENGTH + 40));
+        let read = read_with(&friday, &[("name", Some(&claimed))]).unwrap();
+        assert_eq!(read.name, "W".repeat(NAME_LENGTH));
+        // What goes by each name fits the 255 bytes that an announcement gives the two: the
+        // longest name is made of the letters that take the most bytes.
         let longest = Announcement {
             version: "9".repeat(VERSION_LENGTH),
             revision: u32::MAX,
+            name: "\u{17e}".repeat(NAME_LENGTH),
             ..game()
         };
+        assert_eq!(named(&longest.name), longest.name);
         assert!(
             longest
                 .text()
                 .iter()
-                .all(|(name, said)| name.len() + said.len() < 64)
+                .all(|(name, said)| name.len() + said.len() < 128)
         );
     }
 

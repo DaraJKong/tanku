@@ -7,8 +7,8 @@
 //! key of that name for so long, `wait SECONDS`, `warp SECTOR`, `unlock`, which unlocks every
 //! mode and option, or those that it names, as `unlock seed free`, `tank TANK`, which builds the tank of the garage as the command line
 //! writes one,
-//! `host PORT`, which opens a game for others to join, and takes browsers on the port after
-//! that one, `join ADDRESS`, which joins a game by its address or by what its host hands out
+//! `host PORT NAME`, which opens a game for others to join, under a name if one is given, and
+//! takes browsers on the port after that one, `join ADDRESS`, which joins a game by its address or by what its host hands out
 //! for browsers,
 //! `type TEXT`, which presses the keys that write a text, `turn QUARTERS`, `peek ENEMY`,
 //! `look X Y`, `zoom METERS`, `clear`, `reach DX DY`, which puts the tank that far from the life
@@ -78,7 +78,7 @@ use crate::{
     host::{HostPort, WebPort},
     input,
     music::Baton,
-    session::SessionRequest,
+    session::{SessionRequest, Sign},
     storage,
     unlocks::Unlocks,
 };
@@ -344,18 +344,22 @@ fn display(
 /// has looked for the cursor, which would let go of the button, and before the menus react.
 fn press(
     mut script: ResMut<Script>,
-    mut buttons: Query<(&mut Interaction, &Children), With<Button>>,
+    mut buttons: Query<(Entity, &mut Interaction), With<Button>>,
+    inside: Query<&Children>,
     labels: Query<&Text>,
 ) {
     let Some(label) = script.press.take() else {
         return;
     };
-    let bears = |children: &Children| {
-        let mut texts = children.iter().filter_map(|child| labels.get(child).ok());
+    // A button bears every text that it holds: the row of a game holds several.
+    let bears = |button: Entity| {
+        let mut texts = inside
+            .iter_descendants(button)
+            .filter_map(|piece| labels.get(piece).ok());
         texts.any(|text| text.0.eq_ignore_ascii_case(&label))
     };
-    match buttons.iter_mut().find(|(_, children)| bears(children)) {
-        Some((mut interaction, _)) => *interaction = Interaction::Pressed,
+    match buttons.iter_mut().find(|(button, _)| bears(*button)) {
+        Some((_, mut interaction)) => *interaction = Interaction::Pressed,
         None => warn!("no button bears the label: {label}"),
     }
 }
@@ -437,13 +441,14 @@ fn run_script(
             Err(why) => warn!("no tank can be built as asked: {why}"),
         },
         // Opens a game for others to join, on a port of its own if one is given. Browsers
-        // are then taken on the port after it.
+        // are then taken on the port after it. The words after the port are its name.
         "host" => {
             if let Ok(wanted) = word(1).parse::<u16>() {
                 port.0 = wanted;
                 web.0 = wanted.checked_add(1);
             }
-            session_requests.write(SessionRequest::Host);
+            let name = words.get(2..).unwrap_or_default().join(" ");
+            session_requests.write(SessionRequest::Host(Sign { name }));
         }
         // Joins the game at an address, from the screen where a player types it.
         "join" => {

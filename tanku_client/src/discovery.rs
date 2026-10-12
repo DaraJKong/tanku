@@ -13,8 +13,8 @@ use crate::{
     session::{Found, Game},
 };
 
-/// How many games are shown.
-const SHOWN: usize = 5;
+/// How many games are shown: as many as the join screen has room for, each under its name.
+pub const SHOWN: usize = 4;
 
 /// The search for games, while it goes on.
 #[derive(Resource)]
@@ -51,6 +51,7 @@ fn stop(mut commands: Commands, mut found: ResMut<Found>) {
 fn hear(games: &mut Vec<Game>, told: &Announcement, machine: Ipv4Addr) {
     let game = Game {
         id: told.game,
+        name: told.name.clone(),
         machine,
         address: written(machine, told.port),
         players: told.players,
@@ -106,7 +107,7 @@ mod tests {
     use crate::{
         host::HostPort,
         net::tests::{ask, free_port, game, run_until, screen},
-        session::SessionRequest,
+        session::{SessionRequest, Sign},
     };
 
     /// Where the games of a test are announced and looked for: on its own machine, on a port
@@ -131,7 +132,12 @@ mod tests {
     fn hosting(reach: Reach, port: u16) -> App {
         let mut game = game();
         game.insert_resource(reach).insert_resource(HostPort(port));
-        ask(&mut game, SessionRequest::Host);
+        ask(
+            &mut game,
+            SessionRequest::Host(Sign {
+                name: "Friday".into(),
+            }),
+        );
         run_until("a lobby", &mut [&mut game], |games| {
             screen(games[0]) == Screen::Lobby
         });
@@ -155,6 +161,8 @@ mod tests {
         let address = format!("127.0.0.1:{port}");
         assert_eq!(games[0].address, address);
         assert_eq!((games[0].players, games[0].standing), (1, Standing::Open));
+        // It is listed under the name that its host gave it.
+        assert_eq!(games[0].name, "Friday");
 
         // What was found is where the game is joined.
         ask(&mut guest, SessionRequest::Join(address.clone()));
@@ -216,6 +224,7 @@ mod tests {
         let later = Announcement {
             players: 3,
             open: false,
+            name: "Friday".into(),
             ..told
         };
         hear(&mut games, &later, there);
@@ -225,6 +234,7 @@ mod tests {
             (games[0].players, games[0].standing),
             (3, Standing::Running)
         );
+        assert_eq!(games[0].name, "Friday");
         // Another game is another row, with its port when it isn't the usual one.
         hear(&mut games, &Announcement::of(8, 4000, 1, true), there);
         assert_eq!(games.len(), 2);

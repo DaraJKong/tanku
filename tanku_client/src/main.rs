@@ -48,6 +48,8 @@ pub enum Screen {
     Garage,
     /// Where the player sees what runs unlock, and what theirs have.
     Achievements,
+    /// Where a player sets up the game that they host for others.
+    Host,
     /// Where a player types the address of a game to join.
     Join,
     /// Where the players of a game wait for its host to start a run.

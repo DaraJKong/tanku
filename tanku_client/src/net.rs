@@ -669,7 +669,7 @@ pub(crate) mod tests {
         cli::Options,
         crew,
         host::{HostPort, WebPort},
-        session,
+        session::{self, Sign},
     };
 
     /// The game without its drawings: what plays a run, alone or with others.
@@ -752,7 +752,7 @@ pub(crate) mod tests {
         let mut game = game();
         game.insert_resource(HostPort(port))
             .insert_resource(WebPort(web));
-        ask(&mut game, SessionRequest::Host);
+        ask(&mut game, SessionRequest::Host(default()));
         run_until("a lobby", &mut [&mut game], |games| {
             screen(games[0]) == Screen::Lobby
         });
@@ -922,6 +922,28 @@ pub(crate) mod tests {
         assert!(guest.world().get_resource::<Run>().is_none());
         let world = guest.world_mut();
         assert_eq!(world.query::<&Sector>().iter(world).count(), 0);
+    }
+
+    /// The lobby that a game holds, its own or the one that its host told it of.
+    pub(crate) fn lobby(game: &mut App) -> Lobby {
+        let world = game.world_mut();
+        world.query::<&Lobby>().single(world).unwrap().clone()
+    }
+
+    #[test]
+    fn a_guest_is_told_the_name_that_the_host_gave_the_game() {
+        let port = free_port();
+        let mut host = game();
+        host.insert_resource(HostPort(port));
+        // A name is kept as a host could have typed it, whatever asks for the game.
+        let name = "  Friday night\t ".to_string();
+        ask(&mut host, SessionRequest::Host(Sign { name }));
+        let mut guest = guest(port);
+        run_until("the lobby", &mut [&mut host, &mut guest], |games| {
+            screen(games[1]) == Screen::Lobby
+        });
+        assert_eq!(lobby(&mut host).name, "Friday night");
+        assert_eq!(lobby(&mut guest).name, "Friday night");
     }
 
     #[test]
@@ -1183,7 +1205,7 @@ pub(crate) mod tests {
                 .iter()
                 .all(|port| UdpSocket::bind(("0.0.0.0", *port)).is_ok())
         });
-        ask(&mut host, SessionRequest::Host);
+        ask(&mut host, SessionRequest::Host(default()));
         run_until("the lobby", &mut [&mut host], |games| {
             games[0].world().get_resource::<Hosting>().is_some()
         });
@@ -1505,7 +1527,7 @@ pub(crate) mod tests {
         let _host = host(port);
         let mut second = game();
         second.insert_resource(HostPort(port));
-        ask(&mut second, SessionRequest::Host);
+        ask(&mut second, SessionRequest::Host(default()));
         second.update();
         let told = second.world().resource::<Notice>().0.clone().unwrap();
         assert!(told.contains("is taken on this machine"), "{told}");

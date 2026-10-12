@@ -37,7 +37,7 @@ use lightyear::{
 };
 use tanku_core::{
     discovery::{Announcement, Announcer, Reach},
-    protocol::{Lobby, Member, Reliable, RunState, Told, protocol_id},
+    protocol::{Lobby, Member, Reliable, RunState, Told, named, protocol_id},
     rules::{MAX_PLAYERS, TICK_RATE},
     sim::{
         Bullet, Gun, Motion, Player, Position, Run, RunPhase, RunRequest, Shield, SimEvent, Tank,
@@ -140,6 +140,8 @@ struct Beacon {
     announcer: Announcer,
     /// The number by which the game is told from every other.
     game: u64,
+    /// The name that its host gave it, or nothing.
+    name: String,
     /// How many players the game had and whether it took more, when that was last said.
     said: Option<(u8, bool)>,
 }
@@ -194,13 +196,15 @@ impl ConnectionRequestHandler for Doorkeeper {
 }
 
 /// Opens a game on this machine, for others to join, and announces it where games are looked
-/// for. Fails if the port for desktop games is taken. If the one for browsers is, the game
-/// opens without them. Returns how browsers reach it, if they do.
+/// for, under the name that its host gave it, if any. Fails if the port for desktop games is
+/// taken. If the one for browsers is, the game opens without them. Returns how browsers reach
+/// it, if they do.
 pub fn open(
     commands: &mut Commands,
     ports: Ports,
     reach: &Reach,
     credentials: &mut Credentials,
+    name: &str,
 ) -> io::Result<Option<Web>> {
     let on = |port: u16| SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), port);
     // The network library takes a port a moment later, and stops the game if it can't.
@@ -248,7 +252,11 @@ pub fn open(
         commands.trigger(LinkStart { entity: listener });
         Some(listener)
     });
-    let mut lobby = Lobby::default();
+    let name = named(name);
+    let mut lobby = Lobby {
+        name: name.clone(),
+        ..default()
+    };
     lobby.seats[0] = Some(Member::Host);
     let game = commands
         .spawn((
@@ -271,6 +279,7 @@ pub fn open(
         commands.insert_resource(Beacon {
             announcer,
             game,
+            name,
             said: None,
         });
     }
@@ -535,14 +544,17 @@ fn take_commands(mut tanks: Query<(&ActionState<TankCommand>, &mut TankCommand),
     }
 }
 
-/// Keeps the local network told of the game: how many players it has, and whether it takes
-/// more. Those who look for a game see both.
+/// Keeps the local network told of the game: its name, how many players it has, and whether
+/// it takes more. Those who look for a game see all three.
 fn call_out(hosting: Res<Hosting>, lobbies: Query<&Lobby>, mut beacon: ResMut<Beacon>) {
     let players = lobbies.get(hosting.game).map_or(1, Lobby::players) as u8;
     let news = Some((players, hosting.is_open()));
     if beacon.said != news {
         beacon.said = news;
-        let told = Announcement::of(beacon.game, hosting.port, players, hosting.is_open());
+        let told = Announcement {
+            name: beacon.name.clone(),
+            ..Announcement::of(beacon.game, hosting.port, players, hosting.is_open())
+        };
         beacon.announcer.tell(&told);
     }
 }

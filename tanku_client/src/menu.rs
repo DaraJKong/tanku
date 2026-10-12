@@ -10,7 +10,7 @@ use bevy::{
 use tanku_core::{
     discovery::Standing,
     modes::{Difficulty, Unlock},
-    protocol::{Lobby, Member},
+    protocol::{Lobby, Member, NAME_LENGTH, lettered, named},
     rules::{MAX_PLAYERS, PLAYTEST_LAST_SECTOR, TICK_RATE},
     seed::{self, VERSION},
     sim::{Playtest, Run, RunPhase, RunRequest, SimEvent},
@@ -26,7 +26,7 @@ use crate::{
     garage::Garage,
     net, report,
     scene::Paints,
-    session::{Drawn, Found, Game, Invitation, Notice, Session, SessionRequest},
+    session::{Drawn, Found, Game, Invitation, Notice, Session, SessionRequest, Sign},
     settings::{Action, Binding, League, Records, Settings},
     theme,
     unlocks::{self, Unlocks},
@@ -73,7 +73,9 @@ enum Press {
     /// On the main menu: lists the best runs of a league.
     List(League),
     OpenAchievements,
-    /// Opens a game on this machine for others to join.
+    /// Opens the screen where a host sets up a game.
+    OpenHost,
+    /// On that screen: opens the game on this machine, for others to join.
     Host,
     /// Opens the screen where the address of a game is typed.
     OpenJoin,
@@ -167,6 +169,16 @@ struct FoundList;
 #[derive(Resource, Default)]
 struct Address(String);
 
+/// The text that shows the name of a game as its host types it.
+#[derive(Component)]
+struct NameField;
+
+/// What a host types for the game that they are about to open.
+#[derive(Resource, Default)]
+struct Opening {
+    name: String,
+}
+
 /// What a single player has set for their next run.
 #[derive(Resource, Default)]
 struct Setup {
@@ -226,11 +238,13 @@ pub fn plugin(app: &mut App) {
         .or_else(in_state(Screen::Solo))
         .or_else(in_state(Screen::Garage))
         .or_else(in_state(Screen::Achievements))
+        .or_else(in_state(Screen::Host))
         .or_else(in_state(Screen::Join))
         .or_else(in_state(Screen::Lobby));
     app.init_resource::<Capture>()
         .init_resource::<Outcome>()
         .init_resource::<Address>()
+        .init_resource::<Opening>()
         .init_resource::<Setup>()
         .init_resource::<Listed>()
         .init_resource::<Way>()
@@ -249,12 +263,14 @@ pub fn plugin(app: &mut App) {
             draw_a_seed_for_one,
         )
         .add_systems(OnEnter(Screen::Achievements), achievements_screen)
+        .add_systems(OnEnter(Screen::Host), host_screen)
         .add_systems(OnEnter(Screen::Join), join_screen)
         .add_systems(OnEnter(Screen::Lobby), draw_a_seed)
         .add_systems(OnExit(Screen::Menu), put_the_exhibit_away)
         .add_systems(OnExit(Screen::Solo), put_the_exhibit_away)
         .add_systems(OnExit(Screen::Garage), put_the_exhibit_away)
         .add_systems(OnExit(Screen::Achievements), put_the_exhibit_away)
+        .add_systems(OnExit(Screen::Host), put_the_exhibit_away)
         .add_systems(OnExit(Screen::Join), put_the_exhibit_away)
         .add_systems(OnExit(Screen::Lobby), put_the_exhibit_away)
         .add_systems(OnEnter(Screen::GameOver), game_over)
@@ -270,7 +286,15 @@ pub fn plugin(app: &mut App) {
         .add_systems(
             Update,
             (
-                (capture_binding, type_address, type_seed, press, escape).chain(),
+                (
+                    capture_binding,
+                    type_address,
+                    type_name,
+                    type_seed,
+                    press,
+                    escape,
+                )
+                    .chain(),
                 (solo_screen.run_if(in_state(Screen::Solo)), show_seed).chain(),
                 garage_screen.run_if(in_state(Screen::Garage)),
                 refresh_pause
@@ -279,7 +303,7 @@ pub fn plugin(app: &mut App) {
                 (lobby_screen.run_if(in_state(Screen::Lobby)), show_copy).chain(),
                 list_games.run_if(in_state(Screen::Join)),
                 list_records.run_if(in_state(Screen::Menu)),
-                (show_address, tell_how_it_goes),
+                (show_address, show_name, tell_how_it_goes),
                 hover,
                 pause_time,
                 (watch_run, keep_records).chain(),
@@ -743,7 +767,7 @@ fn main_menu(
                 primary(parent, "Solo", Press::Solo);
                 // A browser can't accept connections, so it hosts no game.
                 if cfg!(not(target_arch = "wasm32")) {
-                    button(parent, "Host a game", Press::Host);
+                    button(parent, "Host a game", Press::OpenHost);
                 }
                 button(parent, "Join a game", Press::OpenJoin);
                 button(parent, "Achievements", Press::OpenAchievements);
@@ -1479,6 +1503,134 @@ fn achievements_screen(mut commands: Commands, unlocks: Res<Unlocks>) {
         });
 }
 
+/// What a key does to words that a player types for others to read, such as the name of a
+/// game: it adds the letters that the interface draws, as long as there is room.
+fn typed_words(words: &mut String, key: &Key, text: Option<&str>, length: usize) {
+    if *key == Key::Backspace {
+        words.pop();
+        return;
+    }
+    let letters = text.unwrap_or_default().chars();
+    for letter in letters.filter(|letter| lettered(*letter)) {
+        if words.chars().count() < length {
+            words.push(letter);
+        }
+    }
+}
+
+/// Asks to open the game that a host set up, and keeps its name for the next one.
+fn ask_to_host(
+    opening: &Opening,
+    settings: &mut Settings,
+    requests: &mut MessageWriter<SessionRequest>,
+) {
+    let name = named(&opening.name);
+    if settings.host_name != name {
+        settings.host_name.clone_from(&name);
+    }
+    requests.write(SessionRequest::Host(Sign { name }));
+}
+
+/// Takes what the player types on the host screen: the name of the game. Enter opens it.
+fn type_name(
+    mut keys: MessageReader<KeyboardInput>,
+    screen: Res<State<Screen>>,
+    session: Res<Session>,
+    mut opening: ResMut<Opening>,
+    mut settings: ResMut<Settings>,
+    mut requests: MessageWriter<SessionRequest>,
+) {
+    let typing = *screen.get() == Screen::Host && *session == Session::Solo;
+    for key in keys.read() {
+        if !typing || key.state != ButtonState::Pressed {
+            continue;
+        }
+        if key.logical_key == Key::Enter {
+            ask_to_host(&opening, &mut settings, &mut requests);
+        } else {
+            let mut name = opening.name.clone();
+            typed_words(
+                &mut name,
+                &key.logical_key,
+                key.text.as_deref(),
+                NAME_LENGTH,
+            );
+            if name != opening.name {
+                opening.name = name;
+            }
+        }
+    }
+}
+
+/// Shows the name of a game as its host types it, with a mark that blinks where the next
+/// letter goes while there is room for one.
+fn show_name(
+    time: Res<Time<Real>>,
+    opening: Res<Opening>,
+    mut fields: Query<&mut Text, With<NameField>>,
+) {
+    let room = opening.name.chars().count() < NAME_LENGTH;
+    let blinks = room && time.elapsed_secs() % 1.0 < 0.5;
+    let wanted = format!("{}{}", opening.name, if blinks { "_" } else { "" });
+    for mut text in &mut fields {
+        if text.0 != wanted {
+            text.0.clone_from(&wanted);
+        }
+    }
+}
+
+/// The screen where a player sets up the game that they host for others.
+fn host_screen(mut commands: Commands, settings: Res<Settings>, mut opening: ResMut<Opening>) {
+    // The name of the game that was hosted last is the likeliest one.
+    opening.name.clone_from(&settings.host_name);
+    commands
+        .spawn((
+            DespawnOnExit(Screen::Host),
+            Node {
+                width: percent(100),
+                height: percent(100),
+                ..default()
+            },
+            GlobalZIndex(10),
+            children![sheet_edge()],
+        ))
+        .with_children(|root| {
+            margin(root, 440.0, |parent| {
+                parent.spawn(theme::label(
+                    "Game of several players",
+                    13.0,
+                    theme::TEXT_DIM,
+                ));
+                parent.spawn((
+                    theme::title("Host a game", 64.0, theme::TEXT),
+                    Node {
+                        margin: UiRect::bottom(px(8)),
+                        ..default()
+                    },
+                ));
+                section(parent, "Name of the game");
+                parent.spawn((
+                    ruled(Node {
+                        padding: UiRect::axes(px(12), px(10)),
+                        min_height: px(48),
+                        align_items: AlignItems::Center,
+                        ..default()
+                    }),
+                    children![(NameField, theme::text("", 22.0, theme::TEXT))],
+                ));
+                line(
+                    parent,
+                    "The others find the game under this name on their join screen. A game \
+                     needs none. Enter opens it.",
+                    theme::TEXT_DIM,
+                );
+                primary(parent, "Open the game", Press::Host);
+                button(parent, "Back", Press::Abandon);
+                status_line(parent);
+            });
+        });
+}
+
 /// The screen where the player types the address of a game to join.
 fn join_screen(mut commands: Commands, settings: Res<Settings>, mut address: ResMut<Address>) {
     // The game that was joined last is the likeliest one.
@@ -1558,7 +1710,8 @@ fn join_screen(mut commands: Commands, settings: Res<Settings>, mut address: Res
         });
 }
 
-/// What a row of the join screen says about a game that was found, next to its address.
+/// What a row of the join screen says about a game that was found, besides its name and its
+/// address.
 fn found_words(game: &Game) -> String {
     match game.standing {
         Standing::Open | Standing::Full => {
@@ -1574,31 +1727,53 @@ fn found_words(game: &Game) -> String {
     }
 }
 
-/// The row of a game that was found. One that can be joined is a button.
+/// The row of a game that was found: its name over its address, or its address alone, and
+/// what a player can do about it. One that can be joined is a button.
 fn found_row(parent: &mut ChildSpawnerCommands, game: &Game) {
     let open = game.standing == Standing::Open;
     let ink = if open { theme::TEXT } else { theme::TEXT_DIM };
     let node = Node {
-        justify_content: JustifyContent::SpaceBetween,
-        align_items: AlignItems::Center,
-        column_gap: px(16),
-        ..button_node(Val::Auto)
+        flex_direction: FlexDirection::Column,
+        row_gap: px(2),
+        padding: UiRect::axes(px(16), px(8)),
+        border: UiRect::all(px(1)),
+        ..default()
     };
-    let words = children![
-        theme::figure(game.address.clone(), 20.0, ink),
-        theme::text(found_words(game), 16.0, ink),
-    ];
+    let (address, words) = (game.address.clone(), found_words(game));
+    let content = |row: &mut ChildSpawnerCommands| {
+        let below = Node {
+            justify_content: JustifyContent::SpaceBetween,
+            align_items: AlignItems::Center,
+            column_gap: px(16),
+            ..default()
+        };
+        if game.name.is_empty() {
+            row.spawn(theme::figure(address, 20.0, ink));
+            row.spawn(theme::text(words, 15.0, theme::TEXT_DIM));
+        } else {
+            row.spawn(theme::text(game.name.clone(), 18.0, ink));
+            row.spawn((
+                below,
+                children![
+                    theme::figure(address, 15.0, theme::TEXT_DIM),
+                    theme::text(words, 15.0, theme::TEXT_DIM),
+                ],
+            ));
+        }
+    };
     if open {
-        parent.spawn((
+        let button = (
             Button,
             Press::JoinFound(game.id),
             node,
             BackgroundColor(theme::SURFACE_RAISED),
             BorderColor::all(theme::RULE),
-            words,
-        ));
+        );
+        parent.spawn(button).with_children(content);
     } else {
-        parent.spawn((node, BorderColor::all(theme::RULE_DIM), words));
+        parent
+            .spawn((node, BorderColor::all(theme::RULE_DIM)))
+            .with_children(content);
     }
 }
 
@@ -1859,9 +2034,14 @@ fn lobby_screen(
         ))
         .with_children(|root| {
             margin(root, 460.0, |parent| {
+                // The game goes by the name that its host gave it.
                 let role = if host { "host" } else { "guest" };
+                let game = match lobby.name.as_str() {
+                    "" => "Game of several players",
+                    name => name,
+                };
                 parent.spawn(theme::label(
-                    format!("Game of several players \u{b7} {role}"),
+                    format!("{game} \u{b7} {role}"),
                     13.0,
                     theme::TEXT_DIM,
                 ));
@@ -2291,7 +2471,12 @@ fn press(
     mut playtest: Option<ResMut<Playtest>>,
     mut destination: ResMut<Destination>,
     (options, run, time): (Res<Options>, Option<Res<Run>>, Res<Time<Real>>),
-    (session, mut address, mut notice): (Res<Session>, ResMut<Address>, ResMut<Notice>),
+    (session, mut address, mut notice, opening): (
+        Res<Session>,
+        ResMut<Address>,
+        ResMut<Notice>,
+        Res<Opening>,
+    ),
     (mut setup, mut drawn, mut listed, mut garage): (
         ResMut<Setup>,
         ResMut<Drawn>,
@@ -2383,9 +2568,13 @@ fn press(
                     Session::Guest => {}
                 }
             }
+            Press::OpenHost => {
+                notice.0 = None;
+                next_screen.set(Screen::Host);
+            }
             Press::Host => {
                 notice.0 = None;
-                session_requests.write(SessionRequest::Host);
+                ask_to_host(&opening, &mut settings, &mut session_requests);
             }
             Press::OpenJoin => {
                 notice.0 = None;
@@ -2504,7 +2693,10 @@ fn escape(
         return;
     }
     // Esc leaves the screens that come before a run as their button "Back" does.
-    let before = matches!(*screen.get(), Screen::Solo | Screen::Achievements);
+    let before = matches!(
+        *screen.get(),
+        Screen::Solo | Screen::Achievements | Screen::Host
+    );
     if before && *overlay.get() == Overlay::None {
         next_screen.set(Screen::Menu);
         return;
@@ -2647,6 +2839,8 @@ mod tests {
     const LONG_SEED: &str = "WWWWWWWWWW";
     /// A name as long as the join screen takes, which fills two lines of its field.
     const LONG_NAME: &str = "a-machine-with-the-longest-name-of-its-network.example.org:28405";
+    /// The name of a game, as long as one gets and in the widest letter.
+    const LONG_GAME: &str = "WWWWWWWWWWWWWWWWWWWWWWWW";
 
     /// A run that was lost in a far sector by a team of this size, to the tank that has
     /// the most parts to list.
@@ -2702,6 +2896,7 @@ mod tests {
     /// Sits this many players in the lobby of a game, the host first.
     fn gather(app: &mut App, players: usize) {
         let mut lobby = Lobby {
+            name: LONG_GAME.into(),
             seed: "85GVTHQA".into(),
             ..default()
         };
@@ -2860,9 +3055,22 @@ mod tests {
                 app.insert_resource(Unlocks::of(&[Unlock::ChosenSeed, Unlock::HardMode]));
                 build(app, achievements_screen);
             }),
+            // The longest name that a host types, on a machine that kept it from the last
+            // game, with the longest notice: the port may be taken.
+            ("the host screen", |app| {
+                assert_eq!(LONG_GAME.chars().count(), NAME_LENGTH);
+                let mut settings = Settings::default();
+                settings.host_name = LONG_GAME.into();
+                app.insert_resource(settings)
+                    .insert_resource(Notice(Some(LONG_NOTICE.into())));
+                build(app, host_screen);
+            }),
+            // As many games as the screen lists, each under a name as long as one gets but
+            // the last, which has none.
             ("the join screen", |app| {
                 let game = |id: u64, standing: Standing| Game {
                     id,
+                    name: if id == 4 { "" } else { LONG_GAME }.into(),
                     machine: std::net::Ipv4Addr::new(192, 168, 100, 200),
                     address: format!("{LONG_ADDRESS}:2840{id}"),
                     players: 4,
@@ -2873,8 +3081,8 @@ mod tests {
                     game(2, Standing::Full),
                     game(3, Standing::Running),
                     game(4, Standing::Other),
-                    game(5, Standing::Open),
                 ];
+                assert_eq!(found.len(), crate::discovery::SHOWN);
                 assert_eq!(LONG_NAME.len(), ADDRESS_LENGTH);
                 app.insert_resource(Found(found))
                     .insert_resource(Address(LONG_NAME.into()))
@@ -3015,6 +3223,8 @@ mod tests {
         app.init_resource::<Records>()
             .init_resource::<Options>()
             .init_resource::<Address>()
+            .init_resource::<Opening>()
+            .init_resource::<Settings>()
             .init_resource::<Setup>()
             .init_resource::<Listed>()
             .init_resource::<Garage>()
@@ -3032,6 +3242,7 @@ mod tests {
         build(&mut app, list_games);
         build(&mut app, list_records);
         build(&mut app, show_address);
+        build(&mut app, show_name);
         build(&mut app, tell_how_it_goes);
         app.update();
         app.update();
@@ -3249,6 +3460,7 @@ mod tests {
     fn a_game_that_was_found_says_whether_it_can_be_joined() {
         let game = |players: u8, standing: Standing| Game {
             id: 1,
+            name: String::new(),
             machine: std::net::Ipv4Addr::new(192, 168, 0, 21),
             address: "192.168.0.21".to_string(),
             players,
@@ -3264,6 +3476,88 @@ mod tests {
             found_words(&game(1, Standing::Other)),
             "Another version of the game"
         );
+    }
+
+    /// A key as the keyboard sends it, with the text that it writes if it writes any.
+    fn stroke(key: Key, text: Option<&str>) -> KeyboardInput {
+        KeyboardInput {
+            key_code: KeyCode::Unidentified(bevy::input::keyboard::NativeKeyCode::Unidentified),
+            logical_key: key,
+            state: ButtonState::Pressed,
+            text: text.map(Into::into),
+            repeat: false,
+            window: Entity::PLACEHOLDER,
+        }
+    }
+
+    /// The keys that write a text, one after the other.
+    fn strokes(text: &str) -> Vec<KeyboardInput> {
+        let letters = text.chars().map(|letter| letter.to_string());
+        letters
+            .map(|letter| stroke(Key::Character(letter.as_str().into()), Some(&letter)))
+            .collect()
+    }
+
+    #[test]
+    fn a_name_is_typed_a_key_at_a_time() {
+        let press = |name: &mut String, letter: &str| {
+            let key = Key::Character(letter.into());
+            typed_words(name, &key, Some(letter), NAME_LENGTH);
+        };
+        let mut name = String::new();
+        for letter in ["S", "o", "i", "r", "\u{e9}", "e", " ", "4", "!"] {
+            press(&mut name, letter);
+        }
+        assert_eq!(name, "Soir\u{e9}e 4!");
+        // What the interface has no letter for is not taken: it would show as nothing.
+        press(&mut name, "\u{1F600}");
+        press(&mut name, "\t");
+        assert_eq!(name, "Soir\u{e9}e 4!");
+        typed_words(&mut name, &Key::Backspace, None, NAME_LENGTH);
+        assert_eq!(name, "Soir\u{e9}e 4");
+        // A name stops at its length, which is counted in letters and not in bytes.
+        let mut long = String::new();
+        for _ in 0..NAME_LENGTH + 5 {
+            press(&mut long, "\u{e9}");
+        }
+        assert_eq!(long.chars().count(), NAME_LENGTH);
+    }
+
+    #[test]
+    fn the_host_screen_opens_the_game_under_the_name_that_was_typed() {
+        let mut world = World::new();
+        let mut settings = Settings::default();
+        settings.host_name = "Friday".into();
+        world.insert_resource(settings);
+        world.insert_resource(State::new(Screen::Host));
+        world.insert_resource(Session::Solo);
+        world.init_resource::<Opening>();
+        world.init_resource::<Messages<KeyboardInput>>();
+        world.init_resource::<Messages<SessionRequest>>();
+        // The screen opens on the name of the game that was hosted last.
+        world.run_system_once(host_screen).unwrap();
+        assert_eq!(world.resource::<Opening>().name, "Friday");
+        // The host types more of it, then Enter.
+        let mut keys = world.resource_mut::<Messages<KeyboardInput>>();
+        for key in strokes(" night ") {
+            keys.write(key);
+        }
+        keys.write(stroke(Key::Enter, None));
+        world.run_system_once(type_name).unwrap();
+        let mut asked = world.resource_mut::<Messages<SessionRequest>>();
+        let asked: Vec<SessionRequest> = asked.drain().collect();
+        // The game opens under the name without the space at its end, and the name is kept
+        // for the next game.
+        let name = "Friday night".to_string();
+        assert_eq!(asked, [SessionRequest::Host(Sign { name: name.clone() })]);
+        assert_eq!(world.resource::<Settings>().host_name, name);
+        // Nothing is typed into a game that is open already.
+        world.insert_resource(Session::Host);
+        world
+            .resource_mut::<Messages<KeyboardInput>>()
+            .write(stroke(Key::Enter, None));
+        world.run_system_once(type_name).unwrap();
+        assert!(world.resource::<Messages<SessionRequest>>().is_empty());
     }
 
     #[test]

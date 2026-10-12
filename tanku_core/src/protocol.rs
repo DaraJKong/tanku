@@ -28,12 +28,44 @@ use crate::{
 /// Counts the changes to what the server and its clients tell each other since the version of
 /// the game was last raised. Two builds that don't count the same don't speak the same, so
 /// they don't join each other: raise this with every such change.
-pub const REVISION: u32 = 4;
+pub const REVISION: u32 = 5;
 
 /// The port a game listens on unless it is told otherwise.
 pub const PORT: u16 = 28405;
 /// The port on which it listens for browsers, which don't speak as desktop games do.
 pub const WEB_PORT: u16 = 28406;
+/// The longest name that a host gives a game, in letters.
+pub const NAME_LENGTH: usize = 24;
+
+/// Whether a letter can be part of what a player types for others to read: the lettering of
+/// the interface draws it. That is the Latin alphabet with its accents, figures and signs,
+/// as the font file of the lettering lists them. Whatever a player types then shows as it
+/// was typed, on every machine.
+pub fn lettered(letter: char) -> bool {
+    matches!(
+        letter,
+        ' '..='~'
+            | '\u{a1}'..='\u{ac}'
+            | '\u{ae}'..='\u{113}'
+            | '\u{116}'..='\u{12b}'
+            | '\u{12d}'..='\u{131}'
+            | '\u{133}'..='\u{137}'
+            | '\u{139}'..='\u{13e}'
+            | '\u{140}'..='\u{148}'
+            | '\u{14a}'..='\u{14d}'
+            | '\u{14f}'..='\u{17e}'
+    )
+}
+
+/// The name of a game as it is kept and shown, from what a host typed or from what a
+/// machine on the network claims: only letters that the interface draws, no space at its
+/// ends, and no more letters than a name has.
+pub fn named(text: &str) -> String {
+    let written: String = text.chars().filter(|letter| lettered(*letter)).collect();
+    // The spaces in front of a name take none of its room.
+    let name: String = written.trim_start().chars().take(NAME_LENGTH).collect();
+    name.trim_end().to_string()
+}
 
 /// What tells one build of the game from another on the network: players must run the same
 /// version, and builds that speak the same.
@@ -59,6 +91,8 @@ pub enum Member {
 pub struct Lobby {
     /// Who sits where. A seat is the number of a player in a run.
     pub seats: [Option<Member>; MAX_PLAYERS as usize],
+    /// The name that the host gave the game, or nothing.
+    pub name: String,
     pub seed: String,
 }
 
@@ -149,6 +183,28 @@ mod tests {
         assert_eq!(protocol_id(), number(VERSION, REVISION));
         assert_ne!(protocol_id(), number(VERSION, REVISION + 1));
         assert_ne!(protocol_id(), number("0.0.0", REVISION));
+    }
+
+    #[test]
+    fn a_name_keeps_what_is_written_and_no_more_than_it_has_room_for() {
+        assert_eq!(named("  Friday night \n"), "Friday night");
+        assert_eq!(named("Soir\u{e9}e\tchez\u{0} Dara"), "Soir\u{e9}echez Dara");
+        // A name is counted in letters, not in bytes.
+        let long = "\u{e9}".repeat(NAME_LENGTH + 6);
+        assert_eq!(named(&long).chars().count(), NAME_LENGTH);
+        // What is cut at a space ends before it.
+        let cut = format!("{} tail", "a".repeat(NAME_LENGTH - 1));
+        assert_eq!(named(&cut), "a".repeat(NAME_LENGTH - 1));
+        assert_eq!(named(" \t "), "");
+        // The spaces in front of a name take none of its room.
+        let indented = format!("   {}", "a".repeat(NAME_LENGTH));
+        assert_eq!(named(&indented), "a".repeat(NAME_LENGTH));
+        // What the interface has no letter for is left out: it would show as nothing.
+        assert_eq!(
+            named("Tanks \u{1F600} \u{418}\u{433}\u{440}\u{430} 4"),
+            "Tanks   4"
+        );
+        assert!(lettered('\u{17e}') && !lettered('\u{a0}') && !lettered('\u{7f}'));
     }
 
     #[test]

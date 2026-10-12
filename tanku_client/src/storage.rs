@@ -115,5 +115,8 @@ mod tests {
         assert_eq!(pairs.len(), 2);
         assert_eq!(pairs["volume"], "0.5");
         assert_eq!(pairs["bind.up"], "KeyW, ArrowUp");
+        // What a player typed may hold the sign that parts a pair.
+        let pairs = parse("host.name = 2 + 2 = 5\n");
+        assert_eq!(pairs["host.name"], "2 + 2 = 5");
     }
 }

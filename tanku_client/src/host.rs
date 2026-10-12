@@ -67,12 +67,13 @@ fn direct(
 ) {
     for request in requests.read() {
         match (request, *session) {
-            (SessionRequest::Host, Session::Solo) => {
+            (SessionRequest::Host(sign), Session::Solo) => {
                 let ports = Ports {
                     game: port.0,
                     web: web.0,
                 };
-                let opened = server::open(&mut commands, ports, &reach, &mut credentials);
+                let opened =
+                    server::open(&mut commands, ports, &reach, &mut credentials, &sign.name);
                 let Ok(web) = opened else {
                     notice.0 = Some(format!(
                         "Port {} is taken on this machine. Is another game open?",

@@ -7,7 +7,7 @@ use bevy::{
     prelude::*,
     window::{MonitorSelection, PresentMode, PrimaryWindow, WindowMode},
 };
-use tanku_core::{modes::Difficulty, seed::VERSION, sim::Run};
+use tanku_core::{modes::Difficulty, protocol::named, seed::VERSION, sim::Run};
 
 use crate::{audio::Muted, storage};
 
@@ -265,6 +265,8 @@ pub struct Settings {
     pub solo_difficulty: Difficulty,
     /// Whether the player chose free mode for the last run of their own.
     pub solo_free: bool,
+    /// The name that the player gave the last game that they hosted.
+    pub host_name: String,
 }
 
 impl Default for Settings {
@@ -283,6 +285,7 @@ impl Default for Settings {
             address: String::new(),
             solo_difficulty: Difficulty::Normal,
             solo_free: false,
+            host_name: String::new(),
         }
     }
 }
@@ -389,6 +392,9 @@ impl Settings {
             .and_then(|key| Difficulty::of_key(key))
             .unwrap_or_default();
         settings.solo_free = flag("solo.free", settings.solo_free);
+        // The same goes for the name of a game: what is kept is what a host could type.
+        let name = pairs.get("host.name").map(String::as_str);
+        settings.host_name = named(name.unwrap_or_default());
         for (action, bindings) in &mut settings.bindings {
             if let Some(saved) = pairs.get(action.key()) {
                 let mut codes = saved.split(',').map(|code| Binding::parse(code.trim()));
@@ -410,6 +416,7 @@ impl Settings {
         let difficulty = self.solo_difficulty.key().to_string();
         pairs.insert("solo.difficulty".to_string(), difficulty);
         pairs.insert("solo.free".to_string(), self.solo_free.to_string());
+        pairs.insert("host.name".to_string(), self.host_name.clone());
         for (action, bindings) in &self.bindings {
             let codes = bindings.map(|binding| binding.map_or("", Binding::code));
             pairs.insert(action.key().to_string(), codes.join(", "));
@@ -606,6 +613,7 @@ mod tests {
             address: "192.168.1.20:4000".to_string(),
             solo_difficulty: Difficulty::Hard,
             solo_free: true,
+            host_name: "Friday = game night".to_string(),
             ..default()
         };
         settings.bind(Action::Shield, 0, Binding::Key(KeyCode::ShiftLeft));
@@ -622,8 +630,12 @@ mod tests {
         pairs.insert("bind.up".to_string(), "NoSuchKey".to_string());
         pairs.insert("address".to_string(), "10.0.0.7 /etc".to_string());
         pairs.insert("solo.difficulty".to_string(), "easy".to_string());
+        let name = format!("{}\t", "n".repeat(60));
+        pairs.insert("host.name".to_string(), name);
         let settings = Settings::from_pairs(&pairs);
         assert_eq!(settings.solo_difficulty, Difficulty::Normal);
+        // Only what the name of a game has room for is kept.
+        assert_eq!(settings.host_name, "n".repeat(24));
         // Only what an address is made of is kept.
         assert_eq!(settings.address, "10.0.0.7etc");
         assert_eq!(settings.volume, Settings::default().volume);

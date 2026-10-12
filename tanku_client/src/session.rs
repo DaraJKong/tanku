@@ -20,11 +20,18 @@ pub enum Session {
     Guest,
 }
 
+/// What a host gives a game before it opens.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Sign {
+    /// The name that the game goes by, or nothing.
+    pub name: String,
+}
+
 /// What the menus ask about a game of several players.
 #[derive(Message, Clone, Debug, PartialEq, Eq)]
 pub enum SessionRequest {
-    /// Open a game on this machine and wait in its lobby.
-    Host,
+    /// Open a game on this machine, as its host set it up, and wait in its lobby.
+    Host(Sign),
     /// Join the game at an address, as the player typed it.
     Join(String),
     /// Leave the game. A host closes it for everyone.
@@ -62,6 +69,8 @@ pub struct Invitation {
 pub struct Game {
     /// The number that its host gave it.
     pub id: u64,
+    /// The name that its host gave it, or nothing.
+    pub name: String,
     /// The machine that its word came from.
     pub machine: Ipv4Addr,
     /// Where it is joined, as a player would type it.
