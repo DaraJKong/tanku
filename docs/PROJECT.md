@@ -137,7 +137,7 @@ A playtest is a way to test the game faster, not a mode for players. It starts w
 
 A playtest can also choose its seed without unlocking that option: `--seed` followed by a seed starts every run on it, which brings back a situation that a player reported.
 
-It can bring a tank of its own too: `--tank` followed by the stats of a tank with their levels starts every run in that tank, under the rules of the [garage](#garage). A tank of free mode is tried that way before the garage is built.
+It can bring a tank of its own too: `--tank` followed by the stats of a tank with their levels starts every run in free mode, in that tank, under the rules of the [garage](#garage). A tank is tried that way without building it in the garage, and the tank of the garage stays as it is.
 
 A playtest says on screen that it is one. It sets no record and earns no achievement. A playtest can host a game: the cheats are the host's alone, and the run sets no record for anyone in it.
 
@@ -308,7 +308,7 @@ Outside free mode, every player has the same tank: the standard tank, which spen
 
 ### Garage
 
-In free mode, each player spends the 59 points as they like, in the garage, before the run. The garage lists every hardware stat except Turret, each with its level, what that level gives and its price, and the points that are left. Next to them it shows the tank as it will look, and that drawing follows every change at once (see [Appearance](#appearance)).
+In free mode, each player spends the 59 points as they like, in the garage, before the run. The garage lists every hardware stat except Turret, each with its level, what that level gives, its price and the price of one more level, and the points that are spent and those that are left. Next to them it shows the tank as it will look, and that drawing follows every change at once (see [Appearance](#appearance)).
 
 A tank from the garage follows the rules of every tank, with three of its own:
 
@@ -587,12 +587,12 @@ The interface is the margin of the drawing: ruled panels with square corners, la
 
 | Screen | Content |
 |---|---|
-| Main menu | Solo, host, join, achievements, settings, quit, and the best runs of one difficulty at a time |
+| Main menu | Solo, host, join, achievements, settings, quit, and the best runs of one difficulty at a time, in the standard tank or in free mode |
 | Solo | Difficulty, seed, free mode with its garage, what unlocks each of them while it is locked, a note when the run will earn no achievement, start |
 | Host | The name of the game, its password, open |
 | Join | The games of the local network with their names and which of them have a password, the address of the host, the password of a game that has one, join. In a browser: how to join by the link of a host, and that link again once it was followed. |
 | Lobby | The name of the game, the players with who is ready, the difficulty, the seed and free mode, which the host sets, the garage in free mode, a note when the run will earn no achievement, ready and the countdown to the run, the address to join at or the link for browsers with a button that copies it (host) |
-| Garage | Every stat of the player's tank with its level, what it gives and its price, the points that are left, the tank as it will look, back to the standard tank |
+| Garage | Every stat of the player's tank with its level, what it gives, its price and the price of one more level, the points that are spent and those that are left, the tank as it will look, back to the standard tank |
 | Heads-up display | Rounds and reload progress, mines left, shield state, sector number, lives (solo), seed, difficulty and version, a note on a run that earns no achievement, a scale and a north arrow, a ruler along the edge of the screen that gives the distance to the barrier, the number of each wave of an arena as it is announced, a caption over a life on the floor (solo), a numbered square for each teammate's state, a tag with the number of each player over their tank, a marker at the screen edge for each teammate out of view and what to do about a wreck (multiplayer). Rounds, reload and mines are also on an arc under the player's own tank. |
 | Menu | Resume, settings, quit, and the seed with its version and the difficulty of a run that isn't in normal mode. In multiplayer, the host goes back to the lobby or closes the game, and the others leave it. |
 | Game over | Sectors cleared, time, kills, seed and version, the difficulty of a run that isn't in normal mode, the tank that ended the run with its class and the list of its parts, a note on a run that earned no achievement, retry with a note that it will earn none, new run. In multiplayer, the choice is the host's. |
