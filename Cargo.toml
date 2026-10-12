@@ -18,6 +18,9 @@ lightyear = { version = "0.30", default-features = false }
 mdns-sd = { version = "0.21", default-features = false, features = ["logging"] }
 # What goes over the network is written and read with it.
 serde = { version = "1", features = ["derive"] }
+# SHA-256, for the proof of the password of a hosted game. It is kept at the version that
+# the network library brings for its certificates, so that a build holds it once.
+sha2 = "0.10"
 tanku_audio = { path = "tanku_audio" }
 tanku_core = { path = "tanku_core" }
 # Without default features, so that a release client doesn't inherit the server's development ones.

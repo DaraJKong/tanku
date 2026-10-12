@@ -7708,6 +7708,7 @@ dependencies = [
  "lightyear",
  "mdns-sd",
  "serde",
+ "sha2",
 ]
 
 [[package]]
