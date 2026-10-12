@@ -1,14 +1,14 @@
-//! Fights between one enemy and a crude player, to compare what two brains make of the same
-//! tank.
+//! Fights between one or two enemies and a crude player, to compare what the brains make of
+//! the same tank.
 //!
-//! They take minutes and print a table, so they only run when asked for:
+//! They take minutes and print tables, so they only run when asked for:
 //!
 //! ```text
 //! cargo test -p tanku_server trials -- --ignored --nocapture
 //! ```
 //!
-//! The table says little about a player of flesh and blood, who closes in, takes cover and
-//! lays mines. It tells two brains apart on the same tank, against the same shots.
+//! The tables say little about a player of flesh and blood, who closes in, takes cover and
+//! lays mines. They tell the brains apart on the same tank, against the same shots.
 
 use std::time::Instant;
 
@@ -175,18 +175,26 @@ impl Bot {
 /// How a fight went.
 #[derive(Clone, Copy, Debug)]
 struct Trial {
-    /// How long the enemy lasted, in seconds: the whole fight if it was not destroyed.
+    /// How long the enemies lasted, in seconds: the whole fight if one of them was left.
     lasted: f32,
     fell: bool,
-    /// The bullets of the enemy that ended on the tank of the bot.
+    /// The bullets of the enemies that ended on the tank of the bot.
     hits: u32,
     /// The blasts that reached the tank of the bot.
     blasts: u32,
 }
 
-/// A fight in a sector of a seed, between the bot and one enemy that stands in for the group
-/// of that sector, at the place of one of its tanks. Sectors that are no corridors hold none.
-fn duel(seed: &str, sector: u32, spot: usize, genome: Genome, pace: f32) -> Option<Trial> {
+/// A fight in a sector of a seed, between the bot and so many enemies of one make that stand
+/// in for the group of that sector, at the places of some of its tanks. Sectors that are no
+/// corridors hold none.
+fn fight(
+    seed: &str,
+    sector: u32,
+    spot: usize,
+    genome: Genome,
+    count: usize,
+    pace: f32,
+) -> Option<Trial> {
     let mut app = begin(seed);
     app.insert_resource(Playtest {
         infinite_lives: true,
@@ -197,29 +205,39 @@ fn duel(seed: &str, sector: u32, spot: usize, genome: Genome, pace: f32) -> Opti
         return None;
     }
     let group = enemies(&mut app, sector);
-    let stood = group[spot % group.len()];
-    let at = position(&mut app, stood);
-    let motion = *app.world().get::<Motion>(stood).unwrap();
+    let stood: Vec<(Vec2, Motion)> = (spot..spot + count)
+        .map(|number| group[number % group.len()])
+        .map(|stood| {
+            (
+                position(&mut app, stood),
+                *app.world().get::<Motion>(stood).unwrap(),
+            )
+        })
+        .collect();
     for enemy in group {
         app.world_mut().despawn(enemy);
     }
-    let (brain, _) = app.world().resource::<Field>().brain(sector, spot as u32);
-    let tank = Tank {
-        genome,
-        team: Team::Enemies,
-        sector,
-    };
-    let enemy = (
-        tank,
-        Enemy { awake: false },
-        Position(at),
-        PreviousPosition(at),
-        motion,
-        Gun::loaded(&genome),
-        brain,
-        InSector(sector),
-    );
-    let enemy = app.world_mut().spawn(enemy).id();
+    let mut foes: Vec<Entity> = Vec::new();
+    for (number, (at, motion)) in stood.into_iter().enumerate() {
+        let number = (spot + number) as u32;
+        let (brain, _) = app.world().resource::<Field>().brain(sector, number);
+        let tank = Tank {
+            genome,
+            team: Team::Enemies,
+            sector,
+        };
+        let enemy = (
+            tank,
+            Enemy { awake: false },
+            Position(at),
+            PreviousPosition(at),
+            motion,
+            Gun::loaded(&genome),
+            brain,
+            InSector(sector),
+        );
+        foes.push(app.world_mut().spawn(enemy).id());
+    }
     cross_barrier(&mut app);
     let entity = player(&mut app).unwrap();
     app.world_mut()
@@ -235,7 +253,16 @@ fn duel(seed: &str, sector: u32, spot: usize, genome: Genome, pace: f32) -> Opti
         blasts: 0,
     };
     for step in 0..seconds(LIMIT) {
-        let order = bot.order(&app, entity, enemy);
+        // The bot fights the nearest enemy that is left.
+        let me = position(&mut app, entity);
+        foes.retain(|&foe| alive(&app, foe));
+        let far = |foe: &Entity| app.world().get::<Position>(*foe).unwrap().0.distance(me);
+        let Some(&foe) = foes.iter().min_by(|a, b| far(a).total_cmp(&far(b))) else {
+            trial.lasted = step as f32 * TICK;
+            trial.fell = true;
+            break;
+        };
+        let order = bot.order(&app, entity, foe);
         *app.world_mut().get_mut::<TankCommand>(entity).unwrap() = order;
         tick(&mut app, 1);
         let me = position(&mut app, entity);
@@ -258,11 +285,6 @@ fn duel(seed: &str, sector: u32, spot: usize, genome: Genome, pace: f32) -> Opti
                 _ => {}
             }
         }
-        if !alive(&app, enemy) {
-            trial.lasted = step as f32 * TICK;
-            trial.fell = true;
-            break;
-        }
     }
     Some(trial)
 }
@@ -278,55 +300,69 @@ fn build(body: &[(Stat, u8)], brain: u8) -> Genome {
     genome
 }
 
-/// Prints, for each tank and for a soldier and a veteran in it: how many fights there were,
-/// in how many of them the enemy fell, the median of how long it lasted, how many of its
-/// bullets ended on the bot in a fight and in a minute, how many blasts reached the bot in a
-/// minute, and what a tick of the whole simulation cost in this build.
-#[test]
-#[ignore = "takes minutes and prints a table"]
-fn a_veteran_against_a_soldier() {
-    for (pace, shots) in [(0.25, "bursts"), (1.0, "single shots")] {
-        println!("\nThe bot fires {shots}: one shot every {pace} s at most.");
-        println!(
-            "{:<32} {:>5} {:>6} {:>5} {:>8} {:>10} {:>8} {:>10} {:>7}",
-            "tank",
-            "brain",
-            "fights",
-            "fell",
-            "median s",
-            "hits/fight",
-            "hits/min",
-            "blasts/min",
-            "ms/tick"
-        );
-        for (name, body) in BODIES {
-            for brain in [2, 3] {
-                let started = Instant::now();
-                let mut trials: Vec<Trial> = Vec::new();
-                for (number, seed) in SEEDS.iter().enumerate() {
-                    for sector in SECTORS {
-                        trials.extend(duel(seed, sector, number, build(body, brain), pace));
-                    }
+/// Prints a table of the fights of so many enemies of each make against a bot that fires at
+/// a pace: for each tank and each brain, how many fights there were, in how many of them the
+/// enemies fell, the median of how long they lasted, how many of their bullets ended on the
+/// bot in a fight and in a minute, how many blasts reached the bot in a minute, and what a
+/// tick of the whole simulation cost in this build.
+fn table(count: usize, pace: f32) {
+    println!(
+        "{:<32} {:>5} {:>6} {:>5} {:>8} {:>10} {:>8} {:>10} {:>7}",
+        "tank",
+        "brain",
+        "fights",
+        "fell",
+        "median s",
+        "hits/fight",
+        "hits/min",
+        "blasts/min",
+        "ms/tick"
+    );
+    for (name, body) in BODIES {
+        for brain in [2, 3, 4] {
+            let started = Instant::now();
+            let mut trials: Vec<Trial> = Vec::new();
+            for (number, seed) in SEEDS.iter().enumerate() {
+                for sector in SECTORS {
+                    trials.extend(fight(seed, sector, number, build(body, brain), count, pace));
                 }
-                let spent = started.elapsed().as_secs_f32();
-                let fights = trials.len();
-                let seconds: f32 = trials.iter().map(|trial| trial.lasted).sum();
-                let fell = trials.iter().filter(|trial| trial.fell).count();
-                let mut lasted: Vec<f32> = trials.iter().map(|trial| trial.lasted).collect();
-                lasted.sort_by(f32::total_cmp);
-                let median = lasted[fights / 2];
-                let hits: u32 = trials.iter().map(|trial| trial.hits).sum();
-                let blasts: u32 = trials.iter().map(|trial| trial.blasts).sum();
-                let per_fight = hits as f32 / fights as f32;
-                let per_minute = |count: u32| count as f32 * 60.0 / seconds;
-                let cost = spent * 1000.0 / (seconds / TICK);
-                println!(
-                    "{name:<32} {brain:>5} {fights:>6} {fell:>5} {median:>8.1} {per_fight:>10.2} \
-                     {:>8.1} {:>10.1} {cost:>7.3}",
-                    per_minute(hits),
-                    per_minute(blasts)
-                );
             }
+            let spent = started.elapsed().as_secs_f32();
+            let fights = trials.len();
+            let seconds: f32 = trials.iter().map(|trial| trial.lasted).sum();
+            let fell = trials.iter().filter(|trial| trial.fell).count();
+            let mut lasted: Vec<f32> = trials.iter().map(|trial| trial.lasted).collect();
+            lasted.sort_by(f32::total_cmp);
+            let median = lasted[fights / 2];
+            let hits: u32 = trials.iter().map(|trial| trial.hits).sum();
+            let blasts: u32 = trials.iter().map(|trial| trial.blasts).sum();
+            let per_fight = hits as f32 / fights as f32;
+            let per_minute = |count: u32| count as f32 * 60.0 / seconds;
+            let cost = spent * 1000.0 / (seconds / TICK);
+            println!(
+                "{name:<32} {brain:>5} {fights:>6} {fell:>5} {median:>8.1} {per_fight:>10.2} \
+                 {:>8.1} {:>10.1} {cost:>7.3}",
+                per_minute(hits),
+                per_minute(blasts)
+            );
         }
     }
+}
+
+/// One enemy against the bot. An ace that is alone retreats.
+#[test]
+#[ignore = "takes minutes and prints tables"]
+fn a_tank_alone() {
+    for (pace, shots) in [(0.25, "bursts"), (1.0, "single shots")] {
+        println!("\nOne enemy. The bot fires {shots}: one shot every {pace} s at most.");
+        table(1, pace);
+    }
+}
+
+/// Two enemies of one make against the bot: an ace has an ally to cross its fire with.
+#[test]
+#[ignore = "takes minutes and prints a table"]
+fn two_tanks_together() {
+    println!("\nTwo enemies. The bot fires bursts: one shot every 0.25 s at most.");
+    table(2, 0.25);
 }
