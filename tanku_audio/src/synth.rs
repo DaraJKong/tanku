@@ -33,7 +33,7 @@ const GAP: u32 = 220;
 const CUT: u32 = 132;
 
 /// Plucked strings that can ring at once.
-const PLUCKS: usize = 4;
+pub const PLUCKS: usize = 4;
 /// Longest string, in frames. The lowest note of the pluck in the piece, E3, needs 266, and
 /// this is enough for the E an octave below it. A lower note is played an octave higher.
 const STRING: usize = 540;
@@ -42,7 +42,16 @@ const STOPPED: f32 = 0.9;
 const PLUCK_SEED: u32 = 0x5EED_0001;
 
 /// Notes the lead can play at once: its line, and the same an octave higher.
-const LEADS: usize = 2;
+pub const LEADS: usize = 2;
+
+/// Notes that an instrument can sound at once.
+pub const fn voices(instrument: Instrument) -> usize {
+    match instrument {
+        Instrument::Pluck => PLUCKS,
+        Instrument::Lead => LEADS,
+        _ => 1,
+    }
+}
 
 const HAT_SEED: u32 = 0x5EED_0002;
 const SNARE_SEED: u32 = 0x5EED_0003;
@@ -174,6 +183,13 @@ impl Settings {
             snare_tone_level: snare.tone_level,
         }
     }
+}
+
+/// Frames after which the echo of the pluck comes back: it counts its steps at the tempo of
+/// the piece.
+fn echo_frames(score: &Score) -> usize {
+    let piece = &score.piece;
+    (piece.sounds.pluck.echo_steps * step(piece.tempo) / 2) as usize
 }
 
 /// A time in whole frames, to the nearest one.
@@ -641,7 +657,7 @@ pub struct Synth {
     hat: Hat,
     snare: Snare,
     /// What the pluck played some steps ago: as many as its echo comes after.
-    echo: Box<[f32]>,
+    echo: Vec<f32>,
     echo_at: usize,
     hush: bool,
     muffled: bool,
@@ -669,8 +685,7 @@ impl Synth {
     /// piece says.
     pub fn of(score: &Score) -> Self {
         let piece = &score.piece;
-        // The echo counts its steps at the tempo of the piece, in whole frames.
-        let echo = piece.sounds.pluck.echo_steps * step(piece.tempo) / 2;
+        let echo = echo_frames(score);
         Self {
             bass: Bass::default(),
             plucks: std::array::from_fn(|_| Pluck::new()),
@@ -690,7 +705,7 @@ impl Synth {
                 phase: 0.0,
                 tone: 0.0,
             },
-            echo: vec![0.0; echo as usize].into(),
+            echo: vec![0.0; echo],
             echo_at: 0,
             hush: false,
             muffled: false,
@@ -700,6 +715,20 @@ impl Synth {
             duck: 0.0,
             mix: Instrument::ALL.map(|instrument| piece.mix(instrument)),
             set: Settings::of(&piece.sounds),
+        }
+    }
+
+    /// Takes the settings and the mix of another piece, from the next frame on. What sounds
+    /// goes on sounding. An echo that comes sooner or later than it did starts from silence.
+    pub fn retune(&mut self, score: &Score) {
+        let piece = &score.piece;
+        self.mix = Instrument::ALL.map(|instrument| piece.mix(instrument));
+        self.set = Settings::of(&piece.sounds);
+        let echo = echo_frames(score);
+        if echo != self.echo.len() {
+            self.echo.clear();
+            self.echo.resize(echo, 0.0);
+            self.echo_at = 0;
         }
     }
 

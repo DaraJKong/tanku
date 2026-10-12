@@ -14,9 +14,11 @@
 //!
 //! All of it is integer logic, so it gives the same answer on every platform.
 
+use std::sync::Arc;
+
 use crate::{
-    notation::{Instrument, Layer, Part, Passage, Play, Rhythm, Scene, Source, THREATS},
-    score::{self, BARS, BEAT, Line, Mode, SCORE, STEPS, Score},
+    notation::{Instrument, Layer, Part, Passage, Play, Rhythm, Scene, Source, THREATS, Word},
+    score::{self, BARS, BEAT, Line, Mode, STEPS, Score},
 };
 
 /// Where the run has got to.
@@ -115,9 +117,22 @@ struct Connection {
 /// A note that a line starts: whether it has an echo, and its degree if the line is a melody.
 type Start = (Tone, bool, Option<u8>);
 
+/// Where a director is in its piece, for whoever shows it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Spot {
+    pub scene: Scene,
+    /// The section that plays, by its place among those of the piece.
+    pub section: u8,
+    /// The bar of that section, from 0 to 7, and the step of the bar that comes next.
+    pub bar: u8,
+    pub step: u8,
+    /// A roll or a connection plays: the section stands still under it.
+    pub between: bool,
+}
+
 #[derive(Clone, Debug)]
 pub struct Director {
-    score: &'static Score,
+    score: Arc<Score>,
     /// The scene whose line of the arrangement plays.
     scene: Scene,
     /// The bar of that line that plays, counted through all its sections.
@@ -142,19 +157,19 @@ pub struct Director {
 /// A director at the start of the piece of the game, in the main menu.
 impl Default for Director {
     fn default() -> Self {
-        Self::of(&SCORE)
+        Self::of(score::game())
     }
 }
 
 impl Director {
     /// A director at the start of a piece, in the main menu.
-    pub fn of(score: &'static Score) -> Self {
+    pub fn of(score: Arc<Score>) -> Self {
         Self {
+            mode: score.piece.key.home,
             score,
             scene: Scene::Menu,
             bar: 0,
             step: 0,
-            mode: score.piece.key.home,
             threat: 0,
             next_phrase: 0,
             roll: None,
@@ -168,11 +183,11 @@ impl Director {
     /// A director for a game that has been in this context for a long time: it is in the
     /// section of the context, and nothing announces it.
     pub fn settled(context: Context) -> Self {
-        Self::settled_in(&SCORE, context)
+        Self::settled_in(score::game(), context)
     }
 
     /// The same, for any piece.
-    pub fn settled_in(score: &'static Score, context: Context) -> Self {
+    pub fn settled_in(score: Arc<Score>, context: Context) -> Self {
         let mut director = Self {
             in_menu: context.place == Place::Menu,
             ..Self::of(score)
@@ -185,9 +200,37 @@ impl Director {
         director
     }
 
+    /// Plays another piece from the next step on, and gives back the one that it played.
+    /// The music doesn't start over: it goes on from the bar and the step where it is, in the
+    /// scene where it is. A program that changes a piece while it plays hands each new state
+    /// of it this way.
+    pub fn rescore(&mut self, score: Arc<Score>) -> Arc<Score> {
+        let old = std::mem::replace(&mut self.score, score);
+        // The line of the scene may have fewer sections than it had.
+        self.bar %= self.bars();
+        let key = self.score.piece.key;
+        self.mode = if self.scene == Scene::Arena {
+            key.arena
+        } else {
+            key.home
+        };
+        old
+    }
+
     /// The name of the section that plays.
-    pub fn section(&self) -> &'static str {
-        self.passage().name.as_str()
+    pub fn section(&self) -> Word {
+        self.passage().name
+    }
+
+    /// Where the director is in its piece.
+    pub fn spot(&self) -> Spot {
+        Spot {
+            scene: self.scene,
+            section: self.index(),
+            bar: self.bar(),
+            step: self.step,
+            between: self.roll.is_some() || self.connection.is_some(),
+        }
     }
 
     /// The bar of the section that plays, from 0 to 7.
@@ -216,14 +259,14 @@ impl Director {
 
         // A roll that is over gives way to the fight, and a connection to what follows the
         // fight, wherever the bar was.
-        if self.roll.is_some_and(|roll| roll.done == roll_hits) {
+        if self.roll.is_some_and(|roll| roll.done >= roll_hits) {
             self.roll = None;
             if fight {
                 self.enter_fight(context);
                 out.fresh = true;
             }
         }
-        if self.connection.is_some_and(|link| link.done == link_steps) {
+        if self.connection.is_some_and(|link| link.done >= link_steps) {
             self.connection = None;
             self.enter(calm(context));
             out.fresh = true;
@@ -330,7 +373,7 @@ impl Director {
     /// the pluck and the lead go together, each in its own octave, to the degree on which the
     /// bridge stays.
     fn connect(&mut self, link: Connection, next: Scene, out: &mut Step) {
-        let score = self.score;
+        let score = &*self.score;
         if link.done.is_multiple_of(BEAT as u8) {
             out.kick = link.kick;
         }
@@ -356,7 +399,8 @@ impl Director {
         // Each step is a little nearer the tempo of what follows than the one before.
         let first = score.piece.play(next).sections()[0];
         let (from, to) = (link.from as i64, score.pace(first) as i64);
-        let length = from + (to - from) * (link.done as i64 + 1) / self.link_steps() as i64;
+        let steps = score.piece.link.beats as i64 * BEAT as i64;
+        let length = from + (to - from) * (link.done as i64 + 1) / steps;
         out.length = length as u32;
         self.connection = Some(Connection {
             done: link.done + 1,
@@ -414,7 +458,7 @@ impl Director {
     }
 
     /// The line of the arrangement that plays.
-    fn line(&self) -> &'static Play {
+    fn line(&self) -> &Play {
         self.score.piece.play(self.scene)
     }
 
@@ -429,7 +473,7 @@ impl Director {
         sections[self.bar as usize / BARS % sections.len()]
     }
 
-    fn passage(&self) -> &'static Passage {
+    fn passage(&self) -> &Passage {
         self.score.piece.section(self.index())
     }
 
@@ -480,7 +524,7 @@ impl Director {
     }
 
     /// The pattern that a drum plays in the scene.
-    fn drum(&self, instrument: Instrument) -> Option<&'static Rhythm> {
+    fn drum(&self, instrument: Instrument) -> Option<&Rhythm> {
         match self.layer(instrument)?.first {
             Source::Rhythm { index, .. } => Some(self.score.piece.pattern(index)),
             Source::Tune { .. } => None,
@@ -539,7 +583,7 @@ impl Director {
 
     /// The note that a line starts on this step, if it starts one.
     fn start(&self, source: Source, instrument: Instrument) -> Option<Start> {
-        let score = self.score;
+        let score = &*self.score;
         match source {
             Source::Tune {
                 form,
@@ -693,6 +737,13 @@ mod tests {
         }
     }
 
+    /// The name of the section that a director plays, for a test to keep past the next step.
+    fn playing(director: &Director) -> &'static str {
+        let names = ["intro", "verse", "chorus", "bridge", "one", "two"];
+        let name = names.into_iter().find(|name| director.section().is(name));
+        name.expect("a section of the piece of the game or of the other one")
+    }
+
     fn play(director: &mut Director, context: Context, steps: usize) -> Vec<Step> {
         (0..steps).map(|_| director.step(context)).collect()
     }
@@ -720,7 +771,7 @@ mod tests {
         for place in [Place::Menu, Place::Bay] {
             let mut director = Director::default();
             let steps = play(&mut director, at(place), 2 * BARS * BAR);
-            assert_eq!(director.section(), "intro");
+            assert_eq!(playing(&director), "intro");
             assert!(steps.iter().all(|step| !drums(step)));
             assert!(steps.iter().all(|step| step.lead == [None; 2]));
             // Its melody has no echo, and it is at the tempo of a fight.
@@ -779,7 +830,7 @@ mod tests {
         let first = director.step(fight(Place::Corridor, 0));
         assert!(first.fresh);
         assert_eq!(first.kick, KICK);
-        assert_eq!(director.section(), "verse");
+        assert_eq!(playing(&director), "verse");
     }
 
     #[test]
@@ -793,7 +844,7 @@ mod tests {
 
         let bars = play(&mut director, fight(Place::Arena, 2), 2 * BAR);
         assert_eq!(director.mode(), Mode::Aeolian);
-        assert_eq!(director.section(), "verse");
+        assert_eq!(playing(&director), "verse");
         // The second bar of motif A, with the F of Aeolian where Dorian has F sharp.
         assert_eq!(pitches(&bars[BAR..], |step| step.lead[0]), [72, 76, 77, 76]);
         // The snare is on beats 2 and 4 and the hi-hat on every step.
@@ -864,7 +915,7 @@ mod tests {
             assert!(bridge[0].fresh, "offset {offset}");
             assert_eq!(bridge[0].kick, pattern(Instrument::Kick, "heart").level);
             assert!(bridge.iter().all(|step| step.length == BRIDGE_STEP));
-            assert_eq!(director.section(), "bridge");
+            assert_eq!(playing(&director), "bridge");
             assert_eq!(director.mode(), HOME);
         }
     }
@@ -944,7 +995,7 @@ mod tests {
     fn a_bar_of_the_bridge_is_four_pairs_over_a_tick() {
         let mut director = Director::settled(at(Place::Corridor));
         let steps = play(&mut director, at(Place::Corridor), 2 * BARS * BAR);
-        assert_eq!(director.section(), "bridge");
+        assert_eq!(playing(&director), "bridge");
         // It is slower than the rest, and nothing has an echo.
         assert!(
             steps
@@ -1032,7 +1083,7 @@ mod tests {
         for _ in 0..6 {
             let steps = play(&mut director, fight(Place::Corridor, 2), ROLL + 2 * BAR);
             assert_eq!(steps.iter().position(|step| step.fresh), Some(ROLL));
-            opened.push((director.section(), director.bar()));
+            opened.push((playing(&director), director.bar()));
             play(&mut director, at(Place::Corridor), BAR);
         }
         // Each fight plays the first two bars of the next phrase, so the bar that comes after
@@ -1054,7 +1105,7 @@ mod tests {
         let mut director = Director::settled(fight(Place::Corridor, 2));
         let mut sections = Vec::new();
         for _ in 0..4 {
-            sections.push(director.section());
+            sections.push(playing(&director));
             play(&mut director, fight(Place::Corridor, 2), BARS * BAR);
         }
         assert_eq!(sections, [verse, chorus, verse, chorus]);
@@ -1067,12 +1118,12 @@ mod tests {
         play(&mut director, fight(Place::Corridor, 1), ROLL + 2 * BAR);
         // The run ends and another starts: the intro goes on, and nothing marks it.
         play(&mut director, at(Place::Menu), 2 * BAR);
-        assert_eq!(director.section(), "intro");
+        assert_eq!(playing(&director), "intro");
         let steps = play(&mut director, at(Place::Bay), BAR);
         assert!(steps.iter().all(|step| !step.fresh && !step.hush));
         play(&mut director, fight(Place::Corridor, 1), ROLL);
         director.step(fight(Place::Corridor, 1));
-        assert_eq!((director.section(), director.bar()), ("verse", 0));
+        assert_eq!((playing(&director), director.bar()), ("verse", 0));
     }
 
     #[test]
@@ -1098,7 +1149,7 @@ mod tests {
                 .iter()
                 .all(|step| !drums(step) && !pitched(step))
         );
-        assert_eq!(director.section(), "bridge");
+        assert_eq!(playing(&director), "bridge");
     }
 
     #[test]
@@ -1108,7 +1159,7 @@ mod tests {
         let steps = play(&mut director, at(Place::Menu), BAR);
         assert!(steps[0].hush);
         assert!(steps[10].fresh);
-        assert_eq!(director.section(), "intro");
+        assert_eq!(playing(&director), "intro");
         assert_eq!(director.mode(), HOME);
     }
 
@@ -1122,7 +1173,7 @@ mod tests {
         let steps = play(&mut director, at(Place::Corridor), 2 * BAR);
         assert!(steps.iter().all(|step| step.hat == 0 && !step.fresh));
         assert_eq!(steps[0].kick, pattern(Instrument::Kick, "heart").soft);
-        assert_eq!(director.section(), "bridge");
+        assert_eq!(playing(&director), "bridge");
     }
 
     #[test]
@@ -1178,8 +1229,8 @@ mod tests {
                          sound lead width 30% rise 4ms below 3000Hz vibrato 136ms 0.4% 5.5Hz\n";
 
     /// That piece, as a director plays it.
-    fn other() -> &'static Score {
-        Box::leak(Box::new(Score::new(read(OTHER).unwrap())))
+    fn other() -> Arc<Score> {
+        Arc::new(Score::new(read(OTHER).unwrap()))
     }
 
     /// What an instrument starts on each step where it starts a note: the step, the pitch,
@@ -1198,7 +1249,7 @@ mod tests {
         // The menu has a lead, which the menu of the game doesn't, and no pluck.
         let mut director = Director::of(other());
         let bar = play(&mut director, at(Place::Menu), BAR);
-        assert_eq!(director.section(), "one");
+        assert_eq!(playing(&director), "one");
         assert_eq!(notes(&bar, |step| step.lead[0]), [(0, 69, 16, 255)]);
         assert_eq!(
             notes(&bar, |step| step.bass),
@@ -1252,7 +1303,7 @@ mod tests {
         let mut director = Director::settled_in(other(), at(Place::Corridor));
         let mut heard = Vec::new();
         for _ in 0..4 {
-            let section = director.section();
+            let section = playing(&director);
             let bars = play(&mut director, at(Place::Corridor), BARS * BAR);
             heard.push((section, bars[0].length, bars[BARS * BAR - 1].length));
         }
@@ -1300,7 +1351,7 @@ mod tests {
         assert!(roll.iter().all(|step| step.length == score::step(120)));
         let first = director.step(fight(Place::Corridor, 2));
         assert!(first.fresh);
-        assert_eq!(director.section(), "one");
+        assert_eq!(playing(&director), "one");
 
         // The fight has no kick, so its connection has none either. It slows down to the
         // tempo of the first section of the calm, which is the slow one.
@@ -1314,7 +1365,7 @@ mod tests {
         assert_eq!(lengths[LINK - 1], score::step(90));
         let next = director.step(at(Place::Corridor));
         assert!(next.fresh);
-        assert_eq!((director.section(), next.length), ("two", score::step(90)));
+        assert_eq!((playing(&director), next.length), ("two", score::step(90)));
     }
 
     #[test]
@@ -1323,11 +1374,11 @@ mod tests {
         let mut director = Director::settled_in(other(), fight(Place::Corridor, 0));
         // It ends in its fourth phrase, so the next fight opens on the first one.
         play(&mut director, fight(Place::Corridor, 0), 13 * BAR);
-        assert_eq!(director.section(), "two");
+        assert_eq!(playing(&director), "two");
         play(&mut director, at(Place::Corridor), LINK + BAR);
         play(&mut director, fight(Place::Arena, 0), 4);
         director.step(fight(Place::Arena, 0));
-        assert_eq!((director.section(), director.bar()), ("two", 0));
+        assert_eq!((playing(&director), director.bar()), ("two", 0));
 
         // A fight in an arena that ends in its second phrase leaves the count on a phrase
         // that the corridor has too.
@@ -1335,11 +1386,63 @@ mod tests {
         play(&mut director, at(Place::Arena), LINK + BAR);
         play(&mut director, fight(Place::Corridor, 0), 4);
         director.step(fight(Place::Corridor, 0));
-        assert_eq!((director.section(), director.bar()), ("one", 0));
+        assert_eq!((playing(&director), director.bar()), ("one", 0));
         // Whatever the game does, nothing fails: the two fights in turn, bar by bar.
         for bar in 0..40 {
             let place = [Place::Corridor, Place::Arena][bar % 2];
             play(&mut director, fight(place, (bar % 5) as u8), BAR);
         }
+    }
+
+    #[test]
+    fn a_director_takes_another_piece_where_it_is() {
+        let fight = fight(Place::Corridor, 2);
+        let mut director = Director::settled(fight);
+        // Twelve bars and five steps into a fight: the fifth bar of the chorus.
+        play(&mut director, fight, 12 * BAR + 5);
+        assert_eq!((playing(&director), director.bar()), ("chorus", 4));
+        // A piece whose fights only have the verse.
+        let text = include_str!("../music.score").replace("verse,chorus", "verse");
+        let shorter = Arc::new(Score::new(read(&text).unwrap()));
+        let old = director.rescore(shorter);
+        assert!(Arc::ptr_eq(&old, &score::game()));
+        // The same bar and the same step of the section that the line has there now.
+        let spot = director.spot();
+        assert_eq!((playing(&director), spot.bar, spot.step), ("verse", 4, 5));
+        assert_eq!((spot.scene, spot.between), (Scene::Corridor, false));
+        // And it plays on, through the only section that is left.
+        let bars = play(&mut director, fight, 2 * BARS * BAR);
+        assert!(bars.iter().all(|step| step.length == STEP));
+        assert_eq!(playing(&director), "verse");
+    }
+
+    #[test]
+    fn a_roll_that_another_piece_makes_shorter_is_over() {
+        let fight = fight(Place::Corridor, 0);
+        let mut director = Director::settled(at(Place::Corridor));
+        play(&mut director, at(Place::Corridor), BAR);
+        // Six hits of a roll of eight.
+        let hits = play(&mut director, fight, 6);
+        assert!(hits.iter().all(|step| step.hat > 0));
+        assert!(director.spot().between);
+        let text = include_str!("../music.score").replace("roll 2 hat snare", "roll 1 hat snare");
+        director.rescore(Arc::new(Score::new(read(&text).unwrap())));
+        // The roll of that piece has four hits: the fight starts on the next step.
+        let next = director.step(fight);
+        assert!(next.fresh && next.kick == KICK);
+        assert_eq!((playing(&director), director.bar()), ("verse", 0));
+    }
+
+    #[test]
+    fn a_piece_in_another_key_is_heard_from_the_next_step() {
+        let mut director = Director::settled(at(Place::Bay));
+        let bar = play(&mut director, at(Place::Bay), BAR);
+        let first = bar[0].bass.unwrap().pitch;
+        // Up a tone, and in the mode of the arenas.
+        let text = include_str!("../music.score").replace("key A dorian", "key B aeolian");
+        director.rescore(Arc::new(Score::new(read(&text).unwrap())));
+        assert_eq!(director.mode(), Mode::Aeolian);
+        let bar = play(&mut director, at(Place::Bay), BAR);
+        assert_eq!(bar[0].bass.unwrap().pitch, first + 2);
     }
 }

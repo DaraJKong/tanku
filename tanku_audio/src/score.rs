@@ -4,6 +4,8 @@
 //! Melodies are written in degrees of the scale and not in notes, so each of them exists in
 //! every mode. [`notation`] says how the file writes a bar.
 
+use std::sync::{Arc, LazyLock};
+
 use crate::notation::{self, COLOR, Form, Link, PASSAGES, Piece, REST, Roll, same};
 pub use crate::notation::{BARS, BEAT, Cell, Line, Pattern, STEPS};
 
@@ -16,6 +18,13 @@ pub const PIECE: Piece = match notation::read(include_str!("../music.score")) {
 
 /// The piece as the game plays it.
 pub static SCORE: Score = Score::new(PIECE);
+
+/// The piece of the game, for a director to play from. A director shares its piece with
+/// whoever made it, so that a program can hand it another one while it plays.
+pub fn game() -> Arc<Score> {
+    static GAME: LazyLock<Arc<Score>> = LazyLock::new(|| Arc::new(SCORE));
+    GAME.clone()
+}
 
 /// A piece with every line that the rules derive from what its file writes: what a director
 /// plays from.

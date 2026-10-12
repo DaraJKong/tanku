@@ -217,6 +217,18 @@ impl Instrument {
         }
     }
 
+    /// The name of the instrument in the file.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Kick => "kick",
+            Self::Hat => "hat",
+            Self::Snare => "snare",
+            Self::Bass => "bass",
+            Self::Pluck => "pluck",
+            Self::Lead => "lead",
+        }
+    }
+
     /// Whether the instrument is a drum, which has no pitch.
     pub const fn is_drum(self) -> bool {
         matches!(self, Self::Kick | Self::Hat | Self::Snare)

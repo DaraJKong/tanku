@@ -7,6 +7,7 @@
 //! The sound cues are in [`cues`]: short waveforms that the game computes when it starts and
 //! plays itself.
 
+pub mod checks;
 pub mod cues;
 pub mod director;
 mod math;
@@ -21,8 +22,8 @@ use std::sync::{
 };
 
 use director::Director;
-pub use director::{Context, Place};
-use score::{SCORE, Score};
+pub use director::{Context, Place, Spot};
+use score::Score;
 use synth::Synth;
 
 /// Frames of music per second.
@@ -52,14 +53,15 @@ pub fn music() -> (Music, Conductor) {
 /// The music of a game that has been in a context for a long time: it starts in the section
 /// of that context, and nothing announces it.
 pub fn music_from(context: Context) -> (Music, Conductor) {
-    music_of(&SCORE, context)
+    music_of(score::game(), context)
 }
 
 /// The same for another piece than that of the game: one that a program read while it runs.
-pub fn music_of(score: &'static Score, context: Context) -> (Music, Conductor) {
+pub fn music_of(score: Arc<Score>, context: Context) -> (Music, Conductor) {
     let conductor = Conductor(Arc::new(AtomicU32::new(pack(context))));
+    let synth = Synth::of(&score);
     let director = Director::settled_in(score, context);
-    (conductor.follow(director, Synth::of(score)), conductor)
+    (conductor.follow(director, synth), conductor)
 }
 
 /// The end of the music that the game holds, to tell it what happens. It starts in the main
@@ -116,6 +118,20 @@ pub struct Music {
 }
 
 impl Music {
+    /// Plays another piece from the next step on, without starting over, and gives back the
+    /// one that it played: a program that changes a piece while it plays hands each new
+    /// state of it this way. What sounds goes on sounding. Unlike [`Music::render`], this
+    /// takes memory when the echo of the new piece comes later than any before it.
+    pub fn rescore(&mut self, score: Arc<Score>) -> Arc<Score> {
+        self.synth.retune(&score);
+        self.director.rescore(score)
+    }
+
+    /// Where the music is in its piece.
+    pub fn spot(&self) -> Spot {
+        self.director.spot()
+    }
+
     /// Fills `frames` with the music that comes next. It never allocates, locks or waits, so
     /// a sound thread can call it.
     pub fn render(&mut self, frames: &mut [f32]) {
@@ -275,8 +291,7 @@ mod tests {
                 };
                 text += &format!("{line}\n");
             }
-            let score: &'static Score =
-                Box::leak(Box::new(Score::new(notation::read(&text).unwrap())));
+            let score = Arc::new(Score::new(notation::read(&text).unwrap()));
             let fight = Context {
                 place: Place::Arena,
                 fight: true,
@@ -309,7 +324,7 @@ mod tests {
             let left = format!("mix {name} 50% 0%");
             text = text.replace(&line, if name == "kick " { &left } else { &silent });
         }
-        let score: &'static Score = Box::leak(Box::new(Score::new(notation::read(&text).unwrap())));
+        let score = Arc::new(Score::new(notation::read(&text).unwrap()));
         let fight = Context {
             place: Place::Arena,
             fight: true,
@@ -329,11 +344,61 @@ mod tests {
 
         // The piece of the game is the same music either way.
         let (mut game, _) = music_from(fight);
-        let (mut same, _) = music_of(&SCORE, fight);
+        let (mut same, _) = music_of(score::game(), fight);
         let mut heard = [vec![0.0; 2 * 44_100], vec![0.0; 2 * 44_100]];
         game.render(&mut heard[0]);
         same.render(&mut heard[1]);
         assert_eq!(heard[0], heard[1]);
         assert!(heard[0] != frames);
+    }
+
+    #[test]
+    fn a_music_takes_another_piece_without_starting_over() {
+        let fight = Context {
+            place: Place::Arena,
+            fight: true,
+            threat: 4,
+            ..Context::default()
+        };
+        // The piece of the game without its lead, with an echo that comes a step later, at
+        // another level.
+        let text = include_str!("../music.score")
+            .replace("mix lead   5%  8%", "mix lead   0%  0%")
+            .replace("echo 3 33%", "echo 4 50%");
+        let other = Arc::new(Score::new(notation::read(&text).unwrap()));
+        let listen = |music: &mut Music, frames: usize| {
+            let mut heard = vec![0.0; 2 * frames];
+            music.render(&mut heard);
+            heard
+        };
+
+        // A bar and a little more of the game's piece, then the other piece.
+        let (mut music, _) = music_of(score::game(), fight);
+        let before = listen(&mut music, 100_000);
+        let spot = music.spot();
+        let old = music.rescore(other.clone());
+        assert!(Arc::ptr_eq(&old, &score::game()));
+        assert_eq!(music.spot(), spot);
+        let after = listen(&mut music, 200_000);
+        assert!(after.iter().any(|sample| sample.abs() > 0.1));
+        assert!(after.iter().all(|sample| sample.abs() < 1.0));
+
+        // The piece of the game went on to the same place by itself, so the two are the same
+        // music up to the change and another music after it.
+        let (mut game, _) = music_of(score::game(), fight);
+        assert_eq!(listen(&mut game, 100_000), before);
+        assert_eq!(game.spot(), spot);
+        assert!(listen(&mut game, 200_000) != after);
+
+        // A piece that only mixes the lead away sounds, from the change on, as if it had
+        // played from the start: nothing else of the music has moved.
+        let text = include_str!("../music.score").replace("mix lead   5%  8%", "mix lead   0%  0%");
+        let muted = Arc::new(Score::new(notation::read(&text).unwrap()));
+        let (mut changed, _) = music_of(score::game(), fight);
+        let (mut whole, _) = music_of(muted.clone(), fight);
+        listen(&mut changed, 100_000);
+        listen(&mut whole, 100_000);
+        changed.rescore(muted);
+        assert_eq!(listen(&mut changed, 200_000), listen(&mut whole, 200_000));
     }
 }
