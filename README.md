@@ -205,6 +205,12 @@ cargo test --workspace
 
 The server-only check exists because a workspace build gives the server the client's Bevy features.
 
+The tests of the network open real games on this machine and play them in real time. On a machine that is busy with something else, such as another build, a dozen of them can fail together, most of them in `mirror`: run them again once the machine is quiet. Keeping their threads on two cores shows it every time:
+
+```bash
+taskset -c 0-1 cargo test -p tanku_client -- --test-threads=24
+```
+
 The tests check the map generator over a dozen seeds. A wider check over a thousand seeds takes two to three minutes and is worth running after a change to the generator:
 
 ```bash
