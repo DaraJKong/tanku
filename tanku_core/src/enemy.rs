@@ -2,7 +2,8 @@
 //!
 //! The enemies of a sector are a group. The group has a budget, which its tanks share
 //! unevenly, so that weak tanks stand next to strong ones. Each tank has a class, which
-//! decides what it spends its share on.
+//! decides what it spends its share on. What a tank can't spend on hardware raises its
+//! software.
 
 use crate::{
     modes::Difficulty,
@@ -97,6 +98,31 @@ pub fn group(seed: u64, difficulty: Difficulty, sector: u32, count: u32) -> Vec<
         .collect()
 }
 
+/// A tank with one more tier of software, if what it has left pays for it: of its brain, or
+/// else of its ballistics, with the bounce that the tier needs. No tier is higher than the
+/// sector and the class of the tank allow.
+fn smarter(genome: &Genome, highest: impl Fn(Stat) -> u8) -> Option<Genome> {
+    let budget = genome.budget as u32;
+    if genome.brain() < highest(Stat::Brain) {
+        let mut raised = *genome;
+        raised.set(Stat::Brain, genome.brain() + 1);
+        if raised.cost() <= budget {
+            return Some(raised);
+        }
+    }
+    let tier = genome.ballistics() + 1;
+    if tier <= highest(Stat::Ballistics) {
+        let mut raised = *genome;
+        raised.set(Stat::Ballistics, tier);
+        // A bank shot needs a bullet that bounces.
+        raised.set(Stat::Ricochet, genome.bounces().max(tier - 1));
+        if raised.cost() <= budget {
+            return Some(raised);
+        }
+    }
+    None
+}
+
 /// One tank of a group: its class, then what its budget buys. A tank has the same class
 /// whatever the difficulty.
 fn build(seed: u64, difficulty: Difficulty, sector: u32, index: u32, budget: u32) -> Genome {
@@ -130,10 +156,13 @@ fn build(seed: u64, difficulty: Difficulty, sector: u32, index: u32, budget: u32
     }
 
     // A tank without a brain can't use mines or a shield.
-    let wanted: Vec<Stat> = Stat::HARDWARE
-        .into_iter()
-        .filter(|stat| brain > 0 || !matches!(stat, Stat::Mines | Stat::Shield))
-        .collect();
+    let wanted = |genome: &Genome| -> Vec<Stat> {
+        let thinks = genome.brain() > 0;
+        Stat::HARDWARE
+            .into_iter()
+            .filter(|stat| thinks || !matches!(stat, Stat::Mines | Stat::Shield))
+            .collect()
+    };
     let affordable = |genome: &Genome, stat: Stat| {
         let level = genome.level(stat);
         level < highest(stat)
@@ -146,7 +175,7 @@ fn build(seed: u64, difficulty: Difficulty, sector: u32, index: u32, budget: u32
         .favorites()
         .iter()
         .copied()
-        .filter(|stat| wanted.contains(stat))
+        .filter(|stat| wanted(&genome).contains(stat))
         .collect();
     for &stat in &favorites {
         if genome.level(stat) == 0 && affordable(&genome, stat) {
@@ -155,13 +184,18 @@ fn build(seed: u64, difficulty: Difficulty, sector: u32, index: u32, budget: u32
     }
 
     loop {
-        let open: Vec<Stat> = wanted
-            .iter()
-            .copied()
+        let open: Vec<Stat> = wanted(&genome)
+            .into_iter()
             .filter(|&stat| affordable(&genome, stat))
             .collect();
         if open.is_empty() {
-            return genome;
+            // What a tank can't spend on hardware raises its software, a tier at a time.
+            // It then goes on buying: a first brain opens mines and a shield.
+            match smarter(&genome, highest) {
+                Some(raised) => genome = raised,
+                None => return genome,
+            }
+            continue;
         }
         let favored = open.iter().filter(|stat| favorites.contains(stat)).count() as u32;
         let weights: Vec<u32> = open
@@ -430,7 +464,109 @@ mod tests {
                     "sector {sector}: {left} points left for {stat:?} in {genome:?}"
                 );
             }
+            // Nor can it afford a tier of software: of its brain, or of its ballistics with
+            // the bounce that the tier needs.
+            let highest = |stat: Stat| highest_level(stat, difficulty, sector, genome.class);
+            let budget = genome.budget as u32;
+            let step = |stat: Stat| {
+                let tier = genome.level(stat);
+                stat.share(tier + 1, budget) - stat.share(tier, budget)
+            };
+            assert!(
+                genome.brain() == highest(Stat::Brain) || step(Stat::Brain) > left,
+                "sector {sector}: {left} points left for a brain in {genome:?}"
+            );
+            if genome.ballistics() < highest(Stat::Ballistics) {
+                let bounces = genome.bounces().max(genome.ballistics());
+                let bounce = Stat::Ricochet.price(bounces) - Stat::Ricochet.price(genome.bounces());
+                assert!(
+                    step(Stat::Ballistics) + bounce > left,
+                    "sector {sector}: {left} points left for ballistics in {genome:?}"
+                );
+            }
         }
+    }
+
+    #[test]
+    fn a_tier_of_software_is_paid_for_and_stays_within_what_the_class_allows() {
+        let tank = |class: Class, budget: u16, levels: &[(Stat, u8)]| {
+            let mut genome = Genome::empty(budget);
+            genome.class = class;
+            for &(stat, level) in levels {
+                genome.set(stat, level);
+            }
+            genome
+        };
+        // A late sector allows every tier, so only the class and the points decide.
+        let raised =
+            |genome: &Genome| smarter(genome, |stat| highest_level(stat, Normal, 50, genome.class));
+        let tiers = |genome: &Genome| (genome.brain(), genome.ballistics(), genome.bounces());
+        // The brain comes first.
+        let plain = tank(Class::None, 200, &[]);
+        assert_eq!(raised(&plain).as_ref().map(tiers), Some((1, 0, 0)));
+        // A tank with the best brain sharpens its aim. The second tier needs a bullet that
+        // bounces, which comes with it.
+        let ace = tank(Class::None, 200, &[(Stat::Brain, 4), (Stat::Ballistics, 1)]);
+        let sharper = raised(&ace).unwrap();
+        assert_eq!(tiers(&sharper), (4, 2, 1));
+        // The third tier is kept for the classes whose bullets bounce twice.
+        assert_eq!(raised(&sharper), None);
+        let mut trickster = sharper;
+        trickster.class = Class::Trickster;
+        assert_eq!(raised(&trickster).as_ref().map(tiers), Some((4, 3, 2)));
+        // Nothing is raised on credit. A tank of 50 points with 2 left can pay neither for
+        // a brain, which costs it 4, nor for an aim, which costs it 3. With 3 left, it
+        // takes the aim.
+        let parts = [(Stat::Engine, 7), (Stat::Muzzle, 7), (Stat::Turret, 6)];
+        let spent = tank(Class::None, 50, &parts);
+        assert_eq!(spent.cost(), 48);
+        assert_eq!(raised(&spent), None);
+        let richer = tank(Class::None, 51, &parts);
+        assert_eq!(raised(&richer).as_ref().map(tiers), Some((0, 1, 0)));
+        assert_eq!(raised(&richer).map(|tank| tank.cost()), Some(51));
+    }
+
+    #[test]
+    fn what_a_tank_can_not_spend_on_hardware_raises_its_software() {
+        let everyone = || sample(Normal).chain(sample(Hard));
+        let left = |tank: &Genome| tank.budget as u32 - tank.cost();
+        // No tank is left with what a tier of a brain costs the richest of them, which is
+        // 8% of 195 points, and few are left with more than a few points.
+        let most = everyone().map(|(_, tank)| left(&tank)).max();
+        assert!(most < Some(16), "{most:?}");
+        let (idle, all) = (
+            everyone().filter(|(_, tank)| left(tank) > 4).count(),
+            everyone().count(),
+        );
+        assert!(idle * 50 < all, "{idle} of {all}");
+        // A tank that has more points than all the hardware there is costs has a brain:
+        // without one, it could use neither mines nor a shield.
+        for (sector, tank) in everyone() {
+            assert!(
+                tank.budget <= 135 || tank.brain() > 0,
+                "sector {sector}: {tank:?}"
+            );
+        }
+        // Two leaders of late sectors, each with every part that a tank without a brain
+        // may have. One has enough left for a brain, which opens mines and a shield to
+        // it. The other has too little for a brain, and sharpens its aim.
+        let leader = |seed: &str, sector: u32, index: usize| {
+            let count = progression::enemy_count(sector, 1, false);
+            group(crate::seed::seed_value(seed), Normal, sector, count)[index]
+        };
+        let sniper = leader("BRAVO", 21, 3);
+        assert_eq!(
+            (sniper.class, sniper.budget, sniper.cost()),
+            (Class::Sniper, 114, 114)
+        );
+        assert_eq!((sniper.brain(), sniper.mines()), (1, 3));
+        assert_eq!(sniper.shield_cooldown(), Some(10.0));
+        let scout = leader("TANKU", 24, 0);
+        assert_eq!(
+            (scout.class, scout.budget, scout.cost()),
+            (Class::Scout, 101, 100)
+        );
+        assert_eq!((scout.brain(), scout.ballistics()), (0, 2));
     }
 
     #[test]
