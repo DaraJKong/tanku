@@ -507,7 +507,9 @@ A host opens a game from the host screen, and can give it two things first:
 - **A name** of up to 24 characters, which the join screen and the lobby show. A game without a name is listed by the address of its host alone.
 - **A password** of up to 24 characters. A game that has one only lets in a player who types it, whichever way they join. A wrong password is refused, and the player is told so. The password itself never goes over the network, and the game doesn't keep it: the host types it again for the next game.
 
-Both stay as they are until the host closes the game.
+Both are made of the characters that the interface draws: the letters of the Latin alphabet with their accents, figures and signs. What a player types then shows as it was typed on every machine. Both stay as they are until the host closes the game.
+
+The password keeps out those who were not given it: a player who has not typed it is sent nothing of the game. It hides nothing from someone who listens to the network, and a short word that others could guess keeps out the honest alone.
 
 The join screen lists the games of the local network, each with its name, the address of its host and its number of players, and a click joins one. A game that has a password is listed as locked, and joining it asks for the password. A game whose run is in progress, a full one and one of another version are listed for what they are, and can't be joined. A game is gone from the list a few seconds after its host closed it.
 
@@ -527,11 +529,13 @@ The host sets what the run is, and the others see it. Nothing is locked for a ho
 | Seed | One that the game draws, and draws again when the host asks, or one that the host types, which makes it a chosen seed |
 | Free mode | On or off. When it is on, each player builds their tank in their own garage (see [Garage](#garage)). |
 
-A run starts once every player has said that they are ready, the host included. It then starts by itself after a countdown of 3 s, which the lobby shows. A player can take their word back at any time, which stops the countdown. Two changes take it back for them: a player who changes their tank in the garage is no longer ready, and when the host changes an option, nobody is. A player who joins isn't ready either.
+A run starts once every player has said that they are ready, the host included. A player says so with a button of the lobby, or with Enter. The run then starts by itself after a countdown of 3 s, which the lobby shows. A player can take their word back at any time, which stops the countdown. Two changes take it back for them: a player who changes their tank in the garage is no longer ready, and when the host changes an option, nobody is. A player who joins isn't ready either.
 
 A host who starts alone plays a solo run, with its lives, its checkpoints and its locks: a host who is alone can't be ready while the difficulty or an option is one that they haven't unlocked for solo.
 
 When a run is over, the host decides what comes next: the same seed again, a new run, or the lobby. The first two start at once for everyone, with the same options and the same tanks: only the lobby asks who is ready. The host can also end a run from the menu, which brings everyone back to the lobby. Nobody is ready there until they say so again.
+
+A host whom the others have left by then would go on alone, in a solo run. The locks of solo hold for that run too: the host is offered neither the same seed nor a new run while the difficulty or an option is one that they haven't unlocked for solo.
 
 ### Connection and latency
 
