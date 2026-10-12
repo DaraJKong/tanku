@@ -80,7 +80,7 @@ Arena mode is an option of a run, as free mode is. A single player unlocks it by
 
 A run in arena mode has no corridor. It is fought in one room, which the seed draws, against one group after another:
 
-- **Groups.** A group is the group of the sector of its number, for as many players. It comes in two waves, each as large as a wave of an arena of the corridor: the second one when the last tank of the first is destroyed. The place of each tank is marked before the tank appears, as in an arena.
+- **Groups.** A group is the group of the sector of its number, for as many players. It comes in two waves, each as large as a wave of an arena of the corridor: the second one when the last tank of the first is destroyed. The place of each tank is marked for a second before the tank appears, as in an arena. A tank whose place has a player within 4 m takes another place that has room, so that a wave never waits for a player to move.
 - **The lull and the reserve.** Between two groups, and before the first one, there is a lull of 5 s. The tanks that have not come yet wait in reserve south of the room, as outlines in dashes with every part that tells a stat, so that the next group is read as a group is through a barrier. A tank leaves the reserve when its place in the room is marked: during a fight, the reserve holds the second wave.
 - **The room.** It is laid out anew for each group, with the cover and the crates of the sector of that number. The place of each block and of each crate is inked in on the floor for 2 s first, and one that has a tank or a mine in its place waits. The marks that a fight left on the floor go with the old layout.
 - **Lives.** A single player gets a life back for every fifth group that is cleared, up to three. A tank that is destroyed comes back in the middle of the room, and what was left of the group goes back into reserve and comes again. Several players repair each other, as in the corridor.
@@ -264,6 +264,25 @@ After a change to what a mode makes of its enemies, two more tests send the same
 ```bash
 cargo test -p tanku_server trials::modes -- --ignored --nocapture
 ```
+
+After a change to arena mode, one more test fights the groups of sectors 6 to 9 and 15 to 20 three ways on the same eight seeds: each in its sector of the corridor, in the room in two waves, and in the room all at once. It prints the same figures, and takes two minutes:
+
+```bash
+cargo test -p tanku_server trials::arena -- --ignored --nocapture
+```
+
+On 2026-10-12 it gave this. In two waves, the room is about as dangerous as the corridor. All at once, half as many shots again land in a minute in the late groups, and twice as many in the early ones:
+
+| Groups | Fought | Median time | Shots that landed in a minute | For each tank that fell |
+|---|---|---|---|---|
+| 6 to 9 | In the corridor | 13.1 s | 7.0 | 0.62 |
+| 6 to 9 | In the room, two waves | 10.3 s | 8.2 | 0.48 |
+| 6 to 9 | In the room, at once | 10.9 s | 14.3 | 0.85 |
+| 15 to 20 | In the corridor | 33.3 s | 13.3 | 1.30 |
+| 15 to 20 | In the room, two waves | 27.5 s | 14.7 | 1.29 |
+| 15 to 20 | In the room, at once | 25.6 s | 20.2 | 1.66 |
+
+The crude player says little about one of flesh and blood: nothing destroys it, and it neither takes cover nor reads the reserve.
 
 Before a change to what a player's tank may be, one more test puts the same crude player in the four tanks of [the garage check](#the-garage-check), against the groups of sectors 6 to 15. That player raises its shield just before a bullet reaches its tank and lays no mine. The test prints the same figures for each tank, and how many shots landed for each enemy that fell. It takes four minutes:
 

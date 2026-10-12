@@ -9,6 +9,7 @@
 //! cargo test -p tanku_server trials::brains -- --ignored --nocapture
 //! cargo test -p tanku_server trials::modes -- --ignored --nocapture
 //! cargo test -p tanku_server trials::garage -- --ignored --nocapture
+//! cargo test -p tanku_server trials::arena -- --ignored --nocapture
 //! ```
 //!
 //! The tables say little about a player of flesh and blood, who closes in, takes cover and
@@ -603,6 +604,146 @@ mod garage {
                 let points = format!("{name} ({})", tank.cost());
                 skirmishes(&points, &fights);
             }
+        }
+    }
+}
+
+/// The same groups in the corridor and in the room of arena mode.
+mod arena {
+    use tanku_core::rules::LULL;
+
+    use super::*;
+
+    /// A group of arena mode against the bot in the standard tank, which fires bursts: in
+    /// two waves, or all at once. The fight is timed from the end of the lull.
+    fn room_skirmish(seed: &str, group: u32, whole: bool, limit: f32) -> (Vec<Genome>, Trial) {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, CorePlugin, ServerPlugin));
+        app.insert_resource(Playtest {
+            infinite_lives: true,
+            whole_groups: whole,
+            ..default()
+        });
+        app.world_mut().write_message(RunRequest::Start {
+            seed: seed.into(),
+            players: 1,
+            drawn: true,
+            difficulty: Difficulty::Normal,
+            free: false,
+            arena: true,
+            tanks: Vec::new(),
+        });
+        tick(&mut app, 1);
+        skip_to(&mut app, group);
+        tick(&mut app, 1);
+        let entity = player(&mut app).unwrap();
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(Protected(f32::MAX));
+        let made: Vec<Genome> = {
+            let field = app.world().resource::<Field>();
+            let state = field.room.as_ref().unwrap();
+            state
+                .next
+                .iter()
+                .flatten()
+                .map(|tank| tank.genome)
+                .collect()
+        };
+        tick(&mut app, seconds(LULL));
+        events(&mut app);
+
+        let mut bot = Bot::new(0.25);
+        let mut trial = Trial {
+            lasted: limit,
+            fell: false,
+            hits: 0,
+            blasts: 0,
+            left: 0,
+        };
+        for step in 0..seconds(limit) {
+            if run(&app).cleared >= group {
+                trial.lasted = step as f32 * TICK;
+                trial.fell = true;
+                break;
+            }
+            // The bot fights the nearest tank that is in the room, and waits for the next
+            // where it stands.
+            let me = position(&mut app, entity);
+            let foes = enemies(&mut app, group);
+            let far = |foe: &Entity| app.world().get::<Position>(*foe).unwrap().0.distance(me);
+            let nearest = foes
+                .iter()
+                .min_by(|a, b| far(a).total_cmp(&far(b)))
+                .copied();
+            let order = match nearest {
+                Some(foe) => bot.order(&app, entity, foe),
+                None => TankCommand {
+                    aim: me + Vec2::Y,
+                    ..default()
+                },
+            };
+            *app.world_mut().get_mut::<TankCommand>(entity).unwrap() = order;
+            tick(&mut app, 1);
+            let me = position(&mut app, entity);
+            for event in events(&mut app) {
+                match event {
+                    SimEvent::BulletDestroyed {
+                        at,
+                        team: Team::Enemies,
+                    } if (at.distance(me) - TANK_RADIUS - BULLET_RADIUS).abs() < 0.05 => {
+                        trial.hits += 1;
+                    }
+                    SimEvent::Blast { at } => {
+                        let field = app.world().resource::<Field>();
+                        let walled = field.blocked(at, me, |solid| solid.stops_blasts());
+                        if at.distance(me) <= BLAST_RADIUS && !walled {
+                            trial.blasts += 1;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if !trial.fell {
+            let field = app.world().resource::<Field>();
+            let held = field.arenas.get(&group).map_or(0, |arena| {
+                arena.waiting.iter().flatten().count() + arena.incoming.len()
+            });
+            trial.left = held + enemies(&mut app, group).len();
+        }
+        (made, trial)
+    }
+
+    /// The groups of two stretches of sectors, each fought three ways on the same seeds: in
+    /// its sector of the corridor, in the room in two waves, and in the room all at once.
+    /// Only the sectors that are corridors are fought: the group is then the same, tank for
+    /// tank. It takes about ten minutes.
+    #[test]
+    #[ignore = "takes minutes and prints a table"]
+    fn the_same_groups_in_the_corridor_and_in_the_room() {
+        println!(
+            "\nThe group of a sector on 8 seeds: in its corridor, and in the room of arena \
+             mode. The bot fires bursts, and a fight lasts {SKIRMISH} s at most."
+        );
+        skirmish_header();
+        for (from, to) in [(6, 9), (15, 20)] {
+            let (mut corridor, mut waves, mut whole) = (Vec::new(), Vec::new(), Vec::new());
+            for seed in trial_seeds(8) {
+                for sector in from..=to {
+                    let Some(fight) = skirmish(&seed, sector, Difficulty::Normal, SKIRMISH) else {
+                        continue;
+                    };
+                    let in_waves = room_skirmish(&seed, sector, false, SKIRMISH);
+                    assert_eq!(fight.0, in_waves.0, "seed {seed}, sector {sector}");
+                    corridor.push(fight);
+                    waves.push(in_waves);
+                    whole.push(room_skirmish(&seed, sector, true, SKIRMISH));
+                }
+            }
+            skirmishes(&format!("{from}-{to}, corridor"), &corridor);
+            skirmishes(&format!("{from}-{to}, room, two waves"), &waves);
+            skirmishes(&format!("{from}-{to}, room, at once"), &whole);
         }
     }
 }

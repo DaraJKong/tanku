@@ -275,6 +275,66 @@ fn a_group_of_arena_mode_comes_in_two_waves_after_a_lull() {
 }
 
 #[test]
+fn a_tank_whose_place_a_player_stands_on_takes_another_place_of_its_group() {
+    let mut app = before_group("TEST", 1, 9);
+    shelter(&mut app);
+    // The player stands on the place of the first tank of the group, and stays there.
+    let (place, spare) = {
+        let field = app.world().resource::<Field>();
+        let state = field.room.as_ref().unwrap();
+        (state.next[0][0].at, state.spare.clone())
+    };
+    assert!(spare.len() >= 4);
+    let own = player(&mut app).unwrap();
+    teleport(&mut app, own, place + Vec2::X);
+    wait_for_the_group(&mut app);
+    tick(&mut app, 1);
+    // Both tanks of the wave are marked at once all the same: nobody could tell that one
+    // of them waited for the player to move.
+    let news = events(&mut app);
+    let marks: Vec<Vec2> = news
+        .iter()
+        .filter_map(|event| match event {
+            SimEvent::TankIncoming { at } => Some(*at),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(marks.len(), 2);
+    assert!(!marks.contains(&place));
+    // The tank took a place that the group had to spare, with room around it.
+    let taken: Vec<&Vec2> = marks.iter().filter(|mark| spare.contains(mark)).collect();
+    assert_eq!(taken.len(), 1);
+    assert!(taken[0].distance(place + Vec2::X) > APPEAR_ROOM);
+    tick(&mut app, seconds(APPEAR_TIME) + 2);
+    let there = enemies(&mut app, 9);
+    assert_eq!(there.len(), 2);
+    for tank in there {
+        assert!(position(&mut app, tank).distance(place + Vec2::X) > APPEAR_ROOM);
+    }
+    // The place that it left is one to spare now.
+    let field = app.world().resource::<Field>();
+    let state = field.room.as_ref().unwrap();
+    assert!(state.spare.contains(&place) && state.spare.len() == spare.len());
+
+    // A group that has no place to spare waits for room, as a wave of an arena does.
+    let mut app = before_group("TEST", 1, 9);
+    shelter(&mut app);
+    let mut field = app.world_mut().resource_mut::<Field>();
+    let state = field.room.as_mut().unwrap();
+    state.spare.clear();
+    let place = state.next[0][0].at;
+    let own = player(&mut app).unwrap();
+    teleport(&mut app, own, place + Vec2::X);
+    wait_for_the_group(&mut app);
+    tick(&mut app, seconds(APPEAR_TIME) + 3);
+    assert_eq!(enemies(&mut app, 9).len(), 1);
+    assert_eq!(numbers(&mut app), [0, 2, 3]);
+    teleport(&mut app, own, place + Vec2::X * (APPEAR_ROOM + 1.0));
+    tick(&mut app, seconds(APPEAR_TIME) + 3);
+    assert_eq!(enemies(&mut app, 9).len(), 2);
+}
+
+#[test]
 fn a_group_is_the_group_of_the_sector_of_its_number_for_as_many_players() {
     for (group, players, difficulty) in [
         (1, 1, Difficulty::Normal),

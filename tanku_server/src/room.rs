@@ -40,6 +40,9 @@ pub struct RoomState {
     /// How many tanks each wave has of the group that is on, or of the next one during a
     /// lull. A tank keeps its place in the reserve by it.
     pub split: Vec<u32>,
+    /// The places of that group that none of its tanks has: a tank whose own place has a
+    /// player too close takes one of them, so that a wave never waits for a player to move.
+    pub spare: Vec<Vec2>,
     /// What stands in the room as it was last laid out: the lowest corners of its blocks, and
     /// those of its crates.
     pub blocks: Vec<IVec2>,
@@ -57,6 +60,7 @@ impl RoomState {
             lull: None,
             next: VecDeque::new(),
             split: Vec::new(),
+            spare: Vec::new(),
             blocks: Vec::new(),
             crates: Vec::new(),
         }
@@ -139,6 +143,8 @@ fn muster(field: &Field, state: &mut RoomState, group: u32, waves: u32) -> VecDe
         genome,
         at: place.as_vec2(),
     });
+    let left_over = places.iter().skip(tanks.len());
+    state.spare = left_over.map(|place| place.as_vec2()).collect();
     state.split = progression::wave_sizes(tanks.len() as u32, waves);
     let sizes = state.split.iter();
     sizes
