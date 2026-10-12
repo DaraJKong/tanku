@@ -313,8 +313,6 @@ pub struct Run {
 pub struct Playtest {
     /// A destroyed player comes back without losing a life.
     pub infinite_lives: bool,
-    /// In arena mode: a group comes all at once, and not in waves.
-    pub whole_groups: bool,
 }
 
 /// What the client asks of the server.
@@ -412,7 +410,9 @@ pub enum SimEvent {
     SectorEntered {
         sector: u32,
     },
-    /// A wave of an arena is on its way: which one, of how many.
+    /// A wave of an arena is on its way: which one, of how many. A group of arena mode is
+    /// told as the one wave of one: the tanks that come later, each for one that is destroyed,
+    /// are told by their marks alone.
     WaveIncoming {
         wave: u32,
         of: u32,

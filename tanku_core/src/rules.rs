@@ -67,11 +67,15 @@ pub const ARENA_DELAY: f32 = 2.0;
 pub const APPEAR_TIME: f32 = 1.0;
 /// The mark of a tank of an arena waits while the tank of a player is this close to its place.
 pub const APPEAR_ROOM: f32 = 4.0;
+/// And while a tank of its own group is this close to it: the two would stand in each other.
+/// That only happens in arena mode, where a tank comes while others of its group are there.
+pub const APPEAR_APART: f32 = 2.0;
 
-/// In arena mode, a group comes in this many waves at most.
-pub const ROOM_WAVES: u32 = 2;
-/// In arena mode, the time between the end of a group and the warning of the first wave of
-/// the next one, and the time before the first group of a run.
+/// In arena mode, one tank in this many of a group comes with it, rounded up, and the room
+/// holds no more of the group at once: each of the others comes when one is destroyed.
+pub const ROOM_SHARE: u32 = 2;
+/// In arena mode, the time between the end of a group and the coming of the next one, and the
+/// time before the first group of a run.
 pub const LULL: f32 = 3.0;
 /// In arena mode, a single player who is short of a life gets one back for every this many
 /// groups that are cleared.

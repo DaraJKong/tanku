@@ -3,7 +3,7 @@
 //! Everything that feeds generation is an integer formula or a lookup table, so that a seed
 //! gives the same enemies on every platform.
 
-use crate::modes::Difficulty;
+use crate::{modes::Difficulty, rules::ROOM_SHARE};
 
 /// What hard mode adds to the budget of every sector: its budgets go from 40 to 130.
 const HARD_BUDGET: u32 = 30;
@@ -59,6 +59,15 @@ pub fn wave_sizes(count: u32, waves: u32) -> Vec<u32> {
     (0..waves)
         .map(|wave| count / waves + (wave < count % waves) as u32)
         .collect()
+}
+
+/// How many tanks of a group of arena mode come with it, and how many wait in reserve, each
+/// to take the place of one that is destroyed. The first are half of the group, rounded up:
+/// the room holds no more of a group at once, which is as many tanks as a wave of an arena
+/// has.
+pub fn room_parts(count: u32) -> (u32, u32) {
+    let first = count.div_ceil(ROOM_SHARE);
+    (first, count - first)
 }
 
 /// Highest brain tier an enemy of this sector can have. Hard mode has every tier from the
@@ -142,26 +151,29 @@ mod tests {
     }
 
     #[test]
-    fn a_group_of_arena_mode_comes_in_two_waves_as_large_as_those_of_an_arena() {
-        let in_the_room = |count: u32| wave_sizes(count, ROOM_WAVES);
-        assert_eq!(in_the_room(6), [3, 3]);
-        assert_eq!(in_the_room(5), [3, 2]);
-        assert_eq!(in_the_room(15), [8, 7]);
-        assert_eq!(in_the_room(1), [1]);
-        // A playtest can have it all at once.
-        assert_eq!(wave_sizes(6, 1), [6]);
-        // The group of a sector in two waves, and the group of an arena, which is half as
-        // large again, in three: the largest wave is the same.
+    fn the_room_of_arena_mode_holds_as_much_of_a_group_as_a_wave_of_an_arena_has() {
+        assert_eq!(room_parts(6), (3, 3));
+        assert_eq!(room_parts(5), (3, 2));
+        assert_eq!(room_parts(15), (8, 7));
+        // A tank that is alone has nobody to take its place.
+        assert_eq!(room_parts(1), (1, 0));
+        assert_eq!(room_parts(0), (0, 0));
+        // The group of a sector, of which half is there at once, and the group of an arena,
+        // which is half as large again and comes in three waves: the most tanks that the
+        // players face together are the same. And nobody waits longer than a tank is there
+        // to be destroyed for them.
         for sector in 1..=40 {
             for players in 1..=4 {
-                let group = in_the_room(enemy_count(sector, players, false));
+                let count = enemy_count(sector, players, false);
+                let (first, held) = room_parts(count);
                 let arena = wave_sizes(enemy_count(sector, players, true), ARENA_WAVES);
-                assert_eq!(group[0], arena[0], "sector {sector}, {players} players");
+                assert_eq!(first, arena[0], "sector {sector}, {players} players");
+                assert!(first + held == count && held <= first);
             }
         }
     }
 
-    use crate::rules::{ARENA_WAVES, ROOM_WAVES};
+    use crate::rules::ARENA_WAVES;
     use Difficulty::{Hard, Normal};
 
     #[test]
