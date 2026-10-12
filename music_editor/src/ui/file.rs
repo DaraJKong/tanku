@@ -1,14 +1,11 @@
 //! The tab of the file: the lines as they will be saved, with what each part of them means,
 //! what is not saved yet, and the checks that say whether it should be.
 
-use bevy::{
-    input::mouse::{MouseScrollUnit, MouseWheel},
-    prelude::*,
-};
+use bevy::prelude::*;
 
 use super::{
     check,
-    widgets::{Kind, button, grow, head, mark, note, panel, told},
+    widgets::{Kind, Scrolls, button, grow, head, mark, note, panel, scrolling, told},
 };
 use crate::{
     checks::{Checks, Item, Standing},
@@ -42,41 +39,6 @@ const NOTES: [&str; 8] = [
     "The settings of each instrument by their names: times in ms, frequencies in Hz, levels in percent. How an \
      instrument is made stays in the code.",
 ];
-
-/// The listing, which the wheel of the mouse moves when it is longer than its place.
-#[derive(Component)]
-pub struct Listing;
-
-/// How far down the listing is.
-#[derive(Resource, Default)]
-pub struct Scrolled(f32);
-
-/// Moves the listing with the wheel, and keeps it where it was when the sheet is drawn again.
-pub fn scroll(
-    mut wheel: MessageReader<MouseWheel>,
-    mut scrolled: ResMut<Scrolled>,
-    mut listings: Query<(&mut ScrollPosition, &ComputedNode), With<Listing>>,
-) {
-    let lines = |event: &MouseWheel| match event.unit {
-        MouseScrollUnit::Line => 3.0 * LINE * event.y,
-        MouseScrollUnit::Pixel => event.y,
-    };
-    let moved: f32 = wheel.read().map(lines).sum();
-    for (mut position, node) in &mut listings {
-        // A listing that was just drawn has no size yet.
-        if node.size.y == 0.0 {
-            continue;
-        }
-        let longer = (node.content_size.y - node.size.y) * node.inverse_scale_factor;
-        let wanted = (scrolled.0 - moved).clamp(0.0, longer.max(0.0));
-        if position.y != wanted {
-            position.y = wanted;
-        }
-        if scrolled.0 != wanted {
-            scrolled.0 = wanted;
-        }
-    }
-}
 
 pub fn list(parent: &mut ChildSpawnerCommands, doc: &Doc, _: &View) {
     head(parent, "In this file", |head| {
@@ -159,64 +121,53 @@ pub fn center(parent: &mut ChildSpawnerCommands, doc: &Doc, _: &View) {
         });
 
     let parts = lines::parts(doc.lines());
-    parent
-        .spawn((
-            Listing,
-            Node {
-                flex_direction: FlexDirection::Column,
-                min_height: px(0),
-                overflow: Overflow::scroll_y(),
-                ..grow()
-            },
-            BackgroundColor(theme::FLOOR),
-        ))
-        .with_children(|listing| {
-            for (place, ((name, _), meaning)) in PARTS.into_iter().zip(NOTES).enumerate() {
-                let of_part = |at: &usize| parts[*at] == Some(place);
-                let numbers: Vec<usize> = (0..doc.lines().len()).filter(of_part).collect();
-                if numbers.is_empty() {
-                    continue;
-                }
-                listing
-                    .spawn((
+    scrolling(parent, Scrolls::Listing, theme::FLOOR, |listing| {
+        for (place, ((name, _), meaning)) in PARTS.into_iter().zip(NOTES).enumerate() {
+            let of_part = |at: &usize| parts[*at] == Some(place);
+            let numbers: Vec<usize> = (0..doc.lines().len()).filter(of_part).collect();
+            if numbers.is_empty() {
+                continue;
+            }
+            listing
+                .spawn((
+                    Node {
+                        flex_shrink: 0.0,
+                        padding: UiRect::vertical(px(1)),
+                        border: UiRect::bottom(px(1)),
+                        ..default()
+                    },
+                    BorderColor::all(theme::RULE_DIM),
+                ))
+                .with_children(|part| {
+                    part.spawn(Node {
+                        width: px(LISTING),
+                        flex_shrink: 0.0,
+                        flex_direction: FlexDirection::Column,
+                        overflow: Overflow::clip_x(),
+                        ..default()
+                    })
+                    .with_children(|rows| {
+                        for at in numbers {
+                            line(rows, doc, at);
+                        }
+                    });
+                    part.spawn((
                         Node {
-                            flex_shrink: 0.0,
-                            padding: UiRect::vertical(px(1)),
-                            border: UiRect::bottom(px(1)),
-                            ..default()
+                            padding: UiRect::horizontal(px(12)),
+                            flex_direction: FlexDirection::Column,
+                            border: UiRect::left(px(1)),
+                            min_width: px(0),
+                            ..grow()
                         },
                         BorderColor::all(theme::RULE_DIM),
-                    ))
-                    .with_children(|part| {
-                        part.spawn(Node {
-                            width: px(LISTING),
-                            flex_shrink: 0.0,
-                            flex_direction: FlexDirection::Column,
-                            overflow: Overflow::clip_x(),
-                            ..default()
-                        })
-                        .with_children(|rows| {
-                            for at in numbers {
-                                line(rows, doc, at);
-                            }
-                        });
-                        part.spawn((
-                            Node {
-                                padding: UiRect::horizontal(px(12)),
-                                flex_direction: FlexDirection::Column,
-                                border: UiRect::left(px(1)),
-                                min_width: px(0),
-                                ..grow()
-                            },
-                            BorderColor::all(theme::RULE_DIM),
-                            children![
-                                theme::title(name, 11.0, theme::TEXT),
-                                theme::wrapped(meaning, 12.0, theme::TEXT_SOFT),
-                            ],
-                        ));
-                    });
-            }
-        });
+                        children![
+                            theme::title(name, 11.0, theme::TEXT),
+                            theme::wrapped(meaning, 12.0, theme::TEXT_SOFT),
+                        ],
+                    ));
+                });
+        }
+    });
 }
 
 /// One line of the listing: its number in the file, a mark if it is not saved, and the line

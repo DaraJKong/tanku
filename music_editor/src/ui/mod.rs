@@ -33,7 +33,7 @@ use crate::{
     state::{Press, Tab, View},
     theme,
 };
-use widgets::{Kind, button, choice, grow, head, key, mark, panel, strip};
+use widgets::{Kind, Scrolls, button, choice, grow, head, key, mark, panel, scrolling, strip};
 
 /// The sheet that the window is drawn for, in its own pixels.
 pub const SHEET: Vec2 = Vec2::new(1600.0, 900.0);
@@ -81,7 +81,6 @@ pub fn plugin(app: &mut App) {
     app.add_plugins(widgets::plugin)
         .init_resource::<Checks>()
         .init_resource::<instruments::Sound>()
-        .init_resource::<file::Scrolled>()
         .add_systems(Startup, setup)
         .add_systems(
             Update,
@@ -92,7 +91,7 @@ pub fn plugin(app: &mut App) {
                 instruments::listen,
                 draw,
                 (widgets::draw_dashes, widgets::draw_hatches),
-                (show_sound, file::scroll),
+                (show_sound, (widgets::scroll, widgets::show_thumbs).chain()),
             )
                 .chain(),
         )
@@ -749,9 +748,13 @@ pub fn checks_of(
                 color,
             ));
         });
-        for item in items {
-            check(panel, checks, *item, detailed);
-        }
+        // The checks scroll under their heading when what they found takes more room than
+        // the panel has.
+        scrolling(panel, Scrolls::Checks(tab), Color::NONE, |rows| {
+            for item in items {
+                check(rows, checks, *item, detailed);
+            }
+        });
     });
 }
 
@@ -1042,6 +1045,102 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The checks of a tab as they are laid out: how far down they are, how much of them is
+    /// out of sight, and where their middle is in the window.
+    fn checks_of_tab(app: &mut App, tab: Tab) -> (f32, f32, Vec2) {
+        let world = app.world_mut();
+        let mut areas =
+            world.query::<(&Scrolls, &ScrollPosition, &ComputedNode, &UiGlobalTransform)>();
+        let mut areas = areas.iter(world);
+        let (_, position, node, place) = areas
+            .find(|(which, ..)| **which == Scrolls::Checks(tab))
+            .expect("the tab has its checks");
+        let hidden = (node.content_size.y - node.size.y) * node.inverse_scale_factor;
+        (position.y, hidden, place.translation)
+    }
+
+    /// Turns the wheel of the mouse at a point of the window, and lets the sheet follow.
+    fn wheel(app: &mut App, lines: f32, at: Vec2) {
+        use bevy::input::{
+            mouse::{MouseScrollUnit, MouseWheel},
+            touch::TouchPhase,
+        };
+
+        app.world_mut().resource_mut::<widgets::Scrolled>().at = Some(at);
+        app.world_mut().write_message(MouseWheel {
+            unit: MouseScrollUnit::Line,
+            x: 0.0,
+            y: lines,
+            window: Entity::PLACEHOLDER,
+            phase: TouchPhase::Moved,
+        });
+        frames(app);
+    }
+
+    #[test]
+    fn the_checks_scroll_when_they_are_longer_than_their_panel() {
+        use tanku_audio::score::Mode;
+
+        use super::widgets::Thumb;
+
+        let mut app = window(UVec2::new(1600, 900));
+        pressing(&mut app, Press::Tab(Tab::Sections));
+        // The checks of the game's piece fit their panel: nothing is out of sight, the wheel
+        // moves nothing, and the mark that shows where they are is not there.
+        let (down, hidden, middle) = checks_of_tab(&mut app, Tab::Sections);
+        assert!(down == 0.0 && hidden <= 0.5, "{down} {hidden}");
+        wheel(&mut app, -3.0, middle);
+        assert_eq!(checks_of_tab(&mut app, Tab::Sections).0, 0.0);
+        let shown = |app: &mut App| {
+            let world = app.world_mut();
+            let mut thumbs = world.query::<(&Thumb, &Visibility, &Node)>();
+            let (_, visibility, node) = thumbs.single(world).unwrap();
+            (*visibility != Visibility::Hidden).then_some((node.top, node.height))
+        };
+        assert_eq!(shown(&mut app), None);
+
+        // In C Phrygian, two checks fail and say where: they are longer than their panel.
+        pressing(&mut app, Press::Tonic(3));
+        pressing(&mut app, Press::Home(Mode::Phrygian));
+        let (down, hidden, middle) = checks_of_tab(&mut app, Tab::Sections);
+        assert!(down == 0.0 && hidden > 30.0, "{down} {hidden}");
+        let Some((top, height)) = shown(&mut app) else {
+            panic!("the mark of the checks is not shown");
+        };
+        assert_eq!(top, px(0));
+        // The wheel moves them while the cursor is on them, and not from elsewhere.
+        wheel(&mut app, -1.0, Vec2::new(700.0, 400.0));
+        assert_eq!(checks_of_tab(&mut app, Tab::Sections).0, 0.0);
+        wheel(&mut app, -1.0, middle);
+        let (down, ..) = checks_of_tab(&mut app, Tab::Sections);
+        assert_eq!(down, hidden.min(39.0));
+        // They stay there when the sheet is drawn again, from its first frame on.
+        let world = app.world_mut();
+        world.resource_scope(|world, mut doc: Mut<Doc>| {
+            let mut view = world.resource_mut::<View>();
+            actions::apply(&Press::Bar(3), false, &mut doc, &mut view);
+        });
+        app.update();
+        assert_eq!(checks_of_tab(&mut app, Tab::Sections).0, down);
+        frames(&mut app);
+        assert_eq!(checks_of_tab(&mut app, Tab::Sections).0, down);
+        // No further than their end, where the mark is at its foot, and back to their top.
+        wheel(&mut app, -50.0, middle);
+        let (down, hidden, _) = checks_of_tab(&mut app, Tab::Sections);
+        assert!((down - hidden).abs() < 0.01, "{down} {hidden}");
+        let (low, same) = shown(&mut app).unwrap();
+        assert!(
+            same == height && low != px(0),
+            "{low:?} {same:?} {height:?}"
+        );
+        wheel(&mut app, 50.0, middle);
+        assert_eq!(checks_of_tab(&mut app, Tab::Sections).0, 0.0);
+        assert_eq!(shown(&mut app).unwrap().0, px(0));
+        // The checks of another tab are where they were: at their top.
+        pressing(&mut app, Press::Tab(Tab::Motifs));
+        assert_eq!(checks_of_tab(&mut app, Tab::Motifs).0, 0.0);
     }
 
     #[test]

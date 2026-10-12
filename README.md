@@ -358,7 +358,7 @@ It opens `tanku_audio/music.score`, or the file named after `--`. Every change i
 | Ctrl+Shift+Z or Ctrl+Y | Does it again |
 | Ctrl+S | Saves the file |
 | A button that moves a number | Goes on while it is held, and takes a larger step with Shift |
-| The wheel of the mouse | Moves the listing of the file |
+| The wheel of the mouse | Moves what the cursor is on, when it is longer than its place: the checks of a tab, the listing of the file |
 
 [docs/MUSIC.md](docs/MUSIC.md#editor) says what each tab shows and what the editor leaves to the code.
 

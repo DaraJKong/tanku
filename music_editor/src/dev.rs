@@ -5,7 +5,8 @@
 //! `tab NAME`, which shows a tab, `press LABEL`, which presses the button that bears this
 //! label, in capitals or not, `click X Y`, which presses the button at that point of the
 //! sheet, `type TEXT`, `key NAME` for `enter`, `escape`, `back` or `space`,
-//! `wheel LINES`, which turns the wheel of the mouse that many lines, down if it is negative,
+//! `wheel LINES X Y`, which turns the wheel of the mouse that many lines, down if it is
+//! negative, at that point of the sheet, or in its middle without one,
 //! `wait SECONDS`, `checks`, which waits for the checks that listen, `canvas WIDTH HEIGHT`,
 //! which draws from there on as a window of that many pixels does, `shot PATH`, which saves
 //! what is drawn, `tape PATH`, which saves what was played since the run began, and `quit`.
@@ -40,7 +41,7 @@ use crate::{
     doc::Doc,
     sound::Stream,
     state::{Press, Tab, View},
-    ui::{MainCamera, SHEET},
+    ui::{MainCamera, SHEET, widgets::Scrolled},
 };
 
 #[derive(Resource)]
@@ -189,6 +190,8 @@ fn run_script(
     mut images: ResMut<Assets<Image>>,
     mut camera: Single<(Entity, &RenderTarget, &mut Projection), With<MainCamera>>,
     mut wheel: MessageWriter<MouseWheel>,
+    mut scrolled: ResMut<Scrolled>,
+    scale: Res<UiScale>,
     mut exit: MessageWriter<AppExit>,
 ) {
     script.wait -= time.delta_secs();
@@ -250,6 +253,12 @@ fn run_script(
             other => warn!("no key is called {other}"),
         },
         "wheel" => {
+            // A script has no cursor: it says where the wheel is turned.
+            let point = match words.len() {
+                4.. => Vec2::new(number(2), number(3)),
+                _ => SHEET / 2.0,
+            };
+            scrolled.at = Some(point * scale.0);
             wheel.write(MouseWheel {
                 unit: MouseScrollUnit::Line,
                 x: 0.0,

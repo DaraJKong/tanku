@@ -1,15 +1,20 @@
 //! The pieces that every tab is made of: ruled panels with square corners, rows, buttons,
 //! steppers, and the dashes that stand for what a rule derives.
 
+use std::collections::HashMap;
+
 use bevy::{
     asset::RenderAssetUsages,
+    ecs::{lifecycle::HookContext, world::DeferredWorld},
     image::ImageSampler,
+    input::mouse::{MouseScrollUnit, MouseWheel},
     prelude::*,
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
+    ui::RelativeCursorPosition,
 };
 
 use crate::{
-    state::{Field, Press, View},
+    state::{Field, Press, Tab, View},
     theme,
 };
 
@@ -56,7 +61,166 @@ pub fn plugin(app: &mut App) {
         dash_down: images.add(pattern(1, 7, |_, y| y < 4)),
         hatch: images.add(pattern(8, 8, |x, y| (x + y) % 8 == 0)),
     };
-    app.insert_resource(kit).add_systems(Update, hover);
+    app.insert_resource(kit)
+        .init_resource::<Scrolled>()
+        .add_systems(Update, hover);
+}
+
+/// Pixels that one line of the wheel of the mouse moves what it scrolls.
+const WHEEL: f32 = 39.0;
+
+/// Something that can be longer than its place: the wheel of the mouse moves it while the
+/// cursor is on it. Each is known by what it holds, so that it is still where it was when the
+/// sheet is drawn again.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[component(on_add = stay)]
+#[require(RelativeCursorPosition)]
+pub enum Scrolls {
+    /// The listing of the file.
+    Listing,
+    /// The checks of a tab.
+    Checks(Tab),
+}
+
+/// How far down each thing that scrolls is.
+#[derive(Resource, Default)]
+pub struct Scrolled {
+    down: HashMap<Scrolls, f32>,
+    /// Where a script turns the wheel, in the pixels of the window: it has no cursor.
+    pub at: Option<Vec2>,
+}
+
+/// Puts something that was just drawn again where it was.
+fn stay(mut world: DeferredWorld, HookContext { entity, .. }: HookContext) {
+    let Some(which) = world.get::<Scrolls>(entity).copied() else {
+        return;
+    };
+    let scrolled = world.get_resource::<Scrolled>();
+    let down = scrolled.and_then(|scrolled| scrolled.down.get(&which).copied());
+    if let (Some(down), Some(mut position)) = (down, world.get_mut::<ScrollPosition>(entity)) {
+        position.y = down;
+    }
+}
+
+/// The mark at the right of something that scrolls: it is there while a part of the thing is
+/// out of sight, as long as the part that is in sight, and where that part is.
+#[derive(Component)]
+pub struct Thumb(Scrolls);
+
+/// A column that scrolls when it is longer than its place, with its mark at its right. It
+/// takes the room that its parent has left, and no more than it needs.
+pub fn scrolling(
+    parent: &mut ChildSpawnerCommands,
+    which: Scrolls,
+    fill: Color,
+    content: impl FnOnce(&mut ChildSpawnerCommands),
+) {
+    let column = || Node {
+        flex_direction: FlexDirection::Column,
+        flex_grow: 1.0,
+        min_height: px(0),
+        ..default()
+    };
+    parent.spawn(column()).with_children(|frame| {
+        let rows = Node {
+            overflow: Overflow::scroll_y(),
+            ..column()
+        };
+        frame
+            .spawn((which, rows, BackgroundColor(fill)))
+            .with_children(content);
+        // The mark stays where it is while the rows move under it.
+        frame.spawn((
+            Thumb(which),
+            Node {
+                position_type: PositionType::Absolute,
+                right: px(2),
+                top: px(0),
+                width: px(3),
+                height: px(0),
+                ..default()
+            },
+            BackgroundColor(theme::TEXT_DIM),
+            Visibility::Hidden,
+        ));
+    });
+}
+
+/// Moves with the wheel what the cursor is on, as far as it goes and no further.
+pub fn scroll(
+    mut wheel: MessageReader<MouseWheel>,
+    mut scrolled: ResMut<Scrolled>,
+    mut areas: Query<(
+        &Scrolls,
+        &mut ScrollPosition,
+        &ComputedNode,
+        &UiGlobalTransform,
+        &RelativeCursorPosition,
+    )>,
+) {
+    let lines = |event: &MouseWheel| match event.unit {
+        MouseScrollUnit::Line => WHEEL * event.y,
+        MouseScrollUnit::Pixel => event.y,
+    };
+    let moved: f32 = wheel.read().map(lines).sum();
+    let at = scrolled.at.take();
+    for (which, mut position, node, place, cursor) in &mut areas {
+        // What was just drawn has no size yet.
+        if node.size.y == 0.0 {
+            continue;
+        }
+        let under = match at {
+            Some(point) => (point - place.translation)
+                .abs()
+                .cmple(node.size / 2.0)
+                .all(),
+            None => cursor.cursor_over,
+        };
+        let longer = (node.content_size.y - node.size.y) * node.inverse_scale_factor;
+        let before = scrolled.down.get(which).copied().unwrap_or(0.0);
+        let turned = if under { moved } else { 0.0 };
+        let wanted = (before - turned).clamp(0.0, longer.max(0.0));
+        if position.y != wanted {
+            position.y = wanted;
+        }
+        if before != wanted {
+            scrolled.down.insert(*which, wanted);
+        }
+    }
+}
+
+/// Shows on each mark how much of its thing is in sight, and where.
+pub fn show_thumbs(
+    areas: Query<(&Scrolls, &ComputedNode, &ScrollPosition)>,
+    mut thumbs: Query<(&Thumb, &mut Node, &mut Visibility)>,
+) {
+    for (thumb, mut node, mut visibility) in &mut thumbs {
+        let Some((_, area, position)) = areas.iter().find(|(which, ..)| **which == thumb.0) else {
+            continue;
+        };
+        let scale = area.inverse_scale_factor;
+        let (seen, whole) = (area.size.y * scale, area.content_size.y * scale);
+        let hidden = whole - seen;
+        let wanted = if seen > 0.0 && hidden > 0.5 {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+        if *visibility != wanted {
+            *visibility = wanted;
+        }
+        if wanted == Visibility::Hidden {
+            continue;
+        }
+        let height = (seen * seen / whole).max(16.0).min(seen).round();
+        let top = ((seen - height) * (position.y / hidden).clamp(0.0, 1.0)).round();
+        if node.height != px(height) {
+            node.height = px(height);
+        }
+        if node.top != px(top) {
+            node.top = px(top);
+        }
+    }
 }
 
 /// How a button looks when the cursor is on it, and when it isn't.
