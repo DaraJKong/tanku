@@ -140,7 +140,7 @@ The file is text. It has one record per line, with its words apart by spaces. An
 |---|---|
 | `tanku-music 1` | The format of the file and its version. It comes before every other record. |
 | `tempo` | The tempo of the piece in beats per minute, from 30 to 300 |
-| `key` | The tonic, then the mode of the piece and the mode of the fights of an arena. A mode is `ionian`, `dorian`, `mixolydian` or `aeolian`. |
+| `key` | The tonic, then the mode of the piece and the mode of the fights of an arena, each by its name: one of the seven modes below |
 | `motif` | A capital letter, which names the motif, then its bars, one to four of them, with a `\|` between two bars |
 | `turn` | The letter of a motif, then the bar that this motif ends a section with, in place of its last one |
 | `pat` | A pattern: its instrument, its name, one bar, and how loud a hit is, up to 255. A pattern with soft hits also says how loud those are. The instrument is `kick`, `hat`, `snare`, `bass` or `pluck`. |
@@ -149,6 +149,20 @@ The file is text. It has one record per line, with its words apart by spaces. An
 | `link` | The [connection](#connection) out of a fight: its beats, the degree that it goes to, and how many notes it has at most |
 
 The chords of a section are two words of four, one chord per bar. A chord is the degree that it is built on, or `C` for the chord that gives the mode its color. The melody of a section is eight bars of motifs, one word for each: `A` is motif A as it is written, `a` is motif A with its turn, and `C:7` is motif C with its last note on degree 7.
+
+The key names two of the seven modes of the major scale. Each has its color chord, which is what `C` stands for in the chords of a section:
+
+| Mode | Its scale in A | Its color chord |
+|---|---|---|
+| `ionian` | A, B, C♯, D, E, F♯, G♯ | F♯ minor, on degree 6 |
+| `dorian` | A, B, C, D, E, F♯, G | G, on degree 7 |
+| `phrygian` | A, B♭, C, D, E, F, G | B♭, on degree 2 |
+| `lydian` | A, B, C♯, D♯, E, F♯, G♯ | B, on degree 2 |
+| `mixolydian` | A, B, C♯, D, E, F♯, G | G, on degree 7 |
+| `aeolian` | A, B, C, D, E, F, G | F, on degree 6 |
+| `locrian` | A, B♭, C, D, E♭, F, G | B♭, on degree 2 |
+
+The piece is in Dorian, and in Aeolian in the fights of an arena: [Pitch](#pitch) says why. In three of the other modes, one of the chords on 1, 4 and 5 is neither major nor minor: the chord on 5 in Phrygian, the chord on 4 in Lydian and the chord on 1 in Locrian. The checks name a section that has such a chord.
 
 A bar has 16 steps in four beats. It is written beat by beat, as four words of four steps:
 

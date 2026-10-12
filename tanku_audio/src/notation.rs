@@ -504,7 +504,8 @@ const KINDS: &str =
 const TEMPO: &str = "a tempo is a number of beats per minute, from 30 to 300";
 const TONIC: &str = "a key starts with its tonic, such as `A`, `C#` or `Eb`";
 const MODES: &str = "a key has two modes, that of the piece and that of the fights of an arena: \
-                     `ionian`, `dorian`, `mixolydian` or `aeolian`";
+                     `ionian`, `dorian`, `phrygian`, `lydian`, `mixolydian`, `aeolian` or \
+                     `locrian`";
 const BAR: &str = "a bar is written beat by beat, as four words of four steps, such as \
                    `x... x... x... x...`";
 const MELODY: &str =
@@ -1115,6 +1116,19 @@ mod tests {
     }
 
     #[test]
+    fn a_key_names_two_of_the_seven_modes() {
+        for home in Mode::ALL {
+            for arena in Mode::ALL {
+                let modes = format!("{} {}", home.name(), arena.name());
+                let key = read(&SMALL.replace("ionian mixolydian", &modes))
+                    .unwrap()
+                    .key;
+                assert_eq!((key.home, key.arena), (home, arena));
+            }
+        }
+    }
+
+    #[test]
     fn motifs_and_patterns_read_bar_by_bar() {
         let lines = "pat kick heart x.o. .... .... .... 180 135\n\
                      pat bass heart R..O ..V. 5-5. x... 255\n";
@@ -1203,7 +1217,7 @@ mod tests {
         for tempo in ["20", "301", "fast", "", "1e2"] {
             assert_eq!(fault(&SMALL.replace("96", tempo)), (2, TEMPO), "{tempo}");
         }
-        for modes in ["ionian", "ionian lydian", "Ionian aeolian"] {
+        for modes in ["ionian", "ionian blues", "Ionian aeolian"] {
             let text = SMALL.replace("ionian mixolydian", modes);
             assert_eq!(fault(&text), (3, MODES), "{modes}");
         }

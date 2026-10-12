@@ -48,33 +48,61 @@ pub const HOME: Mode = PIECE.key.home;
 /// The mode of the fights of an arena.
 pub const ARENA: Mode = PIECE.key.arena;
 
-/// The scale in use.
+/// The scale in use: one of the seven modes of the major scale.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
     /// Major.
     Ionian,
     /// Minor, with a major sixth. It is the mode of the piece.
     Dorian,
+    /// Minor, with a minor second.
+    Phrygian,
+    /// Major, with an augmented fourth.
+    Lydian,
     /// Major, with a minor seventh.
     Mixolydian,
     /// Minor. It is the mode of the fights in an arena.
     Aeolian,
+    /// Minor, with a minor second and a diminished fifth.
+    Locrian,
 }
 
 impl Mode {
+    /// The seven modes. Each is the scale of the one before it, started one degree higher.
+    pub const ALL: [Mode; 7] = [
+        Mode::Ionian,
+        Mode::Dorian,
+        Mode::Phrygian,
+        Mode::Lydian,
+        Mode::Mixolydian,
+        Mode::Aeolian,
+        Mode::Locrian,
+    ];
+
+    /// The name of the mode in the file.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Mode::Ionian => "ionian",
+            Mode::Dorian => "dorian",
+            Mode::Phrygian => "phrygian",
+            Mode::Lydian => "lydian",
+            Mode::Mixolydian => "mixolydian",
+            Mode::Aeolian => "aeolian",
+            Mode::Locrian => "locrian",
+        }
+    }
+
     /// The mode of a name of the file.
     pub(crate) const fn named(name: &[u8]) -> Option<Self> {
-        if same(name, b"ionian") {
-            Some(Mode::Ionian)
-        } else if same(name, b"dorian") {
-            Some(Mode::Dorian)
-        } else if same(name, b"mixolydian") {
-            Some(Mode::Mixolydian)
-        } else if same(name, b"aeolian") {
-            Some(Mode::Aeolian)
-        } else {
-            None
+        let mut index = 0;
+        while index < Self::ALL.len() {
+            let mode = Self::ALL[index];
+            if same(name, mode.name().as_bytes()) {
+                return Some(mode);
+            }
+            index += 1;
         }
+        None
     }
 
     /// Semitones from the tonic up to a degree. Degree 1 is the tonic, and degree 8 is the
@@ -83,20 +111,25 @@ impl Mode {
         let scale = match self {
             Mode::Ionian => [0, 2, 4, 5, 7, 9, 11],
             Mode::Dorian => [0, 2, 3, 5, 7, 9, 10],
+            Mode::Phrygian => [0, 1, 3, 5, 7, 8, 10],
+            Mode::Lydian => [0, 2, 4, 6, 7, 9, 11],
             Mode::Mixolydian => [0, 2, 4, 5, 7, 9, 10],
             Mode::Aeolian => [0, 2, 3, 5, 7, 8, 10],
+            Mode::Locrian => [0, 1, 3, 5, 6, 8, 10],
         };
         let index = degree as usize - 1;
         12 * (index / 7) as u8 + scale[index % 7]
     }
 
     /// The degree of the chord that gives the mode its color, next to the chords on 1, 4 and
-    /// 5: the major chord a tone below the tonic in Dorian and in Mixolydian, the major chord
-    /// on the sixth degree in Aeolian, and the minor chord on that degree in Ionian.
+    /// 5. It is a major chord in every mode but Ionian: a tone below the tonic in Dorian and
+    /// in Mixolydian, on the sixth degree in Aeolian, and on the second degree in Phrygian, in
+    /// Lydian and in Locrian. In Ionian it is the minor chord on the sixth degree.
     pub const fn color(self) -> u8 {
         match self {
-            Mode::Dorian | Mode::Mixolydian => 7,
             Mode::Ionian | Mode::Aeolian => 6,
+            Mode::Dorian | Mode::Mixolydian => 7,
+            Mode::Phrygian | Mode::Lydian | Mode::Locrian => 2,
         }
     }
 
@@ -399,10 +432,11 @@ pub const fn triad(mode: Mode, chord: u8, lowest: u8) -> [u8; 3] {
     ]
 }
 
-/// The root of a chord for the bass: in the key of A, between E2 and D3.
+/// The root of a chord for the bass, in the twelve semitones from five below its tonic: in
+/// the key of A, from E2 up to the E flat above it, so that the bass never goes below E2.
 pub const fn bass_root(mode: Mode, chord: u8) -> u8 {
     let pitch = T2 + mode.semitones(chord);
-    if pitch > T2 + 5 { pitch - 12 } else { pitch }
+    if pitch > T2 + 6 { pitch - 12 } else { pitch }
 }
 
 #[cfg(test)]
@@ -410,7 +444,6 @@ mod tests {
     use super::*;
     use crate::notation::line;
 
-    const EVERY_MODE: [Mode; 4] = [Mode::Ionian, Mode::Dorian, Mode::Mixolydian, Mode::Aeolian];
     /// The degrees of the bridge. They are the same notes in both modes, and the third degree
     /// is not among them, so the bridge has no mode: it is neither major nor minor.
     const NEUTRAL: [u8; 5] = [1, 2, 4, 5, 7];
@@ -475,10 +508,28 @@ mod tests {
         // The two that were tried for the piece and set aside.
         assert!(scale(Mode::Ionian).eq(["A", "B", "C#", "D", "E", "F#", "G#"]));
         assert!(scale(Mode::Mixolydian).eq(["A", "B", "C#", "D", "E", "F#", "G"]));
-        for mode in EVERY_MODE {
+        // And the three others that a file can name.
+        assert!(scale(Mode::Phrygian).eq(["A", "A#", "C", "D", "E", "F", "G"]));
+        assert!(scale(Mode::Lydian).eq(["A", "B", "C#", "D#", "E", "F#", "G#"]));
+        assert!(scale(Mode::Locrian).eq(["A", "A#", "C", "D", "D#", "F", "G"]));
+
+        // Each mode is the major scale, started one degree higher than the mode before it.
+        let steps = |mode: Mode| -> Vec<u8> {
+            let step = |degree: u8| mode.semitones(degree + 1) - mode.semitones(degree);
+            (1..=7).map(step).collect()
+        };
+        for (first, mode) in Mode::ALL.into_iter().enumerate() {
+            let mut major = steps(Mode::Ionian);
+            major.rotate_left(first);
+            assert_eq!(steps(mode), major, "{mode:?}");
+            // Past the octave, the scale starts over.
             assert_eq!(mode.semitones(8), 12);
-            assert_eq!(mode.semitones(9), 14);
+            assert_eq!(mode.semitones(9), 12 + mode.semitones(2));
+            // The file names each of them, in small letters.
+            assert_eq!(Mode::named(mode.name().as_bytes()), Some(mode));
         }
+        assert_eq!(Mode::named(b"Dorian"), None);
+        assert_eq!(Mode::named(b"minor"), None);
         // The five degrees of the motifs are hirajoshi in Aeolian, and the same with a higher
         // sixth degree in Dorian.
         let five = |mode: Mode| FIVE.map(|degree| name(A4 + mode.semitones(degree)));
@@ -547,31 +598,58 @@ mod tests {
     }
 
     #[test]
-    fn chords_are_major_or_minor_in_every_mode() {
+    fn every_mode_has_its_chords() {
         // The chords on 1, 4 and 5, then the one that gives the mode its color.
         let named = |mode: Mode| {
             [1, 4, 5, mode.color()].map(|chord| {
                 let [root, third, fifth] = triad(mode, chord, A4);
-                assert_eq!(fifth - root, 7);
-                let minor = match third - root {
-                    3 => "m",
-                    4 => "",
-                    other => panic!("a third of {other} semitones"),
+                let kind = match (third - root, fifth - root) {
+                    (4, 7) => "",
+                    (3, 7) => "m",
+                    (3, 6) => "dim",
+                    other => panic!("a chord of {other:?} semitones"),
                 };
-                format!("{}{minor}", name(root))
+                format!("{}{kind}", name(root))
             })
         };
         assert_eq!(named(Mode::Dorian), ["Am", "D", "Em", "G"]);
         assert_eq!(named(Mode::Aeolian), ["Am", "Dm", "Em", "F"]);
         assert_eq!(named(Mode::Ionian), ["A", "D", "E", "F#m"]);
         assert_eq!(named(Mode::Mixolydian), ["A", "D", "Em", "G"]);
-        // The chords of the piece are these and no other.
+        // Three modes have a chord on 1, 4 or 5 that is neither major nor minor. The chord of
+        // their color is B flat in Phrygian and in Locrian, which also has E flat on 5.
+        assert_eq!(named(Mode::Phrygian), ["Am", "Dm", "Edim", "A#"]);
+        assert_eq!(named(Mode::Lydian), ["A", "D#dim", "E", "B"]);
+        assert_eq!(named(Mode::Locrian), ["Adim", "Dm", "D#", "A#"]);
+        // The chord of a color is none of the other three, and it is major or minor.
+        for mode in Mode::ALL {
+            assert!(![1, 4, 5].contains(&mode.color()), "{mode:?}");
+            assert!(!named(mode)[3].ends_with("dim"), "{mode:?}");
+        }
+        // The chords of the piece are these and no other, in both of its modes.
         for mode in [HOME, ARENA] {
             let written = [INTRO, VERSE, CHORUS].map(|passage| mode.chords(passage.chords));
             for chord in written.into_iter().flatten() {
                 assert!([1, 4, 5, mode.color()].contains(&chord));
             }
+            assert!(named(mode).iter().all(|chord| !chord.ends_with("dim")));
         }
+    }
+
+    #[test]
+    fn the_bass_has_the_root_of_every_chord_from_e2_up() {
+        for mode in Mode::ALL {
+            for chord in 1..=7 {
+                let root = bass_root(mode, chord);
+                assert!((T2 - 5..=T2 + 6).contains(&root), "{mode:?}, chord {chord}");
+                // It is the root of the chord, in one octave or another.
+                assert_eq!((root + 12 - T2) % 12, mode.semitones(chord), "{mode:?}");
+            }
+        }
+        assert_eq!(T2 - 5, 40);
+        // The chord of Locrian on its diminished fifth: E flat 3, not the one below E2.
+        assert_eq!(bass_root(Mode::Locrian, 5), 51);
+        assert_eq!(bass_root(Mode::Dorian, 5), 40);
     }
 
     #[test]

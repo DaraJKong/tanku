@@ -73,8 +73,12 @@ fn every_chord_is_major_or_minor() {
 #[test]
 fn no_note_rubs_against_the_root_of_its_chord() {
     // The intro is only heard in the mode of the piece.
-    let intro = HOME.chords(INTRO.chords);
-    assert_eq!(rubs(HOME, &INTRO.melody, &intro), 0, "the intro");
+    let intro = rubs(HOME, &INTRO.melody, &HOME.chords(INTRO.chords));
+    assert!(
+        intro == 0,
+        "notes of the intro that stay a semitone above the root of their chord in {HOME:?}: \
+         {intro}"
+    );
     // The verse and the chorus are heard in both, as they are written, as their skeleton and
     // with their ornaments.
     for mode in MODES {
@@ -86,10 +90,11 @@ fn no_note_rubs_against_the_root_of_its_chord() {
                 ("ornaments", ornamented(passage.melody)),
             ];
             for (what, lines) in lines {
-                assert_eq!(
-                    rubs(mode, &lines, &chords),
-                    0,
-                    "the {what} of the {:?} in {mode:?}",
+                let count = rubs(mode, &lines, &chords);
+                assert!(
+                    count == 0,
+                    "notes of the {what} of the {:?} that stay a semitone above the root of \
+                     their chord in {mode:?}: {count}",
                     passage.name
                 );
             }
@@ -109,11 +114,18 @@ fn the_bridge_has_no_mode() {
         // The same note in both modes, and not the third degree, which tells major from
         // minor.
         let [home, arena] = MODES.map(|mode| mode.semitones(degree));
-        assert_eq!(home, arena, "degree {degree}");
-        assert_ne!((degree - 1) % 7 + 1, 3, "degree {degree}");
+        assert!(
+            home == arena,
+            "degree {degree} of the bridge is another note in {HOME:?} than in {ARENA:?}"
+        );
+        let within = (degree - 1) % 7 + 1;
+        assert!(within != 3, "the bridge has the third degree");
         // Never a semitone above the degree that the bridge stays on.
         let above = (home + 12 - HOME.semitones(LINK.degree)) % 12;
-        assert_ne!(above, 1, "degree {degree}");
+        assert!(
+            above != 1,
+            "degree {degree} of the bridge is a semitone above the degree it stays on"
+        );
     }
 }
 
