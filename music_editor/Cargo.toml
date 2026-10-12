@@ -1,0 +1,21 @@
+[package]
+name = "music_editor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# The interface, the sound device and the clipboard: the parts of the engine that the game
+# already has, and none of its 3D.
+bevy = { workspace = true, features = ["ui", "bevy_audio", "system_clipboard"] }
+tanku_audio.workspace = true
+
+# Development conveniences, enabled by default.
+[features]
+default = ["development", "debug"]
+# A development build links the engine dynamically, which compiles faster.
+development = ["bevy/dynamic_linking"]
+debug = ["bevy/debug"]

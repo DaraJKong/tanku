@@ -17,6 +17,7 @@ Co-op has been played by two players. With three or four, it is checked by tests
 | `tanku_server` | The authoritative simulation: a library that the client embeds for solo and hosted games, and a headless binary |
 | `tanku_client` | The game: rendering, input, interface and sound |
 | `tanku_audio` | The sound that the game computes: the music and the waveforms of the sound cues, which the client plays |
+| `music_editor` | A window that changes the music: it opens the file of the piece, plays it as the game does and saves it. The game doesn't need it. |
 
 ## Playing
 
@@ -223,6 +224,8 @@ The tests also lay every menu out, without a screen, in windows from 1280 by 720
 cargo test -p tanku_client room_the_menus_take -- --ignored --nocapture
 ```
 
+The tests of the music editor lay each of its tabs out in the same way, in three sizes of window, and fail if a button crosses that line or lies on another.
+
 After a change to a brain, two tests compare a soldier, a veteran and an ace in the same five tanks. Each fights a crude player that nothing destroys, in about twenty sectors of six seeds: one tank alone, against bursts and against single shots, and two tanks together, against bursts. They print how long the enemies lasted and how many of their shots landed, and take six minutes:
 
 ```bash
@@ -336,6 +339,33 @@ In the game, the lead tells how smart the enemies are. To know which sectors of 
 
 ```bash
 TANKU_SEED=TANKU cargo test -p tanku_client threats_of_a_seed -- --ignored --nocapture
+```
+
+### Changing the music
+
+The file can be changed by hand, or in an editor that shows it as motifs, patterns, sections, transitions and instruments, and plays it while it changes:
+
+```bash
+cargo run -p music_editor
+```
+
+It opens `tanku_audio/music.score`, or the file named after `--`. Every change is a change of a line of the file, which the reader of the game reads at once: a change that it refuses is not made, and the window says why in the reader's words. So the editor can't save a file that the game doesn't build with. It runs the checks above after every change, with a few of its own about the tempo, the cues and the cost of the sound. The game itself only changes when it is compiled again.
+
+| Input | Effect |
+|---|---|
+| Space | Plays, or stops |
+| Ctrl+Z | Undoes a change |
+| Ctrl+Shift+Z or Ctrl+Y | Does it again |
+| Ctrl+S | Saves the file |
+| A button that moves a number | Goes on while it is held, and takes a larger step with Shift |
+| The wheel of the mouse | Moves the listing of the file |
+
+[docs/MUSIC.md](docs/MUSIC.md#editor) says what each tab shows and what the editor leaves to the code.
+
+Like the game, the editor runs from a script, without a window and without a sound. `MUSIC_EDITOR_SCRIPT` holds commands that show a tab, press a button, type, save what is drawn and keep what was played, which `music_editor/src/dev.rs` lists. Such a run only saves the piece if its file was named on the command line:
+
+```bash
+MUSIC_EDITOR_SCRIPT="tab patterns; wait 1; shot target/patterns.png; quit" cargo run -p music_editor
 ```
 
 ## License

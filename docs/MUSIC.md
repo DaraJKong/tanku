@@ -486,11 +486,14 @@ tanku_audio
 ├── director    from the context to what each instrument plays on each step
 ├── synth       the six instruments, the echo and the mix
 ├── cues        the waveforms of the sound cues
+├── checks      the checks that hold for any piece, for the tests and for the editor
 ├── math        the sines, the decays and the noise that every sound is made with
 └── wav         writes a sound file, for the game, the listening tool and the tests
 ```
 
 [The file](#the-file) is read while the crate is compiled, by a reader that is a plain function: a program can call it too, to read a piece while it runs.
+
+A program that reads a piece of its own hands it to the engine. `music_of` plays it, and `Music::rescore` gives a music another piece to play from its next step on, where it is and without starting over. The [editor](#editor) does both.
 
 The crate has two ends. The game holds a `Conductor` and writes the context into it. The sound thread holds the `Music` and asks it for frames:
 
@@ -564,6 +567,32 @@ On that machine the game itself never holds the page up for so long. Over runs t
 
 With `?probe` after its address, the page shows how long its frames are, how far ahead the music is handed over, and the holes in the music and in the cues. It is how to answer the question of step 5 on another machine.
 
+## Editor
+
+`music_editor` is a window that changes the piece. It is a crate of its own, which the game doesn't need: it opens [the file](#the-file), shows it in seven tabs, plays it and saves it.
+
+| Tab | Shows | Changes |
+|---|---|---|
+| Motifs | A motif on a grid of nine degrees, with its skeleton, its ornaments and its turn | The notes of a motif and of its turn, and its number of bars |
+| Patterns | Every pattern on one grid of sixteen steps, and the notes that one of them gives over a chord | The steps of a pattern, its levels, its echo and its name |
+| Sections | The eight bars of a section, the arrangement and the lines of the threats | The chords, the motifs that the melody states, the tempo of a section, and what each instrument plays in each scene and at each threat |
+| Transitions | The roll and the connection, with every way that a connection can go | The numbers of the `roll` and `link` lines |
+| Instruments | The first bar that an instrument plays alone, as the synthesizer computes it, and the mix | The numbers of a `sound` line and the levels of a `mix` line |
+| Piece | The tempo against the rules of the game, and the two modes on the twelve notes | The tempo, the key and its two modes |
+| File | The lines as they will be saved, what is not saved, and every check | Nothing: it saves, reverts and copies |
+
+Three rules shape it:
+
+- **The document is the lines of the file.** A change rewrites words of a line and hands the text to the reader of `tanku_audio`. A change that the reader refuses is not made, and the window shows the reader's own sentence. The editor therefore holds no piece that it could write wrong. The lines that no change touched stay as they were written, comments and columns included, and what it saves is what the game builds with.
+- **A control only for what a line holds.** What the rules derive is drawn in dashes and can't be changed: the skeleton, the ornaments, the ways of a connection, the hits of a roll. What is in the code is told and tagged as such: what an instrument is made of, how many notes it sounds at once, when a connection starts.
+- **Heard as the game plays it.** The play button plays the thing of the tab alone, or the piece as in the game, in the place, the fight and the threat that the transport is set to. What is played alone is a few lines of the file written again for the occasion, and read by the same reader. A change is heard from the next step on: the music takes the new piece where it is.
+
+The checks that [hold for any piece](#tests-and-benchmarks) run after every change: at once for those that only read the piece, and on a thread of their own for those that listen to it. The editor adds six. Four are about the game: the timings of its rules against the tempo, steps that are whole numbers of half frames, the notes of the cues against the key, and the music 12 dB under a shot. One measures the cost of a second of music. The last says whether the piece still sounds as the saved file does, which tells that a change will move the stored values of the tests.
+
+The key of the file moves every instrument, and the cues stay in A and E: the editor says so next to the key, and one of its checks fails when a mode of the piece has no A or no E in that key.
+
+Like the game, the editor runs from a script without a window and without a sound, which is how it is looked at and listened to in checks: see the [README](../README.md#changing-the-music).
+
 ## Tests and benchmarks
 
 Some tests say what the piece is today:
@@ -573,7 +602,7 @@ Some tests say what the piece is today:
 - **On time.** A fight that is announced on each of the 16 steps of a bar gives a roll at once and the fight two beats later. A fight that ends on each of them plays on to its next beat, and gives a connection there and the bridge two beats later.
 - **Connected.** For every note the lead can be on, the connection goes to degree 5 one step of the scale at a time and never turns back.
 
-Others hold for any piece that the file writes. They are the checks to run after a change of the file, with `cargo test -p tanku_audio --test checks`:
+Others hold for any piece that the file writes. They are the checks to run after a change of the file, with `cargo test -p tanku_audio --test checks`. They are part of the crate, in `checks`, so that the [editor](#editor) runs them too:
 
 - **Sound in both modes.** The melodies use the five degrees, the chords are major or minor, and every melody, with its skeleton and its ornaments, passes the check on semitones above the root. The notes of the bridge are the same in both modes, and its third degree is never heard.
 - **In range.** Whatever happens, every instrument stays in its range: in every arrangement, on every way out of a fight, and while a tank is destroyed.
@@ -612,8 +641,11 @@ Each step answers a question, and the first one changes nothing in the game.
 | 4, Cues | The waveforms of the cues move to the crate, two cues are retuned, and the warning of a mine ducks the music | Is any cue lost under the music? |
 | 5, Web | The web build with music | Does the music play without gaps in a browser? |
 | 6, File | The piece moves from the code to a file, which the crate reads while it is compiled, and plays as before | Is the notation of the file enough to change the piece by hand? What does an editor of the piece need beyond it? |
+| 7, Editor | A window that shows the file as motifs, patterns, sections, transitions and instruments, plays it while it changes and saves it | Is a change made faster in the window than in the file? Which tabs are used, and what is still changed by hand? |
 
 Step 6 left the music as it was, to the sample, but for two settings of the instruments that the file writes round. The echo of the pluck is 33% as loud as its note, where it was a third. The vibrato of the lead comes in after 136 ms, where it came in after 6000 frames, which is 136.05 ms. In a sound file of 16 bits, no sample of any arrangement is further than 19 steps from what it was, where the loudest samples are at about 20,000.
+
+Step 7 changes nothing in the game. To let a piece change while it plays, the engine now holds its piece behind a shared pointer, where it held the piece of the game by name: every arrangement still matches its stored value.
 
 The switch of step 2 was an experiment, to settle by ear whether the music needs to know of the fights, and it is gone. On its other side the place alone set the arrangement, as in the first proposal for this music: the verse and the chorus played wherever the players were outside the bay, with the kick alone in a corridor and all three drums in an arena, and nothing called for the bridge. After a playtest, the music that follows the fight too was kept. [IDEAS.md](IDEAS.md) keeps the other one.
 
