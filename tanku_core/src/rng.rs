@@ -13,6 +13,9 @@ pub enum Purpose {
     Brain = 5,
     /// How the enemies of a sector share the budget of their group.
     Group = 6,
+    /// The room of arena mode: its walls, what stands in it for each group, and where the
+    /// tanks of each group appear.
+    Room = 7,
 }
 
 /// A SplitMix64 generator, which starts from a state that depends on the seed and on its key.

@@ -69,7 +69,8 @@ fn context(
         place: match kind {
             Some(SectorKind::Bay) => Place::Bay,
             Some(SectorKind::Corridor) => Place::Corridor,
-            Some(SectorKind::Arena) => Place::Arena,
+            // The room of arena mode is an arena that a run never leaves.
+            Some(SectorKind::Arena | SectorKind::Room) => Place::Arena,
             // The sector isn't loaded yet.
             None if run.sector == 0 => Place::Bay,
             None => Place::Corridor,
@@ -191,6 +192,7 @@ mod tests {
         assert_eq!(place(Some(SectorKind::Bay)), Place::Bay);
         assert_eq!(place(Some(SectorKind::Corridor)), Place::Corridor);
         assert_eq!(place(Some(SectorKind::Arena)), Place::Arena);
+        assert_eq!(place(Some(SectorKind::Room)), Place::Arena);
         // Until the sector is loaded, the number of the sector tells the bay from the rest.
         assert_eq!(place(None), Place::Corridor);
         let bay = run(0, RunPhase::Playing);
