@@ -41,6 +41,10 @@ web-sys = { workspace = true, features = [
     "Window",
 ] }
 
+# The tests of the network take their ports from the help that the core crate keeps for tests.
+[dev-dependencies]
+tanku_core = { workspace = true, features = ["testing"] }
+
 # Development conveniences, enabled by default.
 # Build releases with `--no-default-features`.
 [features]

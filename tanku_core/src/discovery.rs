@@ -511,8 +511,7 @@ mod tests {
         use super::super::*;
 
         fn here() -> Reach {
-            let free = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
-            Reach::Here(free.local_addr().unwrap().port())
+            Reach::Here(crate::testing::free_port())
         }
 
         /// Takes what a browser learns until something is true of all that it learned.

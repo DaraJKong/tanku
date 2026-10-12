@@ -13,6 +13,8 @@ pub mod rules;
 pub mod seed;
 pub mod sim;
 pub mod stats;
+#[cfg(all(any(test, feature = "testing"), not(target_arch = "wasm32")))]
+pub mod testing;
 
 use bevy::prelude::*;
 

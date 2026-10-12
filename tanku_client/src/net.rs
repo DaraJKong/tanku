@@ -836,11 +836,9 @@ pub(crate) mod tests {
         app
     }
 
-    /// A port that is free on this machine.
-    pub(crate) fn free_port() -> u16 {
-        let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
-        socket.local_addr().unwrap().port()
-    }
+    /// A port that is free on this machine, which no other test is given and which the
+    /// system hands to nobody.
+    pub(crate) use tanku_core::testing::free_port;
 
     /// Runs the games for a while, in real time, until something is true of them.
     pub(crate) fn run_until(

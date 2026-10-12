@@ -26,6 +26,10 @@ mdns-sd.workspace = true
 [dev-dependencies]
 criterion.workspace = true
 
+[features]
+# What the tests of the other crates take from this one: see `testing.rs`.
+testing = []
+
 [[bench]]
 name = "generation"
 harness = false
