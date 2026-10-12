@@ -119,10 +119,10 @@ Enemy groups grow with the number of players (see [Progression](#progression)). 
 | Mode or option | Effect | Unlocked in solo by |
 |---|---|---|
 | Normal | The rules of this document | Available from the start |
-| Chosen seed | The solo player, or the host of a game, types the seed of the run instead of getting a random one. | Reaching sector 10 |
-| Free mode | Each player spends the 59 points of their tank as they like before the run (see [Garage](#garage)). | Reaching sector 20 |
-| Hard mode | Sector budgets start at 40 and are capped at 130, all software tiers are available from sector 1, and experience and the cap on Muzzle are those of 20 sectors further. | Reaching sector 30 |
-| Impossible mode | Later. Enemies adapt to the players during the run (see [Impossible mode](#impossible-mode)). | Reaching sector 20 in hard mode |
+| Chosen seed | The solo player, or the host of a game, types the seed of the run instead of getting a random one. | Clearing sector 10 |
+| Free mode | Each player spends the 59 points of their tank as they like before the run (see [Garage](#garage)). | Clearing sector 20 |
+| Hard mode | Sector budgets start at 40 and are capped at 130, all software tiers are available from sector 1, and experience and the cap on Muzzle are those of 20 sectors further. | Clearing sector 30 |
+| Impossible mode | Later. Enemies adapt to the players during the run (see [Impossible mode](#impossible-mode)). | Clearing sector 20 in hard mode |
 
 Normal, hard and impossible are the three difficulties. Chosen seed and free mode are options that combine with any of them.
 
@@ -612,7 +612,7 @@ Achievements unlock modes and options for solo, and their conditions are listed 
 - A run on a seed that the game didn't just draw for it: a chosen seed, or the seed of an earlier run that is played again. A seed can't be practiced to unlock them.
 - A run in free mode, so that a tank can't be built to unlock them.
 
-Every other run earns them, alone or as a team, and an achievement earned by a team is awarded to each member. A run that earns none says so on screen: before it starts, while it lasts and when it is over. The game over screen says it of a retry before the player picks one. A difficulty that is unlocked unlocks the ones below it: a team can reach sector 20 in hard mode before any of its members has unlocked hard mode.
+Every other run earns them, alone or as a team, and an achievement earned by a team is awarded to each member. A run that earns none says so on screen: before it starts, while it lasts and when it is over. The game over screen says it of a retry before the player picks one. A difficulty that is unlocked unlocks the ones below it: a team can clear sector 20 in hard mode before any of its members has unlocked hard mode.
 
 The game stores settings, bindings, unlocks, records and the tank of the garage on the player's machine, or in the browser's storage on the web. It also keeps what a solo player and a host chose last: the difficulty, free mode and the name of the game, and never the password. Records keep the best sector reached for each difficulty and number of players, with the seed and the version, and apart for the runs in free mode. The number of players is the one at the start of the run, and each player keeps the record on their own machine.
 
