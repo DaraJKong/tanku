@@ -267,6 +267,8 @@ A number of these that turns out to matter gets a word in the file, and the vers
 
 A change is tried with the trials of the balance, which the README describes: the report of a trial as the game is, a change to a line of the file, the report again, and the comparison of the two. Each report names the balance that it was made with by its fingerprint, a number made of the words of the file: comments and the room between two words change nothing of it.
 
+Two builds of different balances don't play together. Each machine works out the tank of its own player by its balance, so two that differ would never agree on it. A hosted game says which balance it plays by: the join screen lists a game of another balance as one of another version, and such a game doesn't answer whoever joins it by its address or by its link. After a change to the file, every machine that plays together is built again, and so is the page for browsers.
+
 A change that is kept is written down in two more places:
 
 1. **[PROJECT.md](PROJECT.md)**, which holds the same numbers in its tables and its text.

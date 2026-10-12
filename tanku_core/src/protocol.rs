@@ -17,6 +17,7 @@ use lightyear::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    balance::FINGERPRINT,
     lock::{Challenge, Proof},
     modes::Difficulty,
     rules::MAX_PLAYERS,
@@ -31,7 +32,7 @@ use crate::{
 /// Counts the changes to what the server and its clients tell each other since the version of
 /// the game was last raised. Two builds that don't count the same don't speak the same, so
 /// they don't join each other: raise this with every such change.
-pub const REVISION: u32 = 0;
+pub const REVISION: u32 = 1;
 
 /// The port a game listens on unless it is told otherwise.
 pub const PORT: u16 = 28405;
@@ -71,12 +72,20 @@ pub fn named(text: &str) -> String {
 }
 
 /// What tells one build of the game from another on the network: players must run the same
-/// version, and builds that speak the same.
+/// version, builds that speak the same, and builds of the same balance. Each machine works out
+/// the tank of its own player by its balance: two that differ would never agree on it.
 pub fn protocol_id() -> u64 {
-    let told_apart_by = VERSION.bytes().chain(REVISION.to_le_bytes());
-    told_apart_by.fold(0xCBF2_9CE4_8422_2325, |hash, byte| {
-        (hash ^ byte as u64).wrapping_mul(0x0000_0100_0000_01B3)
-    })
+    told_apart(VERSION, REVISION, FINGERPRINT)
+}
+
+/// The number that the builds of a version, of a revision and of a balance go by.
+fn told_apart(version: &str, revision: u32, balance: u64) -> u64 {
+    let bytes = version.bytes().chain(revision.to_le_bytes());
+    bytes
+        .chain(balance.to_le_bytes())
+        .fold(0xCBF2_9CE4_8422_2325, |hash, byte| {
+            (hash ^ byte as u64).wrapping_mul(0x0000_0100_0000_01B3)
+        })
 }
 
 /// Who sits in a seat of a game that several players share.
@@ -238,16 +247,25 @@ mod tests {
     fn builds_that_speak_differently_tell_each_other_apart() {
         // The same build always goes by the same number.
         assert_eq!(protocol_id(), protocol_id());
-        // Another version, or another revision of what is told, goes by another.
-        let number = |version: &str, revision: u32| {
-            let told_apart_by = version.bytes().chain(revision.to_le_bytes());
-            told_apart_by.fold(0xCBF2_9CE4_8422_2325u64, |hash, byte| {
-                (hash ^ byte as u64).wrapping_mul(0x0000_0100_0000_01B3)
-            })
-        };
-        assert_eq!(protocol_id(), number(VERSION, REVISION));
-        assert_ne!(protocol_id(), number(VERSION, REVISION + 1));
-        assert_ne!(protocol_id(), number("0.0.0", REVISION));
+        // Another version, another revision of what is told or another balance goes by
+        // another.
+        assert_eq!(protocol_id(), told_apart(VERSION, REVISION, FINGERPRINT));
+        assert_ne!(
+            protocol_id(),
+            told_apart(VERSION, REVISION + 1, FINGERPRINT)
+        );
+        assert_ne!(protocol_id(), told_apart("0.0.0", REVISION, FINGERPRINT));
+        assert_ne!(
+            protocol_id(),
+            told_apart(VERSION, REVISION, FINGERPRINT + 1)
+        );
+        // The balance of the game as it was before one of its numbers changed.
+        let before = crate::balance::fingerprint("tanku-balance 1\nblast 3m\n");
+        let after = crate::balance::fingerprint("tanku-balance 1\nblast 2.5m\n");
+        assert_ne!(
+            told_apart(VERSION, REVISION, before),
+            told_apart(VERSION, REVISION, after)
+        );
     }
 
     #[test]

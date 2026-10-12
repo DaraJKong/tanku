@@ -13,6 +13,7 @@ use std::net::{IpAddr, Ipv4Addr, UdpSocket};
 use bevy::prelude::*;
 
 use crate::{
+    balance::FINGERPRINT,
     protocol::{REVISION, named},
     rules::MAX_PLAYERS,
     seed::VERSION,
@@ -28,10 +29,12 @@ const VERSION_LENGTH: usize = 16;
 pub struct Announcement {
     /// A number of its own, by which a game is told from every other.
     pub game: u64,
-    /// The version of the game that hosts it, and the revision of what it tells its guests. A
-    /// game only takes players whose game has both.
+    /// The version of the game that hosts it, the revision of what it tells its guests, and
+    /// the balance that it plays by, as its fingerprint. A game only takes players whose game
+    /// has all three.
     pub version: String,
     pub revision: u32,
+    pub balance: u64,
     /// The port on which the game takes its guests.
     pub port: u16,
     pub players: u8,
@@ -63,6 +66,7 @@ impl Announcement {
             game,
             version: VERSION.to_string(),
             revision: REVISION,
+            balance: FINGERPRINT,
             port,
             players,
             open,
@@ -73,7 +77,8 @@ impl Announcement {
 
     /// What a player of this build can do about the game.
     pub fn standing(&self) -> Standing {
-        if self.version != VERSION || self.revision != REVISION {
+        let same = self.version == VERSION && self.revision == REVISION;
+        if !same || self.balance != FINGERPRINT {
             Standing::Other
         } else if !self.open {
             Standing::Running
@@ -86,13 +91,14 @@ impl Announcement {
 
     /// The text of the announcement, as names and what goes by them. The port is not in it:
     /// an announcement carries the port of its service apart.
-    pub fn text(&self) -> [(&'static str, String); 7] {
+    pub fn text(&self) -> [(&'static str, String); 8] {
         let door = if self.open { "open" } else { "closed" };
         let lock = if self.locked { "locked" } else { "none" };
         [
             ("game", format!("{:x}", self.game)),
             ("version", self.version.clone()),
             ("revision", self.revision.to_string()),
+            ("balance", format!("{:x}", self.balance)),
             ("players", self.players.to_string()),
             ("door", door.to_string()),
             ("name", self.name.clone()),
@@ -103,7 +109,7 @@ impl Announcement {
     /// Reads what a host says of its game, from the port of its service and from what its
     /// text has by each name. Anything can announce itself on a network: what doesn't read
     /// as a game is none. A later build may say more, which is left unread, and an earlier
-    /// one gave its game neither a name nor a password.
+    /// one gave its game neither a name nor a password, and didn't say its balance.
     pub fn read<'a>(port: u16, said: impl Fn(&str) -> Option<&'a str>) -> Option<Self> {
         let told = |version: &&str| {
             (1..=VERSION_LENGTH).contains(&version.len())
@@ -113,6 +119,10 @@ impl Announcement {
             game: u64::from_str_radix(said("game")?, 16).ok()?,
             version: said("version").filter(told)?.to_string(),
             revision: said("revision")?.parse().ok()?,
+            // A build that doesn't say its balance plays by none that this one knows.
+            balance: said("balance")
+                .and_then(|told| u64::from_str_radix(told, 16).ok())
+                .unwrap_or_default(),
             port: Some(port).filter(|port| *port != 0)?,
             players: said("players")?.parse().ok()?,
             open: match said("door")? {
@@ -411,6 +421,24 @@ mod tests {
         };
         assert_eq!(read_with(&friday, &[]), Some(friday.clone()));
         assert_eq!(read_with(&friday, &[("name", None)]), Some(told.clone()));
+        // It says which balance it plays by, and an earlier build didn't.
+        let tuned = Announcement {
+            balance: u64::MAX,
+            ..told.clone()
+        };
+        assert_eq!(read_with(&tuned, &[]), Some(tuned.clone()));
+        let silent = Announcement {
+            balance: 0,
+            ..told.clone()
+        };
+        assert_eq!(
+            read_with(&tuned, &[("balance", None)]),
+            Some(silent.clone())
+        );
+        assert_eq!(
+            read_with(&tuned, &[("balance", Some("heavy"))]),
+            Some(silent)
+        );
         // It says whether it has a password, and an earlier build had none.
         let locked = Announcement {
             locked: true,
@@ -474,6 +502,10 @@ mod tests {
         assert_eq!(with(|told| told.open = false), Standing::Running);
         assert_eq!(with(|told| told.revision += 1), Standing::Other);
         assert_eq!(with(|told| told.version = "0.0.1".into()), Standing::Other);
+        // A game that plays by another balance is one of another version to this build: the
+        // two would not agree on what a tank does.
+        assert_eq!(with(|told| told.balance += 1), Standing::Other);
+        assert_eq!(with(|told| told.balance = 0), Standing::Other);
         // A game of another version is that before anything else: its seats are no use.
         let other = with(|told| {
             told.revision += 1;

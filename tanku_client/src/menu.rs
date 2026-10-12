@@ -3629,8 +3629,8 @@ mod tests {
 
     /// A notice as long as they get: three lines of a menu.
     const LONG_NOTICE: &str = "No game answers at 192.168.100.200:28405. Its host must run \
-                               version 0.4.0 too, and the link must be the one that its lobby \
-                               shows now.";
+                               the same build of version 0.4.0, and the link must be the one \
+                               that its lobby shows now.";
     /// The longest address that a machine has on a network.
     const LONG_ADDRESS: &str = "192.168.100.200";
     /// The longest seed that a player types, in the widest letter.

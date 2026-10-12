@@ -537,10 +537,14 @@ fn farewell(reason: &DisconnectedReason, joined: &Joined) -> String {
         // What a host hands out for browsers is good while its program runs: one that is
         // started again hands out another.
         _ if joined.by_link => format!(
-            "No game answers at {address}. Its host must run version {VERSION} too, and the \
-             link must be the one that its lobby shows now."
+            "No game answers at {address}. Its host must run the same build of version \
+             {VERSION}, and the link must be the one that its lobby shows now."
         ),
-        _ => format!("No game answers at {address}. Its host must run version {VERSION} too."),
+        // A build of another balance is another build, as one that tells its guests other
+        // things is: neither answers.
+        _ => format!(
+            "No game answers at {address}. Its host must run the same build of version {VERSION}."
+        ),
     }
 }
 
