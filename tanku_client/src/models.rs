@@ -13,7 +13,7 @@ use std::f32::consts::FRAC_PI_2;
 
 use bevy::prelude::*;
 use tanku_core::{
-    rules::SHIELD_RADIUS,
+    rules::{SHIELD_RADIUS, SPLIT_ANGLE},
     sim::{Enemy, Motion, Player, Position, Reserve, Run, Shield, Tank, Wreck},
     stats::{Ammo, Class, Genome, Stat},
 };
@@ -61,11 +61,11 @@ const BORE: f32 = 0.18;
 /// How far behind its point the arms of a chevron end: the chevrons that stand in the place
 /// of the rings on a muzzle whose bullets seek.
 const CHEVRON: f32 = 0.09;
-/// Length and width of the cap on a muzzle whose bullets split, the width of its slit and how
-/// far into the cap the slit starts.
-const CAP: Vec2 = Vec2::new(0.32, 0.28);
-const SLIT: f32 = 0.044;
-const SLIT_SEAT: f32 = 0.04;
+/// The fork on a muzzle whose bullets split: the length and the width of each of its two
+/// prongs, how far before the end of the barrel they start, and how far from its middle.
+const PRONG: Vec2 = Vec2::new(0.3, 0.09);
+const FORK_SEAT: f32 = 0.04;
+const FORK_GAP: f32 = 0.04;
 /// The bell of a muzzle whose bullets explode: how far before the end of the barrel it
 /// starts and how far past it reaches, and the height and the width of its mouth.
 const BELL: (f32, f32) = (0.09, 0.21);
@@ -311,9 +311,18 @@ fn bell(genome: &Genome) -> [Vec2; 4] {
     ]
 }
 
-/// How far in front of the middle of the turret the middle of the cap of a muzzle is.
-fn cap(genome: &Genome) -> f32 {
-    barrel_tip(genome) - TIP_SEAT + CAP.x / 2.0
+/// The plan of the fork of a muzzle: the four corners of each of its two prongs. They leave
+/// the end of the barrel at the angle at which a bullet splits, so they point where the two
+/// bullets will go.
+fn fork(genome: &Genome) -> [[Vec2; 4]; 2] {
+    let tip = barrel_tip(genome);
+    [-1.0, 1.0].map(|side| {
+        let root = Vec2::new(tip - FORK_SEAT, side * FORK_GAP);
+        let along = Vec2::from_angle(side * SPLIT_ANGLE);
+        let across = along.perp() * PRONG.y / 2.0;
+        let end = root + along * PRONG.x;
+        [root - across, root + across, end + across, end - across]
+    })
 }
 
 /// Where the vents are on the roof of the turret: along it and across it, from its middle.
@@ -467,14 +476,13 @@ pub fn turret_drawing(genome: &Genome, color: Color) -> Draft {
         Ammo::Piercing => {
             draft.point(Vec3::new(tip - TIP_SEAT, BORE, 0.0), TIP.x, TIP.y, accent);
         }
-        // Splitting: a short cap on the muzzle, with a slit that shows on its top and on
-        // its end.
+        // Splitting: the muzzle ends in a fork, in front of the rings. Its two prongs are
+        // as high as the barrel, and a hair higher where they lie on it.
         Ammo::Splitting => {
-            let middle = Vec3::new(cap(genome), BORE, 0.0);
-            draft.solid(middle, Vec3::new(CAP.x, CAP.y, CAP.y), accent, pale);
-            let slit = Vec3::new(CAP.x - SLIT_SEAT + LIFT, CAP.y + 2.0 * LIFT, SLIT);
-            let seat = Vec3::X * (SLIT_SEAT + LIFT) / 2.0;
-            draft.solid(middle + seat, slit, dark, dark);
+            let (foot, top) = (BORE - BARREL / 2.0, BORE + BARREL / 2.0 + 2.0 * LIFT);
+            for prong in fork(genome) {
+                draft.prism(&prong.map(|corner| raised(corner, top)), foot, accent, pale);
+            }
         }
         // Exploding: the muzzle flares into a bell, whose mouth is dark.
         Ammo::Exploding => {
@@ -608,13 +616,12 @@ pub fn turret_outline(genome: &Genome, outline: &Outline) -> Draft {
             ];
             draft.face(&corners, accent);
         }
-        // Splitting: the cap, and its slit.
+        // Splitting: the two prongs of the fork.
         Ammo::Splitting => {
-            let middle = Vec3::X * cap(genome);
-            draft.plate(middle + layer(2), CAP, accent);
-            let slit = Vec2::new(CAP.x - SLIT_SEAT, SLIT);
-            let seat = Vec3::X * SLIT_SEAT / 2.0;
-            draft.plate(middle + seat + layer(3), slit, outline.sheet);
+            for prong in fork(genome) {
+                let corners = prong.map(|corner| raised(corner, 0.0) + layer(2));
+                draft.face(&corners, accent);
+            }
         }
         // Exploding: the bell.
         Ammo::Exploding => {
@@ -714,9 +721,11 @@ pub fn anchors(genome: &Genome) -> Vec<Anchor> {
                 anchors.push(on_turret(Stat::Seeking, end));
             }
         }
-        // The top of the cap, beside its slit.
+        // The middle of a prong of the fork, on its top.
         Ammo::Splitting => {
-            let top = Vec3::new(cap(genome), BORE + CAP.y / 2.0, CAP.y / 4.0);
+            let prong = fork(genome)[0];
+            let middle = (prong[0] + prong[2]) / 2.0;
+            let top = raised(middle, BORE + BARREL / 2.0);
             anchors.push(on_turret(Stat::Splitting, top));
         }
         // The top of the bell, toward its mouth.
@@ -1173,11 +1182,25 @@ mod tests {
         let turret = |ammo: Ammo, bounces: u8| turret_drawing(&tank(ammo, bounces), body);
         let reach = |ammo: Ammo| turret(ammo, 0).bounds().1.x - barrel_tip(&tank(ammo, 0));
         // A normal muzzle ends with its barrel, and each special one carries a mark in the
-        // pale tint of the tank: a pointed tip, a cap or a bell.
+        // pale tint of the tank: a pointed tip, a fork or a bell.
         assert!(close(reach(Ammo::Normal), 0.0));
         assert!(close(reach(Ammo::Piercing), TIP.y - TIP_SEAT));
-        assert!(close(reach(Ammo::Splitting), CAP.x - TIP_SEAT + LIFT));
+        let (sin, cos) = SPLIT_ANGLE.sin_cos();
+        let prongs = PRONG.x * cos + PRONG.y / 2.0 * sin - FORK_SEAT;
+        assert!(close(reach(Ammo::Splitting), prongs));
         assert!(close(reach(Ammo::Exploding), BELL.1));
+        // The two prongs of the fork leave the end of the barrel at the angle at which a
+        // bullet splits, one to each side: they point where the two bullets will go.
+        let splitter = tank(Ammo::Splitting, 0);
+        for (prong, side) in fork(&splitter).into_iter().zip([-1.0, 1.0]) {
+            let along = prong[3] - prong[0];
+            assert!(close(along.length(), PRONG.x));
+            assert!(close(along.to_angle(), side * SPLIT_ANGLE));
+            assert!(close(prong[0].distance(prong[1]), PRONG.y));
+            // They part from the middle of the barrel, and neither lies on the other.
+            let nearest = prong.map(|corner| side * corner.y).into_iter();
+            assert!(nearest.fold(f32::MAX, f32::min) >= 0.0);
+        }
         assert_eq!(turret(Ammo::Normal, 0).area(accent), 0.0);
         for ammo in [Ammo::Piercing, Ammo::Splitting, Ammo::Exploding] {
             assert!(turret(ammo, 0).area(accent) > 0.0, "{ammo:?}");
@@ -1190,7 +1213,7 @@ mod tests {
         let mouth = BELL_MOUTH.x * BELL_MOUTH.y;
         let dark = |ammo: Ammo| turret(ammo, 0).area(theme::DARK_METAL);
         assert!(close(dark(Ammo::Exploding) - dark(Ammo::Normal), mouth));
-        // The cap stands in front of the rings, which every tank but a seeker has: one per
+        // The fork stands in front of the rings, which every tank but a seeker has: one per
         // bounce, in the color of its body.
         let ring = RING.x * RING.y;
         for bounces in 0..=Stat::Ricochet.max_level() {
@@ -1219,7 +1242,8 @@ mod tests {
         let accent = accent_color(outline.line);
         let flat = |ammo: Ammo, bounces: u8| turret_outline(&tank(ammo, bounces), &outline);
         assert_eq!(flat(Ammo::Normal, 3).area(accent), 0.0);
-        assert!(close(flat(Ammo::Splitting, 3).area(accent), CAP.x * CAP.y));
+        let fork = 2.0 * PRONG.x * PRONG.y;
+        assert!(close(flat(Ammo::Splitting, 3).area(accent), fork));
         let trapezoid = (BELL.0 + BELL.1) * (BARREL + BELL_MOUTH.y) / 2.0;
         assert!(close(flat(Ammo::Exploding, 0).area(accent), trapezoid));
         assert_eq!(flat(Ammo::Seeking, 0).area(accent), 0.0);

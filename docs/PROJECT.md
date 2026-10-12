@@ -458,14 +458,14 @@ An enemy's model is assembled from its genome, so players can read a tank before
 | Shield | White disk under the turret, of which only the edge shows. The edge is a little wider with level. |
 | Piercing | Pointed tip on the barrel. Its bullets have a pointed tip too, until they have pierced. |
 | Seeking | Chevrons around the muzzle, in the place of the rings: one per bounce. Its bullets have a chevron in the place of each stripe. |
-| Splitting | Short cap with a slit on the muzzle, in front of the rings. Its bullets have a seam along them and no stripe. |
+| Splitting | Fork on the muzzle, in front of the rings: two prongs that point where the two bullets will go. Its bullets have a seam along them and no stripe. |
 | Exploding | Muzzle that flares into a bell. Its bullets have a flat end, with a red line that cuts them near it, and a trail. |
 | Brain | Antennas, one per tier |
 | Ballistics | Sight on the turret, one lens per tier |
 | Total budget | Color intensity. Weak tanks are pale, strong ones saturated, and even the weakest shows its hue. |
 | Class | Color: a hue for each class, gray for an all-rounder, and a darker color for the seeker, the flanker and the grenadier (see [Classes](#classes)) |
 
-The lenses of the sight and what marks the muzzle of a special bullet (the pointed tip, the chevrons, the slit cap and the bell) are a pale tint of the tank's own hue.
+The lenses of the sight and what marks the muzzle of a special bullet (the pointed tip, the chevrons, the fork and the bell) are a pale tint of the tank's own hue.
 
 The mark of a bullet that seeks agrees with the marks of ricochet instead of standing beside them: a seeking bounce is a bounce, so a chevron is drawn where its ring and its stripe would be. A tank whose bullets seek but can't bounce has neither.
 
