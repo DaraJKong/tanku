@@ -125,9 +125,6 @@ enum Press {
     InfiniteLives,
     /// In a playtest of arena mode: sends a group all at once, or in waves again.
     WholeGroups,
-    /// In a playtest of arena mode: brings blocks and crates back after a while, or lays
-    /// the room out anew between two groups again.
-    BlocksReturn,
     /// In a playtest: moves the sector to skip to by this many.
     Destination(i32),
     /// In a playtest: skips to that sector.
@@ -2704,18 +2701,9 @@ fn unit_name(in_a_room: bool) -> &'static str {
     if in_a_room { "Group" } else { "Sector" }
 }
 
-/// What a group of arena mode does in a playtest, and what its blocks do: as the switches of
-/// the menu say them.
+/// What a group of arena mode does in a playtest, as the switch of the menu says it.
 fn group_words(whole: bool) -> &'static str {
     if whole { "All at once" } else { "In two waves" }
-}
-
-fn block_words(back: bool) -> &'static str {
-    if back {
-        "Back after 10 s"
-    } else {
-        "New between groups"
-    }
 }
 
 fn pause_menu(
@@ -2772,10 +2760,6 @@ fn pause_menu(
                     row(parent, "A group comes", |row| {
                         let state = group_words(playtest.whole_groups);
                         small(row, state, 170.0, Press::WholeGroups);
-                    });
-                    row(parent, "Blocks and crates", |row| {
-                        let state = block_words(playtest.blocks_return);
-                        small(row, state, 170.0, Press::BlocksReturn);
                     });
                 }
             }
@@ -3396,11 +3380,6 @@ fn press(
             Press::WholeGroups => {
                 if let Some(playtest) = &mut playtest {
                     playtest.whole_groups = !playtest.whole_groups;
-                }
-            }
-            Press::BlocksReturn => {
-                if let Some(playtest) = &mut playtest {
-                    playtest.blocks_return = !playtest.blocks_return;
                 }
             }
             Press::Destination(change) => {
@@ -4081,7 +4060,7 @@ mod tests {
                     });
                 build(app, pause_menu);
             }),
-            // In arena mode, a playtest has two more switches, and its level a longer line.
+            // In arena mode, a playtest has one more switch, and its level a longer line.
             (
                 "the menu of a host during a playtest of arena mode",
                 |app| {
@@ -4095,8 +4074,7 @@ mod tests {
                         .insert_resource(Session::Host)
                         .insert_resource(Playtest {
                             infinite_lives: true,
-                            blocks_return: true,
-                            ..default()
+                            whole_groups: true,
                         });
                     build(app, pause_menu);
                 },
@@ -4968,7 +4946,7 @@ mod tests {
     }
 
     #[test]
-    fn a_playtest_of_arena_mode_has_two_switches_and_skips_to_a_group() {
+    fn a_playtest_of_arena_mode_has_a_switch_and_skips_to_a_group() {
         let menu = |arena: bool| {
             move |app: &mut App| {
                 app.insert_resource(Run {
@@ -4993,24 +4971,20 @@ mod tests {
         let mut corridor = stage(|_| {}, WINDOWS[0]);
         menu(false)(&mut corridor);
         let offered = buttons(&mut corridor);
-        assert!(!offered.contains(&Press::WholeGroups) && !offered.contains(&Press::BlocksReturn));
+        assert!(!offered.contains(&Press::WholeGroups));
         assert!(said(&mut corridor, "Skip to sector 8"));
 
         let mut room = stage(|_| {}, WINDOWS[0]);
         menu(true)(&mut room);
         let offered = buttons(&mut room);
-        assert!(offered.contains(&Press::WholeGroups) && offered.contains(&Press::BlocksReturn));
+        assert!(offered.contains(&Press::WholeGroups));
         assert!(said(&mut room, "Skip to group 8"));
-        assert!(said(&mut room, "In two waves") && said(&mut room, "New between groups"));
-        // Each switch turns its rule over, and the menu says what holds now.
+        assert!(said(&mut room, "In two waves"));
+        // The switch turns its rule over, and the menu says what holds now.
         click(&mut room, Press::WholeGroups);
-        let playtest = *room.world().resource::<Playtest>();
-        assert!(playtest.whole_groups && !playtest.blocks_return);
-        click(&mut room, Press::BlocksReturn);
-        let playtest = *room.world().resource::<Playtest>();
-        assert!(playtest.whole_groups && playtest.blocks_return);
+        assert!(room.world().resource::<Playtest>().whole_groups);
         build(&mut room, refresh_pause);
-        assert!(said(&mut room, "All at once") && said(&mut room, "Back after 10 s"));
+        assert!(said(&mut room, "All at once"));
         click(&mut room, Press::WholeGroups);
         assert!(!room.world().resource::<Playtest>().whole_groups);
     }

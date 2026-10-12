@@ -7,7 +7,7 @@ The solo game and co-op are playable, on Linux, on Windows and in a browser:
 - **Solo:** the corridor, the generated enemies with their classes and their brains, arenas and their waves, lives and checkpoints, the menus, the sound cues and the music. Runs unlock achievements. Clearing sector 5 unlocks arena mode, a run in one room against one group after another. Clearing sector 10 lets the player type the seed of a run. Clearing sector 20 unlocks free mode, in which the player spends the 59 points of their tank as they like, in a garage that draws the tank as they build it. Clearing sector 30 unlocks hard mode, whose enemies are stronger from the first sector.
 - **Co-op:** up to four players. One of them hosts a game, which the others find on the local network or join by its address, from a desktop build or from a browser. A game can have a name and a password. The host sets the run in the lobby: its difficulty, its seed, arena mode, and free mode, in which each player has the tank of their own garage. Nothing is locked for a host who has company. The run starts once everyone has said that they are ready. A destroyed tank is a wreck that a teammate repairs.
 
-Co-op has been played by two players. With three or four, it is checked by tests and by scripted runs only. Arena mode is new and an experiment: nobody has played it yet, and two of its rules have a switch in a playtest (see [Arena mode](#arena-mode)). The build for Windows is checked under wine, not yet on Windows itself. The specification is in [docs/PROJECT.md](docs/PROJECT.md).
+Co-op has been played by two players. With three or four, it is checked by tests and by scripted runs only. Arena mode is new and an experiment: nobody has played it yet, and one of its rules has a switch in a playtest (see [Arena mode](#arena-mode)). The build for Windows is checked under wine, not yet on Windows itself. The specification is in [docs/PROJECT.md](docs/PROJECT.md).
 
 ## Workspace
 
@@ -87,18 +87,17 @@ A run in arena mode has no corridor. It is fought in one room, which the seed dr
 - **The view** stays on the room: on a wide screen, all of it and the reserve show at once.
 - **The score** is the number of groups cleared. Arena mode has records of its own, and its runs earn no achievement.
 
-Two of these rules are the least settled, and each has a switch in the pause menu of a playtest, which holds from the next group on:
+One of these rules is the least settled, and has a switch in the pause menu of a playtest, which holds from the next group on:
 
 | Switch | The rule | The other way |
 |---|---|---|
 | A group comes | In two waves | All at once: every tank of the group is marked together |
-| Blocks and crates | New between groups | Back after 10 s: the room is laid out once and stays, and a block or a crate that was destroyed stands again 10 s later, after 2 s of ink, once nothing is in its place |
 
 ```bash
 cargo run -p tanku_client -- --playtest --seed TANKU
 ```
 
-Pick "Solo", turn arena mode on and start. Esc opens the menu with the switches, and "Skip to group" goes straight to a later group: group 15 is the first with six tanks.
+Pick "Solo", turn arena mode on and start. Esc opens the menu with the switch, and "Skip to group" goes straight to a later group: group 15 is the first with six tanks.
 
 ### Playtest
 
@@ -114,7 +113,7 @@ cargo run -p tanku_client -- --playtest
 | Skip to a sector | The pause menu picks any sector up to 999. The tank comes back at the end of the sector before it, in front of its barrier, as it does after clearing that sector. In arena mode, it picks a group: the run goes on with the lull before that group. |
 | Choose the seed | `--seed TEXT` after `--playtest` starts every run on that seed instead of a random one. |
 | Nothing locked | The solo screen takes a typed seed and offers hard mode, arena mode and free mode, whatever the player has unlocked. |
-| The rules of arena mode | In arena mode, the pause menu has two switches: see [Arena mode](#arena-mode). |
+| The rules of arena mode | In arena mode, the pause menu has a switch: see [Arena mode](#arena-mode). |
 | Bring a tank | `--tank TANK` after `--playtest` starts every run in free mode, in that tank, without a visit to the garage: see [The garage check](#the-garage-check). |
 
 With a seed and a skip, a seed and a sector from a report are a few clicks away:

@@ -3,7 +3,7 @@
 use tanku_core::{
     enemy,
     map::Room,
-    rules::{LIFE_GROUPS, LULL, RETURN_TIME, RISE_TIME, ROOM_WAVES},
+    rules::{LIFE_GROUPS, LULL, RISE_TIME, ROOM_WAVES},
     seed::seed_value,
     sim::{Planned, Reserve},
 };
@@ -401,7 +401,6 @@ fn the_room_is_laid_out_anew_between_two_groups() {
     assert_eq!(standing(&mut app), (Vec::new(), Vec::new()));
     let marks = planned(&mut app);
     assert_eq!(marks.len(), blocks.len() + crates.len());
-    assert!(marks.iter().all(|(_, mark)| mark.due));
     let places = |explosive: bool| -> Vec<Vec2> {
         let kind = marks.iter().filter(|(_, mark)| mark.explosive == explosive);
         kind.map(|(at, _)| *at).collect()
@@ -681,56 +680,6 @@ fn a_playtest_can_send_a_group_all_at_once() {
     destroy_enemies(&mut app, 15);
     tick(&mut app, 1);
     assert_eq!(run(&app).cleared, 15);
-}
-
-#[test]
-fn a_playtest_can_bring_blocks_and_crates_back_instead_of_a_new_layout() {
-    let mut app = open("TEST");
-    app.insert_resource(Playtest {
-        blocks_return: true,
-        ..default()
-    });
-    skip_to(&mut app, 4);
-    tick(&mut app, 1);
-    shelter(&mut app);
-    stand_aside(&mut app);
-    // The room is then laid out once, with crates in it, and stays as it is.
-    let laid = standing(&mut app);
-    assert!(!laid.0.is_empty() && !laid.1.is_empty());
-    let world = app.world_mut();
-    let mut blocks = world.query_filtered::<(Entity, &Position), With<Block>>();
-    let (block, gone) = blocks.iter(world).map(|(e, at)| (e, at.0)).next().unwrap();
-    // A block that is destroyed is planned again, and its place is not inked in yet.
-    app.world_mut().entity_mut(block).despawn();
-    tick(&mut app, 2);
-    assert_eq!(
-        planned(&mut app),
-        [(
-            gone,
-            Planned {
-                explosive: false,
-                due: false
-            }
-        )]
-    );
-    assert_eq!(standing(&mut app).0.len(), laid.0.len() - 1);
-    // The place is inked in for the last moments, and the block stands after ten seconds.
-    tick(&mut app, seconds(RETURN_TIME - RISE_TIME) - 6);
-    assert!(!planned(&mut app)[0].1.due);
-    tick(&mut app, 8);
-    assert!(planned(&mut app)[0].1.due);
-    tick(&mut app, seconds(RISE_TIME) - 8);
-    assert_eq!(planned(&mut app).len(), 1);
-    tick(&mut app, 10);
-    assert!(planned(&mut app).is_empty());
-    assert_eq!(standing(&mut app), laid);
-    // Clearing a group changes nothing in the room.
-    wait_for_the_group(&mut app);
-    clear_sector(&mut app, 4);
-    tick(&mut app, 2);
-    assert_eq!(run(&app).cleared, 4);
-    assert_eq!(standing(&mut app), laid);
-    assert!(planned(&mut app).is_empty());
 }
 
 #[test]

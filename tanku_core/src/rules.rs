@@ -79,9 +79,6 @@ pub const LIFE_GROUPS: u32 = 5;
 /// In arena mode, how long the place of a block or of a crate is inked in before it stands
 /// there. It waits for as long as something is in its place.
 pub const RISE_TIME: f32 = 2.0;
-/// In a playtest of arena mode that brings them back: how long after it was destroyed a
-/// block or a crate stands again, if nothing is in its place.
-pub const RETURN_TIME: f32 = 10.0;
 
 /// The lives of a single player, which are also the most they can have.
 pub const SOLO_LIVES: u32 = 3;

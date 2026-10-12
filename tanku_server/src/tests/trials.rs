@@ -622,7 +622,6 @@ mod arena {
         app.insert_resource(Playtest {
             infinite_lives: true,
             whole_groups: whole,
-            ..default()
         });
         app.world_mut().write_message(RunRequest::Start {
             seed: seed.into(),

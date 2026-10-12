@@ -14,8 +14,8 @@ use tanku_core::{
     map::Room,
     progression,
     rules::{
-        ARENA_DELAY, BLOCK_SIZE, BULLET_RADIUS, LIFE_GROUPS, LULL, MINE_RADIUS, RETURN_TIME,
-        RISE_TIME, ROOM_WAVES, SOLO_LIVES, TANK_RADIUS, TICK,
+        ARENA_DELAY, BLOCK_SIZE, BULLET_RADIUS, LIFE_GROUPS, LULL, MINE_RADIUS, RISE_TIME,
+        ROOM_WAVES, SOLO_LIVES, TANK_RADIUS, TICK,
     },
     sim::{
         Block, Bullet, Enemy, ExplosiveCrate, Mine, Planned, Player, Playtest, Position, Reserve,
@@ -24,10 +24,6 @@ use tanku_core::{
 };
 
 use crate::field::{Arena, Field, Fuse, InSector, Recruit};
-
-/// The level of the terrain of a room whose blocks and crates come back: it stays as it is,
-/// with the cover and the crates of a sector halfway to the harshest.
-const STEADY_LEVEL: u32 = 15;
 
 /// The room of a run in arena mode, and how the run stands in it.
 #[derive(Clone, Debug)]
@@ -85,7 +81,7 @@ impl RoomState {
             if at_once {
                 stand(commands, at, explosive);
             } else {
-                plan(commands, at, explosive, RISE_TIME);
+                plan(commands, at, explosive);
             }
         }
     }
@@ -105,13 +101,11 @@ fn stand(commands: &mut Commands, at: Vec2, explosive: bool) {
     }
 }
 
-/// Plans a block or a crate that stands after this long. Its place is inked in for the last
-/// moments.
-fn plan(commands: &mut Commands, at: Vec2, explosive: bool, after: f32) {
-    let due = after <= RISE_TIME;
+/// Plans a block or a crate: its place is inked in, and it stands there after a moment.
+fn plan(commands: &mut Commands, at: Vec2, explosive: bool) {
     commands.spawn((
-        Planned { explosive, due },
-        Due(after),
+        Planned { explosive },
+        Due(RISE_TIME),
         Position(at),
         InSector(0),
     ));
@@ -123,12 +117,6 @@ fn waves(playtest: Option<&Playtest>) -> u32 {
         Some(playtest) if playtest.whole_groups => 1,
         _ => ROOM_WAVES,
     }
-}
-
-/// Whether a block or a crate comes back after it was destroyed, which a playtest can ask
-/// for. The room then stays as it is, and is not laid out anew between two groups.
-fn returns(playtest: Option<&Playtest>) -> bool {
-    playtest.is_some_and(|playtest| playtest.blocks_return)
 }
 
 /// Draws up a group: the tanks of the sector of its number, as many as the players call for,
@@ -163,12 +151,7 @@ pub fn open(commands: &mut Commands, field: &mut Field, cleared: u32, playtest: 
     field.stale = true;
     let layout = state.room.shell();
     commands.spawn((Sector { layout }, SectorIndex(0), InSector(0)));
-    let level = if returns(playtest) {
-        STEADY_LEVEL
-    } else {
-        cleared + 1
-    };
-    state.lay(commands, level, true);
+    state.lay(commands, cleared + 1, true);
     state.next = muster(field, &mut state, cleared + 1, waves(playtest));
     state.lull = Some(LULL);
     field.room = Some(state);
@@ -232,13 +215,11 @@ pub fn advance(
                     events.write(SimEvent::LifeTaken { at });
                 }
                 // The room is laid out anew for the next group, which goes into reserve.
-                if !returns(playtest) {
-                    for entity in &standing {
-                        commands.entity(entity).try_despawn();
-                    }
-                    field.stale = true;
-                    state.lay(&mut commands, front + 1, false);
+                for entity in &standing {
+                    commands.entity(entity).try_despawn();
                 }
+                field.stale = true;
+                state.lay(&mut commands, front + 1, false);
                 state.next = muster(&field, &mut state, front + 1, waves(playtest));
                 state.lull = Some(LULL);
             }
@@ -319,39 +300,21 @@ fn gap(point: Vec2, center: Vec2) -> f32 {
 
 /// Raises the blocks and the crates that are planned, each once its time has come and
 /// nothing is in its place: no tank, no wreck and no mine. A bullet that flies there ends.
-/// In a playtest that brings them back, what was destroyed is planned again.
 pub fn raise(
     mut commands: Commands,
     mut field: ResMut<Field>,
-    playtest: Option<Res<Playtest>>,
-    mut planned: Query<(Entity, &mut Planned, &mut Due, &Position)>,
-    standing: Query<&Position, Or<(With<Block>, With<ExplosiveCrate>)>>,
+    mut planned: Query<(Entity, &Planned, &mut Due, &Position)>,
     tanks: Query<&Position, With<Tank>>,
     mines: Query<&Position, With<Mine>>,
     bullets: Query<(Entity, &Position, &Bullet)>,
     mut events: MessageWriter<SimEvent>,
 ) {
-    let Some(state) = &field.room else {
+    if field.room.is_none() {
         return;
-    };
-    if returns(playtest.as_deref()) {
-        let blocks = state.blocks.iter().map(|corner| (center(*corner), false));
-        let crates = state.crates.iter().map(|corner| (center(*corner), true));
-        for (at, explosive) in blocks.chain(crates) {
-            let here = |position: &Position| position.0.distance(at) < 0.5;
-            let stands = standing.iter().any(here);
-            let comes = planned.iter().any(|(.., position)| here(position));
-            if !stands && !comes {
-                plan(&mut commands, at, explosive, RETURN_TIME);
-            }
-        }
     }
     let mut raised = false;
-    for (entity, mut marked, mut due, position) in &mut planned {
+    for (entity, marked, mut due, position) in &mut planned {
         due.0 = (due.0 - TICK).max(0.0);
-        if due.0 <= RISE_TIME && !marked.due {
-            marked.due = true;
-        }
         if due.0 > 0.0 {
             continue;
         }

@@ -214,16 +214,14 @@ pub struct Reserve {
     pub number: u32,
 }
 
-/// A block or a crate of arena mode that is on its way. Its place is drawn on the floor, and
-/// it stands there once its time has come and nothing is in its place. Its position is its
-/// center.
+/// A block or a crate of arena mode that is on its way. Its place is inked in on the floor,
+/// and it stands there once its time has come and nothing is in its place. Its position is
+/// its center.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[require(Position)]
 pub struct Planned {
     /// Whether it is a crate. It is a block otherwise.
     pub explosive: bool,
-    /// Whether it is about to stand: its place is inked in, as a warning.
-    pub due: bool,
 }
 
 /// A life that an arena left on its floor when it was cleared. A single player who is short
@@ -317,9 +315,6 @@ pub struct Playtest {
     pub infinite_lives: bool,
     /// In arena mode: a group comes all at once, and not in waves.
     pub whole_groups: bool,
-    /// In arena mode: a block or a crate comes back a while after it was destroyed, and the
-    /// room is not laid out anew between two groups.
-    pub blocks_return: bool,
 }
 
 /// What the client asks of the server.
