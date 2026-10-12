@@ -4,7 +4,7 @@ Tanku is a cooperative top-down tank game for one to four players. The players f
 
 The core loop is: advance, read the enemies, fight, survive, learn, advance again. Learning is what the players earn each time around: they see what each kind of enemy does and prepare better for the next one. Nothing carries over between runs except what they have understood.
 
-All numbers in this document are starting values to tune in playtests.
+All numbers in this document are starting values to tune in playtests. Those that decide how hard the game is are written in one file, `tanku_core/game.balance`, which the game is compiled with: [BALANCE.md](BALANCE.md) describes it. The file and this document hold the same numbers, and a change to one is a change to the other.
 
 ## Overview
 
