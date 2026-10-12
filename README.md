@@ -293,6 +293,8 @@ It takes Firefox, Python 3 and the web build in `target/web-dist`. No window ope
 
 On a bad line, a host may log errors of `lightyear_debug::input` about an input for a tick that it has already simulated. They tell that the orders of a guest came late: its clock was behind, after the guest stalled for a moment or the line suddenly got slower. The host goes on with the last orders it had, the network library sets the clock of the guest anew within a second or two, and the errors stop. Nothing is lost: what the guest shows of its own tank is put right by what the host tells.
 
+A host also logs an error of `lightyear_udp::server` about a packet for an unknown entity when a guest leaves over a slow line. A guest says goodbye several times over, in case one is lost, and the later ones find it gone already. Nothing is wrong.
+
 The command `tape` keeps the music that the run would have played from there on. When the script quits, the music goes to a sound file, and the list of what the game told the music, with the time of each change, to a text file of the same name:
 
 ```bash
