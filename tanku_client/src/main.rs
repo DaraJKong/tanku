@@ -1,3 +1,4 @@
+mod ahead;
 mod audio;
 mod camera;
 mod cli;
@@ -110,6 +111,7 @@ fn main() {
             scene::plugin,
             models::plugin,
             effects::plugin,
+            ahead::plugin,
             scars::plugin,
             exhibit::plugin,
             hud::plugin,

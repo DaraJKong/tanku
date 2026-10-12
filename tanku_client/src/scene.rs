@@ -46,7 +46,7 @@ const BARRIER_HEIGHT: f32 = 1.5;
 const CHAIN: [(f32, f32); 2] = [(0.9, 0.2), (0.15, 0.2)];
 const CHAIN_WIDTH: f32 = 0.12;
 /// Height at which bullets fly: the height of a barrel.
-const BULLET_HEIGHT: f32 = 0.8;
+pub const BULLET_HEIGHT: f32 = 0.8;
 /// Half the length of the straight part of a bullet. Its rounded ends come on top.
 const BULLET_BODY: f32 = BULLET_RADIUS;
 /// Length of the pointed tip of a piercing bullet.
