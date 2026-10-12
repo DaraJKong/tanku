@@ -6,7 +6,7 @@ The solo game and co-op are playable, on Linux, on Windows and in a browser:
 
 - **Solo:** the corridor, the generated enemies with their classes and their brains, arenas and their waves, lives and checkpoints, the menus, the sound cues and the music.
 - **Co-op:** up to four players. One of them hosts a game, which the others find on the local network or join by its address, from a desktop build or from a browser. A destroyed tank is a wreck that a teammate repairs.
-- **Not in yet:** achievements, the other modes with the garage, what a host sets for a game (its name, its password, its difficulty, free mode), the ready check of the lobby, and brain tiers 3 and 4. An enemy that has one of those tiers acts as tier 2 for now.
+- **Not in yet:** achievements, the other modes with the garage, what a host sets for a game (its name, its password, its difficulty, free mode), the ready check of the lobby, and brain tier 4. An enemy that has that tier acts as tier 3 for now.
 
 Co-op has been played by two players. With three or four, it is checked by tests and by scripted runs only. The build for Windows is checked under wine, not yet on Windows itself. The specification is in [docs/PROJECT.md](docs/PROJECT.md).
 

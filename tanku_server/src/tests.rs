@@ -181,9 +181,14 @@ fn spawn_enemy(app: &mut App, at: Vec2, levels: &[(Stat, u8)]) -> Entity {
 }
 
 /// An enemy that is awake and thinks with the experience of a late sector.
-fn spawn_veteran(app: &mut App, at: Vec2, levels: &[(Stat, u8)]) -> Entity {
+fn spawn_awake(app: &mut App, at: Vec2, levels: &[(Stat, u8)]) -> Entity {
+    spawn_thinker(app, at, levels, 60)
+}
+
+/// An enemy that is awake and thinks with the experience of a sector.
+fn spawn_thinker(app: &mut App, at: Vec2, levels: &[(Stat, u8)], sector: u32) -> Entity {
     let enemy = spawn_enemy(app, at, levels);
-    let brain = Brain::new(Stream::new(1, Purpose::Brain, 0, 0), 60);
+    let brain = Brain::new(Stream::new(1, Purpose::Brain, 0, 0), sector);
     app.world_mut()
         .entity_mut(enemy)
         .insert((brain, Enemy { awake: true }));
@@ -842,6 +847,13 @@ fn spawn_bullet_of(app: &mut App, maker: Genome, at: Vec2, velocity: Vec2) {
     app.world_mut().entity_mut(bullet).insert(Maker(maker));
 }
 
+/// A destructible block in the start bay.
+fn spawn_block(app: &mut App, at: Vec2) {
+    let block = (Block { sector: 0 }, Position(at), InSector(0));
+    app.world_mut().spawn(block);
+    app.world_mut().resource_mut::<Field>().stale = true;
+}
+
 /// An explosive crate in the start bay.
 fn spawn_crate(app: &mut App, at: Vec2) -> Entity {
     let explosive = (ExplosiveCrate { sector: 0 }, Position(at), InSector(0));
@@ -854,7 +866,7 @@ fn spawn_crate(app: &mut App, at: Vec2) -> Entity {
 fn a_run_tells_whose_bullet_destroyed_the_player() {
     let mut app = start("TEST");
     let levels = [(Stat::Turret, 6), (Stat::Muzzle, 4)];
-    let sentry = spawn_veteran(&mut app, Vec2::new(0.0, 13.0), &levels);
+    let sentry = spawn_awake(&mut app, Vec2::new(0.0, 13.0), &levels);
     let genome = app.world().get::<Tank>(sentry).unwrap().genome;
     assert_eq!(run(&app).lost_to, None);
     let blow = Blow {
@@ -873,7 +885,7 @@ fn a_run_tells_whose_bullet_destroyed_the_player() {
 fn a_bullet_tells_who_fired_it_after_that_tank_is_gone() {
     let mut app = start("TEST");
     // Its bullets are slow: the first one is still on its way when the tank is destroyed.
-    let sentry = spawn_veteran(&mut app, Vec2::new(0.0, 13.0), &[(Stat::Turret, 6)]);
+    let sentry = spawn_awake(&mut app, Vec2::new(0.0, 13.0), &[(Stat::Turret, 6)]);
     let genome = app.world().get::<Tank>(sentry).unwrap().genome;
     for _ in 0..seconds(6.0) {
         if bullets(&mut app) > 0 {
@@ -1791,7 +1803,7 @@ fn abandoning_a_run_removes_everything() {
 #[test]
 fn a_sentry_shoots_the_player_it_sees() {
     let mut app = start("TEST");
-    spawn_veteran(
+    spawn_awake(
         &mut app,
         Vec2::new(0.0, 13.0),
         &[(Stat::Turret, 6), (Stat::Muzzle, 4)],
@@ -1817,7 +1829,7 @@ fn shoot_at_enemy(levels: &[(Stat, u8)]) -> (App, Entity) {
     let entity = player(&mut app).unwrap();
     // The player waits out of the way, where no mine reflex is triggered.
     teleport(&mut app, entity, Vec2::new(-5.0, 2.0));
-    let enemy = spawn_veteran(&mut app, Vec2::new(0.0, 8.0), levels);
+    let enemy = spawn_awake(&mut app, Vec2::new(0.0, 8.0), levels);
     spawn_bullet(
         &mut app,
         Team::Players,
@@ -1857,6 +1869,212 @@ fn a_grunt_raises_its_shield_by_reflex() {
         matches!(event, SimEvent::ShieldBlocked { .. })
     });
     assert_eq!(blocked, 1);
+}
+
+#[test]
+fn a_veteran_sees_a_bullet_come_off_a_wall() {
+    // A tank without an engine stands near the east wall of the bay, with a shield and a
+    // turret that is too slow to turn on a bullet. A bullet flies past it at the wall, and
+    // comes back at it from 2.4 m: too late for a brain that only then sees it coming.
+    let fares = |brain: u8| {
+        let mut app = start("TEST");
+        let entity = player(&mut app).unwrap();
+        teleport(&mut app, entity, Vec2::new(-5.0, 2.0));
+        let at = Vec2::new(5.0, 8.0);
+        let enemy = spawn_awake(&mut app, at, &[(Stat::Shield, 3), (Stat::Brain, brain)]);
+        let bounce = Vec2::new(6.775, 9.6);
+        let back = (at - bounce).normalize();
+        let out = Vec2::new(-back.x, back.y);
+        let bullet = spawn_bullet(&mut app, Team::Players, bounce - out * 7.0, out * 10.0, 0);
+        app.world_mut()
+            .get_mut::<Bullet>(bullet)
+            .unwrap()
+            .bounces_left = 1;
+        tick(&mut app, seconds(1.5));
+        let blocked = count(&events(&mut app), |event| {
+            matches!(event, SimEvent::ShieldBlocked { .. })
+        });
+        (alive(&app, enemy), blocked)
+    };
+    assert_eq!(fares(2), (false, 0));
+    // A veteran has followed the bullet off the wall, and has its shield up in time.
+    assert_eq!(fares(3), (true, 1));
+}
+
+#[test]
+fn a_veteran_shoots_down_a_bullet_that_it_can_not_dodge() {
+    // A tank without an engine. A block hides the player from it, so it holds its fire, with
+    // its gun turned toward the player. Bullets are fired at it, a quarter of a second apart:
+    // each from a place, at a velocity and with a number of bounces left. Tells whether the
+    // tank is still there, how many shots it fired and how many bullets ended.
+    let fares = |brain: u8, sector: u32, shots: &[(Vec2, Vec2, u8)]| {
+        let mut app = start("TEST");
+        let entity = player(&mut app).unwrap();
+        teleport(&mut app, entity, Vec2::new(-3.0, 14.5));
+        spawn_block(&mut app, Vec2::new(-1.8, 10.25));
+        let levels = [(Stat::Turret, 6), (Stat::Magazine, 2), (Stat::Brain, brain)];
+        let enemy = spawn_thinker(&mut app, Vec2::new(0.0, 6.0), &levels, sector);
+        tick(&mut app, seconds(1.0));
+        for &(from, velocity, bounces) in shots {
+            let bullet = spawn_bullet(&mut app, Team::Players, from, velocity, 0);
+            app.world_mut()
+                .get_mut::<Bullet>(bullet)
+                .unwrap()
+                .bounces_left = bounces;
+            tick(&mut app, seconds(0.25));
+        }
+        tick(&mut app, seconds(1.5));
+        let events = events(&mut app);
+        let shots = count(&events, |event| matches!(event, SimEvent::Shot { .. }));
+        let ended = count(&events, |event| {
+            matches!(event, SimEvent::BulletDestroyed { .. })
+        });
+        (alive(&app, enemy), shots, ended)
+    };
+    // A bullet that flies straight at the tank from the north, from about where the player
+    // is. A soldier is destroyed, and the bullet ends on it.
+    let north = (Vec2::new(0.0, 15.0), Vec2::NEG_Y * 9.0, 0);
+    assert_eq!(fares(2, 60, &[north]), (false, 0, 1));
+    // A veteran fires, and the two bullets destroy each other. It fires once, though its gun
+    // is ready again well before they meet: its own bullets are slow.
+    assert_eq!(fares(3, 60, &[north]), (true, 1, 2));
+    // It has seen the second and the third bullet of a burst coming while it dealt with the
+    // first, and has a shot for each. A brain of sector 11 is too slow to wait for one
+    // bullet to be gone before it looks at the next.
+    assert_eq!(fares(3, 11, &[north; 3]), (true, 3, 6));
+    // A bullet from 5 m is there in 0.43 s. A veteran of a late sector acts on it after
+    // 0.14 s. One of the first sector takes 0.5 s, and is destroyed.
+    let close = (Vec2::new(0.0, 11.0), Vec2::NEG_Y * 9.0, 0);
+    assert_eq!(fares(3, 60, &[close]), (true, 1, 2));
+    assert_eq!(fares(3, 1, &[close]), (false, 0, 1));
+    // Of two bullets, it takes the one that gets to it first: here the second one, which is
+    // fired from the east, from closer.
+    let east = (Vec2::new(6.5, 6.0), Vec2::NEG_X * 9.0, 0);
+    let far_north = (Vec2::new(0.0, 15.5), Vec2::NEG_Y * 9.0, 0);
+    assert_eq!(fares(3, 60, &[far_north, east]), (true, 2, 4));
+    // A bullet that is fired away from the tank, at the east wall of the bay, and comes back
+    // at it. The veteran waits until it has bounced, and shoots it down then.
+    let off_the_wall = (Vec2::new(3.0, 6.0), Vec2::X * 9.0, 1);
+    assert_eq!(fares(2, 60, &[off_the_wall]), (false, 0, 1));
+    assert_eq!(fares(3, 60, &[off_the_wall]), (true, 1, 2));
+}
+
+#[test]
+fn a_veteran_keeps_its_shield_for_the_bullet_that_it_can_not_dodge() {
+    // A slow tank with a shield, and a bullet that flies straight at it from the north. Its
+    // turret is too slow to turn on the bullet. The faster the bullet, the less the tank gets
+    // out of its way.
+    let fares = |brain: u8, speed: f32| {
+        let levels = [
+            (Stat::Engine, 2),
+            (Stat::Tracks, 6),
+            (Stat::Shield, 3),
+            (Stat::Brain, brain),
+        ];
+        let mut app = start("TEST");
+        let entity = player(&mut app).unwrap();
+        teleport(&mut app, entity, Vec2::new(-5.0, 2.0));
+        let enemy = spawn_awake(&mut app, Vec2::new(0.0, 8.0), &levels);
+        spawn_bullet(
+            &mut app,
+            Team::Players,
+            Vec2::new(0.0, 15.5),
+            Vec2::NEG_Y * speed,
+            0,
+        );
+        tick(&mut app, seconds(1.6));
+        let events = events(&mut app);
+        let raised = count(&events, |event| {
+            matches!(event, SimEvent::ShieldRaised { .. })
+        });
+        let blocked = count(&events, |event| {
+            matches!(event, SimEvent::ShieldBlocked { .. })
+        });
+        (alive(&app, enemy), raised, blocked)
+    };
+    let speeds = [6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 15.0, 17.0];
+    let soldier = speeds.map(|speed| fares(2, speed));
+    let veteran = speeds.map(|speed| fares(3, speed));
+    // A soldier raises its shield at the last moment whenever the bullet is still close to
+    // its tank, and sometimes for a bullet that was going to miss.
+    assert!(soldier.iter().any(|(_, raised, blocked)| raised > blocked));
+    // A veteran only raises it for a bullet that would hit, and survives every time. It gets
+    // out of the way of bullets for which a soldier needs its shield.
+    for (speed, (survived, raised, blocked)) in speeds.iter().zip(veteran) {
+        assert!(survived, "at {speed} m/s");
+        assert_eq!(raised, blocked, "at {speed} m/s");
+    }
+    let raises = |tank: &[(bool, usize, usize)]| tank.iter().map(|fared| fared.1).sum::<usize>();
+    assert!(raises(&veteran) >= 1);
+    assert!(raises(&veteran) < raises(&soldier));
+
+    // It raises it at the last moment. A tank without an engine sees a slow bullet coming
+    // for a second, and its bubble only lasts half of one.
+    let mut app = start("TEST");
+    let entity = player(&mut app).unwrap();
+    teleport(&mut app, entity, Vec2::new(-5.0, 2.0));
+    let levels = [(Stat::Shield, 3), (Stat::Brain, 3)];
+    let enemy = spawn_awake(&mut app, Vec2::new(0.0, 8.0), &levels);
+    spawn_bullet(
+        &mut app,
+        Team::Players,
+        Vec2::new(0.0, 15.5),
+        Vec2::NEG_Y * 6.0,
+        0,
+    );
+    tick(&mut app, seconds(1.6));
+    let blocked = count(&events(&mut app), |event| {
+        matches!(event, SimEvent::ShieldBlocked { .. })
+    });
+    assert!(alive(&app, enemy));
+    assert_eq!(blocked, 1);
+}
+
+#[test]
+fn a_veteran_lays_its_mines_where_the_player_is_likely_to_come() {
+    // The player is out of the reach of the reflex that lays mines, and stays out of it. A
+    // place is a narrow one between two blocks that are 4 m apart.
+    let lays = |brain: u8, at: Vec2, narrow: bool, charged: bool, ally: bool| {
+        let mut app = start("TEST");
+        let entity = player(&mut app).unwrap();
+        teleport(&mut app, entity, Vec2::new(0.0, 1.5));
+        if narrow {
+            spawn_block(&mut app, at - Vec2::X * 3.0);
+            spawn_block(&mut app, at + Vec2::X * 3.0);
+        }
+        let levels = [
+            (Stat::Engine, 3),
+            (Stat::Tracks, 4),
+            (Stat::Mines, 2),
+            (Stat::Brain, brain),
+        ];
+        spawn_awake(&mut app, at, &levels);
+        if ally {
+            spawn_awake(&mut app, at + Vec2::Y * 2.0, &[]);
+        }
+        if charged {
+            let drive = Vec2::Y;
+            command(&mut app, TankCommand { drive, ..default() });
+        }
+        // Long enough for a tank to lay a second mine, and too short for it to get far
+        // enough from the first one.
+        tick(&mut app, seconds(0.8));
+        count(&events(&mut app), |event| {
+            matches!(event, SimEvent::MinePlaced { .. })
+        })
+    };
+    // In the open, a veteran keeps its mines.
+    let (near, far) = (Vec2::new(0.0, 9.0), Vec2::new(0.0, 13.0));
+    assert_eq!(lays(3, near, false, false, false), 0);
+    // In a narrow place it lays one: no tank gets through without setting it off. A soldier
+    // lays none.
+    assert_eq!(lays(3, near, true, false, false), 1);
+    assert_eq!(lays(2, near, true, false, false), 0);
+    // It lays none next to an ally, which the blast would reach.
+    assert_eq!(lays(3, near, true, false, true), 0);
+    // It lays one in the way of a player who drives at it.
+    assert_eq!(lays(3, far, false, true, false), 1);
+    assert_eq!(lays(2, far, false, true, false), 0);
 }
 
 /// A position that changes with everything that moves.
@@ -2537,7 +2755,7 @@ fn an_enemy_fights_the_nearest_player_whose_tank_still_runs() {
     teleport(&mut app, first, Vec2::new(-5.0, 3.0));
     teleport(&mut app, second, Vec2::new(5.0, 9.0));
     let at = Vec2::new(4.0, 13.0);
-    let enemy = spawn_veteran(&mut app, at, &[(Stat::Turret, 6), (Stat::Brain, 1)]);
+    let enemy = spawn_awake(&mut app, at, &[(Stat::Turret, 6), (Stat::Brain, 1)]);
     let aims_at = |app: &mut App, target: Entity| {
         let aim = app.world().get::<TankCommand>(enemy).unwrap().aim;
         let wanted = position(app, target) - at;
