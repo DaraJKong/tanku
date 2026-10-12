@@ -285,8 +285,7 @@ pub fn duels(asked: &Asked) -> Report {
                         player: asked.player,
                         limit: asked.limit,
                         make: Some(Make {
-                            genome,
-                            count: asked.count,
+                            tanks: vec![genome; asked.count],
                             spot: number as usize,
                         }),
                     });

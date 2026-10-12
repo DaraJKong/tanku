@@ -366,7 +366,7 @@ TANKU_DEV_SCRIPT="tape run.wav; wait 4; start TANKU; wait 4; play 0 1 0 0 4; wai
 
 ## Trials of the balance
 
-The trials measure what the rules of the game make, without anyone at the keyboard, and tell it in reports that can be compared from one change to the next. They are a tool of their own, `tanku_trials`, with a command for each kind of trial. The census counts what the seeds generate, the comparison of the reference players says what the yardstick of every fight is worth, the skirmishes say what each stretch of sectors costs and which tanks the cost comes from, and the duels say what each level of a stat adds to the danger of a tank next to what it adds to its price. A comparison tells what a change to the game moved between two reports.
+The trials measure what the rules of the game make, without anyone at the keyboard, and tell it in reports that can be compared from one change to the next. They are a tool of their own, `tanku_trials`, with a command for each kind of trial. The census counts what the seeds generate, the comparison of the reference players says what the yardstick of every fight is worth, the skirmishes say what each stretch of sectors costs and which tanks the cost comes from, the duels say what each level of a stat adds to the danger of a tank next to what it adds to its price, and the trial of the classes draws the curve of the danger of each class over its points. A comparison tells what a change to the game moved between two reports.
 
 ### Census
 
@@ -486,6 +486,28 @@ There is a table for the base, one for each stat, and one for the types of bulle
 | `--limit 40` | How long a duel lasts at most, in seconds |
 | `--threads N` | How many duels run side by side |
 | `--out DIRECTORY` | Writes the report there as `duels.md` and `duels.csv` |
+
+### Classes
+
+The trial of the classes fights each class alone. Its tanks are made as the game makes a tank of that class, with a budget that is given and under the caps of the sectors that they are fought in. What a tank buys besides the stats of its class is drawn anew for each tank, so what is left over hundreds of them is the class itself. The budget grows from one column to the next, which gives the curve of the danger of a class over its points. It takes about a minute on 24 cores:
+
+```bash
+cargo run --release -p tanku_trials -- classes
+```
+
+Every table has a row for each class and a column for each budget: the losses of the player in a fight, the losses for each hundred points that the tanks spent, how long a tank lasted, the fights that were cleared in time, the points that a tank spent, and the tanks that the player lost in all, which say how sure the other numbers are. Prices are right when the classes are close to each other in a column of the first table.
+
+| Option | Effect |
+|---|---|
+| `--budgets 20,40,60,80,100,120` | The budgets that the tanks are made with |
+| `--sectors 21-30` | The sectors that the tanks are made for and fought in: their caps, their corridors and the experience of their brains |
+| `--seeds 20` | How many seeds to fight on |
+| `--count 3` | How many tanks of the class the player fights at once, each made apart |
+| `--difficulty normal` | `normal` or `hard` |
+| `--player regular` | The player who fights |
+| `--limit 40` | How long a fight lasts at most, in seconds |
+| `--threads N` | How many fights run side by side |
+| `--out DIRECTORY` | Writes the report there as `classes.md` and `classes.csv` |
 
 ### Comparing two reports
 

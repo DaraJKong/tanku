@@ -128,6 +128,34 @@ fn smarter(genome: &Genome, highest: impl Fn(Stat) -> u8) -> Option<Genome> {
 fn build(seed: u64, difficulty: Difficulty, sector: u32, index: u32, budget: u32) -> Genome {
     let mut rng = Stream::new(seed, Purpose::Enemy, sector, index);
     let class = rng.pick(&Class::ALL);
+    spend(rng, difficulty, sector, class, budget)
+}
+
+/// A tank of a class that is given, with a budget that is given: what a tank of a group
+/// would be if it drew that class and had those points, under the caps of its sector. No
+/// group of the game is made this way: it is for the trials, which try a class alone.
+pub fn of_class(
+    seed: u64,
+    difficulty: Difficulty,
+    sector: u32,
+    index: u32,
+    class: Class,
+    budget: u32,
+) -> Genome {
+    let mut rng = Stream::new(seed, Purpose::Enemy, sector, index);
+    // The draw of the class is made and set aside, so that the rest is drawn as in a group.
+    rng.pick(&Class::ALL);
+    spend(rng, difficulty, sector, class, budget)
+}
+
+/// What the budget of a tank of a class buys.
+fn spend(
+    mut rng: Stream,
+    difficulty: Difficulty,
+    sector: u32,
+    class: Class,
+    budget: u32,
+) -> Genome {
     let mut genome = Genome::empty(budget as u16);
     genome.class = class;
     let highest = |stat: Stat| highest_level(stat, difficulty, sector, class);
@@ -734,6 +762,26 @@ mod tests {
                     "sector {sector}: {genome:?}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn a_tank_of_a_class_that_is_given_is_the_one_a_group_would_hold() {
+        // A tank of a group, made again with the class that it drew and the points that it
+        // had, is the same tank.
+        for sector in [3, 12, 30] {
+            for (index, tank) in group(7, Difficulty::Normal, sector, 6).iter().enumerate() {
+                let budget = tank.budget as u32;
+                let index = index as u32;
+                let again = of_class(7, Difficulty::Normal, sector, index, tank.class, budget);
+                assert_eq!(&again, tank);
+            }
+        }
+        // Another class with the same points is another tank, of that class.
+        for class in Class::ALL {
+            let tank = of_class(7, Difficulty::Normal, 30, 0, class, 80);
+            assert_eq!(tank.class, class);
+            assert!(tank.cost() <= 80);
         }
     }
 }

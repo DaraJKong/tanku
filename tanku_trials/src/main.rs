@@ -8,18 +8,21 @@
 //! `skirmish` puts one of them against the group of every sector, and tells what each
 //! stretch of sectors costs and which tanks the cost comes from. `duels` puts one of them
 //! against tanks of one make, with one stat at a time at each of its levels, and tells what
-//! a level adds to the danger of a tank next to what it adds to its price. `compare`
-//! tells what changed between two reports of the same trial.
+//! a level adds to the danger of a tank next to what it adds to its price. `classes` puts
+//! one of them against the tanks of each class alone, made as the game makes them with a
+//! budget that grows. `compare` tells what changed between two reports of the same trial.
 //!
 //! ```text
 //! cargo run --release -p tanku_trials -- census --sectors 1-30 --seeds 300 --out target/trials
 //! cargo run --release -p tanku_trials -- players --sectors 1-30 --seeds 40 --out target/trials
 //! cargo run --release -p tanku_trials -- skirmish --sectors 1-30 --seeds 40 --out target/trials
 //! cargo run --release -p tanku_trials -- duels --stat muzzle --stat loader --out target/trials
+//! cargo run --release -p tanku_trials -- classes --budgets 20,40,60,80,100,120 --out target/trials
 //! cargo run --release -p tanku_trials -- compare before/skirmish.csv after/skirmish.csv
 //! ```
 
 mod census;
+mod classes;
 mod compare;
 mod duels;
 mod fight;
@@ -65,6 +68,10 @@ enum Command {
     /// level adds to the danger of a tank, next to what it adds to its price. It takes
     /// about a minute on every core of the machine.
     Duels(DuelsArgs),
+    /// Fights the tanks of each class alone, made as the game makes them, with a budget
+    /// that grows: the curve of the danger of a class over its points. It takes about a
+    /// minute on every core of the machine.
+    Classes(ClassesArgs),
     /// Tells what changed between two reports of the same trial, from their CSV files.
     Compare(CompareArgs),
 }
@@ -187,6 +194,39 @@ struct DuelsArgs {
 }
 
 #[derive(Args)]
+struct ClassesArgs {
+    /// The budgets that the tanks are made with, each in turn.
+    #[arg(long, default_value = "20,40,60,80,100,120", value_parser = classes::budgets)]
+    budgets: std::vec::Vec<u32>,
+    /// The sectors that the tanks are made for and fought in, as FIRST-LAST: their caps on
+    /// software and on the gun, their corridors and the experience of their brains.
+    #[arg(long, default_value = "21-30", value_parser = sectors)]
+    sectors: (u32, u32),
+    /// How many seeds to fight on: TRIAL0, TRIAL1 and so on.
+    #[arg(long, default_value_t = 20, value_parser = clap::value_parser!(u32).range(1..))]
+    seeds: u32,
+    /// How many tanks of the class the player fights at once, each made apart.
+    #[arg(long, default_value_t = 3, value_parser = clap::value_parser!(u32).range(1..=6))]
+    count: u32,
+    /// The difficulty: normal or hard.
+    #[arg(long, default_value = "normal", value_parser = difficulty)]
+    difficulty: Difficulty,
+    /// The player who fights: novice, regular or expert.
+    #[arg(long, default_value = "regular", value_parser = player)]
+    player: Reference,
+    /// How long a fight lasts at most, in seconds.
+    #[arg(long, default_value_t = 40.0)]
+    limit: f32,
+    /// How many fights run side by side: as many as the machine has cores, unless told.
+    #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
+    threads: Option<u32>,
+    /// A directory to write the report to, as classes.md and classes.csv. It is printed
+    /// either way.
+    #[arg(long)]
+    out: Option<PathBuf>,
+}
+
+#[derive(Args)]
 struct CompareArgs {
     /// The CSV file of the report from before the change.
     before: PathBuf,
@@ -298,6 +338,19 @@ fn main() {
                 threads: threads(args.threads),
             };
             tell(&duels::duels(&asked), args.out, "duels");
+        }
+        Command::Classes(args) => {
+            let asked = classes::Asked {
+                budgets: args.budgets,
+                sectors: args.sectors,
+                seeds: args.seeds,
+                count: args.count as usize,
+                difficulty: args.difficulty,
+                player: args.player,
+                limit: args.limit,
+                threads: threads(args.threads),
+            };
+            tell(&classes::classes(&asked), args.out, "classes");
         }
         Command::Compare(args) => {
             let asked = compare::Asked {
@@ -440,7 +493,15 @@ mod tests {
     }
 
     #[test]
-    fn a_comparison_takes_two_reports() {
+    fn the_classes_take_their_budgets_and_a_comparison_takes_two_reports() {
+        let line = ["tanku_trials", "classes", "--budgets", "30,90"];
+        let Command::Classes(args) = Cli::try_parse_from(line).unwrap().command else {
+            panic!("no classes");
+        };
+        assert_eq!(
+            (args.budgets, args.sectors, args.count),
+            (vec![30, 90], (21, 30), 3)
+        );
         let line = [
             "tanku_trials",
             "compare",

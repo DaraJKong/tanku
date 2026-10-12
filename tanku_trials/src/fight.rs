@@ -40,12 +40,11 @@ pub struct Setup {
     pub make: Option<Make>,
 }
 
-/// Tanks of one make that stand in for the group of a sector, at the places of some of its
-/// tanks and with the brains that the sector gives them.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// Tanks that stand in for the group of a sector, at the places of some of its tanks and
+/// with the brains that the sector gives them.
+#[derive(Clone, Debug, PartialEq)]
 pub struct Make {
-    pub genome: Genome,
-    pub count: usize,
+    pub tanks: Vec<Genome>,
     /// The first of the tanks of the group whose places they take.
     pub spot: usize,
 }
@@ -137,14 +136,14 @@ fn ticks(seconds: f32) -> u32 {
     (seconds / TICK).ceil() as u32
 }
 
-/// Puts tanks of one make in the place of the group of a sector, which waits there.
+/// Puts other tanks in the place of the group of a sector, which waits there.
 fn stand_in(
     world: &mut World,
     sector: u32,
     group: &[(Entity, Genome)],
-    make: Make,
+    make: &Make,
 ) -> Vec<(Entity, Genome)> {
-    let stood: Vec<(usize, Vec2, Motion)> = (make.spot..make.spot + make.count)
+    let stood: Vec<(usize, Vec2, Motion)> = (make.spot..make.spot + make.tanks.len())
         .map(|number| {
             let (entity, _) = group[number % group.len()];
             let at = world.get::<Position>(entity).unwrap().0;
@@ -154,26 +153,28 @@ fn stand_in(
     for &(entity, _) in group {
         world.despawn(entity);
     }
-    let genome = make.genome;
-    let tanks = stood.into_iter().map(|(number, at, motion)| {
-        let (brain, _) = world.resource::<Field>().brain(sector, number as u32);
-        let tank = Tank {
-            genome,
-            team: Team::Enemies,
-            sector,
-        };
-        let enemy = (
-            tank,
-            Enemy { awake: false },
-            Position(at),
-            PreviousPosition(at),
-            motion,
-            Gun::loaded(&genome),
-            brain,
-            InSector(sector),
-        );
-        (world.spawn(enemy).id(), genome)
-    });
+    let tanks = stood
+        .into_iter()
+        .zip(&make.tanks)
+        .map(|((number, at, motion), &genome)| {
+            let (brain, _) = world.resource::<Field>().brain(sector, number as u32);
+            let tank = Tank {
+                genome,
+                team: Team::Enemies,
+                sector,
+            };
+            let enemy = (
+                tank,
+                Enemy { awake: false },
+                Position(at),
+                PreviousPosition(at),
+                motion,
+                Gun::loaded(&genome),
+                brain,
+                InSector(sector),
+            );
+            (world.spawn(enemy).id(), genome)
+        });
     tanks.collect()
 }
 
@@ -216,7 +217,7 @@ pub fn corridor(setup: &Setup) -> Option<Outcome> {
         .filter(|(_, tank)| tank.sector == sector)
         .map(|(entity, tank)| (entity, tank.genome))
         .collect();
-    if let Some(make) = setup.make {
+    if let Some(make) = &setup.make {
         made = stand_in(world, sector, &made, make);
     }
     let entity = world
@@ -379,13 +380,12 @@ mod tests {
         let mut genome = Genome::empty(40);
         genome.set(tanku_core::stats::Stat::Muzzle, 3);
         let make = Make {
-            genome,
-            count: 2,
+            tanks: vec![genome; 2],
             spot: 1,
         };
         let duels = (5..=8).filter_map(|sector| {
             corridor(&Setup {
-                make: Some(make),
+                make: Some(make.clone()),
                 ..setup(sector, Reference::Regular)
             })
         });
