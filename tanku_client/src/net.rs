@@ -6,6 +6,10 @@
 //! one that a host makes for itself only with the print of that certificate. So a browser
 //! joins by what its host hands out, an address and a print. Hosting is in `host`, which a
 //! browser doesn't have.
+//!
+//! A game that has a password asks whoever knocks for a proof of it. A guest whose player
+//! typed one answers with it. One whose player typed none, or the wrong one, leaves, and the
+//! player is asked.
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::net::ToSocketAddrs;
@@ -26,8 +30,11 @@ use lightyear::{
     },
 };
 use tanku_core::{
+    lock::{prove, worded},
     map::Corridor,
-    protocol::{Lobby, Member, PORT, ProtocolPlugin, RunState, WEB_PORT, protocol_id},
+    protocol::{
+        Door, Lobby, Member, PORT, ProtocolPlugin, Reliable, RunState, WEB_PORT, Word, protocol_id,
+    },
     rules::TICK_RATE,
     seed::VERSION,
     sim::{Player, Run, RunPhase, Sector, SectorIndex, SimEvent, TankCommand},
@@ -38,7 +45,7 @@ use crate::{
     Overlay, Screen,
     crew::{LocalSeat, Own},
     mirror,
-    session::{Notice, Session, SessionRequest},
+    session::{Asked, Notice, Session, SessionRequest, Shut},
 };
 
 /// How long a guest stays connected without a seat before it takes the game for full.
@@ -49,6 +56,24 @@ const SEAT_WAIT: f32 = 3.0;
 #[derive(Resource, Clone, Copy, Debug)]
 pub struct Patience(pub i32);
 
+/// What a player asked to join: where, in their words or in those of a host, and with which
+/// password if they typed one.
+#[derive(Clone, Debug)]
+struct Wanted {
+    at: String,
+    password: Option<String>,
+}
+
+/// What a host said at the door of a game that has a password, to a guest that it didn't
+/// let in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Turned {
+    /// The game has a password, and the player typed none.
+    Asked,
+    /// The password that the player typed is not the one.
+    Refused,
+}
+
 /// The game that this machine joined, or is trying to.
 #[derive(Resource)]
 struct Joined {
@@ -57,12 +82,16 @@ struct Joined {
     id: u64,
     /// Where the game is, as the player is told.
     address: String,
+    /// What the player asked for: it joins the game again.
+    wanted: Wanted,
     /// Whether it is joined the way browsers join, by what its host handed out.
     by_link: bool,
     /// Whether the game gave this machine a seat.
     seated: bool,
     /// Seconds spent connected without a seat.
     waited: f32,
+    /// Whether the host turned this machine away at its door, and how.
+    turned: Option<Turned>,
 }
 
 /// The name of a host being looked up, before its game can be joined.
@@ -71,6 +100,7 @@ struct Joined {
 struct Lookup {
     name: String,
     found: Task<Option<SocketAddr>>,
+    wanted: Wanted,
 }
 
 /// A connection that the player ended, and the seconds that it is still kept for. It goes
@@ -193,8 +223,8 @@ fn speaks() -> bool {
 /// browsers when it comes with the print of the game's certificate.
 fn join(
     commands: &mut Commands,
-    address: SocketAddr,
-    print: Option<String>,
+    (address, print): (SocketAddr, Option<String>),
+    wanted: Wanted,
     patience: Patience,
     notice: &mut Notice,
 ) -> bool {
@@ -258,9 +288,11 @@ fn join(
         client,
         id,
         address: told,
+        wanted,
         by_link,
         seated: false,
         waited: 0.0,
+        turned: None,
     });
     true
 }
@@ -292,6 +324,7 @@ impl Plugin for NetPlugin {
             .add_systems(
                 PreUpdate,
                 (
+                    knock,
                     watch,
                     (
                         take_the_controls,
@@ -359,14 +392,25 @@ fn direct(
 ) {
     for request in requests.read() {
         match (request, *session) {
-            (SessionRequest::Join(text), Session::Solo) => {
+            (SessionRequest::Join(text) | SessionRequest::JoinLocked(text, _), Session::Solo) => {
                 notice.0 = None;
+                // A password that holds nothing is none: the host then asks for one.
+                let password = match request {
+                    SessionRequest::JoinLocked(_, password) => Some(worded(password)),
+                    _ => None,
+                };
+                let wanted = Wanted {
+                    at: text.clone(),
+                    password: password.filter(|password| !password.is_empty()),
+                };
                 let started = match target(text) {
                     Some(Target::Address(address)) => {
-                        join(&mut commands, address, None, *patience, &mut notice)
+                        let at = (address, None);
+                        join(&mut commands, at, wanted, *patience, &mut notice)
                     }
                     Some(Target::Web(address, print)) => {
-                        join(&mut commands, address, Some(print), *patience, &mut notice)
+                        let at = (address, Some(print));
+                        join(&mut commands, at, wanted, *patience, &mut notice)
                     }
                     #[cfg(not(target_arch = "wasm32"))]
                     Some(Target::Name(name, port)) => {
@@ -375,7 +419,11 @@ fn direct(
                             let found = (host.as_str(), port).to_socket_addrs().ok()?;
                             found.into_iter().find(SocketAddr::is_ipv4)
                         });
-                        commands.insert_resource(Lookup { name, found });
+                        commands.insert_resource(Lookup {
+                            name,
+                            found,
+                            wanted,
+                        });
                         true
                     }
                     #[cfg(target_arch = "wasm32")]
@@ -433,7 +481,16 @@ fn find_the_host(
     };
     commands.remove_resource::<Lookup>();
     let joined = match found {
-        Some(address) => join(&mut commands, address, None, *patience, &mut notice),
+        Some(address) => {
+            let wanted = lookup.wanted.clone();
+            join(
+                &mut commands,
+                (address, None),
+                wanted,
+                *patience,
+                &mut notice,
+            )
+        }
         None => {
             notice.0 = Some(format!("No machine is known as {}.", lookup.name));
             false
@@ -470,15 +527,45 @@ fn farewell(reason: &DisconnectedReason, joined: &Joined) -> String {
     }
 }
 
+/// What a player is told when the password that they typed is not the one of the game.
+const WRONG_PASSWORD: &str = "That is not the password of the game.";
+
+/// Answers a host that asks for the password of its game: with the proof of the one that the
+/// player typed, if they typed one. What the host says otherwise is kept for `watch`.
+fn knock(
+    mut joined: ResMut<Joined>,
+    mut doors: Query<(&mut MessageReceiver<Door>, &mut MessageSender<Word>), With<Client>>,
+) {
+    let Ok((mut door, mut words)) = doors.get_mut(joined.client) else {
+        return;
+    };
+    for said in door.receive() {
+        match (said, joined.wanted.password.clone()) {
+            (Door::Locked(challenge), Some(password)) => {
+                let proof = prove(challenge, joined.id, &password);
+                words.send::<Reliable>(Word::Proof(proof));
+            }
+            (Door::Locked(_), None) => joined.turned = Some(Turned::Asked),
+            (Door::Refused, _) => joined.turned = Some(Turned::Refused),
+        }
+    }
+}
+
 /// Watches the connection to the host: takes the seat that the host gives, and goes back to
-/// the menus when the connection ends.
+/// the menus when the connection ends. A host that asks for a password which the player
+/// didn't type, or typed wrong, has the player asked for it.
 fn watch(
     mut commands: Commands,
     time: Res<Time<Real>>,
     mut joined: ResMut<Joined>,
     clients: Query<(Has<Connected>, Option<&Disconnected>)>,
     lobbies: Query<&Lobby>,
-    (mut seat, mut session, mut notice): (ResMut<LocalSeat>, ResMut<Session>, ResMut<Notice>),
+    (mut seat, mut session, mut notice, mut asked): (
+        ResMut<LocalSeat>,
+        ResMut<Session>,
+        ResMut<Notice>,
+        ResMut<Asked>,
+    ),
     screen: Res<State<Screen>>,
     mut next_screen: ResMut<NextState<Screen>>,
     mut next_overlay: ResMut<NextState<Overlay>>,
@@ -488,15 +575,29 @@ fn watch(
     };
     let lobby = lobbies.single().ok();
     let seated = lobby.and_then(|lobby| lobby.seat_of(Member::Guest(joined.id)));
-    let ended = match (disconnected, connected, seated) {
-        (Some(disconnected), ..) => Some(farewell(&disconnected.reason, &joined)),
+    let ended = match (joined.turned, disconnected, connected, seated) {
+        // The player is asked for the password, of the game by the name that they found it
+        // under if they did.
+        (Some(turned), ..) => {
+            let known = asked.0.take().filter(|shut| shut.at == joined.wanted.at);
+            asked.0 = Some(Shut {
+                at: joined.wanted.at.clone(),
+                name: known.map(|shut| shut.name).unwrap_or_default(),
+                address: joined.address.clone(),
+            });
+            Some((turned == Turned::Refused).then(|| WRONG_PASSWORD.to_string()))
+        }
+        (None, Some(disconnected), ..) => Some(Some(farewell(&disconnected.reason, &joined))),
         // A host that closes its game takes the lobby away first, and its guests leave on
         // that: the connection is still whole then, and carries the word to every guest.
-        (None, true, None) if joined.seated && lobby.is_none() => Some(CLOSED.to_string()),
-        (None, true, Some(given)) => {
-            // The lobby is where a guest comes in.
+        (None, None, true, None) if joined.seated && lobby.is_none() => {
+            Some(Some(CLOSED.to_string()))
+        }
+        (None, None, true, Some(given)) => {
+            // The lobby is where a guest comes in. Whoever is in is asked nothing more.
             if !joined.seated {
                 next_screen.set(Screen::Lobby);
+                asked.0 = None;
             }
             joined.seated = true;
             joined.waited = 0.0;
@@ -504,19 +605,19 @@ fn watch(
             None
         }
         // A host that has no seat to give says so by giving none.
-        (None, true, None) => {
+        (None, None, true, None) => {
             joined.waited += time.delta_secs();
             (joined.waited > SEAT_WAIT).then(|| {
                 let denied = DisconnectedReason::TransportError("Denied".to_string());
-                farewell(&denied, &joined)
+                Some(farewell(&denied, &joined))
             })
         }
-        (None, false, _) => None,
+        (None, None, false, _) => None,
     };
     let Some(told) = ended else {
         return;
     };
-    notice.0 = Some(told);
+    notice.0 = told;
     // The connection may still be up when the host gave no seat.
     commands.trigger(Disconnect {
         entity: joined.client,
@@ -527,9 +628,14 @@ fn watch(
     commands.remove_resource::<Field>();
     *session = Session::Solo;
     seat.0 = 0;
-    // Whoever was still asking to join can ask again where they are.
+    // Whoever was still asking to join can ask again where they are, and whoever is asked
+    // for a password is asked on the join screen.
+    let wanted = match joined.turned {
+        Some(_) => Screen::Join,
+        None => Screen::Menu,
+    };
     if *screen.get() != Screen::Join {
-        next_screen.set(Screen::Menu);
+        next_screen.set(wanted);
     }
     next_overlay.set(Overlay::None);
 }
@@ -936,14 +1042,214 @@ pub(crate) mod tests {
         let mut host = game();
         host.insert_resource(HostPort(port));
         // A name is kept as a host could have typed it, whatever asks for the game.
-        let name = "  Friday night\t ".to_string();
-        ask(&mut host, SessionRequest::Host(Sign { name }));
+        let sign = Sign {
+            name: "  Friday night\t ".into(),
+            ..default()
+        };
+        ask(&mut host, SessionRequest::Host(sign));
         let mut guest = guest(port);
         run_until("the lobby", &mut [&mut host, &mut guest], |games| {
             screen(games[1]) == Screen::Lobby
         });
         assert_eq!(lobby(&mut host).name, "Friday night");
         assert_eq!(lobby(&mut guest).name, "Friday night");
+    }
+
+    /// The game whose password a game asks its player for, if it asks.
+    fn asked(game: &App) -> Option<Shut> {
+        game.world().resource::<Asked>().0.clone()
+    }
+
+    fn notice(game: &App) -> Option<String> {
+        game.world().resource::<Notice>().0.clone()
+    }
+
+    /// How many times a game was told of a lobby.
+    #[derive(Resource, Default)]
+    struct Lobbies(u32);
+
+    /// What a host said at its door to a guest that a test speaks for.
+    #[derive(Resource, Default)]
+    struct Heard(Vec<Door>);
+
+    #[test]
+    fn a_game_that_has_a_password_lets_in_only_those_who_type_it() {
+        let port = free_port();
+        let mut host = game();
+        host.insert_resource(HostPort(port));
+        let sign = Sign {
+            name: "Friday".into(),
+            password: "open sesame".into(),
+        };
+        ask(&mut host, SessionRequest::Host(sign));
+        let at = format!("127.0.0.1:{port}");
+        let mut guest = guest(port);
+        guest
+            .init_resource::<Lobbies>()
+            .add_observer(|_: On<Add, Lobby>, mut told: ResMut<Lobbies>| told.0 += 1);
+
+        // Whoever comes without the password is asked for it, and is not in.
+        run_until("the question", &mut [&mut host, &mut guest], |games| {
+            asked(games[1]).is_some()
+        });
+        let shut = asked(&guest).unwrap();
+        assert_eq!((shut.at, shut.address), (at.clone(), at.clone()));
+        assert_eq!(notice(&guest), None);
+        assert_eq!(*guest.world().resource::<Session>(), Session::Solo);
+        assert_eq!(screen(&guest), Screen::Join);
+
+        // A password that is not the one is refused, and the player is told so.
+        let wrong = SessionRequest::JoinLocked(at.clone(), "open sesam".into());
+        ask(&mut guest, wrong);
+        run_until("the refusal", &mut [&mut host, &mut guest], |games| {
+            notice(games[1]).is_some()
+        });
+        assert_eq!(notice(&guest).as_deref(), Some(WRONG_PASSWORD));
+        assert!(asked(&guest).is_some());
+        assert_eq!(*guest.world().resource::<Session>(), Session::Solo);
+        // Nobody got in, and the guest was told nothing of the game.
+        let since = std::time::Instant::now();
+        run_until("a while", &mut [&mut host, &mut guest], |_| {
+            since.elapsed().as_secs_f32() > 0.5
+        });
+        assert_eq!(lobby(&mut host).players(), 1);
+        assert_eq!(guest.world().resource::<Lobbies>().0, 0);
+
+        // The password lets the guest in, typed as the host typed it or with spaces around.
+        let right = SessionRequest::JoinLocked(at, " open sesame ".into());
+        ask(&mut guest, right);
+        run_until("the lobby", &mut [&mut host, &mut guest], |games| {
+            screen(games[1]) == Screen::Lobby
+        });
+        assert_eq!(guest.world().resource::<Lobbies>().0, 1);
+        assert_eq!((asked(&guest), notice(&guest)), (None, None));
+        for game in [&mut host, &mut guest] {
+            let lobby = lobby(game);
+            assert_eq!((lobby.players(), lobby.locked), (2, true));
+        }
+    }
+
+    #[test]
+    fn the_password_is_asked_the_way_browsers_come_too() {
+        let (port, web) = (free_port(), free_port());
+        let mut host = game();
+        host.insert_resource(HostPort(port))
+            .insert_resource(WebPort(Some(web)));
+        let sign = Sign {
+            name: String::new(),
+            password: "sesame".into(),
+        };
+        ask(&mut host, SessionRequest::Host(sign));
+        run_until("a lobby", &mut [&mut host], |games| {
+            screen(games[0]) == Screen::Lobby
+        });
+        // What the host hands out carries no password: whoever follows it is asked.
+        let link = code(&host);
+        assert!(!link.contains("sesame"));
+        let mut guest = game();
+        ask(&mut guest, SessionRequest::Join(link.clone()));
+        run_until("the question", &mut [&mut host, &mut guest], |games| {
+            asked(games[1]).is_some()
+        });
+        // The game is joined again by what the host handed out, with the password.
+        assert_eq!(asked(&guest).unwrap().at, link);
+        ask(
+            &mut guest,
+            SessionRequest::JoinLocked(link, "sesame".into()),
+        );
+        run_until("the lobby", &mut [&mut host, &mut guest], |games| {
+            screen(games[1]) == Screen::Lobby
+        });
+        assert_eq!(lobby(&mut guest).players(), 2);
+    }
+
+    #[test]
+    fn a_guest_at_the_door_gets_one_answer_and_nothing_of_the_game() {
+        let port = free_port();
+        let mut host = game();
+        host.insert_resource(HostPort(port));
+        let sign = Sign {
+            name: String::new(),
+            password: "sesame".into(),
+        };
+        ask(&mut host, SessionRequest::Host(sign));
+        // A guest that doesn't do as the game does: it stays at the door when it is turned
+        // away, and answers again. The game is told to forget it, so that this test speaks
+        // to the host in its place.
+        let mut guest = guest(port);
+        guest.update();
+        let joined = guest.world_mut().remove_resource::<Joined>().unwrap();
+        let (client, id) = (joined.client, joined.id);
+        // What the host says is there for one frame: the guest notes it as it comes.
+        fn listen(mut doors: Query<&mut MessageReceiver<Door>>, mut heard: ResMut<Heard>) {
+            for mut door in &mut doors {
+                heard.0.extend(door.receive());
+            }
+        }
+        guest
+            .init_resource::<Heard>()
+            .add_systems(PreUpdate, listen.after(MessageSystems::Receive));
+        let hears = |guest: &mut App| -> Vec<Door> {
+            std::mem::take(&mut guest.world_mut().resource_mut::<Heard>().0)
+        };
+        let says = |guest: &mut App, proof| {
+            let mut client = guest.world_mut().entity_mut(client);
+            let mut words = client.get_mut::<MessageSender<Word>>().unwrap();
+            words.send::<Reliable>(Word::Proof(proof));
+        };
+        let step = |host: &mut App, guest: &mut App| {
+            host.update();
+            guest.update();
+            std::thread::sleep(Duration::from_millis(4));
+        };
+        let mut challenge = None;
+        for _ in 0..1000 {
+            step(&mut host, &mut guest);
+            if let Some(Door::Locked(asked)) = hears(&mut guest).first() {
+                challenge = Some(*asked);
+                break;
+            }
+        }
+        let challenge = challenge.expect("a challenge");
+        // A wrong answer is refused.
+        says(&mut guest, prove(challenge, id, "sesamf"));
+        let mut refused = false;
+        for _ in 0..1000 {
+            step(&mut host, &mut guest);
+            refused |= hears(&mut guest).contains(&Door::Refused);
+            if refused {
+                break;
+            }
+        }
+        assert!(refused);
+        // The right one, to the same challenge, comes too late: a challenge takes one
+        // answer, so that nobody tries a list of passwords at one door.
+        says(&mut guest, prove(challenge, id, "sesame"));
+        for _ in 0..150 {
+            step(&mut host, &mut guest);
+        }
+        assert_eq!(lobby(&mut host).players(), 1);
+        let world = host.world_mut();
+        assert_eq!(world.query::<&Seat>().iter(world).count(), 0);
+        // All that time at the door, the guest was told nothing of the game.
+        let world = guest.world_mut();
+        assert_eq!(world.query::<&Lobby>().iter(world).count(), 0);
+        assert!(hears(&mut guest).is_empty());
+    }
+
+    #[test]
+    fn a_game_without_a_password_asks_for_none() {
+        let port = free_port();
+        let mut host = host(port);
+        // A player who typed a password for it gets in all the same.
+        let mut guest = game();
+        let at = format!("127.0.0.1:{port}");
+        ask(&mut guest, SessionRequest::JoinLocked(at, "sesame".into()));
+        run_until("the lobby", &mut [&mut host, &mut guest], |games| {
+            screen(games[1]) == Screen::Lobby
+        });
+        assert!(!lobby(&mut guest).locked);
+        assert_eq!(asked(&guest), None);
     }
 
     #[test]

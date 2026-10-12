@@ -25,6 +25,8 @@ pub enum Session {
 pub struct Sign {
     /// The name that the game goes by, or nothing.
     pub name: String,
+    /// The password that those who join must type, or nothing.
+    pub password: String,
 }
 
 /// What the menus ask about a game of several players.
@@ -34,6 +36,8 @@ pub enum SessionRequest {
     Host(Sign),
     /// Join the game at an address, as the player typed it.
     Join(String),
+    /// Join it with the password that the player typed for it.
+    JoinLocked(String, String),
     /// Leave the game. A host closes it for everyone.
     Leave,
     /// The host starts a run on the seed of the lobby, with everyone who is there.
@@ -49,6 +53,22 @@ pub struct Drawn(pub bool);
 /// how it ended.
 #[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]
 pub struct Notice(pub Option<String>);
+
+/// A game that has a password, which the player must type to join it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Shut {
+    /// Where it is joined, as it was asked for: an address, or what its host handed out.
+    pub at: String,
+    /// How the player is told of it: by its name if they found it under one, and by where
+    /// it is.
+    pub name: String,
+    pub address: String,
+}
+
+/// The game that asks the player for its password, if one does: the join screen then takes
+/// the password instead of an address.
+#[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]
+pub struct Asked(pub Option<Shut>);
 
 /// What a host tells those who want to join.
 #[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]
@@ -71,6 +91,8 @@ pub struct Game {
     pub id: u64,
     /// The name that its host gave it, or nothing.
     pub name: String,
+    /// Whether it has a password.
+    pub locked: bool,
     /// The machine that its word came from.
     pub machine: Ipv4Addr,
     /// Where it is joined, as a player would type it.
@@ -89,6 +111,7 @@ pub fn plugin(app: &mut App) {
         .init_resource::<Notice>()
         .init_resource::<Drawn>()
         .init_resource::<Invitation>()
+        .init_resource::<Asked>()
         .init_resource::<Found>()
         .add_message::<SessionRequest>()
         // A guest shows the run of its host and simulates nothing.

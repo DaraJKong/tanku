@@ -6,7 +6,7 @@ The solo game and co-op are playable, on Linux, on Windows and in a browser:
 
 - **Solo:** the corridor, the generated enemies with their classes and their brains, arenas and their waves, lives and checkpoints, the menus, the sound cues and the music. Runs unlock achievements: the first one lets the player type the seed of a run. Clearing sector 20 unlocks free mode, in which the player spends the 59 points of their tank as they like, in a garage that draws the tank as they build it. Clearing sector 30 unlocks hard mode, whose enemies are stronger from the first sector.
 - **Co-op:** up to four players. One of them hosts a game, which the others find on the local network or join by its address, from a desktop build or from a browser. A destroyed tank is a wreck that a teammate repairs.
-- **Not in yet:** what else a host sets for a game (its password, its difficulty, free mode), and the ready check of the lobby. Until then, a game of several players is in normal mode and in the standard tank.
+- **Not in yet:** what a host sets for a run (its difficulty, free mode), and the ready check of the lobby. Until then, a game of several players is in normal mode and in the standard tank.
 
 Co-op has been played by two players. With three or four, it is checked by tests and by scripted runs only. The build for Windows is checked under wine, not yet on Windows itself. The specification is in [docs/PROJECT.md](docs/PROJECT.md).
 
@@ -44,8 +44,8 @@ The interface is drawn for a window of 1600 by 900 pixels or more. A smaller win
 
 Up to four players share a run. One of them hosts the game, and the others join it:
 
-1. The host picks "Host a game" in the main menu, gives the game a name if they like, and opens it. The lobby shows the address of the machine on its network.
-2. Each of the others picks "Join a game". A game that is hosted on the same network shows there, under its name if it has one, and a click joins it. One that doesn't show is joined by typing the address of its host.
+1. The host picks "Host a game" in the main menu, gives the game a name and a password if they like, and opens it. The lobby shows the address of the machine on its network.
+2. Each of the others picks "Join a game". A game that is hosted on the same network shows there, under its name if it has one, and a click joins it. One that doesn't show is joined by typing the address of its host. A game that has a password asks for it.
 3. The host starts the run once everyone is in the lobby. Nobody joins a run in progress.
 
 A tank that is destroyed stays as a wreck, in a circle in dashes. It is in nobody's way: tanks drive over it and bullets fly over it. A teammate repairs it by driving into the circle and holding the repair key for two seconds, and can drive, shoot, lay mines and shield meanwhile: the circle is inked in as the repair goes on, and starts over if the key is let go or the tank leaves the circle. A tank repairs one wreck at a time: the nearest one whose circle it is in. The run is over when every tank is a wreck. A marker at the edge of the screen points to each teammate who is out of view, by the number of its player: full for a tank that runs, hollow for a wreck.
@@ -54,6 +54,8 @@ All players need the same version of the game. The game listens on UDP port 2840
 
 Two games on one machine can play together, which is the quickest way to try it: the second one finds the first on its join screen.
 
+A game that has a password lets in only those who type it, whichever way they come. The join screen lists it as locked. The password itself is never sent: the host asks whoever knocks a question that only the password answers, takes one answer, and sends nothing of the game to someone who has not answered right. That keeps out those who were not given the password. It hides nothing from someone who listens to the network, and a short word that others could guess keeps out the honest alone. The game keeps the name of a game for the next one, and never its password.
+
 #### From a browser
 
 The web build joins games too, and hosts none. A browser can't look around a network, and it only speaks to a game that shows it a certificate. A hosted game makes its own certificate, which a browser takes by its print alone. So a browser joins by a link that the host hands out:
@@ -61,7 +63,7 @@ The web build joins games too, and hosts none. A browser can't look around a net
 1. The host picks "For a browser" in the lobby. The lobby then shows what the link ends with: a `#`, where the game takes browsers, and the print of its certificate. "Copy" puts it on the clipboard, and the button says whether it got there. The game also writes it to its log.
 2. The player opens the page of the game with that at the end of its address, as in `http://localhost:8000/#192.168.1.20:28406/3f0c…`. The page joins the game at once. What the host copied can also be pasted into a page that is already open, with or without the address of the page in front of it.
 
-What a host hands out stays the same from one game to the next, until the host quits the program. A player who left, or whose connection was lost, joins again from "Join a game".
+What a host hands out stays the same from one game to the next, until the host quits the program. It carries no password: a page that follows the link of a game that has one asks for it. A player who left, or whose connection was lost, joins again from "Join a game".
 
 A hosted game listens for browsers on UDP port 28406, which the firewall of the host's machine must let in. Over the internet, that port of the host's router must lead to the host's machine as well, and the host's public address goes into the link in place of the one that the lobby shows.
 
@@ -253,7 +255,7 @@ The command `canvas` gives the image another size, to see what a smaller window 
 TANKU_DEV_SCRIPT="start TANKU; wait 1; warp 12; wait 1; peek 0; wait 1; shot sector12.png; quit" cargo run -p tanku_client
 ```
 
-Two scripted games can play together: one hosts on a port, and the other joins it. A game that hosts on a port of its own takes browsers on the port after it, and the words after the port are the name of the game, as in `host 28999 Friday night`.
+Two scripted games can play together: one hosts on a port, and the other joins it. A game that hosts on a port of its own takes browsers on the port after it, and the words after the port are the name of the game, as in `host 28999 Friday night`. `password sesame` before it gives the game a password, and `join 127.0.0.1:28999 sesame` joins with one. A script can also go through the menus as a player does: `press` presses a button by its label, `type` writes a text and `key` presses `enter`, `tab` or `backspace`.
 
 ```bash
 TANKU_DEV_SCRIPT="host 28999; wait 6; press Start; wait 5; shot host.png; quit" cargo run -p tanku_client

@@ -1,8 +1,10 @@
 //! The server's side of the network, for games of several players.
 //!
-//! The server listens for clients and gives each one a seat while its lobby is open. It sends
-//! them the lobby, the run and the simulation as they change, and takes what their players ask
-//! of their tanks. It also announces its game on the local network, for those who look for one.
+//! The server listens for clients and gives each one a seat while its lobby is open: at once,
+//! or once they have proved that they know the password of a game that has one. It sends
+//! those who have a seat the lobby, the run and the simulation as they change, and takes what
+//! their players ask of their tanks. It also announces its game on the local network, for
+//! those who look for one.
 //! It needs the server plugins of the network library and the protocol of `tanku_core`, added
 //! in that order.
 //!
@@ -37,7 +39,8 @@ use lightyear::{
 };
 use tanku_core::{
     discovery::{Announcement, Announcer, Reach},
-    protocol::{Lobby, Member, Reliable, RunState, Told, named, protocol_id},
+    lock::Lock,
+    protocol::{Door, Lobby, Member, Reliable, RunState, Told, Word, named, protocol_id},
     rules::{MAX_PLAYERS, TICK_RATE},
     sim::{
         Bullet, Gun, Motion, Player, Position, Run, RunPhase, RunRequest, Shield, SimEvent, Tank,
@@ -131,6 +134,22 @@ pub struct Hosting {
     web: Option<Web>,
     /// Whether players can still join: nobody joins a run in progress.
     open: Arc<AtomicBool>,
+    /// What is kept of the password of the game, if it has one.
+    lock: Option<Lock>,
+}
+
+/// A guest at the door of a game that has a password: the number that their proof must
+/// answer, and whether they were asked for it yet. They have no seat, and are sent nothing
+/// of the game.
+#[derive(Component)]
+struct Knock {
+    nonce: u64,
+    asked: bool,
+}
+
+/// A number that nobody can tell beforehand: the standard library draws it from the system.
+fn drawn() -> u64 {
+    RandomState::new().build_hasher().finish()
 }
 
 /// How a hosted game is found on the local network: what announces it, and what it last
@@ -142,6 +161,8 @@ struct Beacon {
     game: u64,
     /// The name that its host gave it, or nothing.
     name: String,
+    /// Whether it has a password.
+    locked: bool,
     /// How many players the game had and whether it took more, when that was last said.
     said: Option<(u8, bool)>,
 }
@@ -196,15 +217,15 @@ impl ConnectionRequestHandler for Doorkeeper {
 }
 
 /// Opens a game on this machine, for others to join, and announces it where games are looked
-/// for, under the name that its host gave it, if any. Fails if the port for desktop games is
-/// taken. If the one for browsers is, the game opens without them. Returns how browsers reach
-/// it, if they do.
+/// for, under the name that its host gave it, if any. With a password, it lets in only those
+/// who type it. Fails if the port for desktop games is taken. If the one for browsers is,
+/// the game opens without them. Returns how browsers reach it, if they do.
 pub fn open(
     commands: &mut Commands,
     ports: Ports,
     reach: &Reach,
     credentials: &mut Credentials,
-    name: &str,
+    (name, password): (&str, &str),
 ) -> io::Result<Option<Web>> {
     let on = |port: u16| SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), port);
     // The network library takes a port a moment later, and stops the game if it can't.
@@ -253,8 +274,11 @@ pub fn open(
         Some(listener)
     });
     let name = named(name);
+    // The password is turned into a key here and kept nowhere.
+    let lock = Lock::new(password, drawn());
     let mut lobby = Lobby {
         name: name.clone(),
+        locked: lock.is_some(),
         ..default()
     };
     lobby.seats[0] = Some(Member::Host);
@@ -272,14 +296,16 @@ pub fn open(
         port: ports.game,
         web: web.clone(),
         open,
+        lock,
     });
     // A game that can't be announced is joined by its address all the same.
-    let game = RandomState::new().build_hasher().finish();
+    let game = drawn();
     if let Some(announcer) = Announcer::new(*reach, game) {
         commands.insert_resource(Beacon {
             announcer,
             game,
             name,
+            locked: lock.is_some(),
             said: None,
         });
     }
@@ -335,9 +361,16 @@ impl Plugin for NetPlugin {
                 take_commands.after(InputSystems::UpdateActionState),
             )
             .add_systems(
+                PreUpdate,
+                admit
+                    .after(MessageSystems::Receive)
+                    .run_if(resource_exists::<Hosting>),
+            )
+            .add_systems(
                 PostUpdate,
                 (
                     (close_ranks, announce).chain(),
+                    challenge,
                     share,
                     (
                         report::<Position>,
@@ -361,27 +394,37 @@ impl Plugin for NetPlugin {
     }
 }
 
-/// A connection that opens can be sent the simulation. One that a browser opened came to the
-/// listener for browsers, and is handed to the server, which takes it as any other.
+/// A connection that a browser opened came to the listener for browsers, and is handed to
+/// the server, which takes it as any other.
 fn greet(
     trigger: On<Add, LinkOf>,
     hosting: Option<Res<Hosting>>,
     links: Query<&LinkOf>,
     mut commands: Commands,
 ) {
-    let mut link = commands.entity(trigger.entity);
-    link.insert(ReplicationSender);
     let came_to = links.get(trigger.entity).map(|link| link.server);
     if let (Some(hosting), Ok(came_to)) = (hosting, came_to)
         && hosting.listener == Some(came_to)
     {
-        link.insert(LinkOf {
+        commands.entity(trigger.entity).insert(LinkOf {
             server: hosting.server,
         });
     }
 }
 
-/// A client that connects while the lobby is open takes the first free seat.
+/// Gives a guest the first seat that isn't taken, and with it the game: a guest who has no
+/// seat is sent nothing of it.
+fn give_seat(commands: &mut Commands, guest: Entity, taken: &mut Vec<u8>) {
+    if let Some(free) = (1..MAX_PLAYERS as u8).find(|seat| !taken.contains(seat)) {
+        taken.push(free);
+        commands
+            .entity(guest)
+            .insert((Seat(free), ReplicationSender));
+    }
+}
+
+/// A client that connects while the lobby is open takes the first free seat. Where the game
+/// has a password, it waits at the door until it has proved that its player knows it.
 fn seat(
     trigger: On<Add, Connected>,
     clients: Query<(), With<ClientOf>>,
@@ -389,12 +432,75 @@ fn seat(
     hosting: Option<Res<Hosting>>,
     mut commands: Commands,
 ) {
-    if !hosting.is_some_and(|hosting| hosting.is_open()) || !clients.contains(trigger.entity) {
+    let Some(hosting) = hosting.filter(|hosting| hosting.is_open()) else {
+        return;
+    };
+    if !clients.contains(trigger.entity) {
         return;
     }
-    let taken: Vec<u8> = seats.iter().map(|seat| seat.0).collect();
-    if let Some(free) = (1..MAX_PLAYERS as u8).find(|seat| !taken.contains(seat)) {
-        commands.entity(trigger.entity).insert(Seat(free));
+    if hosting.lock.is_some() {
+        commands.entity(trigger.entity).insert(Knock {
+            nonce: drawn(),
+            asked: false,
+        });
+        return;
+    }
+    let mut taken: Vec<u8> = seats.iter().map(|seat| seat.0).collect();
+    give_seat(&mut commands, trigger.entity, &mut taken);
+}
+
+/// Asks each guest at the door for the proof that their player knows the password.
+fn challenge(hosting: Res<Hosting>, mut guests: Query<(&mut Knock, &mut MessageSender<Door>)>) {
+    let Some(lock) = &hosting.lock else {
+        return;
+    };
+    for (mut knock, mut door) in &mut guests {
+        if !knock.asked {
+            knock.asked = true;
+            door.send::<Reliable>(Door::Locked(lock.challenge(knock.nonce)));
+        }
+    }
+}
+
+/// Lets in the guests who prove that their player knows the password of the game, and tells
+/// the others that they don't. A challenge takes one answer: whoever would try another
+/// password comes back for another challenge.
+fn admit(
+    mut commands: Commands,
+    hosting: Res<Hosting>,
+    mut guests: Query<
+        (
+            Entity,
+            &RemoteId,
+            Option<&Knock>,
+            &mut MessageReceiver<Word>,
+            &mut MessageSender<Door>,
+        ),
+        With<ClientOf>,
+    >,
+    seats: Query<&Seat>,
+) {
+    let mut taken: Vec<u8> = seats.iter().map(|seat| seat.0).collect();
+    for (guest, id, knock, mut words, mut door) in &mut guests {
+        let mut knock = knock;
+        for word in words.receive() {
+            match word {
+                Word::Proof(proof) => {
+                    // A proof that answers no challenge is nothing: the game has no
+                    // password, or this guest was let in or turned away already.
+                    let asked = (hosting.lock.as_ref(), knock.take(), id.0);
+                    let (Some(lock), Some(knock), PeerId::Netcode(number)) = asked else {
+                        continue;
+                    };
+                    commands.entity(guest).remove::<Knock>();
+                    if !lock.opens(knock.nonce, number, &proof) {
+                        door.send::<Reliable>(Door::Refused);
+                    } else if hosting.is_open() {
+                        give_seat(&mut commands, guest, &mut taken);
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -544,8 +650,8 @@ fn take_commands(mut tanks: Query<(&ActionState<TankCommand>, &mut TankCommand),
     }
 }
 
-/// Keeps the local network told of the game: its name, how many players it has, and whether
-/// it takes more. Those who look for a game see all three.
+/// Keeps the local network told of the game: its name, whether it has a password, how many
+/// players it has, and whether it takes more. Those who look for a game see all of it.
 fn call_out(hosting: Res<Hosting>, lobbies: Query<&Lobby>, mut beacon: ResMut<Beacon>) {
     let players = lobbies.get(hosting.game).map_or(1, Lobby::players) as u8;
     let news = Some((players, hosting.is_open()));
@@ -553,6 +659,7 @@ fn call_out(hosting: Res<Hosting>, lobbies: Query<&Lobby>, mut beacon: ResMut<Be
         beacon.said = news;
         let told = Announcement {
             name: beacon.name.clone(),
+            locked: beacon.locked,
             ..Announcement::of(beacon.game, hosting.port, players, hosting.is_open())
         };
         beacon.announcer.tell(&told);

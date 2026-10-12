@@ -3,6 +3,7 @@
 pub mod discovery;
 pub mod enemy;
 pub mod geom;
+pub mod lock;
 pub mod map;
 pub mod modes;
 pub mod progression;

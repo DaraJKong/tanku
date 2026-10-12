@@ -9,6 +9,7 @@ use bevy::{
 };
 use tanku_core::{
     discovery::Standing,
+    lock::PASSWORD_LENGTH,
     modes::{Difficulty, Unlock},
     protocol::{Lobby, Member, NAME_LENGTH, lettered, named},
     rules::{MAX_PLAYERS, PLAYTEST_LAST_SECTOR, TICK_RATE},
@@ -26,7 +27,7 @@ use crate::{
     garage::Garage,
     net, report,
     scene::Paints,
-    session::{Drawn, Found, Game, Invitation, Notice, Session, SessionRequest, Sign},
+    session::{Asked, Drawn, Found, Game, Invitation, Notice, Session, SessionRequest, Shut, Sign},
     settings::{Action, Binding, League, Records, Settings},
     theme,
     unlocks::{self, Unlocks},
@@ -77,12 +78,18 @@ enum Press {
     OpenHost,
     /// On that screen: opens the game on this machine, for others to join.
     Host,
+    /// On that screen: gives the keys to a field.
+    Field(Field),
+    /// Shows the password that is being typed, or hides it again.
+    Reveal,
     /// Opens the screen where the address of a game is typed.
     OpenJoin,
     /// Joins the game at the address that was typed.
     Join,
     /// Joins a game that was found on the local network, by the number of that game.
     JoinFound(u64),
+    /// On the join screen: leaves the game that asks for its password for the list.
+    Forget,
     /// In a lobby: the host starts a run with everyone who is there.
     Start,
     /// In a lobby: the host draws another seed.
@@ -135,6 +142,12 @@ struct SettingsRoot;
 struct LobbyRoot;
 
 #[derive(Component)]
+struct HostRoot;
+
+#[derive(Component)]
+struct JoinRoot;
+
+#[derive(Component)]
 struct SoloRoot;
 
 #[derive(Component)]
@@ -173,11 +186,38 @@ struct Address(String);
 #[derive(Component)]
 struct NameField;
 
+/// The text that shows a password as it is typed: by the host of a game, or by a player who
+/// joins one.
+#[derive(Component)]
+struct PasswordField;
+
+/// A password as it is typed: its letters, and whether the screen shows them.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct Secret {
+    text: String,
+    shown: bool,
+}
+
+/// A field of the host screen.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Field {
+    #[default]
+    Name,
+    Password,
+}
+
 /// What a host types for the game that they are about to open.
 #[derive(Resource, Default)]
 struct Opening {
     name: String,
+    password: Secret,
+    /// The field that the keys write into.
+    field: Field,
 }
+
+/// The password that a player types to join a game that asks for one.
+#[derive(Resource, Default)]
+struct Entry(Secret);
 
 /// What a single player has set for their next run.
 #[derive(Resource, Default)]
@@ -245,6 +285,7 @@ pub fn plugin(app: &mut App) {
         .init_resource::<Outcome>()
         .init_resource::<Address>()
         .init_resource::<Opening>()
+        .init_resource::<Entry>()
         .init_resource::<Setup>()
         .init_resource::<Listed>()
         .init_resource::<Way>()
@@ -263,8 +304,9 @@ pub fn plugin(app: &mut App) {
             draw_a_seed_for_one,
         )
         .add_systems(OnEnter(Screen::Achievements), achievements_screen)
-        .add_systems(OnEnter(Screen::Host), host_screen)
-        .add_systems(OnEnter(Screen::Join), join_screen)
+        .add_systems(OnEnter(Screen::Host), set_up_to_host)
+        .add_systems(OnEnter(Screen::Join), set_up_to_join)
+        .add_systems(OnExit(Screen::Join), forget_the_game)
         .add_systems(OnEnter(Screen::Lobby), draw_a_seed)
         .add_systems(OnExit(Screen::Menu), put_the_exhibit_away)
         .add_systems(OnExit(Screen::Solo), put_the_exhibit_away)
@@ -301,9 +343,15 @@ pub fn plugin(app: &mut App) {
                     .run_if(in_state(Overlay::Pause).and_then(resource_exists::<Playtest>)),
                 refresh_settings.run_if(in_state(Overlay::Settings)),
                 (lobby_screen.run_if(in_state(Screen::Lobby)), show_copy).chain(),
-                list_games.run_if(in_state(Screen::Join)),
+                (
+                    host_screen.run_if(in_state(Screen::Host)),
+                    (forget_the_password, join_screen, list_games)
+                        .chain()
+                        .run_if(in_state(Screen::Join)),
+                    (show_address, show_what_is_typed, tell_how_it_goes),
+                )
+                    .chain(),
                 list_records.run_if(in_state(Screen::Menu)),
-                (show_address, show_name, tell_how_it_goes),
                 hover,
                 pause_time,
                 (watch_run, keep_records).chain(),
@@ -916,12 +964,24 @@ fn typed(address: &mut String, key: &Key, text: Option<&str>) {
     }
 }
 
-/// Asks to join the game at the address that was typed, and keeps the address for next time.
+/// Asks to join a game: the one that asks for its password, with the password that was typed
+/// for it, or else the one of the link in a browser, or the one at the address that was
+/// typed, which is kept for next time.
 fn ask_to_join(
     address: &Address,
+    (asked, entry): (&Asked, &Entry),
     settings: &mut Settings,
     requests: &mut MessageWriter<SessionRequest>,
 ) {
+    if let Some(shut) = &asked.0 {
+        let password = entry.0.text.clone();
+        requests.write(SessionRequest::JoinLocked(shut.at.clone(), password));
+        return;
+    }
+    if let Some(link) = net::link() {
+        requests.write(SessionRequest::Join(link));
+        return;
+    }
     let typed = address.0.trim();
     if settings.address != typed {
         settings.address = typed.to_string();
@@ -929,25 +989,58 @@ fn ask_to_join(
     requests.write(SessionRequest::Join(typed.to_string()));
 }
 
-/// Takes what the player types on the join screen. Enter joins.
+/// Picks a game that the join screen lists. Its address is the one that the screen shows from
+/// then on, and is kept for next time. A game that has a password asks for it first, and one
+/// that has none is joined at once.
+fn pick(
+    game: &Game,
+    (address, asked): (&mut Address, &mut Asked),
+    settings: &mut Settings,
+    requests: &mut MessageWriter<SessionRequest>,
+) {
+    address.0.clone_from(&game.address);
+    if settings.address != game.address {
+        settings.address.clone_from(&game.address);
+    }
+    if game.locked {
+        asked.0 = Some(Shut {
+            at: game.address.clone(),
+            name: game.name.clone(),
+            address: game.address.clone(),
+        });
+    } else {
+        requests.write(SessionRequest::Join(game.address.clone()));
+    }
+}
+
+/// Takes what the player types on the join screen: the address of a game, or the password of
+/// the one that asks for it. Enter joins.
 fn type_address(
     mut keys: MessageReader<KeyboardInput>,
     screen: Res<State<Screen>>,
     session: Res<Session>,
     mut address: ResMut<Address>,
+    (asked, mut entry): (Res<Asked>, ResMut<Entry>),
     mut settings: ResMut<Settings>,
     mut requests: MessageWriter<SessionRequest>,
 ) {
-    // An address that is being joined stays as it is.
+    // What is being joined stays as it is.
     let typing = *screen.get() == Screen::Join && *session == Session::Solo;
     for key in keys.read() {
         if !typing || key.state != ButtonState::Pressed {
             continue;
         }
-        if key.logical_key == Key::Enter {
-            ask_to_join(&address, &mut settings, &mut requests);
+        let (pressed, text) = (&key.logical_key, key.text.as_deref());
+        if *pressed == Key::Enter {
+            ask_to_join(&address, (&asked, &entry), &mut settings, &mut requests);
+        } else if asked.0.is_some() {
+            let mut password = entry.0.text.clone();
+            typed_words(&mut password, pressed, text, PASSWORD_LENGTH);
+            if password != entry.0.text {
+                entry.0.text = password;
+            }
         } else {
-            typed(&mut address.0, &key.logical_key, key.text.as_deref());
+            typed(&mut address.0, pressed, text);
         }
     }
 }
@@ -1518,7 +1611,17 @@ fn typed_words(words: &mut String, key: &Key, text: Option<&str>, length: usize)
     }
 }
 
-/// Asks to open the game that a host set up, and keeps its name for the next one.
+/// A password as the screen shows it while it is typed: its letters, or a dot for each.
+fn masked(secret: &Secret) -> String {
+    if secret.shown {
+        secret.text.clone()
+    } else {
+        "\u{2022}".repeat(secret.text.chars().count())
+    }
+}
+
+/// Asks to open the game that a host set up. Its name is kept for the next one, and its
+/// password is not.
 fn ask_to_host(
     opening: &Opening,
     settings: &mut Settings,
@@ -1528,10 +1631,12 @@ fn ask_to_host(
     if settings.host_name != name {
         settings.host_name.clone_from(&name);
     }
-    requests.write(SessionRequest::Host(Sign { name }));
+    let password = opening.password.text.clone();
+    requests.write(SessionRequest::Host(Sign { name, password }));
 }
 
-/// Takes what the player types on the host screen: the name of the game. Enter opens it.
+/// Takes what the player types on the host screen: the name of the game or its password,
+/// whichever field has the keys. Tab gives them to the other field, and Enter opens the game.
 fn type_name(
     mut keys: MessageReader<KeyboardInput>,
     screen: Res<State<Screen>>,
@@ -1545,46 +1650,161 @@ fn type_name(
         if !typing || key.state != ButtonState::Pressed {
             continue;
         }
-        if key.logical_key == Key::Enter {
-            ask_to_host(&opening, &mut settings, &mut requests);
-        } else {
-            let mut name = opening.name.clone();
-            typed_words(
-                &mut name,
-                &key.logical_key,
-                key.text.as_deref(),
-                NAME_LENGTH,
-            );
-            if name != opening.name {
-                opening.name = name;
+        let (pressed, text) = (&key.logical_key, key.text.as_deref());
+        match (pressed, opening.field) {
+            (Key::Enter, _) => ask_to_host(&opening, &mut settings, &mut requests),
+            (Key::Tab, Field::Name) => opening.field = Field::Password,
+            (Key::Tab, Field::Password) => opening.field = Field::Name,
+            (_, Field::Name) => {
+                let mut name = opening.name.clone();
+                typed_words(&mut name, pressed, text, NAME_LENGTH);
+                if name != opening.name {
+                    opening.name = name;
+                }
+            }
+            (_, Field::Password) => {
+                let mut password = opening.password.text.clone();
+                typed_words(&mut password, pressed, text, PASSWORD_LENGTH);
+                if password != opening.password.text {
+                    opening.password.text = password;
+                }
             }
         }
     }
 }
 
-/// Shows the name of a game as its host types it, with a mark that blinks where the next
-/// letter goes while there is room for one.
-fn show_name(
+/// Shows what is typed into the fields of the host screen and into the password of the join
+/// screen, with a mark that blinks where the next letter goes: in the field that has the
+/// keys, while it has room.
+fn show_what_is_typed(
     time: Res<Time<Real>>,
-    opening: Res<Opening>,
-    mut fields: Query<&mut Text, With<NameField>>,
+    screen: Res<State<Screen>>,
+    session: Res<Session>,
+    (opening, entry): (Res<Opening>, Res<Entry>),
+    mut names: Query<&mut Text, (With<NameField>, Without<PasswordField>)>,
+    mut passwords: Query<&mut Text, With<PasswordField>>,
 ) {
-    let room = opening.name.chars().count() < NAME_LENGTH;
-    let blinks = room && time.elapsed_secs() % 1.0 < 0.5;
-    let wanted = format!("{}{}", opening.name, if blinks { "_" } else { "" });
-    for mut text in &mut fields {
-        if text.0 != wanted {
-            text.0.clone_from(&wanted);
+    let hosting = *screen.get() == Screen::Host;
+    let blinks = *session == Session::Solo && time.elapsed_secs() % 1.0 < 0.5;
+    let mark = |typed: bool, letters: &str, room: usize| {
+        let marked = typed && blinks && letters.chars().count() < room;
+        if marked { "_" } else { "" }
+    };
+    let typed = hosting && opening.field == Field::Name;
+    let name = format!(
+        "{}{}",
+        opening.name,
+        mark(typed, &opening.name, NAME_LENGTH)
+    );
+    // The password of the host screen, or the one that the join screen asks for.
+    let (secret, typed) = if hosting {
+        (&opening.password, opening.field == Field::Password)
+    } else {
+        (&entry.0, true)
+    };
+    let password = format!(
+        "{}{}",
+        masked(secret),
+        mark(typed, &secret.text, PASSWORD_LENGTH)
+    );
+    for mut text in &mut names {
+        if text.0 != name {
+            text.0.clone_from(&name);
+        }
+    }
+    for mut text in &mut passwords {
+        if text.0 != password {
+            text.0.clone_from(&password);
         }
     }
 }
 
-/// The screen where a player sets up the game that they host for others.
-fn host_screen(mut commands: Commands, settings: Res<Settings>, mut opening: ResMut<Opening>) {
-    // The name of the game that was hosted last is the likeliest one.
-    opening.name.clone_from(&settings.host_name);
+/// The box of a field that takes what is typed, around the text that shows it. Where a
+/// screen has several, each is a button that gives the field the keys, and the one that has
+/// them is edged with the accent.
+fn field_box(parent: &mut ChildSpawnerCommands, text: impl Bundle, among: Option<(Press, bool)>) {
+    let node = Node {
+        flex_grow: 1.0,
+        padding: UiRect::axes(px(12), px(10)),
+        min_height: px(48),
+        align_items: AlignItems::Center,
+        border: UiRect::all(px(1)),
+        ..default()
+    };
+    match among {
+        None => {
+            parent.spawn((ruled(node), children![text]));
+        }
+        Some((press, false)) => {
+            let ground = BackgroundColor(theme::SURFACE_RAISED);
+            let edge = BorderColor::all(theme::RULE);
+            parent.spawn((Button, press, node, ground, edge, children![text]));
+        }
+        Some((press, true)) => {
+            let ground = BackgroundColor(theme::SURFACE_RAISED);
+            let edge = BorderColor::all(theme::ACCENT);
+            parent.spawn((Button, Lit, press, node, ground, edge, children![text]));
+        }
+    }
+}
+
+/// The field of a password, next to the button that shows what is typed or hides it again.
+fn password_row(parent: &mut ChildSpawnerCommands, shown: bool, among: Option<(Press, bool)>) {
+    let row = Node {
+        column_gap: px(6),
+        align_items: AlignItems::Stretch,
+        ..default()
+    };
+    parent.spawn(row).with_children(|row| {
+        let text = (PasswordField, theme::text("", 22.0, theme::TEXT));
+        field_box(row, text, among);
+        // As tall as the field, with its word in the middle.
+        let reveal = if shown { "Hide" } else { "Show" };
+        row.spawn((
+            Button,
+            Press::Reveal,
+            Node {
+                padding: UiRect::axes(px(6), px(5)),
+                align_items: AlignItems::Center,
+                ..button_node(px(76))
+            },
+            BackgroundColor(theme::SURFACE_RAISED),
+            BorderColor::all(theme::RULE),
+            children![theme::text(reveal, 16.0, theme::TEXT)],
+        ));
+    });
+}
+
+/// A host who opens the host screen finds the name of the game that they hosted last, and no
+/// password: the game keeps none.
+fn set_up_to_host(settings: Res<Settings>, mut opening: ResMut<Opening>) {
+    *opening = Opening {
+        name: settings.host_name.clone(),
+        ..default()
+    };
+}
+
+/// The screen where a player sets up the game that they host for others: its name and its
+/// password, both of which a game does without.
+fn host_screen(
+    mut commands: Commands,
+    opening: Res<Opening>,
+    roots: Query<Entity, With<HostRoot>>,
+    mut drawn: Local<Option<(Field, bool)>>,
+) {
+    // What is typed shows in the fields as they are. The screen is drawn again when the
+    // keys go to the other field, and when the password shows or hides.
+    let wanted = (opening.field, opening.password.shown);
+    if !roots.is_empty() && *drawn == Some(wanted) {
+        return;
+    }
+    *drawn = Some(wanted);
+    for root in &roots {
+        commands.entity(root).despawn();
+    }
     commands
         .spawn((
+            HostRoot,
             DespawnOnExit(Screen::Host),
             Node {
                 width: percent(100),
@@ -1609,19 +1829,19 @@ fn host_screen(mut commands: Commands, settings: Res<Settings>, mut opening: Res
                     },
                 ));
                 section(parent, "Name of the game");
-                parent.spawn((
-                    ruled(Node {
-                        padding: UiRect::axes(px(12), px(10)),
-                        min_height: px(48),
-                        align_items: AlignItems::Center,
-                        ..default()
-                    }),
-                    children![(NameField, theme::text("", 22.0, theme::TEXT))],
-                ));
+                let named = opening.field == Field::Name;
+                let text = (NameField, theme::text("", 22.0, theme::TEXT));
+                parent.spawn(Node::default()).with_children(|row| {
+                    field_box(row, text, Some((Press::Field(Field::Name), named)))
+                });
+                section(parent, "Password");
+                let among = (Press::Field(Field::Password), !named);
+                password_row(parent, opening.password.shown, Some(among));
                 line(
                     parent,
-                    "The others find the game under this name on their join screen. A game \
-                     needs none. Enter opens it.",
+                    "The others find the game under its name on their join screen. With a \
+                     password, only those who type it get in. A game needs neither. Tab changes \
+                     the field, and Enter opens the game.",
                     theme::TEXT_DIM,
                 );
                 primary(parent, "Open the game", Press::Host);
@@ -1631,14 +1851,53 @@ fn host_screen(mut commands: Commands, settings: Res<Settings>, mut opening: Res
         });
 }
 
-/// The screen where the player types the address of a game to join.
-fn join_screen(mut commands: Commands, settings: Res<Settings>, mut address: ResMut<Address>) {
-    // The game that was joined last is the likeliest one.
+/// A player who opens the join screen finds the address of the game that they joined last.
+fn set_up_to_join(settings: Res<Settings>, mut address: ResMut<Address>) {
     if address.0.is_empty() {
-        address.0 = settings.address.clone();
+        address.0.clone_from(&settings.address);
+    }
+}
+
+/// A player who leaves the join screen leaves the game that asked for its password.
+fn forget_the_game(mut asked: ResMut<Asked>, mut entry: ResMut<Entry>) {
+    asked.0 = None;
+    *entry = Entry::default();
+}
+
+/// A password is typed anew for each game that asks for one, and after one that was refused.
+fn forget_the_password(asked: Res<Asked>, mut entry: ResMut<Entry>) {
+    if asked.is_changed() && !entry.0.text.is_empty() {
+        entry.0.text.clear();
+    }
+}
+
+/// How the join screen names a game that asks for its password.
+fn shut_words(shut: &Shut) -> String {
+    match shut.name.as_str() {
+        "" => format!("The game at {}", shut.address),
+        name => format!("{name}, at {}", shut.address),
+    }
+}
+
+/// The screen where a player joins a game: one that the local network lists, or one at an
+/// address that they type. A game that has a password asks for it there.
+fn join_screen(
+    mut commands: Commands,
+    (asked, entry): (Res<Asked>, Res<Entry>),
+    roots: Query<Entity, With<JoinRoot>>,
+    mut drawn: Local<Option<(Option<Shut>, bool)>>,
+) {
+    let wanted = (asked.0.clone(), entry.0.shown);
+    if !roots.is_empty() && drawn.as_ref() == Some(&wanted) {
+        return;
+    }
+    *drawn = Some(wanted);
+    for root in &roots {
+        commands.entity(root).despawn();
     }
     commands
         .spawn((
+            JoinRoot,
             DespawnOnExit(Screen::Join),
             Node {
                 width: percent(100),
@@ -1662,6 +1921,18 @@ fn join_screen(mut commands: Commands, settings: Res<Settings>, mut address: Res
                         ..default()
                     },
                 ));
+                // A game that has a password asks for it before anything else.
+                if let Some(shut) = &asked.0 {
+                    section(parent, "Password of the game");
+                    line(parent, shut_words(shut), theme::TEXT);
+                    password_row(parent, entry.0.shown, None);
+                    let hint = "Its host gives it to those who may join. Enter joins.";
+                    line(parent, hint, theme::TEXT_DIM);
+                    primary(parent, "Join", Press::Join);
+                    button(parent, "Back", Press::Forget);
+                    status_line(parent);
+                    return;
+                }
                 // A browser neither looks around a network nor joins by an address alone.
                 if cfg!(target_arch = "wasm32") {
                     section(parent, "Link of the host");
@@ -1715,12 +1986,15 @@ fn join_screen(mut commands: Commands, settings: Res<Settings>, mut address: Res
 fn found_words(game: &Game) -> String {
     match game.standing {
         Standing::Open | Standing::Full => {
-            let seats = format!("{} of {MAX_PLAYERS} players", game.players);
+            let mut words = format!("{} of {MAX_PLAYERS} players", game.players);
             if game.standing == Standing::Full {
-                format!("{seats} \u{b7} full")
-            } else {
-                seats
+                words.push_str(" \u{b7} full");
             }
+            // A game that has a password asks whoever joins for it.
+            if game.locked {
+                words.push_str(" \u{b7} locked");
+            }
+            words
         }
         Standing::Running => "Run in progress".to_string(),
         Standing::Other => "Another version of the game".to_string(),
@@ -2040,8 +2314,10 @@ fn lobby_screen(
                     "" => "Game of several players",
                     name => name,
                 };
+                // A game that has a password says so: whoever is to join needs it.
+                let lock = if lobby.locked { " \u{b7} locked" } else { "" };
                 parent.spawn(theme::label(
-                    format!("{game} \u{b7} {role}"),
+                    format!("{game} \u{b7} {role}{lock}"),
                     13.0,
                     theme::TEXT_DIM,
                 ));
@@ -2471,11 +2747,13 @@ fn press(
     mut playtest: Option<ResMut<Playtest>>,
     mut destination: ResMut<Destination>,
     (options, run, time): (Res<Options>, Option<Res<Run>>, Res<Time<Real>>),
-    (session, mut address, mut notice, opening): (
+    (session, mut address, mut notice, mut opening, mut asked, mut entry): (
         Res<Session>,
         ResMut<Address>,
         ResMut<Notice>,
-        Res<Opening>,
+        ResMut<Opening>,
+        ResMut<Asked>,
+        ResMut<Entry>,
     ),
     (mut setup, mut drawn, mut listed, mut garage): (
         ResMut<Setup>,
@@ -2576,26 +2854,37 @@ fn press(
                 notice.0 = None;
                 ask_to_host(&opening, &mut settings, &mut session_requests);
             }
+            Press::Field(field) => opening.field = field,
+            // The password of the screen that is open.
+            Press::Reveal => match *screen.get() {
+                Screen::Host => opening.password.shown = !opening.password.shown,
+                _ => entry.0.shown = !entry.0.shown,
+            },
             Press::OpenJoin => {
                 notice.0 = None;
                 next_screen.set(Screen::Join);
             }
             // A browser joins the game of its link, and a desktop game the one at the
-            // address that was typed.
-            Press::Join => match net::link() {
-                Some(link) => {
-                    session_requests.write(SessionRequest::Join(link));
-                }
-                None => ask_to_join(&address, &mut settings, &mut session_requests),
-            },
+            // address that was typed. A game that asked for its password is joined with
+            // the one that was typed.
+            Press::Join => {
+                let typed = (&*asked, &*entry);
+                ask_to_join(&address, typed, &mut settings, &mut session_requests);
+            }
             // A game that was found is joined as if its address had been typed. While a
-            // game is being joined, the address stays the one of that game.
+            // game is being joined, the address stays the one of that game. One that has a
+            // password asks for it first: nothing is sent before the player has typed it.
             Press::JoinFound(id) => {
                 let found = found.0.iter().find(|game| game.id == id);
                 if let Some(game) = found.filter(|_| *session == Session::Solo) {
-                    address.0 = game.address.clone();
-                    ask_to_join(&address, &mut settings, &mut session_requests);
+                    notice.0 = None;
+                    let typed = (&mut *address, &mut *asked);
+                    pick(game, typed, &mut settings, &mut session_requests);
                 }
+            }
+            Press::Forget => {
+                notice.0 = None;
+                asked.0 = None;
             }
             Press::Start => {
                 session_requests.write(SessionRequest::Start);
@@ -2684,7 +2973,7 @@ fn escape(
     capture: Res<Capture>,
     screen: Res<State<Screen>>,
     overlay: Res<State<Overlay>>,
-    session: Res<Session>,
+    (session, mut asked): (Res<Session>, ResMut<Asked>),
     mut next_screen: ResMut<NextState<Screen>>,
     mut next_overlay: ResMut<NextState<Overlay>>,
     mut session_requests: MessageWriter<SessionRequest>,
@@ -2709,7 +2998,12 @@ fn escape(
         if *session == Session::Guest {
             session_requests.write(SessionRequest::Leave);
         }
-        next_screen.set(Screen::Menu);
+        // Esc leaves a game that asks for its password for the list, as "Back" does.
+        if *session == Session::Solo && asked.0.is_some() {
+            asked.0 = None;
+        } else {
+            next_screen.set(Screen::Menu);
+        }
         return;
     }
     let playing = *screen.get() == Screen::Playing;
@@ -2897,6 +3191,7 @@ mod tests {
     fn gather(app: &mut App, players: usize) {
         let mut lobby = Lobby {
             name: LONG_GAME.into(),
+            locked: true,
             seed: "85GVTHQA".into(),
             ..default()
         };
@@ -3055,14 +3350,20 @@ mod tests {
                 app.insert_resource(Unlocks::of(&[Unlock::ChosenSeed, Unlock::HardMode]));
                 build(app, achievements_screen);
             }),
-            // The longest name that a host types, on a machine that kept it from the last
-            // game, with the longest notice: the port may be taken.
+            // The longest name and the longest password that a host types, which shows, with
+            // the longest notice: the port may be taken.
             ("the host screen", |app| {
                 assert_eq!(LONG_GAME.chars().count(), NAME_LENGTH);
-                let mut settings = Settings::default();
-                settings.host_name = LONG_GAME.into();
-                app.insert_resource(settings)
-                    .insert_resource(Notice(Some(LONG_NOTICE.into())));
+                assert_eq!(LONG_GAME.chars().count(), PASSWORD_LENGTH);
+                app.insert_resource(Opening {
+                    name: LONG_GAME.into(),
+                    password: Secret {
+                        text: LONG_GAME.into(),
+                        shown: true,
+                    },
+                    field: Field::Password,
+                })
+                .insert_resource(Notice(Some(LONG_NOTICE.into())));
                 build(app, host_screen);
             }),
             // As many games as the screen lists, each under a name as long as one gets but
@@ -3071,6 +3372,7 @@ mod tests {
                 let game = |id: u64, standing: Standing| Game {
                     id,
                     name: if id == 4 { "" } else { LONG_GAME }.into(),
+                    locked: true,
                     machine: std::net::Ipv4Addr::new(192, 168, 100, 200),
                     address: format!("{LONG_ADDRESS}:2840{id}"),
                     players: 4,
@@ -3089,6 +3391,24 @@ mod tests {
                     .insert_resource(Notice(Some(LONG_NOTICE.into())));
                 build(app, join_screen);
             }),
+            // A game under the longest name at the longest address, whose password was typed
+            // wrong: the longest password shows.
+            (
+                "the join screen of a game that asks for its password",
+                |app| {
+                    app.insert_resource(Asked(Some(Shut {
+                        at: format!("{LONG_ADDRESS}:28405"),
+                        name: LONG_GAME.into(),
+                        address: format!("{LONG_ADDRESS}:28405"),
+                    })))
+                    .insert_resource(Entry(Secret {
+                        text: LONG_GAME.into(),
+                        shown: true,
+                    }))
+                    .insert_resource(Notice(Some(LONG_NOTICE.into())));
+                    build(app, join_screen);
+                },
+            ),
             ("the lobby of a host", |app| {
                 gather(app, 4);
                 // Nothing else on the machine has taken the port for browsers, or something
@@ -3224,6 +3544,7 @@ mod tests {
             .init_resource::<Options>()
             .init_resource::<Address>()
             .init_resource::<Opening>()
+            .init_resource::<Entry>()
             .init_resource::<Settings>()
             .init_resource::<Setup>()
             .init_resource::<Listed>()
@@ -3242,7 +3563,7 @@ mod tests {
         build(&mut app, list_games);
         build(&mut app, list_records);
         build(&mut app, show_address);
-        build(&mut app, show_name);
+        build(&mut app, show_what_is_typed);
         build(&mut app, tell_how_it_goes);
         app.update();
         app.update();
@@ -3461,12 +3782,19 @@ mod tests {
         let game = |players: u8, standing: Standing| Game {
             id: 1,
             name: String::new(),
+            locked: false,
             machine: std::net::Ipv4Addr::new(192, 168, 0, 21),
             address: "192.168.0.21".to_string(),
             players,
             standing,
         };
         assert_eq!(found_words(&game(2, Standing::Open)), "2 of 4 players");
+        // A game that has a password is listed as locked.
+        let locked = Game {
+            locked: true,
+            ..game(2, Standing::Open)
+        };
+        assert_eq!(found_words(&locked), "2 of 4 players \u{b7} locked");
         assert_eq!(
             found_words(&game(4, Standing::Full)),
             "4 of 4 players \u{b7} full"
@@ -3524,33 +3852,54 @@ mod tests {
     }
 
     #[test]
-    fn the_host_screen_opens_the_game_under_the_name_that_was_typed() {
+    fn the_host_screen_opens_the_game_that_was_typed() {
         let mut world = World::new();
         let mut settings = Settings::default();
         settings.host_name = "Friday".into();
         world.insert_resource(settings);
         world.insert_resource(State::new(Screen::Host));
         world.insert_resource(Session::Solo);
-        world.init_resource::<Opening>();
+        // What was typed for another game is gone, its password too.
+        world.insert_resource(Opening {
+            name: "Another".into(),
+            password: Secret {
+                text: "old".into(),
+                shown: true,
+            },
+            field: Field::Password,
+        });
         world.init_resource::<Messages<KeyboardInput>>();
         world.init_resource::<Messages<SessionRequest>>();
-        // The screen opens on the name of the game that was hosted last.
-        world.run_system_once(host_screen).unwrap();
-        assert_eq!(world.resource::<Opening>().name, "Friday");
-        // The host types more of it, then Enter.
+        // The screen opens on the name of the game that was hosted last, without a password.
+        world.run_system_once(set_up_to_host).unwrap();
+        let opening = world.resource::<Opening>();
+        assert_eq!(opening.name, "Friday");
+        assert_eq!((opening.password.clone(), opening.field), default());
+        // The host types more of the name, goes to the password with Tab, types it, comes
+        // back to the name with Tab for a last letter, then presses Enter.
         let mut keys = world.resource_mut::<Messages<KeyboardInput>>();
-        for key in strokes(" night ") {
+        let typed = [
+            strokes(" night"),
+            vec![stroke(Key::Tab, Some("\t"))],
+            strokes("sesame "),
+            vec![stroke(Key::Backspace, None), stroke(Key::Tab, None)],
+            strokes("s "),
+            vec![stroke(Key::Enter, None)],
+        ];
+        for key in typed.into_iter().flatten() {
             keys.write(key);
         }
-        keys.write(stroke(Key::Enter, None));
         world.run_system_once(type_name).unwrap();
         let mut asked = world.resource_mut::<Messages<SessionRequest>>();
         let asked: Vec<SessionRequest> = asked.drain().collect();
         // The game opens under the name without the space at its end, and the name is kept
-        // for the next game.
-        let name = "Friday night".to_string();
-        assert_eq!(asked, [SessionRequest::Host(Sign { name: name.clone() })]);
-        assert_eq!(world.resource::<Settings>().host_name, name);
+        // for the next game. The password goes with it as it was typed.
+        let sign = Sign {
+            name: "Friday nights".into(),
+            password: "sesame".into(),
+        };
+        assert_eq!(asked, [SessionRequest::Host(sign)]);
+        assert_eq!(world.resource::<Settings>().host_name, "Friday nights");
         // Nothing is typed into a game that is open already.
         world.insert_resource(Session::Host);
         world
@@ -3558,6 +3907,132 @@ mod tests {
             .write(stroke(Key::Enter, None));
         world.run_system_once(type_name).unwrap();
         assert!(world.resource::<Messages<SessionRequest>>().is_empty());
+    }
+
+    #[test]
+    fn a_password_shows_as_dots_until_the_player_asks_to_see_it() {
+        let mut secret = Secret {
+            text: "s\u{e9}same".into(),
+            shown: false,
+        };
+        // A dot for each letter, not for each byte.
+        assert_eq!(masked(&secret), "\u{2022}".repeat(6));
+        secret.shown = true;
+        assert_eq!(masked(&secret), "s\u{e9}same");
+        assert_eq!(masked(&Secret::default()), "");
+    }
+
+    #[test]
+    fn a_game_that_asks_for_its_password_is_joined_with_the_one_that_was_typed() {
+        let mut world = World::new();
+        world.insert_resource(Settings::default());
+        world.insert_resource(State::new(Screen::Join));
+        world.insert_resource(Session::Solo);
+        world.insert_resource(Address("192.168.0.21".into()));
+        world.init_resource::<Asked>();
+        world.init_resource::<Entry>();
+        world.init_resource::<Messages<KeyboardInput>>();
+        world.init_resource::<Messages<SessionRequest>>();
+        let asked = |world: &mut World, keys: Vec<KeyboardInput>| -> Vec<SessionRequest> {
+            let mut typed = world.resource_mut::<Messages<KeyboardInput>>();
+            for key in keys {
+                typed.write(key);
+            }
+            world.run_system_once(type_address).unwrap();
+            // A system that is run once reads every key that the world still holds.
+            world.resource_mut::<Messages<KeyboardInput>>().clear();
+            let mut asked = world.resource_mut::<Messages<SessionRequest>>();
+            asked.drain().collect()
+        };
+        // Without a game that asks for one, the keys write the address.
+        let enter = || stroke(Key::Enter, None);
+        let keys = [strokes(":4000"), vec![enter()]].concat();
+        let at = "192.168.0.21:4000".to_string();
+        assert_eq!(asked(&mut world, keys), [SessionRequest::Join(at.clone())]);
+        assert_eq!(world.resource::<Settings>().address, at);
+        // The game there has a password: the keys now write it, and Enter joins with it.
+        world.insert_resource(Asked(Some(Shut {
+            at: at.clone(),
+            name: String::new(),
+            address: at.clone(),
+        })));
+        let keys = [strokes("s\u{e9}same!"), vec![enter()]].concat();
+        let locked = SessionRequest::JoinLocked(at.clone(), "s\u{e9}same!".into());
+        assert_eq!(asked(&mut world, keys), [locked]);
+        // The address is as it was.
+        assert_eq!(world.resource::<Address>().0, at);
+        // Another game that asks, or the same one again after a wrong password, starts
+        // from nothing: the password is typed anew.
+        world.run_system_once(forget_the_password).unwrap();
+        assert_eq!(world.resource::<Entry>().0.text, "");
+        // A player who goes back to the list is asked nothing more.
+        world.resource_mut::<Entry>().0.text = "half".into();
+        world.run_system_once(forget_the_game).unwrap();
+        assert_eq!(world.resource::<Asked>().0, None);
+        assert_eq!(world.resource::<Entry>().0, Secret::default());
+        assert_eq!(asked(&mut world, vec![enter()]), [SessionRequest::Join(at)]);
+    }
+
+    #[test]
+    fn a_game_of_the_list_that_has_a_password_asks_for_it_before_anything_is_sent() {
+        fn click(
+            In(game): In<Game>,
+            (mut address, mut asked): (ResMut<Address>, ResMut<Asked>),
+            mut settings: ResMut<Settings>,
+            mut requests: MessageWriter<SessionRequest>,
+        ) {
+            let typed = (&mut *address, &mut *asked);
+            pick(&game, typed, &mut settings, &mut requests);
+        }
+        let mut world = World::new();
+        world.insert_resource(Settings::default());
+        world.insert_resource(Address("10.0.0.7".into()));
+        world.init_resource::<Asked>();
+        world.init_resource::<Messages<SessionRequest>>();
+        let mut clicked = |game: &Game| -> (Vec<SessionRequest>, Option<Shut>) {
+            world.run_system_once_with(click, game.clone()).unwrap();
+            let mut requests = world.resource_mut::<Messages<SessionRequest>>();
+            let requests: Vec<SessionRequest> = requests.drain().collect();
+            assert_eq!(world.resource::<Address>().0, game.address);
+            assert_eq!(world.resource::<Settings>().address, game.address);
+            (requests, world.resource::<Asked>().0.clone())
+        };
+        let open = Game {
+            id: 1,
+            name: "Friday".into(),
+            locked: false,
+            machine: std::net::Ipv4Addr::new(192, 168, 0, 21),
+            address: "192.168.0.21".into(),
+            players: 1,
+            standing: Standing::Open,
+        };
+        // A game without a password is joined at once.
+        let join = SessionRequest::Join("192.168.0.21".into());
+        assert_eq!(clicked(&open), (vec![join], None));
+        // One that has a password is not: the player is asked for it, by the name and the
+        // address that the list gave.
+        let locked = Game {
+            locked: true,
+            address: "192.168.0.22:4000".into(),
+            ..open
+        };
+        let shut = Shut {
+            at: "192.168.0.22:4000".into(),
+            name: "Friday".into(),
+            address: "192.168.0.22:4000".into(),
+        };
+        assert_eq!(clicked(&locked), (Vec::new(), Some(shut)));
+    }
+
+    #[test]
+    fn a_game_that_asks_for_its_password_is_named_as_the_player_found_it() {
+        let shut = |name: &str| Shut {
+            at: "192.168.0.21".into(),
+            name: name.into(),
+            address: "192.168.0.21".into(),
+        };
+        assert_eq!(shut_words(&shut("")), "The game at 192.168.0.21");
+        assert_eq!(shut_words(&shut("Friday")), "Friday, at 192.168.0.21");
     }
 
     #[test]

@@ -17,6 +17,7 @@ use lightyear::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    lock::{Challenge, Proof},
     rules::MAX_PLAYERS,
     seed::VERSION,
     sim::{
@@ -28,7 +29,7 @@ use crate::{
 /// Counts the changes to what the server and its clients tell each other since the version of
 /// the game was last raised. Two builds that don't count the same don't speak the same, so
 /// they don't join each other: raise this with every such change.
-pub const REVISION: u32 = 5;
+pub const REVISION: u32 = 6;
 
 /// The port a game listens on unless it is told otherwise.
 pub const PORT: u16 = 28405;
@@ -93,7 +94,25 @@ pub struct Lobby {
     pub seats: [Option<Member>; MAX_PLAYERS as usize],
     /// The name that the host gave the game, or nothing.
     pub name: String,
+    /// Whether the game has a password, which whoever joins must type.
+    pub locked: bool,
     pub seed: String,
+}
+
+/// What a host tells one guest who knocks at a game that has a password.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Door {
+    /// The game has a password: this is what a proof of it must answer.
+    Locked(Challenge),
+    /// The proof was not the one of the password.
+    Refused,
+}
+
+/// What a guest tells its host, besides what its player asks of their tank.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Word {
+    /// The proof that its player typed the password of the game.
+    Proof(Proof),
 }
 
 impl Lobby {
@@ -136,6 +155,10 @@ impl Plugin for ProtocolPlugin {
 
         app.register_message::<SimEvent>()
             .add_direction(NetworkDirection::ServerToClient);
+        app.register_message::<Door>()
+            .add_direction(NetworkDirection::ServerToClient);
+        app.register_message::<Word>()
+            .add_direction(NetworkDirection::ClientToServer);
         app.add_channel::<Reliable>(ChannelSettings {
             mode: ChannelMode::OrderedReliable(ReliableSettings::default()),
             ..default()

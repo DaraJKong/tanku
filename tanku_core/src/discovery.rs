@@ -39,6 +39,8 @@ pub struct Announcement {
     pub open: bool,
     /// The name that its host gave it, or nothing.
     pub name: String,
+    /// Whether it has a password.
+    pub locked: bool,
 }
 
 /// What a player can do about a game that was found.
@@ -65,6 +67,7 @@ impl Announcement {
             players,
             open,
             name: String::new(),
+            locked: false,
         }
     }
 
@@ -83,8 +86,9 @@ impl Announcement {
 
     /// The text of the announcement, as names and what goes by them. The port is not in it:
     /// an announcement carries the port of its service apart.
-    pub fn text(&self) -> [(&'static str, String); 6] {
+    pub fn text(&self) -> [(&'static str, String); 7] {
         let door = if self.open { "open" } else { "closed" };
+        let lock = if self.locked { "locked" } else { "none" };
         [
             ("game", format!("{:x}", self.game)),
             ("version", self.version.clone()),
@@ -92,13 +96,14 @@ impl Announcement {
             ("players", self.players.to_string()),
             ("door", door.to_string()),
             ("name", self.name.clone()),
+            ("lock", lock.to_string()),
         ]
     }
 
     /// Reads what a host says of its game, from the port of its service and from what its
     /// text has by each name. Anything can announce itself on a network: what doesn't read
     /// as a game is none. A later build may say more, which is left unread, and an earlier
-    /// one gave its game no name.
+    /// one gave its game neither a name nor a password.
     pub fn read<'a>(port: u16, said: impl Fn(&str) -> Option<&'a str>) -> Option<Self> {
         let told = |version: &&str| {
             (1..=VERSION_LENGTH).contains(&version.len())
@@ -116,6 +121,7 @@ impl Announcement {
                 _ => return None,
             },
             name: named(said("name").unwrap_or_default()),
+            locked: said("lock") == Some("locked"),
         })
     }
 }
@@ -404,7 +410,14 @@ mod tests {
             ..told.clone()
         };
         assert_eq!(read_with(&friday, &[]), Some(friday.clone()));
-        assert_eq!(read_with(&friday, &[("name", None)]), Some(told));
+        assert_eq!(read_with(&friday, &[("name", None)]), Some(told.clone()));
+        // It says whether it has a password, and an earlier build had none.
+        let locked = Announcement {
+            locked: true,
+            ..told.clone()
+        };
+        assert_eq!(read_with(&locked, &[]), Some(locked.clone()));
+        assert_eq!(read_with(&locked, &[("lock", None)]), Some(told));
         // Anything can claim a name: what is read of it is what a host could have typed.
         let claimed = format!(" {}\n", "W".repeat(NAME_LENGTH + 40));
         let read = read_with(&friday, &[("name", Some(&claimed))]).unwrap();

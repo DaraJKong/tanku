@@ -52,6 +52,7 @@ fn hear(games: &mut Vec<Game>, told: &Announcement, machine: Ipv4Addr) {
     let game = Game {
         id: told.game,
         name: told.name.clone(),
+        locked: told.locked,
         machine,
         address: written(machine, told.port),
         players: told.players,
@@ -136,6 +137,7 @@ mod tests {
             &mut game,
             SessionRequest::Host(Sign {
                 name: "Friday".into(),
+                password: "sesame".into(),
             }),
         );
         run_until("a lobby", &mut [&mut game], |games| {
@@ -161,11 +163,16 @@ mod tests {
         let address = format!("127.0.0.1:{port}");
         assert_eq!(games[0].address, address);
         assert_eq!((games[0].players, games[0].standing), (1, Standing::Open));
-        // It is listed under the name that its host gave it.
+        // It is listed under the name that its host gave it, as a game that has a password.
         assert_eq!(games[0].name, "Friday");
+        assert!(games[0].locked);
 
-        // What was found is where the game is joined.
-        ask(&mut guest, SessionRequest::Join(address.clone()));
+        // What was found is where the game is joined, with its password.
+        let password = "sesame".to_string();
+        ask(
+            &mut guest,
+            SessionRequest::JoinLocked(address.clone(), password),
+        );
         run_until("the lobby", &mut [&mut host, &mut guest], |games| {
             screen(games[1]) == Screen::Lobby
         });
@@ -225,6 +232,7 @@ mod tests {
             players: 3,
             open: false,
             name: "Friday".into(),
+            locked: true,
             ..told
         };
         hear(&mut games, &later, there);
@@ -235,6 +243,7 @@ mod tests {
             (3, Standing::Running)
         );
         assert_eq!(games[0].name, "Friday");
+        assert!(games[0].locked);
         // Another game is another row, with its port when it isn't the usual one.
         hear(&mut games, &Announcement::of(8, 4000, 1, true), there);
         assert_eq!(games.len(), 2);

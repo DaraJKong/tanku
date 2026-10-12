@@ -72,8 +72,8 @@ fn direct(
                     game: port.0,
                     web: web.0,
                 };
-                let opened =
-                    server::open(&mut commands, ports, &reach, &mut credentials, &sign.name);
+                let sign = (sign.name.as_str(), sign.password.as_str());
+                let opened = server::open(&mut commands, ports, &reach, &mut credentials, sign);
                 let Ok(web) = opened else {
                     notice.0 = Some(format!(
                         "Port {} is taken on this machine. Is another game open?",

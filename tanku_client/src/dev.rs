@@ -8,9 +8,12 @@
 //! mode and option, or those that it names, as `unlock seed free`, `tank TANK`, which builds the tank of the garage as the command line
 //! writes one,
 //! `host PORT NAME`, which opens a game for others to join, under a name if one is given, and
-//! takes browsers on the port after that one, `join ADDRESS`, which joins a game by its address or by what its host hands out
-//! for browsers,
-//! `type TEXT`, which presses the keys that write a text, `turn QUARTERS`, `peek ENEMY`,
+//! takes browsers on the port after that one, `password WORDS`, which gives a password to the
+//! game that `host` opens next, `port PORT`, which sets the port of a game that is hosted
+//! from the menus, `join ADDRESS PASSWORD`, which joins a game by its address or by what its
+//! host hands out for browsers, with a password if one is given,
+//! `type TEXT`, which presses the keys that write a text, `key NAME`, which presses `enter`,
+//! `tab` or `backspace`, `turn QUARTERS`, `peek ENEMY`,
 //! `look X Y`, `zoom METERS`, `clear`, `reach DX DY`, which puts the tank that far from the life
 //! that an arena left, `lives NUMBER`, `cross`, which carries the tank through the barrier of
 //! its sector,
@@ -99,6 +102,8 @@ struct Script {
     shield: f32,
     /// The label of the button that the script presses.
     press: Option<String>,
+    /// The password of the game that the script hosts next.
+    password: String,
 }
 
 /// The music that a scripted run would play, kept from the command `tape` on.
@@ -221,6 +226,7 @@ pub fn plugin(app: &mut App) {
         repair: 0.0,
         shield: 0.0,
         press: None,
+        password: String::new(),
     })
     .add_systems(PostStartup, draw_into_an_image)
     .add_systems(Update, run_script)
@@ -448,12 +454,50 @@ fn run_script(
                 web.0 = wanted.checked_add(1);
             }
             let name = words.get(2..).unwrap_or_default().join(" ");
-            session_requests.write(SessionRequest::Host(Sign { name }));
+            let password = std::mem::take(&mut script.password);
+            session_requests.write(SessionRequest::Host(Sign { name, password }));
         }
-        // Joins the game at an address, from the screen where a player types it.
+        // Gives a password to the game that the script hosts next.
+        "password" => script.password = words[1..].join(" "),
+        // The port of the game that this machine hosts from its menus. Browsers are taken
+        // on the port after it.
+        "port" => {
+            if let Ok(wanted) = word(1).parse::<u16>() {
+                port.0 = wanted;
+                web.0 = wanted.checked_add(1);
+            }
+        }
+        // Joins the game at an address, from the screen where a player types it, with a
+        // password if one follows the address.
         "join" => {
             screen.set(Screen::Join);
-            session_requests.write(SessionRequest::Join(word(1).to_string()));
+            let (at, password) = (word(1).to_string(), words.get(2..).unwrap_or_default());
+            session_requests.write(match password {
+                [] => SessionRequest::Join(at),
+                password => SessionRequest::JoinLocked(at, password.join(" ")),
+            });
+        }
+        // Presses a key that writes nothing: `enter`, `tab` or `backspace`.
+        "key" => {
+            let key = match word(1) {
+                "enter" => Some(Key::Enter),
+                "tab" => Some(Key::Tab),
+                "backspace" => Some(Key::Backspace),
+                _ => None,
+            };
+            match key {
+                Some(key) => {
+                    keys.write(KeyboardInput {
+                        key_code: KeyCode::Unidentified(NativeKeyCode::Unidentified),
+                        logical_key: key,
+                        state: ButtonState::Pressed,
+                        text: None,
+                        repeat: false,
+                        window: Entity::PLACEHOLDER,
+                    });
+                }
+                None => warn!("no such key: {}", word(1)),
+            }
         }
         // Presses the keys that write a text, one after the other.
         "type" => {
