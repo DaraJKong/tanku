@@ -10,7 +10,7 @@ use bevy::prelude::*;
 use tanku_core::{
     CorePlugin,
     map::SectorKind,
-    modes::Difficulty,
+    modes::{Difficulty, Unlock},
     rules::{APPEAR_ROOM, SOLO_LIVES, TICK},
     seed,
     sim::{
@@ -299,11 +299,14 @@ pub fn runs(asked: &Asked) -> Report {
 
     let mut scores = table(
         "Runs",
-        "The sectors that a run cleared: their mean, the score that one run in ten, in four, \
-         in two stayed under, and so on, and the best. Then how the runs ended: with the \
-         last life, in a fight that neither side could end, or at the last sector of the \
-         trial. Then the median of their length in minutes: of their fights alone, and with \
-         an estimate of the drive between them.",
+        &format!(
+            "The sectors that a run cleared: their mean, the score that one run in ten, in \
+             four, in two stayed under, and so on, and the best. Then how the runs ended: \
+             with the last of the {SOLO_LIVES} lives of a single player, in a fight that \
+             neither side could end, or at the last sector of the trial. Then the median of \
+             their length in minutes: of their fights alone, and with an estimate of the \
+             drive between them."
+        ),
         named(&[
             "runs",
             "mean",
@@ -327,8 +330,14 @@ pub fn runs(asked: &Asked) -> Report {
         .collect();
     let mut reached = table(
         "Sectors cleared",
-        "The runs that cleared a sector. Clearing sector 5 unlocks arena mode, sector 10 the \
-         chosen seed, sector 20 free mode and sector 30 hard mode.",
+        &format!(
+            "The runs that cleared a sector. Clearing sector {} unlocks arena mode, sector {} \
+             the chosen seed, sector {} free mode and sector {} hard mode.",
+            Unlock::ArenaMode.sector(),
+            Unlock::ChosenSeed.sector(),
+            Unlock::FreeMode.sector(),
+            Unlock::HardMode.sector(),
+        ),
         named(
             &marks
                 .iter()
@@ -503,10 +512,10 @@ pub fn runs(asked: &Asked) -> Report {
     Report {
         title: "Runs".to_string(),
         asked: format!(
-            "Version {}, {} mode, one player in the standard tank with three lives, from the \
-             start bay, on {} seeds: {} to {}. A run is stopped once it has cleared sector \
-             {}, or when a fight lasts {} s. The player doesn't drive the corridor: the tank \
-             is put through each barrier once its sector is cleared.",
+            "Version {}, {} mode, one player in the standard tank, from the start bay, on {} \
+             seeds: {} to {}. A run is stopped once it has cleared sector {}, or when a fight \
+             lasts {} s. The player doesn't drive the corridor: the tank is put through each \
+             barrier once its sector is cleared.",
             seed::VERSION,
             asked.difficulty.key(),
             asked.seeds,
@@ -544,9 +553,10 @@ mod tests {
             journey("TRIAL0", Difficulty::Normal, Reference::Regular, &asked)
         );
         assert!(run.cleared <= 6 && run.fought > 0.0);
-        // A run that was lost lost three tanks, give or take the lives that arenas left.
+        // A run that was lost lost a tank for each life, give or take the lives that
+        // arenas left.
         match run.end {
-            End::Lost => assert!(run.deaths.len() >= 3),
+            End::Lost => assert!(run.deaths.len() >= SOLO_LIVES as usize),
             End::Finished => assert_eq!(run.cleared, 6),
             End::Stalled => {}
         }
