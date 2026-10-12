@@ -150,6 +150,19 @@ pub fn experience(sector: u32, difficulty: Difficulty) -> f32 {
     1.0 - (-(ahead(sector.max(1), difficulty) as f32 - 1.0) / every).exp()
 }
 
+/// The delay before a brain of this experience reacts, in seconds: between the one of a
+/// novice and the one of a flawless brain.
+pub fn reaction_delay(experience: f32) -> f32 {
+    let (novice, flawless) = BALANCE.experience.reaction;
+    novice - (novice - flawless) * experience
+}
+
+/// The largest aiming error of a brain of this experience, in degrees.
+pub fn aim_error(experience: f32) -> f32 {
+    let (novice, flawless) = BALANCE.experience.aim;
+    novice - (novice - flawless) * experience
+}
+
 /// A value that goes from the first of two in sector 1 to the second in the harshest
 /// sector, and stays there.
 fn harshness(sector: u32, (easy, harsh): (i32, i32)) -> i32 {

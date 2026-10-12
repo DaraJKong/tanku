@@ -7,6 +7,7 @@ use std::f32::consts::{PI, TAU};
 
 use bevy::prelude::*;
 use tanku_core::{
+    balance::{self, BALANCE},
     geom,
     modes::Difficulty,
     progression,
@@ -25,11 +26,14 @@ use crate::{
     tanks,
 };
 
+/// How the brains fight, as the balance says it.
+const ENEMY: balance::Enemy = BALANCE.enemy;
+
 /// Distances a brain of tier 1 or more tries to keep from the player.
-const NEAR: f32 = 8.0;
-const FAR: f32 = 14.0;
+const NEAR: f32 = ENEMY.keep.0;
+const FAR: f32 = ENEMY.keep.1;
 /// A brain keeps its target until another player is this many times nearer.
-const TARGET_HOLD: f32 = 1.25;
+const TARGET_HOLD: f32 = ENEMY.hold;
 /// How far ahead a brain looks for obstacles.
 const LOOKAHEAD: f32 = 2.5;
 /// Directions tried when looking for a bank shot.
@@ -37,39 +41,39 @@ const BANK_SHOT_STEPS: u32 = 180;
 /// How far a bullet is followed when looking for a bank shot.
 const BANK_SHOT_RANGE: f32 = 60.0;
 /// How far ahead a brain sees a bullet coming, in seconds.
-const FORESIGHT: f32 = 1.0;
+const FORESIGHT: f32 = ENEMY.foresight;
 /// A bullet whose path comes this close to the middle of a tank is on course to hit it.
 const ON_COURSE: f32 = TANK_RADIUS + 0.4;
 /// A soldier or a veteran raises its shield this long before a bullet hits.
-const LAST_MOMENT: f32 = 0.2;
+const LAST_MOMENT: f32 = ENEMY.last_moment;
 /// The room that a veteran wants between its tank and a bullet to count on being missed.
-const DODGE_ROOM: f32 = 0.15;
+const DODGE_ROOM: f32 = ENEMY.room;
 /// The ways that a veteran tries when the way it meant to drive brings a bullet too close:
 /// turned from that way by so many degrees, the nearest to it first.
 const WAYS_OUT: [f32; 7] = [45.0, -45.0, 90.0, -90.0, 135.0, -135.0, 180.0];
 /// A veteran fires at a bullet once its shot will pass this close to the middle of it.
-const PARRY_AIM: f32 = 0.3;
+const PARRY_AIM: f32 = ENEMY.parry;
 /// A brain lays mines by reflex when the player is this close.
-const MINE_REFLEX: f32 = 6.0;
+const MINE_REFLEX: f32 = ENEMY.mine_reflex;
 /// A veteran lays mines in the way of a player who is no further than this.
-const MINING_RANGE: f32 = 20.0;
+const MINING_RANGE: f32 = ENEMY.mine_range;
 /// A veteran lays no mine this close to another one.
-const MINE_SPACING: f32 = 5.0;
+const MINE_SPACING: f32 = ENEMY.mine_apart;
 /// A player who comes at a tank this fast charges it.
-const CHARGE_SPEED: f32 = 3.0;
+const CHARGE_SPEED: f32 = ENEMY.charge;
 /// The distances that an ace keeps from a player who has rounds: far enough to see their
 /// shots coming and get out of the way.
-const BAIT: (f32, f32) = (11.0, 14.0);
+const BAIT: (f32, f32) = ENEMY.bait;
 /// The distances that it keeps from a player who has none: close enough for its own shots
 /// to be hard to dodge.
-const PRESS: (f32, f32) = (5.0, 8.0);
+const PRESS: (f32, f32) = ENEMY.press;
 /// It presses a player until the player has this many rounds again.
-const PRESS_UNTIL: u8 = 3;
+const PRESS_UNTIL: u8 = ENEMY.until;
 /// The distances that it keeps when it is the last of its group.
-const RETREAT: (f32, f32) = (16.0, 22.0);
+const RETREAT: (f32, f32) = ENEMY.retreat;
 /// An ace wants at least this much of a turn around the player between itself and the
 /// nearest ally, so that their fire crosses.
-const CROSSFIRE: f32 = PI / 2.0;
+const CROSSFIRE: f32 = ENEMY.crossfire;
 /// How far a shot is followed to find where it ends.
 const SHOT_RANGE: f32 = 80.0;
 /// A tank whose bullets explode holds its fire while its own tank or an ally is this close to
@@ -135,14 +139,15 @@ impl Brain {
         }
     }
 
-    /// Delay before the brain reacts: 0.50 s for a novice, 0.12 s for a flawless brain.
+    /// Delay before the brain reacts: from the one of a novice to the one of a flawless
+    /// brain.
     pub(crate) fn reaction_delay(&self) -> f32 {
-        0.50 - 0.38 * self.experience
+        progression::reaction_delay(self.experience)
     }
 
-    /// Largest aiming error: 8 degrees for a novice, 1 degree for a flawless brain.
+    /// Largest aiming error, between those of a novice and of a flawless brain.
     fn max_aim_error(&self) -> f32 {
-        (8.0 - 7.0 * self.experience).to_radians()
+        progression::aim_error(self.experience).to_radians()
     }
 
     /// Keeps an eye on the bullets that come near the tank, each for as long as it does.
@@ -1260,37 +1265,5 @@ mod tests {
         assert_eq!(steer(&field, &tank, from, Vec2::NEG_X), Vec2::NEG_X);
         let around = steer(&field, &tank, from, Vec2::X);
         assert!(around != Vec2::X && around != Vec2::ZERO);
-    }
-
-    #[test]
-    fn the_balance_file_holds_the_numbers_of_the_brains() {
-        let enemy = tanku_core::balance::BALANCE.enemy;
-        assert_eq!(enemy.keep, (NEAR, FAR));
-        assert_eq!(enemy.hold, TARGET_HOLD);
-        assert_eq!(enemy.foresight, FORESIGHT);
-        assert_eq!(enemy.last_moment, LAST_MOMENT);
-        assert_eq!(enemy.room, DODGE_ROOM);
-        assert_eq!(enemy.parry, PARRY_AIM);
-        assert_eq!(enemy.mine_reflex, MINE_REFLEX);
-        assert_eq!(enemy.mine_range, MINING_RANGE);
-        assert_eq!(enemy.mine_apart, MINE_SPACING);
-        assert_eq!(enemy.charge, CHARGE_SPEED);
-        assert_eq!(enemy.bait, BAIT);
-        assert_eq!(enemy.press, PRESS);
-        assert_eq!(enemy.until, PRESS_UNTIL);
-        assert_eq!(enemy.retreat, RETREAT);
-        assert_eq!(enemy.crossfire, CROSSFIRE);
-        // What experience makes of the reaction and of the aim, at every experience.
-        let (reaction, aim) = {
-            let experience = tanku_core::balance::BALANCE.experience;
-            (experience.reaction, experience.aim)
-        };
-        for step in 0..=1000 {
-            let experience = step as f32 / 1000.0;
-            let delay = reaction.0 - (reaction.0 - reaction.1) * experience;
-            assert_eq!(delay, 0.50 - 0.38 * experience, "{experience}");
-            let error = (aim.0 - (aim.0 - aim.1) * experience).to_radians();
-            assert_eq!(error, (8.0 - 7.0 * experience).to_radians(), "{experience}");
-        }
     }
 }
