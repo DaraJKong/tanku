@@ -215,6 +215,10 @@ mod tests {
             "the tank of a player has no brain"
         );
         assert_eq!(refused("engine=9"), "engine goes up to 7");
+        assert_eq!(
+            refused("engine=1,seeking=1,exploding=1"),
+            "a tank fires one type of bullet, not seeking and exploding"
+        );
         assert_eq!(refused("engine=1,armor=2"), "`armor` is not a stat");
         assert_eq!(refused("engine=fast"), "`fast` is not a level");
         assert_eq!(refused("engine=1,engine=2"), "engine is named twice");
@@ -231,6 +235,9 @@ mod tests {
         assert!(told.contains(A_TANK));
         assert!(told.contains("  engine    0 2 4 6 8 11 14 17"));
         assert!(told.contains("  piercing  0 4"));
+        assert!(told.contains("  seeking   0 4"));
+        assert!(told.contains("  splitting 0 6"));
+        assert!(told.contains("  exploding 0 8"));
         assert!(!told.contains("turret") && !told.contains("brain"));
         assert_eq!(told.lines().count(), 3 + Stat::GARAGE.len());
     }

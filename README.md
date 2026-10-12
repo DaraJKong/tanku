@@ -131,6 +131,11 @@ A tank is written as its stats with their levels, with commas between them. A st
 | Gun | Bullets at 19 m/s, and neither a bounce, mines nor a shield | `engine=4,tracks=5,muzzle=7,magazine=4,loader=6` |
 | Bouncer | Piercing bullets that bounce three times | `engine=4,tracks=4,muzzle=3,magazine=3,loader=5,ricochet=3,piercing=1` |
 | Runner | 8 m/s, and a shield every 6 s | `engine=7,tracks=6,muzzle=2,magazine=2,loader=5,shield=5` |
+| Seeker | Seeking bullets that bounce twice | `engine=4,tracks=5,muzzle=2,magazine=4,loader=6,ricochet=2,seeking=1` |
+| Flanker | Splitting bullets whose halves bounce once, and a mine | `engine=4,tracks=5,muzzle=2,magazine=4,loader=6,ricochet=1,splitting=1,mines=1` |
+| Grenadier | Exploding bullets, and a shield every 10 s | `engine=4,tracks=5,muzzle=2,magazine=4,loader=6,exploding=1,shield=1` |
+
+A tank fires one type of bullet: `piercing`, `seeking`, `splitting` and `exploding` are four stats of one level, and the game refuses a tank that has two of them.
 
 ```bash
 cargo run -p tanku_client -- --playtest --seed GARAGE --tank engine=4,tracks=5,muzzle=7,magazine=4,loader=6

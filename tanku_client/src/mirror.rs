@@ -25,12 +25,12 @@ use tanku_core::{
     protocol::Told,
     rules::{BULLET_RADIUS, MINE_ARMING_TIME, SHIELD_RADIUS, TANK_RADIUS, TICK, TICK_RATE},
     sim::{
-        Barrier, Block, Bullet, ExplosiveCrate, Gun, Mine, MineState, Motion, Position,
-        PreviousPosition, Run, Sector, Shield, SimEvent, Tank, TankCommand, Wreck,
+        Barrier, Block, Bullet, Enemy, ExplosiveCrate, Gun, Kind, Mine, MineState, Motion,
+        Position, PreviousPosition, Run, Sector, Shield, SimEvent, Tank, TankCommand, Wreck,
     },
 };
 use tanku_server::{
-    bullets::{self, Flight},
+    bullets::{self, Flight, Quarry},
     field::{self, Field},
     tanks::{self, Bubble},
 };
@@ -550,7 +550,7 @@ fn foresee(
         ),
         With<Own>,
     >,
-    others: Query<(&Position, &Tank), (Without<Own>, Without<Wreck>)>,
+    others: Query<(&Position, &Tank, Option<&Enemy>), (Without<Own>, Without<Wreck>)>,
     mut bullets: Query<
         (
             &mut Bullet,
@@ -562,6 +562,13 @@ fn foresee(
     >,
 ) {
     let now = timeline.tick().0;
+    // The tanks that a seeking bullet of the player may leave a wall toward, where the guest
+    // shows them.
+    let quarry: Vec<Quarry> = others
+        .iter()
+        .filter(|(.., enemy)| enemy.is_none_or(|enemy| enemy.awake))
+        .map(|(position, tank, _)| (position.0, tank.team))
+        .collect();
     for (entity, tank, command, told, shown, mut ahead, mut nudge, wreck) in &mut own {
         let (told_position, told_motion, told_gun, told_shield, confirmed) = told;
         let (mut position, mut previous, mut motion, mut gun, mut shield) = shown;
@@ -603,7 +610,7 @@ fn foresee(
             // The tanks that run are in its way, and the wrecks are not.
             let others = others
                 .iter()
-                .map(|(other, tank)| (other.0, tank.genome.top_speed() > 0.0));
+                .map(|(other, tank, _)| (other.0, tank.genome.top_speed() > 0.0));
             tanks::give_way(&mut helm.place, others);
             field.push_out(tank, &mut helm.place, &mut helm.moving.velocity);
             let worked = tanks::step_gun(&mut helm.gun, &tank.genome, asked);
@@ -670,7 +677,7 @@ fn foresee(
                 continue;
             }
             let mut flying = *bullet;
-            let flew = flown(&field, &mut place.0, &mut flying, 1);
+            let flew = flown(&field, &mut place.0, &mut flying, 1, &quarry);
             before.0 = flew.way[0];
             bullet.set_if_neq(flying);
             if flew.spent {
@@ -705,7 +712,7 @@ fn foresee(
                             let (mut at, mut bullet) = (shot.at, shot.bullet);
                             // The bullet flies on in the tick of its shot, and in each since.
                             let ticks = 1 + now.wrapping_sub(tick);
-                            let flew = flown(&field, &mut at, &mut bullet, ticks);
+                            let flew = flown(&field, &mut at, &mut bullet, ticks, &quarry);
                             let state = Flown {
                                 heard: tick,
                                 spent: flew.spent,
@@ -750,16 +757,32 @@ struct Flew {
     spent: bool,
 }
 
-/// Flies a bullet for some ticks, past what stands still.
-fn flown(field: &Field, position: &mut Vec2, bullet: &mut Bullet, ticks: u32) -> Flew {
+/// Flies a bullet for some ticks, past what stands still. A seeking bullet leaves a wall
+/// toward the tank that it seeks, where the guest shows that tank. A splitting bullet is at
+/// its end once its time is up: the host tells of the two that it becomes.
+fn flown(
+    field: &Field,
+    position: &mut Vec2,
+    bullet: &mut Bullet,
+    ticks: u32,
+    quarry: &[Quarry],
+) -> Flew {
     let mut flew = Flew {
         way: vec![*position],
         spent: false,
     };
     for _ in 0..ticks {
+        if let Kind::Splitting { fuse, bounces } = bullet.kind {
+            if fuse <= TICK {
+                flew.spent = true;
+                break;
+            }
+            let fuse = fuse - TICK;
+            bullet.kind = Kind::Splitting { fuse, bounces };
+        }
         let from = *position;
         let distance = bullet.velocity.length() * TICK;
-        let flight = bullets::fly_past_walls(field, position, bullet, distance);
+        let flight = bullets::fly_past_walls(field, position, bullet, distance, quarry);
         flew.way.clear();
         flew.way.push(from);
         flew.way.extend(&flight.bounces);
@@ -794,6 +817,7 @@ fn fly(
     mut echoes: ResMut<Echoes>,
     mut events: MessageWriter<SimEvent>,
     own: Query<(&Position, &Shield), (With<Ahead>, Without<Told<Bullet>>, Without<Wreck>)>,
+    tanks: Query<(&Tank, &Position, Option<&Enemy>, Has<Wreck>), Without<Told<Bullet>>>,
     mut told: Query<
         (
             Entity,
@@ -811,6 +835,7 @@ fn fly(
     >,
 ) {
     let now = timeline.tick().0;
+    let quarry = bullets::quarry(tanks.iter());
     let own = own.single().ok().map(|(position, shield)| {
         let radius = if shield.is_active() {
             SHIELD_RADIUS
@@ -847,7 +872,7 @@ fn fly(
         let afresh = || {
             let (mut place, mut bullet) = (told_position.0.0, told_bullet.0);
             let ticks = Some(now.wrapping_sub(told_at)).filter(|ticks| *ticks <= REACH);
-            let flew = flown(&field, &mut place, &mut bullet, ticks.unwrap_or(0));
+            let flew = flown(&field, &mut place, &mut bullet, ticks.unwrap_or(0), &quarry);
             (bullet, place, flew)
         };
         let Some((mut bullet, mut position, mut previous, mut state)) = shown else {
@@ -881,7 +906,7 @@ fn fly(
             meet(&mut state, &flew, &flying);
         } else if !state.spent {
             let mut flying = *bullet;
-            let flew = flown(&field, &mut position.0, &mut flying, 1);
+            let flew = flown(&field, &mut position.0, &mut flying, 1, &quarry);
             previous.0 = flew.way[0];
             bullet.set_if_neq(flying);
             state.spent = flew.spent;

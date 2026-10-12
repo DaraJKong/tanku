@@ -145,7 +145,7 @@ impl Tape {
 struct Exhibit;
 
 /// The stats by the names that `showcase` takes.
-const STATS: [(&str, Stat); 12] = [
+const STATS: [(&str, Stat); 15] = [
     ("engine", Stat::Engine),
     ("tracks", Stat::Tracks),
     ("turret", Stat::Turret),
@@ -156,6 +156,9 @@ const STATS: [(&str, Stat); 12] = [
     ("mines", Stat::Mines),
     ("shield", Stat::Shield),
     ("piercing", Stat::Piercing),
+    ("seeking", Stat::Seeking),
+    ("splitting", Stat::Splitting),
+    ("exploding", Stat::Exploding),
     ("brain", Stat::Brain),
     ("ballistics", Stat::Ballistics),
 ];
@@ -311,7 +314,8 @@ fn play(
 }
 
 /// Puts tanks on display in rows of six from the north of the start bay, in place of those
-/// that were there. The tanks do nothing.
+/// that were there: the bay has room for six rows, which is three tanks of each class. The
+/// tanks do nothing.
 fn display(
     commands: &mut Commands,
     exhibits: &Query<Entity, With<Exhibit>>,
@@ -322,7 +326,7 @@ fn display(
     }
     for (place, genome) in genomes.enumerate() {
         let (row, column) = (place / 6, place % 6);
-        let at = Vec2::new(column as f32 * 2.2 - 5.5, 12.5 - row as f32 * 2.8);
+        let at = Vec2::new(column as f32 * 2.2 - 5.5, 14.0 - row as f32 * 2.5);
         let facing = std::f32::consts::FRAC_PI_2;
         commands.spawn((
             Exhibit,
@@ -573,6 +577,11 @@ fn run_script(
                 for (other, shown) in SHOWN_ON {
                     genome.set(other, shown);
                 }
+                // A bullet that explodes never bounces, so no tank that the game builds
+                // has a ring behind its bell.
+                if stat == Stat::Exploding {
+                    genome.set(Stat::Ricochet, 0);
+                }
                 genome.set(stat, level);
                 genome
             });
@@ -704,6 +713,7 @@ fn run_script(
                             bounces_left,
                             pierces_left,
                             bounced: false,
+                            kind: default(),
                         },
                         Position(position.0 + offset),
                         PreviousPosition(position.0 + offset),
@@ -732,6 +742,7 @@ fn run_script(
                         bounces_left: 1,
                         pierces_left,
                         bounced: false,
+                        kind: default(),
                     },
                     Position(position.0 + offset),
                     PreviousPosition(position.0 + offset),

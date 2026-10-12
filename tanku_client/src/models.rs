@@ -15,7 +15,7 @@ use bevy::prelude::*;
 use tanku_core::{
     rules::SHIELD_RADIUS,
     sim::{Enemy, Motion, Player, Position, Reserve, Run, Shield, Tank, Wreck},
-    stats::{Class, Genome, Stat},
+    stats::{Ammo, Class, Genome, Stat},
 };
 
 use crate::{
@@ -56,6 +56,20 @@ const LENS: Vec2 = Vec2::new(0.14, 0.11);
 /// Radius and length of the pointed tip of a barrel, and how far into the barrel it starts.
 const TIP: Vec2 = Vec2::new(0.1, 0.32);
 const TIP_SEAT: f32 = 0.02;
+/// Height of the middle of the barrel above the turret ring.
+const BORE: f32 = 0.18;
+/// How far behind its point the arms of a chevron end: the chevrons that stand in the place
+/// of the rings on a muzzle whose bullets seek.
+const CHEVRON: f32 = 0.09;
+/// Length and width of the cap on a muzzle whose bullets split, the width of its slit and how
+/// far into the cap the slit starts.
+const CAP: Vec2 = Vec2::new(0.32, 0.28);
+const SLIT: f32 = 0.044;
+const SLIT_SEAT: f32 = 0.04;
+/// The bell of a muzzle whose bullets explode: how far before the end of the barrel it
+/// starts and how far past it reaches, and the height and the width of its mouth.
+const BELL: (f32, f32) = (0.09, 0.21);
+const BELL_MOUTH: Vec2 = Vec2::new(0.3, 0.48);
 
 /// How far above the sheet an outline lies, and its turret above its hull: over the marks
 /// on the floor, and too little to show.
@@ -138,7 +152,11 @@ fn setup(mut commands: Commands, mut materials: ResMut<Assets<StandardMaterial>>
 
 /// The hue of a class, in degrees: teal for a sniper, yellow for a scout, green for a
 /// tactician, purple for a trickster, orange for a lancer, pink for a sapper and red for a
-/// gunner. A tank without a class has none: it is gray. Blue is the players'.
+/// gunner. A tank without a class has none: it is gray. The bright blue is the players'.
+///
+/// The wheel has no room left for the three classes of the newer bullets, which are told by
+/// how dark they are as much as by their hue: the magenta of a seeker, the blue of a flanker,
+/// which is not the players', and the brown of a grenadier, at the hue of the lancer.
 pub fn class_hue(class: Class) -> Option<f32> {
     match class {
         Class::None => None,
@@ -149,17 +167,51 @@ pub fn class_hue(class: Class) -> Option<f32> {
         Class::Lancer => Some(26.0),
         Class::Sapper => Some(322.0),
         Class::Gunner => Some(0.0),
+        Class::Seeker => Some(297.0),
+        Class::Flanker => Some(238.0),
+        Class::Grenadier => Some(24.0),
     }
+}
+
+/// The saturation and the lightness of a tank of a class: of one that has no point, and of
+/// one that has a hundred. Weak tanks are pale and strong ones saturated. The seeker, the
+/// flanker and the grenadier are darker than the others from one end to the other, and the
+/// grenadier is almost black.
+fn shades(class: Class) -> ((f32, f32), (f32, f32)) {
+    match class {
+        Class::Seeker => ((0.40, 0.52), (0.95, 0.30)),
+        Class::Flanker => ((0.45, 0.50), (0.85, 0.34)),
+        Class::Grenadier => ((0.35, 0.24), (0.60, 0.12)),
+        _ => ((0.40, 0.68), (0.95, 0.46)),
+    }
+}
+
+/// Whether the color of a class is too dark for a line in dashes to show on the sheet.
+pub fn is_dark(class: Class) -> bool {
+    matches!(class, Class::Seeker | Class::Flanker | Class::Grenadier)
 }
 
 /// The color of an enemy: its hue tells its class, and its intensity tells how many points
 /// it has. Even the weakest tank shows its hue.
 pub fn enemy_color(genome: &Genome) -> Color {
     let strength = (genome.budget as f32 / 100.0).clamp(0.0, 1.0);
-    let lightness = 0.68 - 0.22 * strength;
+    let (weak, strong) = shades(genome.class);
+    let saturation = weak.0 + (strong.0 - weak.0) * strength;
+    let lightness = weak.1 + (strong.1 - weak.1) * strength;
     match class_hue(genome.class) {
-        Some(hue) => Color::hsl(hue, 0.4 + 0.55 * strength, lightness),
+        Some(hue) => Color::hsl(hue, saturation, lightness),
         None => Color::hsl(0.0, 0.0, lightness),
+    }
+}
+
+/// The color of the outline in dashes of an enemy that isn't there yet: its own color, or
+/// the pale tint of it for the classes whose color is too dark to show in dashes.
+pub fn outline_color(genome: &Genome) -> Color {
+    let color = enemy_color(genome);
+    if is_dark(genome.class) {
+        accent_color(color)
+    } else {
+        color
     }
 }
 
@@ -227,6 +279,41 @@ fn antennas(genome: &Genome) -> impl Iterator<Item = Vec2> {
 fn muzzle_rings(genome: &Genome) -> impl Iterator<Item = f32> {
     let tip = barrel_tip(genome);
     (0..genome.bounces()).map(move |ring| tip - 0.08 - 0.13 * ring as f32)
+}
+
+/// The plan of the two arms of the chevron that stands in the place of a ring: the four
+/// corners of each, along the barrel and across it. Its point is where the front of the ring
+/// would be, and an arm is as thick as a ring.
+fn chevron(ring: f32) -> [[Vec2; 4]; 2] {
+    let half = RING.y / 2.0;
+    // Along the barrel, a slanted arm is longer than it is thick.
+    let thick = RING.x * (1.0 + (CHEVRON / half).powi(2)).sqrt() / 2.0;
+    let point = ring + RING.x / 2.0;
+    [-1.0, 1.0].map(|side| {
+        [
+            Vec2::new(point - thick, 0.0),
+            Vec2::new(point + thick, 0.0),
+            Vec2::new(point - CHEVRON + thick, side * half),
+            Vec2::new(point - CHEVRON - thick, side * half),
+        ]
+    })
+}
+
+/// The plan of the bell of a muzzle: its four corners, from the barrel to its mouth.
+fn bell(genome: &Genome) -> [Vec2; 4] {
+    let tip = barrel_tip(genome);
+    let (from, to) = (tip - BELL.0, tip + BELL.1);
+    [
+        Vec2::new(from, -BARREL / 2.0),
+        Vec2::new(from, BARREL / 2.0),
+        Vec2::new(to, BELL_MOUTH.y / 2.0),
+        Vec2::new(to, -BELL_MOUTH.y / 2.0),
+    ]
+}
+
+/// How far in front of the middle of the turret the middle of the cap of a muzzle is.
+fn cap(genome: &Genome) -> f32 {
+    barrel_tip(genome) - TIP_SEAT + CAP.x / 2.0
 }
 
 /// Where the vents are on the roof of the turret: along it and across it, from its middle.
@@ -325,7 +412,8 @@ pub fn hull_drawing(genome: &Genome, color: Color) -> Draft {
 }
 
 /// The drawing of the turret of a tank, with what it carries: the barrel with its rings and
-/// its tip, the drum, the vents and the sight. Heights are above the turret ring.
+/// what its muzzle says of its bullets, the drum, the vents and the sight. Heights are above
+/// the turret ring.
 pub fn turret_drawing(genome: &Genome, color: Color) -> Draft {
     let mut draft = Draft::default();
     let (side, accent, dark) = (theme::side(color), accent_color(color), theme::DARK_METAL);
@@ -351,7 +439,7 @@ pub fn turret_drawing(genome: &Genome, color: Color) -> Draft {
     }
     // Muzzle: the faster the bullet, the longer the barrel.
     let (barrel, tip) = (barrel_length(genome), barrel_tip(genome));
-    let middle = Vec3::new(tip - barrel / 2.0, 0.18, 0.0);
+    let middle = Vec3::new(tip - barrel / 2.0, BORE, 0.0);
     draft.solid(middle, Vec3::new(barrel, BARREL, BARREL), dark, dark);
     draft.frame(
         middle + Vec3::Y * (0.08 + LIFT),
@@ -359,14 +447,51 @@ pub fn turret_drawing(genome: &Genome, color: Color) -> Draft {
         BARREL_LINE,
         theme::LINE,
     );
-    // Ricochet: one ring around the muzzle per bounce.
+    let (ammo, pale) = (genome.ammo(), theme::side(accent));
+    // Ricochet: one ring around the muzzle per bounce. Seeking: a chevron in the place of
+    // each ring, because its bullets seek at their bounces.
+    let (foot, top) = (BORE - RING.y / 2.0, BORE + RING.y / 2.0);
     for ring in muzzle_rings(genome) {
-        let center = Vec3::new(ring, 0.18, 0.0);
-        draft.solid(center, Vec3::new(RING.x, RING.y, RING.y), color, side);
+        if ammo == Ammo::Seeking {
+            for arm in chevron(ring) {
+                draft.prism(&arm.map(|corner| raised(corner, top)), foot, accent, pale);
+            }
+        } else {
+            let center = Vec3::new(ring, BORE, 0.0);
+            draft.solid(center, Vec3::new(RING.x, RING.y, RING.y), color, side);
+        }
     }
-    // Piercing: a pointed tip on the barrel.
-    if genome.piercing() > 0 {
-        draft.point(Vec3::new(tip - TIP_SEAT, 0.18, 0.0), TIP.x, TIP.y, accent);
+    match ammo {
+        Ammo::Normal | Ammo::Seeking => {}
+        // Piercing: a pointed tip on the barrel.
+        Ammo::Piercing => {
+            draft.point(Vec3::new(tip - TIP_SEAT, BORE, 0.0), TIP.x, TIP.y, accent);
+        }
+        // Splitting: a short cap on the muzzle, with a slit that shows on its top and on
+        // its end.
+        Ammo::Splitting => {
+            let middle = Vec3::new(cap(genome), BORE, 0.0);
+            draft.solid(middle, Vec3::new(CAP.x, CAP.y, CAP.y), accent, pale);
+            let slit = Vec3::new(CAP.x - SLIT_SEAT + LIFT, CAP.y + 2.0 * LIFT, SLIT);
+            let seat = Vec3::X * (SLIT_SEAT + LIFT) / 2.0;
+            draft.solid(middle + seat, slit, dark, dark);
+        }
+        // Exploding: the muzzle flares into a bell, whose mouth is dark.
+        Ammo::Exploding => {
+            let plan = bell(genome);
+            let height = |corner: usize| if corner < 2 { BARREL } else { BELL_MOUTH.x };
+            let roof: Vec<Vec3> = (0..4)
+                .map(|corner| raised(plan[corner], BORE + height(corner) / 2.0))
+                .collect();
+            let floor: Vec<Vec3> = (0..4)
+                .map(|corner| raised(plan[corner], BORE - height(corner) / 2.0))
+                .collect();
+            draft.face(&roof, accent);
+            for (near, far) in [(0, 3), (1, 2)] {
+                draft.face(&[floor[near], floor[far], roof[far], roof[near]], pale);
+            }
+            draft.face(&[floor[3], floor[2], roof[2], roof[3]], dark);
+        }
     }
     let roof = ROOF;
     draft.post(Vec3::new(0.0, roof / 2.0, 0.0), radius, roof, color, side);
@@ -459,19 +584,43 @@ pub fn turret_outline(genome: &Genome, outline: &Outline) -> Draft {
     let size = Vec2::new(barrel, BARREL);
     draft.plate(middle + layer(0), size, outline.sheet);
     draft.dashed_frame(middle + layer(1), size, BARREL_LINE, outline.line);
-    // Ricochet: a bar across the muzzle per bounce.
+    let ammo = genome.ammo();
+    // Ricochet: a bar across the muzzle per bounce. Seeking: a chevron in its place.
     for ring in muzzle_rings(genome) {
-        draft.plate(Vec3::X * ring + layer(2), RING, outline.line);
+        if ammo == Ammo::Seeking {
+            for arm in chevron(ring) {
+                let corners = arm.map(|corner| raised(corner, 0.0) + layer(2));
+                draft.face(&corners, accent);
+            }
+        } else {
+            draft.plate(Vec3::X * ring + layer(2), RING, outline.line);
+        }
     }
-    // Piercing: the pointed tip.
-    if genome.piercing() > 0 {
-        let base = Vec3::X * (tip - TIP_SEAT) + layer(2);
-        let corners = [
-            base - Vec3::Z * TIP.x,
-            base + Vec3::Z * TIP.x,
-            base + Vec3::X * TIP.y,
-        ];
-        draft.face(&corners, accent);
+    match ammo {
+        Ammo::Normal | Ammo::Seeking => {}
+        // Piercing: the pointed tip.
+        Ammo::Piercing => {
+            let base = Vec3::X * (tip - TIP_SEAT) + layer(2);
+            let corners = [
+                base - Vec3::Z * TIP.x,
+                base + Vec3::Z * TIP.x,
+                base + Vec3::X * TIP.y,
+            ];
+            draft.face(&corners, accent);
+        }
+        // Splitting: the cap, and its slit.
+        Ammo::Splitting => {
+            let middle = Vec3::X * cap(genome);
+            draft.plate(middle + layer(2), CAP, accent);
+            let slit = Vec2::new(CAP.x - SLIT_SEAT, SLIT);
+            let seat = Vec3::X * SLIT_SEAT / 2.0;
+            draft.plate(middle + seat + layer(3), slit, outline.sheet);
+        }
+        // Exploding: the bell.
+        Ammo::Exploding => {
+            let corners = bell(genome).map(|corner| raised(corner, 0.0) + layer(2));
+            draft.face(&corners, accent);
+        }
     }
     draft.disc(layer(2), radius, outline.body);
     draft.dashed_ring(layer(3), (radius - LINE, radius), outline.line);
@@ -550,8 +699,34 @@ pub fn anchors(genome: &Genome) -> Vec<Anchor> {
         let rim = Vec3::new(-0.6, 0.0, -0.8) * reach + Vec3::Y * (deck + 0.04);
         anchors.push(on_hull(Stat::Shield, rim));
     }
-    if has(Stat::Piercing) {
-        anchors.push(on_turret(Stat::Piercing, Vec3::new(tip + 0.14, 0.18, 0.0)));
+    // What the muzzle says of the bullets: one part, for the type that the tank fires.
+    match genome.ammo() {
+        Ammo::Normal => {}
+        Ammo::Piercing => {
+            anchors.push(on_turret(Stat::Piercing, Vec3::new(tip + 0.14, BORE, 0.0)));
+        }
+        // The end of an arm of the first chevron: its point is the bounce's. A tank whose
+        // bullets can't bounce has no chevron.
+        Ammo::Seeking => {
+            if has(Stat::Ricochet) {
+                let arm = chevron(tip - 0.08)[0][3] + Vec2::new(0.035, 0.03);
+                let end = raised(arm, BORE + RING.y / 2.0);
+                anchors.push(on_turret(Stat::Seeking, end));
+            }
+        }
+        // The top of the cap, beside its slit.
+        Ammo::Splitting => {
+            let top = Vec3::new(cap(genome), BORE + CAP.y / 2.0, CAP.y / 4.0);
+            anchors.push(on_turret(Stat::Splitting, top));
+        }
+        // The top of the bell, toward its mouth.
+        Ammo::Exploding => {
+            let share = 0.6;
+            let along = tip - BELL.0 + (BELL.0 + BELL.1) * share;
+            let high = BARREL + (BELL_MOUTH.x - BARREL) * share;
+            let top = Vec3::new(along, BORE + high / 2.0, 0.0);
+            anchors.push(on_turret(Stat::Exploding, top));
+        }
     }
     if has(Stat::Brain) {
         // The bead on top of the first antenna.
@@ -604,7 +779,11 @@ fn drawings(
             (0.0, TURRET_HEIGHT),
         ),
         Look::Outline => {
-            let outline = Outline::dormant(color, sheet_under(tank, run));
+            let line = match player {
+                Some(_) => theme::PLAYER,
+                None => outline_color(genome),
+            };
+            let outline = Outline::dormant(line, sheet_under(tank, run));
             (
                 hull_outline(genome, &outline),
                 turret_outline(genome, &outline),
@@ -703,7 +882,7 @@ fn hold_in_reserve(
 ) {
     for (entity, reserve, position) in &reserves {
         let genome = &reserve.genome;
-        let outline = Outline::dormant(enemy_color(genome), theme::VOID);
+        let outline = Outline::dormant(outline_color(genome), theme::VOID);
         let motion = Motion {
             hull: FRAC_PI_2,
             turret: FRAC_PI_2,
@@ -825,20 +1004,61 @@ mod tests {
     }
 
     #[test]
-    fn every_class_has_a_hue_of_its_own_and_none_has_the_players() {
-        let player = Hsla::from(theme::PLAYER).hue;
-        let hues: Vec<f32> = Class::ALL.into_iter().filter_map(class_hue).collect();
-        assert_eq!(hues.len(), Class::ALL.len() - 1);
+    fn every_class_has_a_color_of_its_own_and_none_has_the_players() {
+        let player = Hsla::from(theme::PLAYER);
+        let hued: Vec<(Class, f32)> = Class::ALL
+            .into_iter()
+            .filter_map(|class| Some((class, class_hue(class)?)))
+            .collect();
+        assert_eq!(hued.len(), Class::ALL.len() - 1);
         let apart = |a: f32, b: f32| ((a - b).abs()).min(360.0 - (a - b).abs());
-        for (index, &hue) in hues.iter().enumerate() {
+        let lightness = |class: Class, budget: u16| {
+            let mut genome = Genome::empty(budget);
+            genome.class = class;
+            Hsla::from(enemy_color(&genome)).lightness
+        };
+        // One class is darker than another when it is so whatever the two tanks have.
+        let darker = |class: Class, other: Class| {
+            [0, 50, 100]
+                .into_iter()
+                .all(|budget| lightness(class, budget) < lightness(other, budget) - 0.1)
+        };
+        for (index, &(class, hue)) in hued.iter().enumerate() {
+            // No enemy has the bright blue of the players. A flanker is blue too: of
+            // another hue, and darker whatever it has.
+            let dim = [0, 50, 100]
+                .into_iter()
+                .all(|budget| lightness(class, budget) < player.lightness);
+            let hue_apart = apart(hue, player.hue);
             assert!(
-                apart(hue, player) > 35.0,
-                "{hue} is close to the players' blue"
+                hue_apart > 35.0 || (hue_apart > 20.0 && dim),
+                "{class:?} is close to the players' blue"
             );
-            for &other in &hues[index + 1..] {
-                assert!(apart(hue, other) > 20.0, "{hue} and {other}");
+            // Two classes are told apart by their hue, or by how dark one of them is: the
+            // wheel had no room left for the three classes of the newer bullets.
+            for &(other, other_hue) in &hued[index + 1..] {
+                assert!(
+                    apart(hue, other_hue) > 20.0 || darker(class, other) || darker(other, class),
+                    "{class:?} and {other:?}"
+                );
             }
         }
+        for class in [Class::Seeker, Class::Flanker, Class::Grenadier] {
+            assert!(is_dark(class));
+            // Each is darker than every class that isn't one of the three.
+            for &(other, _) in hued.iter().filter(|(other, _)| !is_dark(*other)) {
+                assert!(darker(class, other), "{class:?} and {other:?}");
+            }
+            // Its outline in dashes takes its pale tint, which shows on the sheet.
+            let mut genome = Genome::empty(60);
+            genome.class = class;
+            let (body, line) = (enemy_color(&genome), outline_color(&genome));
+            assert!(Hsla::from(line).lightness > 0.7, "{class:?}");
+            assert_eq!(Hsla::from(line).hue, Hsla::from(body).hue);
+        }
+        let mut lancer = Genome::empty(60);
+        lancer.class = Class::Lancer;
+        assert_eq!(outline_color(&lancer), enemy_color(&lancer));
         // A tank without a class is gray, however strong, and the weakest tank of a class
         // still shows its hue.
         let mut weak = Genome::empty(3);
@@ -894,7 +1114,16 @@ mod tests {
         {
             full.set(stat, stat.max_level());
         }
-        for genome in [full, Genome::empty(10), Genome::PLAYER] {
+        // And one for each type of bullet, with a bounce.
+        let loaded = Ammo::ALL.map(|ammo| {
+            let mut genome = Genome::PLAYER;
+            genome.load(ammo);
+            genome
+        });
+        for genome in loaded
+            .into_iter()
+            .chain([full, Genome::empty(10), Genome::PLAYER])
+        {
             let hull = hull_drawing(&genome, theme::PLAYER).bounds();
             let turret = turret_drawing(&genome, theme::PLAYER).bounds();
             let anchors = anchors(&genome);
@@ -910,11 +1139,93 @@ mod tests {
             }
             // A part is there if the tank has it, and the six that every tank has always are.
             let shown = |stat: Stat| anchors.iter().any(|anchor| anchor.stat == stat);
-            for stat in [Stat::Ricochet, Stat::Mines, Stat::Shield, Stat::Piercing] {
+            for stat in [Stat::Ricochet, Stat::Mines, Stat::Shield] {
                 assert_eq!(shown(stat), genome.level(stat) > 0, "{stat:?}");
+            }
+            // The muzzle says one thing of the bullets: the type that the tank fires.
+            for stat in Ammo::STATS {
+                assert_eq!(shown(stat), genome.ammo().stat() == Some(stat), "{stat:?}");
             }
             assert!(shown(Stat::Engine) && shown(Stat::Loader) && shown(Stat::Magazine));
         }
+        // Bullets seek at their bounces: a tank whose bullets can't bounce has no chevron to
+        // point at.
+        let mut seeker = Genome::empty(10);
+        seeker.load(Ammo::Seeking);
+        let shown = |genome: &Genome| {
+            let anchors = anchors(genome);
+            anchors.iter().any(|anchor| anchor.stat == Stat::Seeking)
+        };
+        assert!(!shown(&seeker));
+        seeker.set(Stat::Ricochet, 1);
+        assert!(shown(&seeker));
+    }
+
+    #[test]
+    fn the_muzzle_says_what_the_bullets_do() {
+        let (body, accent) = (theme::PLAYER, accent_color(theme::PLAYER));
+        let tank = |ammo: Ammo, bounces: u8| {
+            let mut genome = Genome::empty(60);
+            genome.set(Stat::Ricochet, bounces);
+            genome.load(ammo);
+            genome
+        };
+        let turret = |ammo: Ammo, bounces: u8| turret_drawing(&tank(ammo, bounces), body);
+        let reach = |ammo: Ammo| turret(ammo, 0).bounds().1.x - barrel_tip(&tank(ammo, 0));
+        // A normal muzzle ends with its barrel, and each special one carries a mark in the
+        // pale tint of the tank: a pointed tip, a cap or a bell.
+        assert!(close(reach(Ammo::Normal), 0.0));
+        assert!(close(reach(Ammo::Piercing), TIP.y - TIP_SEAT));
+        assert!(close(reach(Ammo::Splitting), CAP.x - TIP_SEAT + LIFT));
+        assert!(close(reach(Ammo::Exploding), BELL.1));
+        assert_eq!(turret(Ammo::Normal, 0).area(accent), 0.0);
+        for ammo in [Ammo::Piercing, Ammo::Splitting, Ammo::Exploding] {
+            assert!(turret(ammo, 0).area(accent) > 0.0, "{ammo:?}");
+        }
+        // The bell is as wide as the barrel where it starts, and three times that at its
+        // mouth, which is dark.
+        let plan = bell(&tank(Ammo::Exploding, 0));
+        assert!(close(plan[1].y - plan[0].y, BARREL));
+        assert!(close(plan[2].y - plan[3].y, 3.0 * BARREL));
+        let mouth = BELL_MOUTH.x * BELL_MOUTH.y;
+        let dark = |ammo: Ammo| turret(ammo, 0).area(theme::DARK_METAL);
+        assert!(close(dark(Ammo::Exploding) - dark(Ammo::Normal), mouth));
+        // The cap stands in front of the rings, which every tank but a seeker has: one per
+        // bounce, in the color of its body.
+        let ring = RING.x * RING.y;
+        for bounces in 0..=Stat::Ricochet.max_level() {
+            for ammo in [Ammo::Normal, Ammo::Piercing, Ammo::Splitting] {
+                let rings = turret(ammo, bounces).area(body) - turret(ammo, 0).area(body);
+                assert!(close(rings, bounces as f32 * ring), "{ammo:?} {bounces}");
+            }
+            // A seeker has a chevron in the place of each ring, in its pale tint, and nothing
+            // in front of them. A chevron covers as much of the barrel as a ring, give or
+            // take the slant of its two ends.
+            let seeker = turret(Ammo::Seeking, bounces);
+            assert!(close(seeker.area(body), turret(Ammo::Normal, 0).area(body)));
+            let chevrons = seeker.area(accent) / bounces.max(1) as f32;
+            assert_eq!(chevrons > 0.0, bounces > 0, "{bounces}");
+            assert!(
+                bounces == 0 || (chevrons - ring).abs() < 0.2 * ring,
+                "{chevrons}"
+            );
+            assert!(close(
+                seeker.bounds().1.x,
+                barrel_tip(&tank(Ammo::Seeking, 0))
+            ));
+        }
+        // An outline says the same, flat.
+        let outline = Outline::dormant(body, theme::FLOOR);
+        let accent = accent_color(outline.line);
+        let flat = |ammo: Ammo, bounces: u8| turret_outline(&tank(ammo, bounces), &outline);
+        assert_eq!(flat(Ammo::Normal, 3).area(accent), 0.0);
+        assert!(close(flat(Ammo::Splitting, 3).area(accent), CAP.x * CAP.y));
+        let trapezoid = (BELL.0 + BELL.1) * (BARREL + BELL_MOUTH.y) / 2.0;
+        assert!(close(flat(Ammo::Exploding, 0).area(accent), trapezoid));
+        assert_eq!(flat(Ammo::Seeking, 0).area(accent), 0.0);
+        let chevron = flat(Ammo::Seeking, 1).area(accent);
+        assert!(close(flat(Ammo::Seeking, 3).area(accent), 3.0 * chevron));
+        assert!(chevron > 0.0);
     }
 
     /// A tank with everything.
@@ -994,6 +1305,10 @@ mod tests {
                 // A tank that moves, so that its tracks show their own stat.
                 let mut genome = Genome::empty(60);
                 genome.set(Stat::Engine, 2);
+                // A bullet seeks at its bounces: a chevron stands in the place of a ring.
+                if stat == Stat::Seeking {
+                    genome.set(Stat::Ricochet, 1);
+                }
                 genome.set(stat, level);
                 let lower = looks(&genome);
                 genome.set(stat, level + 1);

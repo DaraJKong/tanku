@@ -19,8 +19,64 @@ pub enum Stat {
     Mines,
     Shield,
     Piercing,
+    Seeking,
+    Splitting,
+    Exploding,
     Brain,
     Ballistics,
+}
+
+/// The type of a tank's bullets: what they do besides flying straight. A tank fires one type,
+/// and each of the special ones is a stat of a single level.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Ammo {
+    #[default]
+    Normal,
+    /// Destroys the first normal bullet that it touches and flies on.
+    Piercing,
+    /// Leaves a wall toward a tank, not at the mirror angle.
+    Seeking,
+    /// Becomes two normal bullets after a moment.
+    Splitting,
+    /// Never bounces, and goes off where it ends.
+    Exploding,
+}
+
+impl Ammo {
+    pub const ALL: [Ammo; 5] = [
+        Ammo::Normal,
+        Ammo::Piercing,
+        Ammo::Seeking,
+        Ammo::Splitting,
+        Ammo::Exploding,
+    ];
+
+    /// The stats of the special types. A tank has one of them at most.
+    pub const STATS: [Stat; 4] = [
+        Stat::Piercing,
+        Stat::Seeking,
+        Stat::Splitting,
+        Stat::Exploding,
+    ];
+
+    /// The stat that a tank has when it fires this type. Normal bullets need none.
+    pub const fn stat(self) -> Option<Stat> {
+        match self {
+            Ammo::Normal => None,
+            Ammo::Piercing => Some(Stat::Piercing),
+            Ammo::Seeking => Some(Stat::Seeking),
+            Ammo::Splitting => Some(Stat::Splitting),
+            Ammo::Exploding => Some(Stat::Exploding),
+        }
+    }
+
+    /// What a tank pays to fire this type.
+    pub const fn price(self) -> u32 {
+        match self.stat() {
+            Some(stat) => stat.price(1),
+            None => 0,
+        }
+    }
 }
 
 /// The class of an enemy tank: the stats that it favors when it spends its points, which is
@@ -44,10 +100,16 @@ pub enum Class {
     Sapper,
     /// Many rounds, reloaded fast.
     Gunner,
+    /// Bullets that seek at their bounces: no other class has them.
+    Seeker,
+    /// Bullets that split: no other class has them.
+    Flanker,
+    /// Bullets that explode: no other class has them.
+    Grenadier,
 }
 
 impl Class {
-    pub const ALL: [Class; 8] = [
+    pub const ALL: [Class; 11] = [
         Class::None,
         Class::Sniper,
         Class::Scout,
@@ -56,6 +118,9 @@ impl Class {
         Class::Lancer,
         Class::Sapper,
         Class::Gunner,
+        Class::Seeker,
+        Class::Flanker,
+        Class::Grenadier,
     ];
 
     /// The stats that a tank of this class favors, the one it takes first in front.
@@ -69,20 +134,35 @@ impl Class {
             Class::Lancer => &[Stat::Piercing],
             Class::Sapper => &[Stat::Mines, Stat::Shield],
             Class::Gunner => &[Stat::Magazine, Stat::Loader],
+            // A bullet seeks at its bounces, so the bounce comes first.
+            Class::Seeker => &[Stat::Ricochet, Stat::Seeking],
+            Class::Flanker => &[Stat::Splitting],
+            Class::Grenadier => &[Stat::Exploding],
         }
     }
 
-    /// The highest level of a stat that a tank of this class can have. Two things are kept
-    /// for the classes that are about them: only a lancer's bullets pierce, and only a
-    /// trickster's bounce more than once, or a tactician's, whose bank shots need it.
+    /// The highest level of a stat that a tank of this class can have. Some things are kept
+    /// for the classes that are about them. Each special bullet is one class's alone. Only a
+    /// trickster's bullets bounce more than once, or a tactician's, whose bank shots need it,
+    /// or a seeker's, which seek at each bounce.
     pub const fn highest(self, stat: Stat) -> u8 {
         match (stat, self) {
-            (Stat::Piercing, Class::Lancer) => stat.max_level(),
-            (Stat::Piercing, _) => 0,
-            (Stat::Ricochet, Class::Trickster | Class::Tactician) => stat.max_level(),
+            (Stat::Piercing, Class::Lancer)
+            | (Stat::Seeking, Class::Seeker)
+            | (Stat::Splitting, Class::Flanker)
+            | (Stat::Exploding, Class::Grenadier) => stat.max_level(),
+            (Stat::Piercing | Stat::Seeking | Stat::Splitting | Stat::Exploding, _) => 0,
+            // A bullet that explodes never bounces.
+            (Stat::Ricochet, Class::Grenadier) => 0,
+            (Stat::Ricochet, Class::Trickster | Class::Tactician | Class::Seeker) => {
+                stat.max_level()
+            }
             (Stat::Ricochet, _) => 1,
             // A bank shot off two walls needs a bullet that bounces twice.
             (Stat::Ballistics, Class::Trickster | Class::Tactician) => stat.max_level(),
+            // The bank shots of the higher tiers are no use to these: a seeker's bullet
+            // finds its own way off a wall, and the bullets of the other two don't bounce.
+            (Stat::Ballistics, Class::Seeker | Class::Flanker | Class::Grenadier) => 1,
             (Stat::Ballistics, _) => 2,
             _ => stat.max_level(),
         }
@@ -90,8 +170,8 @@ impl Class {
 }
 
 impl Stat {
-    pub const COUNT: usize = 12;
-    pub const HARDWARE: [Stat; 10] = [
+    pub const COUNT: usize = 15;
+    pub const HARDWARE: [Stat; 13] = [
         Stat::Engine,
         Stat::Tracks,
         Stat::Turret,
@@ -102,11 +182,14 @@ impl Stat {
         Stat::Mines,
         Stat::Shield,
         Stat::Piercing,
+        Stat::Seeking,
+        Stat::Splitting,
+        Stat::Exploding,
     ];
 
     /// The stats of a tank that a player builds: every piece of hardware but the turret,
     /// which follows the cursor on a player's tank.
-    pub const GARAGE: [Stat; 9] = [
+    pub const GARAGE: [Stat; 12] = [
         Stat::Engine,
         Stat::Tracks,
         Stat::Muzzle,
@@ -116,6 +199,9 @@ impl Stat {
         Stat::Mines,
         Stat::Shield,
         Stat::Piercing,
+        Stat::Seeking,
+        Stat::Splitting,
+        Stat::Exploding,
     ];
 
     /// The name that a stat goes by where a tank is written down.
@@ -131,6 +217,9 @@ impl Stat {
             Stat::Mines => "mines",
             Stat::Shield => "shield",
             Stat::Piercing => "piercing",
+            Stat::Seeking => "seeking",
+            Stat::Splitting => "splitting",
+            Stat::Exploding => "exploding",
             Stat::Brain => "brain",
             Stat::Ballistics => "ballistics",
         }
@@ -149,6 +238,9 @@ impl Stat {
             Stat::Mines => &[0, 4, 6, 8, 10],
             Stat::Shield => &[0, 6, 9, 12, 15, 18],
             Stat::Piercing => &[0, 4],
+            Stat::Seeking => &[0, 4],
+            Stat::Splitting => &[0, 6],
+            Stat::Exploding => &[0, 8],
             Stat::Brain | Stat::Ballistics => &[],
         }
     }
@@ -196,6 +288,8 @@ pub enum Flaw {
     TooHigh(Stat, u8),
     /// It can't drive, so it would never come within reach of a barrier.
     NoEngine,
+    /// It has two of the special types of bullet, and a tank fires one type.
+    TwoAmmos(Stat, Stat),
     /// It costs this many points, which is more than a player has.
     TooDear(u32),
 }
@@ -215,6 +309,12 @@ impl fmt::Display for Flaw {
                     "it needs engine 1 at least, to reach the barriers"
                 )
             }
+            Flaw::TwoAmmos(one, other) => write!(
+                formatter,
+                "a tank fires one type of bullet, not {} and {}",
+                one.name(),
+                other.name()
+            ),
             Flaw::TooDear(cost) => write!(
                 formatter,
                 "it costs {cost} points, and a player has {PLAYER_BUDGET}"
@@ -235,8 +335,8 @@ pub struct Genome {
 impl Genome {
     /// The fixed tank of a player: 59 points and no software.
     pub const PLAYER: Genome = Genome {
-        //       Eng Trk Tur Muz Mag Ldr Ric Min Shd Prc Brn Bal
-        levels: [4, 5, 0, 2, 4, 6, 1, 2, 2, 0, 0, 0],
+        //       Eng Trk Tur Muz Mag Ldr Ric Min Shd Prc Sek Spl Exp Brn Bal
+        levels: [4, 5, 0, 2, 4, 6, 1, 2, 2, 0, 0, 0, 0, 0, 0],
         budget: PLAYER_BUDGET,
         class: Class::None,
     };
@@ -282,6 +382,10 @@ impl Genome {
         let own = |stat: &&Stat| !Stat::GARAGE.contains(stat) && self.level(**stat) > 0;
         if let Some(&stat) = every.clone().find(own) {
             return Some(Flaw::NotAPlayers(stat));
+        }
+        let mut ammos = Ammo::STATS.into_iter().filter(|stat| self.level(*stat) > 0);
+        if let (Some(one), Some(other)) = (ammos.next(), ammos.next()) {
+            return Some(Flaw::TwoAmmos(one, other));
         }
         if self.level(Stat::Engine) == 0 {
             return Some(Flaw::NoEngine);
@@ -375,6 +479,20 @@ impl Genome {
     /// Normal bullets that a bullet of this tank destroys before one destroys it.
     pub fn piercing(&self) -> u8 {
         self.level(Stat::Piercing)
+    }
+
+    /// The type of its bullets. No tank that the game builds has two special types, and a
+    /// tank that was given two fires the first of them.
+    pub fn ammo(&self) -> Ammo {
+        let special = |ammo: &Ammo| ammo.stat().is_some_and(|stat| self.level(stat) > 0);
+        Ammo::ALL.into_iter().find(special).unwrap_or_default()
+    }
+
+    /// Gives the tank this type of bullet, and none of the others.
+    pub fn load(&mut self, ammo: Ammo) {
+        for stat in Ammo::STATS {
+            self.set(stat, (ammo.stat() == Some(stat)) as u8);
+        }
     }
 
     pub fn brain(&self) -> u8 {
@@ -472,6 +590,31 @@ mod tests {
         assert_eq!(fast, Err(Flaw::TooHigh(Engine, 7)));
         let sharp = Genome::of_the_garage(&[(Engine, 1), (Piercing, 2)]);
         assert_eq!(sharp, Err(Flaw::TooHigh(Piercing, 1)));
+        // A tank fires one type of bullet: any of the special ones, at its price, and never
+        // two of them.
+        for (ammo, price) in [
+            (Ammo::Normal, 0),
+            (Ammo::Piercing, 4),
+            (Ammo::Seeking, 4),
+            (Ammo::Splitting, 6),
+            (Ammo::Exploding, 8),
+        ] {
+            let mut tank = Genome::of_the_garage(&[(Engine, 1)]).unwrap();
+            tank.load(ammo);
+            assert_eq!((tank.ammo(), tank.cost()), (ammo, 2 + price));
+            assert_eq!(ammo.price(), price);
+            assert!(tank.is_a_players());
+        }
+        let both = Genome::of_the_garage(&[(Engine, 1), (Seeking, 1), (Exploding, 1)]);
+        assert_eq!(both, Err(Flaw::TwoAmmos(Seeking, Exploding)));
+        // Loading a type unloads the one that the tank had.
+        let mut tank = Genome::PLAYER;
+        tank.load(Ammo::Splitting);
+        tank.load(Ammo::Piercing);
+        assert_eq!((tank.ammo(), tank.piercing()), (Ammo::Piercing, 1));
+        assert_eq!(tank.level(Splitting), 0);
+        tank.load(Ammo::Normal);
+        assert_eq!(tank, Genome::PLAYER);
     }
 
     #[test]
@@ -515,6 +658,10 @@ mod tests {
             said(Flaw::TooDear(63)),
             "it costs 63 points, and a player has 59"
         );
+        assert_eq!(
+            said(Flaw::TwoAmmos(Stat::Piercing, Stat::Splitting)),
+            "a tank fires one type of bullet, not piercing and splitting"
+        );
         // A stat goes by one name, and no two by the same.
         let every = Stat::HARDWARE
             .iter()
@@ -542,12 +689,43 @@ mod tests {
     }
 
     #[test]
-    fn full_hardware_costs_135_points() {
-        let total: u32 = Stat::HARDWARE
+    fn full_hardware_costs_139_points() {
+        // Every stat at its highest level, with the dearest of the types of bullet: a tank
+        // has one type.
+        let plain: u32 = Stat::HARDWARE
             .iter()
+            .filter(|stat| !Ammo::STATS.contains(stat))
             .map(|stat| stat.price(stat.max_level()))
             .sum();
-        assert_eq!(total, 135);
+        let dearest = Ammo::ALL.map(Ammo::price).into_iter().max();
+        assert_eq!((plain, dearest), (131, Some(8)));
+    }
+
+    #[test]
+    fn the_special_bullets_are_priced_by_what_they_add() {
+        let price = |ammo: Ammo| ammo.price();
+        assert_eq!(price(Ammo::Piercing), price(Ammo::Seeking));
+        assert!(price(Ammo::Seeking) < price(Ammo::Splitting));
+        assert!(price(Ammo::Splitting) < price(Ammo::Exploding));
+        // Each is one class's alone, and no class has two.
+        for class in Class::ALL {
+            let own = Ammo::STATS
+                .into_iter()
+                .filter(|stat| class.highest(*stat) > 0)
+                .count();
+            let special = matches!(
+                class,
+                Class::Lancer | Class::Seeker | Class::Flanker | Class::Grenadier
+            );
+            assert_eq!(own, special as usize, "{class:?}");
+        }
+        // A bullet that explodes never bounces, and a bullet seeks at each of its bounces.
+        assert_eq!(Class::Grenadier.highest(Stat::Ricochet), 0);
+        assert_eq!(Class::Seeker.highest(Stat::Ricochet), 3);
+        assert_eq!(Class::Flanker.highest(Stat::Ricochet), 1);
+        for class in [Class::Seeker, Class::Flanker, Class::Grenadier] {
+            assert_eq!(class.highest(Stat::Ballistics), 1, "{class:?}");
+        }
     }
 
     #[test]

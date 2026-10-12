@@ -40,6 +40,9 @@ pub struct Casualties {
     pub detonations: Vec<Entity>,
     /// The tanks whose bullets set off some of the crates.
     pub culprits: Vec<(Entity, (Genome, Team))>,
+    /// Where exploding bullets ended and go off, each with the tank that fired it when that
+    /// tank is known.
+    pub blasts: Vec<(Vec2, Option<(Genome, Team)>)>,
 }
 
 /// Everything the simulation does in a tick. A game that shows a run simulated on another

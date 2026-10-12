@@ -3,7 +3,12 @@
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::{map::SectorLayout, modes::Difficulty, stats::Genome};
+use crate::{
+    map::SectorLayout,
+    modes::Difficulty,
+    rules::SPLIT_TIME,
+    stats::{Ammo, Genome},
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Team {
@@ -133,6 +138,26 @@ pub struct Enemy {
     pub awake: bool,
 }
 
+/// What a bullet does besides flying straight and bouncing. Piercing is counted apart, in
+/// what a bullet has left to pierce.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub enum Kind {
+    #[default]
+    Plain,
+    /// Each of its bounces sends it toward a tank that its side fights, not off at the mirror
+    /// angle.
+    Seeking,
+    /// It becomes two plain bullets once its time is up, and doesn't bounce before that.
+    Splitting {
+        /// Seconds before it splits.
+        fuse: f32,
+        /// The bounces that each of the two has.
+        bounces: u8,
+    },
+    /// It never bounces, and goes off in a blast where it ends.
+    Exploding,
+}
+
 #[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[require(Position, PreviousPosition)]
 pub struct Bullet {
@@ -145,6 +170,48 @@ pub struct Bullet {
     pub pierces_left: u8,
     /// A player's bullet can't hit its owner before it has bounced.
     pub bounced: bool,
+    pub kind: Kind,
+}
+
+impl Bullet {
+    /// A bullet as it leaves the gun of a tank, with what the tank's stats give it.
+    pub fn fired(owner: Entity, tank: &Tank, velocity: Vec2) -> Self {
+        let genome = &tank.genome;
+        let ammo = genome.ammo();
+        let (bounces_left, kind) = match ammo {
+            Ammo::Normal | Ammo::Piercing => (genome.bounces(), Kind::Plain),
+            Ammo::Seeking => (genome.bounces(), Kind::Seeking),
+            // The bounces of the tank are for the two bullets that it becomes.
+            Ammo::Splitting => {
+                let (fuse, bounces) = (SPLIT_TIME, genome.bounces());
+                (0, Kind::Splitting { fuse, bounces })
+            }
+            Ammo::Exploding => (0, Kind::Exploding),
+        };
+        Self {
+            owner,
+            team: tank.team,
+            sector: tank.sector,
+            velocity,
+            bounces_left,
+            pierces_left: (ammo == Ammo::Piercing) as u8,
+            bounced: false,
+            kind,
+        }
+    }
+
+    /// One of the two bullets that a splitting bullet becomes: a plain one, that flies this
+    /// way with these bounces.
+    pub fn half(&self, velocity: Vec2, bounces: u8) -> Self {
+        Self {
+            velocity,
+            bounces_left: bounces,
+            pierces_left: 0,
+            bounced: false,
+            kind: Kind::Plain,
+            ..*self
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -423,6 +490,10 @@ pub enum SimEvent {
     },
     /// A tank of an arena appeared where its place was marked.
     TankAppeared {
+        at: Vec2,
+    },
+    /// A splitting bullet became two.
+    BulletSplit {
         at: Vec2,
     },
 }

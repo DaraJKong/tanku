@@ -36,6 +36,17 @@ pub const MINE_TRIGGER_RADIUS: f32 = 2.0;
 pub const MINE_WARNING: f32 = 0.6;
 pub const BLAST_RADIUS: f32 = 3.0;
 
+/// A splitting bullet becomes two after this long.
+pub const SPLIT_TIME: f32 = 1.0;
+/// The two leave this far to each side of its line of flight.
+pub const SPLIT_ANGLE: f32 = PI / 6.0;
+/// For this long before it splits, the two lines ahead of it are solid and flash: as long as
+/// a mine warns.
+pub const SPLIT_WARNING: f32 = MINE_WARNING;
+/// What a seeking bullet and an exploding one are about to do is marked this long before:
+/// the bounce of the first, and the end of the second on what stands still.
+pub const MARK_TIME: f32 = 1.5;
+
 pub const SHIELD_DURATION: f32 = 0.5;
 pub const SHIELD_RADIUS: f32 = 1.4;
 

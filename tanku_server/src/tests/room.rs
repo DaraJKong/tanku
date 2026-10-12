@@ -409,7 +409,8 @@ fn a_tank_does_not_appear_on_another_tank_of_its_group() {
     let third = enemies(&mut app, 9)
         .into_iter()
         .find(|&tank| number(&app, tank) == 2);
-    assert_eq!(position(&mut app, third.unwrap()), marks[0]);
+    // It appears there, awake: it may have driven for a tick or two since.
+    assert!(position(&mut app, third.unwrap()).distance(marks[0]) < 0.3);
 
     // A group that has no place to spare waits for the tank to move on.
     let mut app = before_group("TEST", 1, 9);

@@ -95,6 +95,9 @@ pub fn stat_name(stat: Stat) -> &'static str {
         Stat::Mines => "Mines",
         Stat::Shield => "Shield",
         Stat::Piercing => "Piercing",
+        Stat::Seeking => "Seeking",
+        Stat::Splitting => "Splitting",
+        Stat::Exploding => "Exploding",
         Stat::Brain => "Brain",
         Stat::Ballistics => "Ballistics",
     }
@@ -117,6 +120,13 @@ pub fn gives(genome: &Genome, stat: Stat) -> String {
             None => "None".to_string(),
         },
         Stat::Piercing => count(genome.piercing(), "bullet"),
+        // The three that a tank has or doesn't have say what its bullets do.
+        Stat::Seeking | Stat::Splitting | Stat::Exploding if genome.level(stat) == 0 => {
+            "No".to_string()
+        }
+        Stat::Seeking => "At each bounce".to_string(),
+        Stat::Splitting => "In two, after 1 s".to_string(),
+        Stat::Exploding => "Blast of 3 m".to_string(),
         Stat::Brain => {
             let tiers = ["Sentry", "Grunt", "Soldier", "Veteran", "Ace"];
             tiers[genome.brain() as usize].to_string()
@@ -176,6 +186,9 @@ pub fn class_name(class: Class) -> &'static str {
         Class::Lancer => "Lancer",
         Class::Sapper => "Sapper",
         Class::Gunner => "Gunner",
+        Class::Seeker => "Seeker",
+        Class::Flanker => "Flanker",
+        Class::Grenadier => "Grenadier",
     }
 }
 

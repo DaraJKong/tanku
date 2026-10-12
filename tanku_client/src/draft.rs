@@ -94,6 +94,17 @@ impl Draft {
         }
     }
 
+    /// An upright prism: `top` on its top face, which has these corners and must be convex,
+    /// and `side` on the faces that go down from its edges to the height of its foot.
+    pub fn prism(&mut self, corners: &[Vec3], foot: f32, top: Color, side: Color) {
+        self.face(corners, top);
+        let down = |corner: Vec3| Vec3::new(corner.x, foot, corner.z);
+        for (index, &here) in corners.iter().enumerate() {
+            let next = corners[(index + 1) % corners.len()];
+            self.face(&[down(here), down(next), next, here], side);
+        }
+    }
+
     /// An upright cylinder: `top` on its top face and `side` around it.
     pub fn post(&mut self, center: Vec3, radius: f32, height: f32, top: Color, side: Color) {
         let count = sides(radius);

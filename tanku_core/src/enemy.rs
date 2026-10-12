@@ -168,6 +168,8 @@ fn build(seed: u64, difficulty: Difficulty, sector: u32, index: u32, budget: u32
         level < highest(stat)
             && stat.price(level + 1) - stat.price(level) <= budget - genome.cost()
             && (stat != Stat::Tracks || genome.level(Stat::Engine) > 0)
+            // A bullet that doesn't bounce never seeks.
+            && (stat != Stat::Seeking || genome.bounces() > 0)
     };
     // What makes its class comes first: a tank has a level of each stat that it favors, if
     // it can pay for it.
@@ -216,6 +218,7 @@ fn build(seed: u64, difficulty: Difficulty, sector: u32, index: u32, budget: u32
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::stats::Ammo;
     use Difficulty::{Hard, Normal};
 
     /// Groups of every size up to nine, over six seeds and sixty sectors: each tank with its
@@ -254,7 +257,7 @@ mod tests {
         let tanks = group(crate::seed::seed_value("TANKU"), Normal, 20, 6);
         assert_eq!(
             format!("{:?}", tanks[0]),
-            "Genome { levels: [3, 6, 6, 6, 5, 4, 1, 0, 0, 0, 0, 0], budget: 64, class: None }"
+            "Genome { levels: [3, 6, 6, 6, 5, 4, 1, 0, 0, 0, 0, 0, 0, 0, 0], budget: 64, class: None }"
         );
         let classes: Vec<Class> = tanks.iter().map(|tank| tank.class).collect();
         assert_eq!(format!("{classes:?}"), CLASSES);
@@ -269,10 +272,10 @@ mod tests {
         assert_eq!(format!("{budgets:?}"), HARD_BUDGETS);
     }
 
-    const CLASSES: &str = "[None, Tactician, Tactician, None, Lancer, Sapper]";
+    const CLASSES: &str = "[None, Lancer, Trickster, None, Sapper, Flanker]";
     const BUDGETS: &str = "[64, 112, 35, 48, 35, 48]";
     const HARD_TANK: &str =
-        "Genome { levels: [7, 6, 6, 7, 5, 7, 1, 0, 0, 0, 0, 0], budget: 90, class: None }";
+        "Genome { levels: [7, 6, 6, 7, 5, 7, 1, 0, 0, 0, 0, 0, 0, 0, 0], budget: 90, class: None }";
     const HARD_BUDGETS: &str = "[90, 157, 49, 67, 49, 67]";
 
     #[test]
@@ -455,6 +458,7 @@ mod tests {
                 let allowed = match stat {
                     Stat::Tracks => genome.level(Stat::Engine) > 0,
                     Stat::Mines | Stat::Shield => genome.brain() > 0,
+                    Stat::Seeking => genome.bounces() > 0,
                     _ => true,
                 };
                 assert!(
@@ -554,19 +558,20 @@ mod tests {
             let count = progression::enemy_count(sector, 1, false);
             group(crate::seed::seed_value(seed), Normal, sector, count)[index]
         };
-        let sniper = leader("BRAVO", 21, 3);
-        assert_eq!(
-            (sniper.class, sniper.budget, sniper.cost()),
-            (Class::Sniper, 114, 114)
-        );
-        assert_eq!((sniper.brain(), sniper.mines()), (1, 3));
-        assert_eq!(sniper.shield_cooldown(), Some(10.0));
-        let scout = leader("TANKU", 24, 0);
+        let scout = leader("BRAVO", 21, 3);
         assert_eq!(
             (scout.class, scout.budget, scout.cost()),
-            (Class::Scout, 101, 100)
+            (Class::Scout, 114, 114)
         );
-        assert_eq!((scout.brain(), scout.ballistics()), (0, 2));
+        assert_eq!((scout.brain(), scout.mines()), (1, 3));
+        assert_eq!(scout.shield_cooldown(), Some(10.0));
+        // A seeker stops at the first tier of ballistics: its bullets need no bank shot.
+        let seeker = leader("ECHO", 20, 5);
+        assert_eq!(
+            (seeker.class, seeker.budget, seeker.cost()),
+            (Class::Seeker, 112, 108)
+        );
+        assert_eq!((seeker.brain(), seeker.ballistics()), (0, 1));
     }
 
     #[test]
@@ -586,6 +591,12 @@ mod tests {
                 assert!(genome.shield_cooldown().is_none());
             }
             assert!(genome.bounces() + 1 >= genome.ballistics());
+            // A tank fires one type of bullet, and a bullet that seeks bounces.
+            let ammos = Ammo::STATS.iter().filter(|stat| genome.level(**stat) > 0);
+            assert!(ammos.count() <= 1, "sector {sector}: {genome:?}");
+            if genome.ammo() == Ammo::Seeking {
+                assert!(genome.bounces() > 0, "sector {sector}: {genome:?}");
+            }
         }
     }
 
@@ -616,30 +627,47 @@ mod tests {
             let of_class = |(_, genome): &(u32, Genome)| genome.class == class;
             let tanks = sample(Normal).filter(of_class).count();
             assert!(
-                tanks * 12 > total && tanks * 6 < total,
+                tanks * 16 > total && tanks * 8 < total,
                 "{class:?}: {tanks} of {total}"
             );
         }
     }
 
     #[test]
-    fn piercing_and_long_ricochets_belong_to_their_classes() {
+    fn special_bullets_and_long_ricochets_belong_to_their_classes() {
         let everyone = || sample(Normal).chain(sample(Hard));
         for (sector, genome) in everyone() {
             let class = genome.class;
-            if genome.piercing() > 0 {
-                assert_eq!(class, Class::Lancer, "sector {sector}");
-            }
+            let own = match genome.ammo() {
+                Ammo::Normal => None,
+                Ammo::Piercing => Some(Class::Lancer),
+                Ammo::Seeking => Some(Class::Seeker),
+                Ammo::Splitting => Some(Class::Flanker),
+                Ammo::Exploding => Some(Class::Grenadier),
+            };
+            assert!(own.is_none_or(|own| own == class), "sector {sector}");
             if genome.bounces() > 1 {
-                let bounces = matches!(class, Class::Trickster | Class::Tactician);
+                let bounces = matches!(class, Class::Trickster | Class::Tactician | Class::Seeker);
                 assert!(bounces, "sector {sector}: {genome:?}");
             }
+            // A bullet that explodes never bounces, and no bank shot is for these three.
+            if class == Class::Grenadier {
+                assert_eq!(genome.bounces(), 0, "sector {sector}");
+            }
+            if matches!(class, Class::Seeker | Class::Flanker | Class::Grenadier) {
+                assert!(genome.ballistics() <= 1, "sector {sector}: {genome:?}");
+            }
         }
-        // A lancer pierces and a trickster's bullets bounce, as soon as they can pay for it.
+        // A tank has the bullet of its class and a trickster's bullets bounce, as soon as
+        // they can pay for it. A seeker pays for the bounce first, then for the seeking.
         for (sector, genome) in everyone() {
             let rich = genome.budget >= 8;
+            let ammo = genome.ammo();
             match genome.class {
-                Class::Lancer if rich => assert_eq!(genome.piercing(), 1, "sector {sector}"),
+                Class::Lancer if rich => assert_eq!(ammo, Ammo::Piercing, "sector {sector}"),
+                Class::Seeker if rich => assert_eq!(ammo, Ammo::Seeking, "sector {sector}"),
+                Class::Flanker if rich => assert_eq!(ammo, Ammo::Splitting, "sector {sector}"),
+                Class::Grenadier if rich => assert_eq!(ammo, Ammo::Exploding, "sector {sector}"),
                 Class::Trickster if rich => assert!(genome.bounces() > 0, "sector {sector}"),
                 _ => {}
             }

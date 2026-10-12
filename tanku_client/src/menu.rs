@@ -24,7 +24,7 @@ use crate::{
     cli::Options,
     crew::LocalSeat,
     exhibit::{self, Exhibit, Show},
-    garage::Garage,
+    garage::{self, Garage},
     net, report,
     scene::Paints,
     session::{Asked, Drawn, Found, Game, Invitation, Notice, Session, SessionRequest, Shut, Sign},
@@ -1588,7 +1588,7 @@ fn garage_screen(
                         cell(names, GARAGE_COLUMNS[3], head("Price"));
                         cell(names, GARAGE_COLUMNS[4], head("Next"));
                     });
-                    for stat in Stat::GARAGE {
+                    for stat in garage::LISTED {
                         let level = tank.level(stat);
                         // What one more level would cost, where there is one.
                         let next = (level < stat.max_level())
@@ -5356,7 +5356,7 @@ mod tests {
         let (down, up) = steps(|app| build(app, garage_screen));
         assert_eq!(up, []);
         let has = |stat: &Stat| Genome::PLAYER.level(*stat) > 0;
-        let owned: Vec<Stat> = Stat::GARAGE.into_iter().filter(has).collect();
+        let owned: Vec<Stat> = garage::LISTED.into_iter().filter(has).collect();
         assert_eq!(down, owned);
         // A tank with points left takes the levels that they pay for. Its engine stays.
         let cheap = |app: &mut App| {
@@ -5389,7 +5389,7 @@ mod tests {
     fn the_garage_says_what_each_level_gives() {
         let parts = [(Stat::Engine, 1), (Stat::Shield, 1), (Stat::Piercing, 1)];
         let tank = Genome::of_the_garage(&parts).unwrap();
-        let told: Vec<String> = Stat::GARAGE.map(|stat| gives(&tank, stat)).to_vec();
+        let told: Vec<String> = garage::LISTED.map(|stat| gives(&tank, stat)).to_vec();
         let wanted = [
             "2 m/s",
             "90\u{b0}/s",
@@ -5402,7 +5402,7 @@ mod tests {
             "1 bullet",
         ];
         assert_eq!(told, wanted);
-        let standard = Stat::GARAGE.map(|stat| gives(&Genome::PLAYER, stat));
+        let standard = garage::LISTED.map(|stat| gives(&Genome::PLAYER, stat));
         let wanted = [
             "5 m/s",
             "315\u{b0}/s",

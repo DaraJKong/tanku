@@ -16,9 +16,11 @@ use tanku_core::{
         Bullet, Enemy, ExplosiveCrate, Gun, Mine, Motion, Player, Position, Shield, ShieldState,
         Tank, TankCommand, Team, Wreck,
     },
+    stats::Ammo,
 };
 
 use crate::{
+    bullets::{self, Mark, Quarry},
     field::{Collider, Field},
     tanks,
 };
@@ -68,6 +70,11 @@ const RETREAT: (f32, f32) = (16.0, 22.0);
 /// An ace wants at least this much of a turn around the player between itself and the
 /// nearest ally, so that their fire crosses.
 const CROSSFIRE: f32 = PI / 2.0;
+/// How far a shot is followed to find where it ends.
+const SHOT_RANGE: f32 = 80.0;
+/// A tank whose bullets explode holds its fire while its own tank or an ally is this close to
+/// where its shot would end: within the blast, and a little more, since tanks move.
+const BLAST_CLEARANCE: f32 = BLAST_RADIUS + 0.5;
 
 #[derive(Component)]
 pub struct Brain {
@@ -300,15 +307,16 @@ struct Path {
 }
 
 impl Path {
-    /// Follows a bullet from where it is, off the walls and the blocks that it bounces off.
-    fn of(field: &Field, entity: Entity, bullet: &Bullet, at: Vec2) -> Self {
+    /// Follows a bullet from where it is, off the walls and the blocks that it bounces off. A
+    /// seeking bullet leaves them toward the tank that it would seek now.
+    fn of(field: &Field, entity: Entity, bullet: &Bullet, at: Vec2, quarry: &[Quarry]) -> Self {
         let speed = bullet.velocity.length();
         let mut legs = Vec::new();
-        let (mut from, mut direction) = (at, bullet.velocity / speed);
+        let (mut from, mut flying) = (at, *bullet);
         let (mut left, mut start) = (speed * FORESIGHT, 0.0);
         let mut flies_on = false;
         for bounce in 0..=bullet.bounces_left {
-            let delta = direction * left;
+            let delta = flying.velocity / speed * left;
             let hit = field.cast(from, delta, BULLET_RADIUS);
             let done = hit.map_or(1.0, |(hit, _)| hit.t);
             let to = from + delta * done;
@@ -317,7 +325,7 @@ impl Path {
                 Some((hit, solid)) if solid.bounces() && bounce < bullet.bounces_left => {
                     start += left * done / speed;
                     left *= 1.0 - done;
-                    direction = geom::reflect(direction, hit.normal);
+                    flying.velocity = bullets::rebound(field, &flying, to, hit.normal, quarry);
                     from = to;
                 }
                 Some(_) => break,
@@ -523,6 +531,17 @@ fn answer(field: &Field, me: Vec2, path: &Path, speed: f32) -> Option<Vec2> {
     intercept(me, path.at, path.velocity, speed).filter(|&meeting| field.sees(me, meeting))
 }
 
+/// Where the shot of a tank ends if it is fired now: on the first thing that is solid along
+/// the way that its turret points, or on the first tank of a player before that.
+fn shot_end(field: &Field, me: Vec2, turret: f32, players: impl Iterator<Item = Vec2>) -> Vec2 {
+    let delta = Vec2::from_angle(turret) * SHOT_RANGE;
+    let wall = field.cast(me, delta, BULLET_RADIUS).map(|(hit, _)| hit.t);
+    let reach = TANK_RADIUS + BULLET_RADIUS;
+    let tanks = players.filter_map(|at| geom::sweep_circle_point(me, delta, at, reach));
+    let first = tanks.chain(wall).fold(1.0, f32::min);
+    me + delta * first
+}
+
 /// Whether a place lies between two walls or blocks that are so close that no tank gets
 /// through without setting off a mine that lies there.
 fn narrow(field: &Field, at: Vec2) -> bool {
@@ -581,10 +600,26 @@ pub fn think(
     let followed = enemies
         .iter()
         .any(|(_, tank, .., enemy, _, _)| enemy.awake && tank.genome.brain() >= 3);
+    // The tanks that a seeking bullet may leave a wall toward.
+    let running = rivals.iter().map(|rival| (rival.3, Team::Players));
+    let awake = allies.iter().filter(|ally| ally.2.is_some());
+    let quarry: Vec<Quarry> = running
+        .chain(awake.map(|ally| (ally.1, Team::Enemies)))
+        .collect();
     let paths: Vec<Path> = bullets
         .iter()
         .filter(|(_, bullet, _)| followed && bullet.team == Team::Players)
-        .map(|(entity, bullet, position)| Path::of(&field, entity, bullet, position.0))
+        .map(|(entity, bullet, position)| Path::of(&field, entity, bullet, position.0, &quarry))
+        .collect();
+    // The places where exploding bullets are about to go off, which are marked on the floor.
+    let blasts: Vec<Vec2> = bullets
+        .iter()
+        .filter_map(|(_, bullet, position)| {
+            match bullets::mark(&field, bullet, position.0, &quarry) {
+                Some(Mark::Blast { at }) => Some(at),
+                _ => None,
+            }
+        })
         .collect();
 
     for (entity, tank, position, motion, gun, shield, enemy, mut brain, mut command) in &mut enemies
@@ -752,9 +787,13 @@ pub fn think(
             } else {
                 toward.perp() * brain.strafe
             };
-            // Stay away from mines.
-            for mine in &mines {
-                let away = me - mine.0;
+            // Stay away from mines, and out of the blast that an exploding bullet marks.
+            for at in mines
+                .iter()
+                .map(|mine| mine.0)
+                .chain(blasts.iter().copied())
+            {
+                let away = me - at;
                 if away.length() < BLAST_RADIUS + 1.0 {
                     drive += away.normalize_or_zero() * 1.5;
                 }
@@ -871,6 +910,15 @@ pub fn think(
             lay = apart && alone && (charged || narrow(&field, me));
         }
 
+        // A blast spares nobody. A tank whose bullets explode holds its fire while the blast
+        // of its shot would reach its own tank or another enemy.
+        if fire && genome.ammo() == Ammo::Exploding {
+            let players = rivals.iter().map(|rival| rival.3);
+            let end = shot_end(&field, me, motion.turret, players);
+            let clear = |ally: &(Entity, Vec2, Option<u32>)| ally.1.distance(end) > BLAST_CLEARANCE;
+            fire = allies.iter().all(clear);
+        }
+
         let can_shield = shield.state == ShieldState::Ready && shield.cooldown == 0.0;
         *command = TankCommand {
             drive,
@@ -885,7 +933,10 @@ pub fn think(
 
 #[cfg(test)]
 mod tests {
-    use tanku_core::stats::{Genome, Stat};
+    use tanku_core::{
+        sim::Kind,
+        stats::{Genome, Stat},
+    };
 
     use super::*;
     use crate::field::Solid;
@@ -927,6 +978,7 @@ mod tests {
             bounces_left,
             pierces_left: 0,
             bounced: false,
+            kind: Kind::Plain,
         }
     }
 
@@ -935,7 +987,7 @@ mod tests {
     fn path_off_the_south_wall(bounces_left: u8) -> (Path, Bullet, Position) {
         let flying = bullet(Vec2::new(1.0, -1.0).normalize() * 10.0, bounces_left);
         let from = Vec2::new(5.0, 5.0);
-        let path = Path::of(&room(), Entity::PLACEHOLDER, &flying, from);
+        let path = Path::of(&room(), Entity::PLACEHOLDER, &flying, from, &[]);
         (path, flying, Position(from))
     }
 
@@ -1003,7 +1055,13 @@ mod tests {
         // In a tick, a bullet flies 1 m east while a tank drives from 5 m north of its path to
         // 1 m north of it. The tank has driven when the bullet flies: they touch.
         let flying = bullet(Vec2::X * 60.0, 0);
-        let path = Path::of(&room(), Entity::PLACEHOLDER, &flying, Vec2::new(5.0, 3.0));
+        let path = Path::of(
+            &room(),
+            Entity::PLACEHOLDER,
+            &flying,
+            Vec2::new(5.0, 3.0),
+            &[],
+        );
         let course = [Vec2::new(5.5, 8.0), Vec2::new(5.5, 4.0)];
         let (room, close) = path.approach(&course);
         assert!((room - (1.0 - TANK_RADIUS - BULLET_RADIUS)).abs() < 1e-4);
@@ -1068,7 +1126,7 @@ mod tests {
     /// The path of a bullet that is fired from a place at another, at 10 m/s.
     fn shot(field: &Field, from: Vec2, at: Vec2) -> Path {
         let flying = bullet((at - from).normalize() * 10.0, 0);
-        Path::of(field, Entity::PLACEHOLDER, &flying, from)
+        Path::of(field, Entity::PLACEHOLDER, &flying, from, &[])
     }
 
     #[test]

@@ -678,6 +678,7 @@ mod tests {
             bounces_left: 1,
             pierces_left: 0,
             bounced: false,
+            kind: default(),
         };
         let last_shot = app.world_mut().spawn(bullet(Team::Enemies)).id();
         // The player's own bullets are theirs to watch.

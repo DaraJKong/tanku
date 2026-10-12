@@ -13,9 +13,9 @@ use tanku_core::{
         SHIELD_DURATION, SOLO_LIVES, SPAWN_FIRE_DELAY, TANK_PUSH, TANK_RADIUS, TICK_RATE,
     },
     sim::{
-        Barrier, Block, Blow, Bullet, Enemy, ExplosiveCrate, Gun, Life, Mine, MineState, Motion,
-        Player, Playtest, Position, PreviousPosition, Protected, Run, RunPhase, RunRequest, Sector,
-        Shield, SimEvent, Tank, TankCommand, Team, Weapon, Wreck,
+        Barrier, Block, Blow, Bullet, Enemy, ExplosiveCrate, Gun, Kind, Life, Mine, MineState,
+        Motion, Player, Playtest, Position, PreviousPosition, Protected, Run, RunPhase, RunRequest,
+        Sector, Shield, SimEvent, Tank, TankCommand, Team, Weapon, Wreck,
     },
     stats::{Genome, Stat},
 };
@@ -26,6 +26,7 @@ use crate::{
     field::{Field, Fuse, Home, InSector},
 };
 
+mod ammo;
 mod room;
 mod trials;
 
@@ -172,6 +173,7 @@ fn spawn_bullet(app: &mut App, team: Team, at: Vec2, velocity: Vec2, pierces: u8
                 bounces_left: 0,
                 pierces_left: pierces,
                 bounced: false,
+                kind: Kind::Plain,
             },
             Position(at),
             PreviousPosition(at),

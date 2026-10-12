@@ -10,6 +10,20 @@ use crate::storage;
 
 const GARAGE_FILE: &str = "garage.txt";
 
+/// The stats that the garage lists, each with its levels. The bullets that seek, split and
+/// explode are not among them yet: a playtest brings a tank that fires them.
+pub const LISTED: [Stat; 9] = [
+    Stat::Engine,
+    Stat::Tracks,
+    Stat::Muzzle,
+    Stat::Magazine,
+    Stat::Loader,
+    Stat::Ricochet,
+    Stat::Mines,
+    Stat::Shield,
+    Stat::Piercing,
+];
+
 /// The tank of the player's garage: the one that they built last, or the standard tank until
 /// they build one.
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
@@ -115,7 +129,7 @@ mod tests {
         let mut garage = Garage::default();
         // The standard tank spends every point: nothing more fits.
         assert_eq!(garage.left(), 0);
-        for stat in Stat::GARAGE {
+        for stat in LISTED {
             assert_eq!(garage.changed(stat, 1), None, "{stat:?}");
         }
         // Giving up the shield frees its 9 points, which pay for three levels of Muzzle.

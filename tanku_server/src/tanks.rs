@@ -266,17 +266,8 @@ pub struct Shot {
 /// through it. A bullet doesn't bounce in there: it ends on whatever blocks the barrel. It
 /// would come back at its tank before anyone could move out of its way.
 pub fn shoot(field: &Field, owner: Entity, tank: &Tank, position: Vec2, turret: f32) -> Shot {
-    let genome = &tank.genome;
     let direction = Vec2::from_angle(turret);
-    let bullet = Bullet {
-        owner,
-        team: tank.team,
-        sector: tank.sector,
-        velocity: direction * genome.bullet_speed(),
-        bounces_left: genome.bounces(),
-        pierces_left: genome.piercing(),
-        bounced: false,
-    };
+    let bullet = Bullet::fired(owner, tank, direction * tank.genome.bullet_speed());
     let barrel = direction * MUZZLE_DISTANCE;
     let (at, end) = match field.cast(position, barrel, BULLET_RADIUS) {
         Some((hit, solid)) => (position + barrel * hit.t, Flight::Stopped(solid)),
@@ -323,9 +314,12 @@ pub fn operate(
                         InSector(tank.sector),
                     ));
                 }
-                // A shot that ends in the barrel hits what stopped it all the same.
+                // A shot that ends in the barrel hits what stopped it all the same, and an
+                // exploding bullet goes off there, next to its own tank.
                 Flight::Stopped(solid) => {
-                    bullets::strike(&mut casualties, solid, Some((*genome, team)));
+                    let shooter = Some((*genome, team));
+                    bullets::strike(&mut casualties, solid, shooter);
+                    bullets::go_off(&mut casualties, &shot.bullet, shot.at, shooter);
                     events.write(SimEvent::BulletDestroyed { at: shot.at, team });
                 }
             }
