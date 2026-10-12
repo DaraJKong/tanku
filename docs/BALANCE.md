@@ -12,6 +12,7 @@ The numbers that decide how hard Tanku is are written in one text file, `tanku_c
 | What it holds | Numbers: what the levels of the stats give and cost, the standard tank, the weapons, how the sectors get harder, how a group shares its points, the classes, the terrain, the arenas, arena mode, how the brains fight, and what unlocks the modes |
 | What it doesn't hold | Rules. Which stats, classes and tiers there are, and what each of them does, is said by the code that reads the numbers. |
 | Reader | `tanku_core/src/balance/read.rs`: a function that the compiler runs. A program can call it too. |
+| Tests | They have a balance of their own, `tanku_core/test.balance`: a change to the balance of the game fails one test, which says so, and no other (see [Tests](#tests)) |
 
 ## Notation
 
@@ -261,3 +262,31 @@ The sector that a run must clear to unlock each mode. The last one is cleared in
 - **What a reader of numbers can't change**: the tick, the search for a bank shot, how far a brain looks ahead.
 
 A number of these that turns out to matter gets a word in the file, and the version on its first line goes up when a file of today would no longer read.
+
+## Changing the balance
+
+A change is tried with the trials of the balance, which the README describes: the report of a trial as the game is, a change to a line of the file, the report again, and the comparison of the two. Each report names the balance that it was made with by its fingerprint, a number made of the words of the file: comments and the room between two words change nothing of it.
+
+A change that is kept is written down in two more places:
+
+1. **[PROJECT.md](PROJECT.md)**, which holds the same numbers in its tables and its text.
+2. **The test that watches the file**, `the_balance_of_the_game_is_the_one_that_the_specification_describes` in `tanku_core/src/balance.rs`. It holds the fingerprint of the balance that the specification describes, and fails when the file has another, with the fingerprint to give it once the specification is up to date.
+
+## Tests
+
+The tests of the rules have a balance of their own, `tanku_core/test.balance`: the numbers that the game had at version 0.7.0, in the same notation. `tanku_core` is compiled with that file for its own tests and for those of the other crates, which ask for it with the feature `testing`. A test that says that group 9 has four tanks, or that a tank of 55 points fits the garage, holds numbers of that file. So a change to the balance of the game fails no test of a rule: it fails the one test that watches the file, and nothing else.
+
+What the tests then don't say is that the rules hold with the numbers of the game. Three things say it:
+
+- **The reader** refuses a file whose numbers can't work together, while the game is compiled.
+- **The trials** play the game as it is compiled, with the balance of the game.
+- **The tests themselves, on request**, run on the balance of the game:
+
+```bash
+cargo test --workspace --features tanku_core/game-balance
+```
+
+There, a test that holds a number fails where the two files differ, and the others say whether the rules still hold. The tests of the generator are among them: after a change to the terrain, those that hold no width say whether every sector still has its way through.
+
+The balance of the tests doesn't follow the one of the game. Bringing it up to date is a change of its own, with every test that holds one of its numbers: it is worth it when the two have grown so far apart that the tests no longer look like the game.
+

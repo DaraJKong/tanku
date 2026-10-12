@@ -7,6 +7,12 @@
 //!
 //! The file holds numbers and no rules: which stats, classes and tiers there are, and what
 //! each of them does, is said by the code that reads these numbers.
+//!
+//! The tests have a balance of their own, `test.balance`: this crate is compiled with it for
+//! its own tests, and for those of the other crates, which ask for it with the feature
+//! `testing`. A test that holds a number holds one of that file, so a change to the balance
+//! of the game fails no test of a rule. The feature `game-balance` runs the tests on the
+//! balance of the game all the same.
 
 mod read;
 
@@ -21,18 +27,36 @@ pub const RISES: usize = 8;
 /// The most weights that a group draws from.
 pub const WEIGHTS: usize = 8;
 
-const FILE: &str = include_str!("../game.balance");
+/// The file of the game, and the file of the tests.
+const GAME_FILE: &str = include_str!("../game.balance");
+#[cfg(any(test, feature = "testing"))]
+const TEST_FILE: &str = include_str!("../test.balance");
 
-/// The balance as its file writes it. The file is read while the crate is compiled: one that
-/// can't be read stops the build, and the error says on which line.
-pub const BALANCE: Balance = match read(FILE) {
+/// The file that this build is compiled with, and its name: the one of the tests in a build
+/// for tests, unless it was asked for the one of the game.
+#[cfg(all(any(test, feature = "testing"), not(feature = "game-balance")))]
+const FILE: (&str, &str) = (TEST_FILE, "test.balance");
+#[cfg(not(all(any(test, feature = "testing"), not(feature = "game-balance"))))]
+const FILE: (&str, &str) = (GAME_FILE, "game.balance");
+
+/// The balance of the game, as its file writes it. The file is read while the crate is
+/// compiled, in every build: one that can't be read stops the build, and the error says on
+/// which line.
+pub const GAME: Balance = match read(GAME_FILE) {
     Ok(balance) => balance,
-    Err(fault) => fault.stop(),
+    Err(fault) => fault.stop("game.balance"),
 };
 
-/// What tells one balance from another: a number made of the words of the file. Its comments
-/// and the room between its words change nothing of it.
-pub const FINGERPRINT: u64 = fingerprint(FILE);
+/// The balance that this build plays by: the one of the game, or the one of the tests in a
+/// build for tests.
+pub const BALANCE: Balance = match read(FILE.0) {
+    Ok(balance) => balance,
+    Err(fault) => fault.stop(FILE.1),
+};
+
+/// What tells the balance of this build from another: a number made of the words of its
+/// file. Comments and the room between two words change nothing of it.
+pub const FINGERPRINT: u64 = fingerprint(FILE.0);
 
 /// Every number of `game.balance`. Times are in seconds, lengths in meters and speeds in
 /// meters per second.
@@ -389,4 +413,39 @@ pub struct Unlock {
     pub hard: u32,
     /// In hard mode.
     pub impossible: u32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The fingerprint of the balance that `docs/PROJECT.md` describes.
+    const SPECIFIED: u64 = 0xf411_4153_0081_323d;
+
+    #[test]
+    fn the_balance_of_the_game_is_the_one_that_the_specification_describes() {
+        let game = fingerprint(GAME_FILE);
+        assert!(
+            game == SPECIFIED,
+            "game.balance changed. Write its new numbers into docs/PROJECT.md, then set \
+             SPECIFIED to {game:#018x} in tanku_core/src/balance.rs."
+        );
+    }
+
+    #[test]
+    fn the_tests_have_a_balance_of_their_own() {
+        // Both files read, and a build for tests plays by its own unless it is asked for
+        // the one of the game.
+        assert_eq!(read(GAME_FILE), Ok(GAME));
+        let tests = read(TEST_FILE).unwrap();
+        if cfg!(feature = "game-balance") {
+            assert_eq!((BALANCE, FINGERPRINT), (GAME, fingerprint(GAME_FILE)));
+        } else {
+            assert_eq!((BALANCE, FINGERPRINT), (tests, fingerprint(TEST_FILE)));
+        }
+        assert_eq!(
+            FILE.1.ends_with("test.balance"),
+            !cfg!(feature = "game-balance")
+        );
+    }
 }

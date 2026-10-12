@@ -27,8 +27,12 @@ mdns-sd.workspace = true
 criterion.workspace = true
 
 [features]
-# What the tests of the other crates take from this one: see `testing.rs`.
+# What the tests of the other crates take from this one: see `testing.rs`. With it, this crate
+# is compiled with the balance of the tests, `test.balance`, as it is for its own tests.
 testing = []
+# Runs the tests on the balance of the game, `game.balance`, all the same. A test that holds
+# a number of the balance of the tests then fails where the two differ.
+game-balance = []
 
 [[bench]]
 name = "generation"

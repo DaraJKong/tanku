@@ -24,6 +24,8 @@ tanku_core.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true
+# The tests are written for the balance of the tests, which this feature asks for.
+tanku_core = { workspace = true, features = ["testing"] }
 
 [[bench]]
 name = "simulation"

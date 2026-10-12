@@ -581,6 +581,14 @@ A change of the balance is tried in four steps:
 
 The file holds numbers and no rules. What a number can't say stays in the code: which stats and classes there are, what each tier of a brain does, how the walls of the corridor are shaped.
 
+A change to the file fails one test, which watches it: it says that `docs/PROJECT.md` holds the same numbers, and gives the fingerprint to set once the specification is up to date. No other test fails, because the tests have a balance of their own, `tanku_core/test.balance`, which doesn't move with the one of the game. To run them on the balance of the game all the same:
+
+```bash
+cargo test --workspace --features tanku_core/game-balance
+```
+
+A test that holds a number then fails where the two files differ, and the others say whether the rules still hold with the new numbers.
+
 ## Listening to the music
 
 The music is specified in [docs/MUSIC.md](docs/MUSIC.md). The game plays it, on the desktop and on the web, and the settings have a volume for it. A tool also writes it to sound files, to hear an arrangement without playing up to it:

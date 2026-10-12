@@ -14,3 +14,7 @@ clap.workspace = true
 tanku_core.workspace = true
 # The simulation, without the network and without what development adds to it.
 tanku_server.workspace = true
+
+[dev-dependencies]
+# The tests are written for the balance of the tests, which this feature asks for.
+tanku_core = { workspace = true, features = ["testing"] }

@@ -33,10 +33,11 @@ pub struct Fault {
 }
 
 impl Fault {
-    /// Stops the build with the line of the file and what is wrong with it.
-    pub const fn stop(self) -> ! {
+    /// Stops the build with the name of the file, the line and what is wrong with it.
+    pub const fn stop(self, file: &str) -> ! {
         let mut text = [0; 400];
-        let mut len = append(&mut text, 0, b"game.balance, line ");
+        let mut len = append(&mut text, 0, file.as_bytes());
+        len = append(&mut text, len, b", line ");
         let mut digits = 1;
         while self.line / digits >= 10 {
             digits *= 10;
@@ -53,7 +54,7 @@ impl Fault {
         }
         match std::str::from_utf8(text.split_at(len).0) {
             Ok(message) => panic!("{}", message),
-            Err(_) => panic!("game.balance can't be read"),
+            Err(_) => panic!("the balance can't be read"),
         }
     }
 }
@@ -1468,7 +1469,10 @@ const fn enemy(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::balance::{BALANCE, FILE, FINGERPRINT};
+
+    /// The file of the tests: its lines are those that these tests write otherwise, whatever
+    /// the balance of the game becomes.
+    const FILE: &str = include_str!("../../test.balance");
 
     /// What the reader says of the file of the game with one piece of it written otherwise.
     fn fault(written: &str, otherwise: &str) -> Fault {
@@ -1491,9 +1495,8 @@ mod tests {
     }
 
     #[test]
-    fn the_file_of_the_game_is_read() {
+    fn a_file_is_read_into_its_numbers() {
         let balance = read(FILE).unwrap();
-        assert_eq!(balance, BALANCE);
         // A few of its numbers, of each kind that the file writes.
         assert_eq!(balance.stats.gives[Stat::Muzzle as usize][1], 7.5);
         assert_eq!(balance.stats.gives[Stat::Shield as usize][..2], [0.0, 10.0]);
@@ -1530,7 +1533,7 @@ mod tests {
 
     #[test]
     fn something_that_grows_by_steps_goes_up_at_its_sectors() {
-        let tanks = BALANCE.steps.tanks;
+        let tanks = read(FILE).unwrap().steps.tanks;
         let told: Vec<u32> = [0, 1, 2, 3, 5, 6, 14, 15, 16, 1000]
             .into_iter()
             .map(|sector| tanks.at(sector))
@@ -2006,7 +2009,7 @@ mod tests {
             fault.to_string(),
             "line 37: the file has no `stat` line for engine"
         );
-        fault.stop();
+        fault.stop("game.balance");
     }
 
     #[test]
@@ -2018,30 +2021,28 @@ mod tests {
             about: "",
         };
         assert_eq!(fault.to_string(), "line 4: this line has a word too many");
-        fault.stop();
+        fault.stop("game.balance");
     }
 
     #[test]
     fn the_fingerprint_is_of_the_words_and_of_nothing_else() {
-        assert_eq!(fingerprint(FILE), FINGERPRINT);
+        let whole = read(FILE).unwrap();
+        let print = fingerprint(FILE);
         // Comments, empty lines and the room between two words are no part of it.
         let spaced = FILE.replace("  ", " ").replace("\n\n", "\n");
         assert_ne!(spaced, FILE);
-        assert_eq!(fingerprint(&spaced), FINGERPRINT);
+        assert_eq!(fingerprint(&spaced), print);
         let commented = format!("# Another word.\n{FILE}\n   # And one more.\n");
-        assert_eq!(fingerprint(&commented), FINGERPRINT);
+        assert_eq!(fingerprint(&commented), print);
         let windows = FILE.replace('\n', "\r\n");
-        assert_eq!(fingerprint(&windows), FINGERPRINT);
-        assert_eq!(read(&windows).unwrap(), BALANCE);
+        assert_eq!(fingerprint(&windows), print);
+        assert_eq!(read(&windows).unwrap(), whole);
         // Any number is, and so is the order of the words.
         assert_ne!(
             fingerprint(&FILE.replace("blast   3m", "blast   4m")),
-            FINGERPRINT
+            print
         );
-        assert_ne!(
-            fingerprint(&FILE.replace("lives 3", "lives  4")),
-            FINGERPRINT
-        );
+        assert_ne!(fingerprint(&FILE.replace("lives 3", "lives  4")), print);
         assert_ne!(fingerprint("a b\n"), fingerprint("ab\n"));
         assert_ne!(fingerprint("a\nb\n"), fingerprint("a b\n"));
     }
