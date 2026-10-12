@@ -1,14 +1,18 @@
-//! Fights between one or two enemies and a crude player, to compare what the brains make of
-//! the same tank.
+//! Fights between enemies and a crude player: one or two tanks of the same make, to compare
+//! what the brains make of it, and the groups of the first sectors as they are, to compare
+//! normal mode with hard mode.
 //!
-//! They take minutes and print tables, so they only run when asked for:
+//! They take minutes and print tables, so they only run when asked for, the brains and the
+//! modes apart:
 //!
 //! ```text
-//! cargo test -p tanku_server trials -- --ignored --nocapture
+//! cargo test -p tanku_server trials::brains -- --ignored --nocapture
+//! cargo test -p tanku_server trials::modes -- --ignored --nocapture
 //! ```
 //!
 //! The tables say little about a player of flesh and blood, who closes in, takes cover and
-//! lays mines. They tell the brains apart on the same tank, against the same shots.
+//! lays mines. They tell the brains apart on the same tank, and the modes on the same seed,
+//! against the same shots.
 
 use std::time::Instant;
 
@@ -238,35 +242,64 @@ fn fight(
         );
         foes.push(app.world_mut().spawn(enemy).id());
     }
-    cross_barrier(&mut app);
-    let entity = player(&mut app).unwrap();
+    Some(duel(&mut app, foes, pace, LIMIT))
+}
+
+/// The group of a sector of a seed as a difficulty makes it, against the bot. Sectors that
+/// are no corridors hold no fight. Tells what the group was made of besides.
+fn skirmish(
+    seed: &str,
+    sector: u32,
+    difficulty: Difficulty,
+    limit: f32,
+) -> Option<(Vec<Genome>, Trial)> {
+    let mut app = begin_in(seed, 1, difficulty);
+    app.insert_resource(Playtest {
+        infinite_lives: true,
+    });
+    skip_to(&mut app, sector);
+    let mut field = app.world_mut().resource_mut::<Field>();
+    if field.corridor.plan(sector).kind != SectorKind::Corridor {
+        return None;
+    }
+    let foes = enemies(&mut app, sector);
+    let genome = |foe: &Entity| app.world().get::<Tank>(*foe).unwrap().genome;
+    let group: Vec<Genome> = foes.iter().map(genome).collect();
+    Some((group, duel(&mut app, foes, 0.25, limit)))
+}
+
+/// The bot crosses the barrier of the sector that it stands in front of, and fights the
+/// enemies there until they have fallen or the time is up.
+fn duel(app: &mut App, mut foes: Vec<Entity>, pace: f32, limit: f32) -> Trial {
+    cross_barrier(app);
+    let entity = player(app).unwrap();
     app.world_mut()
         .entity_mut(entity)
         .insert(Protected(f32::MAX));
-    events(&mut app);
+    events(app);
 
     let mut bot = Bot::new(pace);
     let mut trial = Trial {
-        lasted: LIMIT,
+        lasted: limit,
         fell: false,
         hits: 0,
         blasts: 0,
     };
-    for step in 0..seconds(LIMIT) {
+    for step in 0..seconds(limit) {
         // The bot fights the nearest enemy that is left.
-        let me = position(&mut app, entity);
-        foes.retain(|&foe| alive(&app, foe));
+        let me = position(app, entity);
+        foes.retain(|&foe| alive(app, foe));
         let far = |foe: &Entity| app.world().get::<Position>(*foe).unwrap().0.distance(me);
         let Some(&foe) = foes.iter().min_by(|a, b| far(a).total_cmp(&far(b))) else {
             trial.lasted = step as f32 * TICK;
             trial.fell = true;
             break;
         };
-        let order = bot.order(&app, entity, foe);
+        let order = bot.order(app, entity, foe);
         *app.world_mut().get_mut::<TankCommand>(entity).unwrap() = order;
-        tick(&mut app, 1);
-        let me = position(&mut app, entity);
-        for event in events(&mut app) {
+        tick(app, 1);
+        let me = position(app, entity);
+        for event in events(app) {
             match event {
                 // A bullet that ends on a tank ends where it touches it.
                 SimEvent::BulletDestroyed {
@@ -286,7 +319,7 @@ fn fight(
             }
         }
     }
-    Some(trial)
+    trial
 }
 
 /// A tank of a body, with a brain of a tier that leads its shots.
@@ -349,20 +382,120 @@ fn table(count: usize, pace: f32) {
     }
 }
 
-/// One enemy against the bot. An ace that is alone retreats.
-#[test]
-#[ignore = "takes minutes and prints tables"]
-fn a_tank_alone() {
-    for (pace, shots) in [(0.25, "bursts"), (1.0, "single shots")] {
-        println!("\nOne enemy. The bot fires {shots}: one shot every {pace} s at most.");
-        table(1, pace);
+/// What each brain makes of the same tank.
+mod brains {
+    use super::*;
+
+    /// One enemy against the bot. An ace that is alone retreats.
+    #[test]
+    #[ignore = "takes minutes and prints tables"]
+    fn a_tank_alone() {
+        for (pace, shots) in [(0.25, "bursts"), (1.0, "single shots")] {
+            println!("\nOne enemy. The bot fires {shots}: one shot every {pace} s at most.");
+            table(1, pace);
+        }
+    }
+
+    /// Two enemies of one make against the bot: an ace has an ally to cross its fire with.
+    #[test]
+    #[ignore = "takes minutes and prints a table"]
+    fn two_tanks_together() {
+        println!("\nTwo enemies. The bot fires bursts: one shot every 0.25 s at most.");
+        table(2, 0.25);
     }
 }
 
-/// Two enemies of one make against the bot: an ace has an ally to cross its fire with.
-#[test]
-#[ignore = "takes minutes and prints a table"]
-fn two_tanks_together() {
-    println!("\nTwo enemies. The bot fires bursts: one shot every 0.25 s at most.");
-    table(2, 0.25);
+/// Prints a row of a table of skirmishes: how many there were, how many tanks each held, in
+/// how many the group fell, the median of how long it lasted, and how many of its bullets
+/// and of its blasts reached the bot in a minute.
+fn skirmishes(name: &str, fights: &[(Vec<Genome>, Trial)]) {
+    if fights.is_empty() {
+        return println!("{name:<22} {:>6}", 0);
+    }
+    let count = fights.len();
+    let tanks: usize = fights.iter().map(|(group, _)| group.len()).sum();
+    let seconds: f32 = fights.iter().map(|(_, trial)| trial.lasted).sum();
+    let fell = fights.iter().filter(|(_, trial)| trial.fell).count();
+    let mut lasted: Vec<f32> = fights.iter().map(|(_, trial)| trial.lasted).collect();
+    lasted.sort_by(f32::total_cmp);
+    let hits: u32 = fights.iter().map(|(_, trial)| trial.hits).sum();
+    let blasts: u32 = fights.iter().map(|(_, trial)| trial.blasts).sum();
+    println!(
+        "{name:<22} {count:>6} {:>6.1} {:>5.0}% {:>8.1} {:>8.1} {:>10.1}",
+        tanks as f32 / count as f32,
+        fell as f32 * 100.0 / count as f32,
+        lasted[count / 2],
+        hits as f32 * 60.0 / seconds,
+        blasts as f32 * 60.0 / seconds,
+    );
+}
+
+/// How long a skirmish lasts at most, in seconds: a group takes longer than a tank.
+const SKIRMISH: f32 = 60.0;
+
+/// The seeds of the skirmishes.
+fn trial_seeds(count: u32) -> impl Iterator<Item = String> {
+    (0..count).map(|number| format!("TRIAL{number}"))
+}
+
+fn skirmish_header() {
+    println!(
+        "{:<22} {:>6} {:>6} {:>6} {:>8} {:>8} {:>10}",
+        "", "fights", "tanks", "fell", "median s", "hits/min", "blasts/min"
+    );
+}
+
+/// Prints a table of the skirmishes of each mode in stretches of sectors, on so many seeds.
+fn modes_table(stretches: &[(u32, u32)], seeds: u32) {
+    println!(
+        "\nThe group of a sector as it is, on {seeds} seeds. The bot fires bursts, and a \
+         fight lasts {SKIRMISH} s at most."
+    );
+    skirmish_header();
+    for &(from, to) in stretches {
+        for difficulty in Difficulty::ALL {
+            let mut fights = Vec::new();
+            for seed in trial_seeds(seeds) {
+                for sector in from..=to {
+                    fights.extend(skirmish(&seed, sector, difficulty, SKIRMISH));
+                }
+            }
+            skirmishes(&format!("{from}-{to}, {difficulty:?}"), &fights);
+        }
+    }
+}
+
+/// What each mode makes of the same sectors.
+mod modes {
+    use super::*;
+
+    /// The groups of the first sectors as each mode makes them, against the bot. Then the
+    /// tank that is alone in the first two sectors of hard mode, by its brain: an ace that
+    /// is alone retreats.
+    #[test]
+    #[ignore = "takes minutes and prints tables"]
+    fn the_first_groups() {
+        modes_table(&[(1, 2), (3, 5), (6, 8), (9, 12)], 12);
+        println!("\nThe tank of sectors 1 and 2 of hard mode, by its brain, on 60 seeds.");
+        skirmish_header();
+        let mut fights = Vec::new();
+        for seed in trial_seeds(60) {
+            for sector in [1, 2] {
+                fights.extend(skirmish(&seed, sector, Difficulty::Hard, SKIRMISH));
+            }
+        }
+        for brain in 0..=4 {
+            let of_brain = |(group, _): &&(Vec<Genome>, Trial)| group[0].brain() == brain;
+            let fights: Vec<_> = fights.iter().filter(of_brain).cloned().collect();
+            skirmishes(&format!("brain {brain}"), &fights);
+        }
+    }
+
+    /// The groups of later sectors as each mode makes them: where hard mode gets past the
+    /// sector of normal mode that unlocks it.
+    #[test]
+    #[ignore = "takes minutes and prints a table"]
+    fn the_later_groups() {
+        modes_table(&[(13, 16), (17, 20), (21, 25), (26, 30)], 6);
+    }
 }

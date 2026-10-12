@@ -194,7 +194,19 @@ cargo test -p tanku_client room_the_menus_take -- --ignored --nocapture
 After a change to a brain, two tests compare a soldier, a veteran and an ace in the same five tanks. Each fights a crude player that nothing destroys, in about twenty sectors of six seeds: one tank alone, against bursts and against single shots, and two tanks together, against bursts. They print how long the enemies lasted and how many of their shots landed, and take six minutes:
 
 ```bash
-cargo test -p tanku_server trials -- --ignored --nocapture
+cargo test -p tanku_server trials::brains -- --ignored --nocapture
+```
+
+After a change to what a mode makes of its enemies, two more tests send the same crude player against the groups of the first thirty sectors as they are, in normal mode and in hard mode. They print the same figures for each mode by stretch of sectors, and take nine minutes:
+
+```bash
+cargo test -p tanku_server trials::modes -- --ignored --nocapture
+```
+
+This prints what the groups of each mode are made of, by stretch of sectors: which brains they have, and how many points they can't spend:
+
+```bash
+cargo test -p tanku_core what_the_groups_are_made_of -- --ignored --nocapture
 ```
 
 Benchmarks measure generation, the simulation and the music, and take under a minute:

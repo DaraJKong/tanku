@@ -274,6 +274,86 @@ mod tests {
         assert_eq!(fastest(Hard), Some(6));
     }
 
+    /// Prints what the groups of a single player are made of in each mode, by stretch of
+    /// sectors: how many tanks have each brain, and how many points they can't spend.
+    /// `cargo test -p tanku_core what_the_groups_are_made_of -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn print_what_the_groups_are_made_of() {
+        let stretches = [
+            (1, 2),
+            (3, 5),
+            (6, 10),
+            (11, 15),
+            (16, 20),
+            (21, 30),
+            (31, 50),
+        ];
+        for difficulty in Difficulty::ALL {
+            println!("\n{difficulty:?} mode, 300 seeds");
+            println!(
+                "{:<8} {:>6} {:>6} {:>24} {:>9} {:>9} {:>9} {:>9}",
+                "sectors",
+                "tanks",
+                "budget",
+                "brains 0 1 2 3 4, in %",
+                "left > 4",
+                "mean left",
+                "most left",
+                "leader's"
+            );
+            for (from, to) in stretches {
+                let mut tanks: Vec<(Genome, bool)> = Vec::new();
+                for seed in 0..300u64 {
+                    for sector in from..=to {
+                        let count = progression::enemy_count(sector, 1, false);
+                        let group = group(seed, difficulty, sector, count);
+                        let most = group.iter().map(|tank| tank.budget).max();
+                        let leads = |tank: &Genome| count > 1 && Some(tank.budget) == most;
+                        tanks.extend(group.iter().map(|tank| (*tank, leads(tank))));
+                    }
+                }
+                let total = tanks.len() as f32;
+                let left = |tank: &Genome| tank.budget as u32 - tank.cost();
+                let brains: Vec<String> = (0..=4)
+                    .map(|tier| {
+                        let with = tanks
+                            .iter()
+                            .filter(|(tank, _)| tank.brain() == tier)
+                            .count();
+                        format!("{:>3.0}", with as f32 * 100.0 / total)
+                    })
+                    .collect();
+                let budget = tanks
+                    .iter()
+                    .map(|(tank, _)| tank.budget as f32)
+                    .sum::<f32>()
+                    / total;
+                let idle = tanks.iter().filter(|(tank, _)| left(tank) > 4).count();
+                let mean = tanks.iter().map(|(tank, _)| left(tank) as f32).sum::<f32>() / total;
+                let most = tanks.iter().map(|(tank, _)| left(tank)).max().unwrap_or(0);
+                let leaders: Vec<&Genome> = tanks
+                    .iter()
+                    .filter(|(_, leads)| *leads)
+                    .map(|(tank, _)| tank)
+                    .collect();
+                let leaders_left = leaders.iter().map(|tank| left(tank) as f32).sum::<f32>()
+                    / leaders.len().max(1) as f32;
+                println!(
+                    "{:<8} {:>6} {:>6.0} {:>24} {:>8.0}% {:>9.1} {:>9} {:>9.1}",
+                    format!("{from}-{to}"),
+                    tanks.len(),
+                    budget,
+                    brains.join(" "),
+                    idle as f32 * 100.0 / total,
+                    mean,
+                    most,
+                    leaders_left
+                );
+            }
+        }
+    }
+
     #[test]
     fn a_group_shares_its_budget_unevenly() {
         for difficulty in Difficulty::ALL {
