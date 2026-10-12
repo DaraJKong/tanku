@@ -22,6 +22,7 @@ use std::sync::{
 
 use director::Director;
 pub use director::{Context, Place};
+use score::{SCORE, Score};
 use synth::Synth;
 
 /// Frames of music per second.
@@ -51,8 +52,14 @@ pub fn music() -> (Music, Conductor) {
 /// The music of a game that has been in a context for a long time: it starts in the section
 /// of that context, and nothing announces it.
 pub fn music_from(context: Context) -> (Music, Conductor) {
+    music_of(&SCORE, context)
+}
+
+/// The same for another piece than that of the game: one that a program read while it runs.
+pub fn music_of(score: &'static Score, context: Context) -> (Music, Conductor) {
     let conductor = Conductor(Arc::new(AtomicU32::new(pack(context))));
-    (conductor.follow(Director::settled(context)), conductor)
+    let director = Director::settled_in(score, context);
+    (conductor.follow(director, Synth::of(score)), conductor)
 }
 
 /// The end of the music that the game holds, to tell it what happens. It starts in the main
@@ -81,14 +88,14 @@ impl Conductor {
     /// The music that this conductor leads, from the start of the piece. Whoever plays the
     /// sound asks for it, which may be after the game has started to tell what happens.
     pub fn music(&self) -> Music {
-        self.follow(Director::default())
+        self.follow(Director::default(), Synth::default())
     }
 
-    fn follow(&self, director: Director) -> Music {
+    fn follow(&self, director: Director, synth: Synth) -> Music {
         Music {
             context: self.0.clone(),
             director,
-            synth: Synth::default(),
+            synth,
             frame: 0,
             next_step: 0,
         }
@@ -228,5 +235,51 @@ mod tests {
         later.render(&mut frames[1]);
         assert!(frames[0].iter().any(|sample| *sample != 0.0));
         assert_eq!(frames[0], frames[1]);
+    }
+
+    #[test]
+    fn another_piece_is_played_as_its_file_says() {
+        // The piece of the game, with every instrument but the kick mixed down to nothing,
+        // and the kick on the left alone.
+        let mut text = include_str!("../music.score").to_string();
+        for (name, levels) in [
+            ("kick ", "32% 32%"),
+            ("hat  ", "75% 45%"),
+            ("snare", "28% 28%"),
+            ("bass ", "10% 10%"),
+            ("pluck", "20% 10%"),
+            ("lead ", " 5%  8%"),
+        ] {
+            let (line, silent) = (format!("mix {name} {levels}"), format!("mix {name} 0% 0%"));
+            assert!(text.contains(&line), "{line}");
+            let left = format!("mix {name} 50% 0%");
+            text = text.replace(&line, if name == "kick " { &left } else { &silent });
+        }
+        let score: &'static Score = Box::leak(Box::new(Score::new(notation::read(&text).unwrap())));
+        let fight = Context {
+            place: Place::Arena,
+            fight: true,
+            threat: 4,
+            ..Context::default()
+        };
+        let (mut music, _) = music_of(score, fight);
+        let mut frames = vec![0.0; 2 * 44_100];
+        music.render(&mut frames);
+        let (left, right): (Vec<f32>, Vec<f32>) =
+            frames.chunks(2).map(|frame| (frame[0], frame[1])).unzip();
+        assert!(left.iter().any(|sample| sample.abs() > 0.2));
+        assert!(right.iter().all(|sample| *sample == 0.0));
+        // Nothing else is heard: before the kick of the second beat, the one of the first has
+        // died away.
+        assert!(left[20_000..22_000].iter().all(|sample| *sample == 0.0));
+
+        // The piece of the game is the same music either way.
+        let (mut game, _) = music_from(fight);
+        let (mut same, _) = music_of(&SCORE, fight);
+        let mut heard = [vec![0.0; 2 * 44_100], vec![0.0; 2 * 44_100]];
+        game.render(&mut heard[0]);
+        same.render(&mut heard[1]);
+        assert_eq!(heard[0], heard[1]);
+        assert!(heard[0] != frames);
     }
 }

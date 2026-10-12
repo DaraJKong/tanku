@@ -1163,7 +1163,13 @@ mod tests {
                          threat 3 lead=ornate@4\n\
                          threat 4 hat=off lead=ornate@4:200\n\
                          roll 1 kick kick 255 51\n\
-                         link 2 5 4\n";
+                         link 2 5 4\n\
+                         mix kick 30% 30%\n\
+                         mix hat 30% 30%\n\
+                         mix snare 30% 30%\n\
+                         mix bass 10% 10%\n\
+                         mix pluck 10% 10%\n\
+                         mix lead 10% 10%\n";
 
     /// That piece, as a director plays it.
     fn other() -> &'static Score {

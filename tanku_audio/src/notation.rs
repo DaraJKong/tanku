@@ -470,7 +470,7 @@ pub struct Link {
 }
 
 /// The piece as the file writes it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Piece {
     /// Beats per minute.
     pub tempo: u16,
@@ -489,6 +489,10 @@ pub struct Piece {
     threat_lines: [u32; THREATS],
     pub roll: Roll,
     pub link: Link,
+    /// How loud each instrument is on the left and on the right, where 1 is as loud as a
+    /// sound can be, and whether the file says so.
+    mix: [[f32; 2]; 6],
+    mixed: [bool; 6],
 }
 
 impl Piece {
@@ -520,6 +524,8 @@ impl Piece {
             degree: 0,
             notes: 0,
         },
+        mix: [[0.0; 2]; 6],
+        mixed: [false; 6],
     };
 
     pub const fn motifs(&self) -> &[Motif] {
@@ -613,6 +619,12 @@ impl Piece {
     pub const fn threat(&self, threat: u8, instrument: Instrument) -> Option<Layer> {
         self.threats[threat as usize][instrument as usize]
     }
+
+    /// How loud an instrument is on the left and on the right, where 1 is as loud as a sound
+    /// can be.
+    pub const fn mix(&self, instrument: Instrument) -> [f32; 2] {
+        self.mix[instrument as usize]
+    }
 }
 
 /// The words of one line, one after the other.
@@ -665,6 +677,75 @@ const fn number(word: &[u8]) -> Option<u32> {
     Some(value)
 }
 
+/// A number of the file that can have a point, such as `5.5` or `0.4`: its digits as one whole
+/// number, and how many of them come after the point.
+#[derive(Clone, Copy)]
+struct Decimal {
+    digits: u32,
+    places: u32,
+}
+
+impl Decimal {
+    /// The number over a power of ten: over a hundred for a number of percent. It is one
+    /// division of two whole numbers, so it is the nearest value to what the file writes.
+    const fn over(self, tens: u32) -> f32 {
+        let mut scale = 1u32;
+        let mut power = 0;
+        while power < self.places + tens {
+            scale *= 10;
+            power += 1;
+        }
+        self.digits as f32 / scale as f32
+    }
+}
+
+/// A measure: a number right before its unit, as in `136ms`, `5.5Hz` or `30%`. It has seven
+/// digits at most, of which four after its point.
+const fn measure(word: &[u8], unit: &[u8]) -> Option<Decimal> {
+    if word.len() <= unit.len() {
+        return None;
+    }
+    let (number, ending) = word.split_at(word.len() - unit.len());
+    if !same(ending, unit) {
+        return None;
+    }
+    let (mut digits, mut count, mut places) = (0, 0, 0);
+    let mut point = false;
+    let mut index = 0;
+    while index < number.len() {
+        let byte = number[index];
+        if byte == b'.' {
+            // One point, between two digits.
+            if point || index == 0 || index + 1 == number.len() {
+                return None;
+            }
+            point = true;
+        } else if byte.is_ascii_digit() && count < 7 {
+            digits = 10 * digits + (byte - b'0') as u32;
+            count += 1;
+            places += point as u32;
+        } else {
+            return None;
+        }
+        index += 1;
+    }
+    if places > 4 {
+        return None;
+    }
+    Some(Decimal { digits, places })
+}
+
+/// The next word as a share of the whole, from its number of percent, up to 100%.
+const fn percent(words: &mut Words) -> Option<f32> {
+    let Some(word) = words.next() else {
+        return None;
+    };
+    match measure(word, b"%") {
+        Some(share) if share.over(2) <= 1.0 => Some(share.over(2)),
+        _ => None,
+    }
+}
+
 /// The next word as a number, if it is one between two bounds.
 const fn amount(words: &mut Words, least: u32, most: u32) -> Option<u32> {
     let Some(word) = words.next() else {
@@ -707,7 +788,7 @@ struct Found {
 
 const HEADING: &str = "the file starts with the line `tanku-music 1`";
 const KINDS: &str = "a line starts with `tempo`, `key`, `motif`, `turn`, `pat`, `sec`, `play`, \
-                     `threat`, `roll` or `link`";
+                     `threat`, `roll`, `link` or `mix`";
 const TEMPO: &str = "a tempo is a number of beats per minute, from 30 to 300";
 const TONIC: &str = "a key starts with its tonic, such as `A`, `C#` or `Eb`";
 const MODES: &str = "a key has two modes, that of the piece and that of the fights of an arena: \
@@ -745,6 +826,8 @@ const STAR: &str = "`*` leaves an instrument to the threat, in a `play` line";
 const LEFT: &str = "an instrument is left to the threat, and a threat from 0 to 4 has no \
                     `threat` line";
 const NOT_LEFT: &str = "no `play` line leaves this instrument to the threat, with `*`";
+const MIX: &str = "a `mix` line has an instrument, then how loud it is on the left and on the \
+                   right, each from 0% to 100%";
 const DRUM: &str = "on a drum, a step is `x` for a hit, `o` for a soft one or a dot";
 const PITCHED: &str = "on the bass and the pluck, a step is `x`, `o`, `R`, `O`, `V`, a degree \
                        from 1 to 9, a dot or a dash";
@@ -814,6 +897,21 @@ pub const fn read(text: &str) -> Result<Piece, Fault> {
     }
     if let Err(fault) = arrangement(&piece, line) {
         return Err(fault);
+    }
+    let mut instrument = 0;
+    while instrument < Instrument::ALL.len() {
+        if !piece.mixed[instrument] {
+            let what = match Instrument::ALL[instrument] {
+                Instrument::Kick => "the file has no `mix kick` line",
+                Instrument::Hat => "the file has no `mix hat` line",
+                Instrument::Snare => "the file has no `mix snare` line",
+                Instrument::Bass => "the file has no `mix bass` line",
+                Instrument::Pluck => "the file has no `mix pluck` line",
+                Instrument::Lead => "the file has no `mix lead` line",
+            };
+            return Err(Fault { line, what });
+        }
+        instrument += 1;
     }
     // A section without a tempo of its own has that of the piece.
     let mut index = 0;
@@ -925,6 +1023,8 @@ const fn record(
         }
         found.link = true;
         piece.link = tri!(link(words));
+    } else if same(kind, b"mix") {
+        tri!(mix(piece, words));
     } else {
         return Err(KINDS);
     }
@@ -1478,6 +1578,20 @@ const fn link(words: &mut Words) -> Result<Link, &'static str> {
     })
 }
 
+const fn mix(piece: &mut Piece, words: &mut Words) -> Result<(), &'static str> {
+    let instrument = match words.next() {
+        Some(name) => Instrument::named(name),
+        None => None,
+    };
+    let instrument = need!(instrument, MIX) as usize;
+    if piece.mixed[instrument] {
+        return Err("this instrument is mixed twice");
+    }
+    piece.mix[instrument] = [need!(percent(words), MIX), need!(percent(words), MIX)];
+    piece.mixed[instrument] = true;
+    Ok(())
+}
+
 /// One bar of a melody from its grid, for a test that writes a bar of its own.
 #[cfg(test)]
 pub(crate) const fn line(grid: &str) -> Line {
@@ -1515,6 +1629,13 @@ mod tests {
                            play calm rest\n\
                            play corridor rest\n\
                            play arena rest\n";
+    /// The mix of the six instruments.
+    const LEVELS: &str = "mix kick 30% 30%\n\
+                          mix hat 70% 40%\n\
+                          mix snare 25% 25%\n\
+                          mix bass 10% 10%\n\
+                          mix pluck 20% 15%\n\
+                          mix lead 5.5% 12.25%\n";
     /// A motif of one bar and a motif of two, with its turn.
     const MOTIFS: &str = "motif A 1... .... .... ....\n\
                           motif B 1..2 .... 3-.. .... | 5... .... .... 6...\n\
@@ -1552,15 +1673,15 @@ mod tests {
         fault(&format!("{SMALL}{lines}"))
     }
 
-    /// A file that reads: the small one, some more lines, and the shortest arrangement.
+    /// A file that reads: the small one, some more lines, the shortest arrangement and a mix.
     fn whole(lines: &str) -> String {
-        format!("{SMALL}{lines}{SILENCE}")
+        format!("{SMALL}{lines}{SILENCE}{LEVELS}")
     }
 
     /// The same for an arrangement of its own, over the motifs, the patterns and the two
     /// sections that such a file has.
     fn arranged(arrangement: &str) -> String {
-        format!("{SMALL}{MOTIFS}{PATTERNS}{SECTIONS}{arrangement}")
+        format!("{SMALL}{MOTIFS}{PATTERNS}{SECTIONS}{arrangement}{LEVELS}")
     }
 
     #[test]
@@ -1605,12 +1726,12 @@ mod tests {
         let calm = "the file has no `play calm` line";
         assert_eq!(
             fault(&whole("").replace("play calm rest\n", "")),
-            (10, calm)
+            (16, calm)
         );
         let arena = "the file has no `play arena` line";
         assert_eq!(
             fault(&whole("").replace("play arena rest\n", "")),
-            (10, arena)
+            (16, arena)
         );
     }
 
@@ -1618,7 +1739,8 @@ mod tests {
     fn comments_empty_lines_and_line_endings_change_nothing() {
         let dressed = "# A comment.\r\n\r\n  tanku-music   1\r\n#tempo 60\r\ntempo 96\r\n\
                        \tkey C# ionian mixolydian\n\nroll 1 kick snare 20 200\nlink 3 2 6";
-        assert_eq!(read(&format!("{dressed}\n{SILENCE}")), read(&whole("")));
+        let whole_dressed = format!("{dressed}\n{SILENCE}{LEVELS}");
+        assert_eq!(read(&whole_dressed), read(&whole("")));
         assert!(read(&whole("")).is_ok());
     }
 
@@ -1876,12 +1998,67 @@ mod tests {
         assert_eq!(with("threat 2 hat=off", "threat 2 hat=*"), (24, STAR));
         // A scene leaves instruments to the threat, and one threat has no line.
         let third = "threat 3 hat=off bass=walk@1 lead=ornate@4\n";
-        assert_eq!(with(third, ""), (25, LEFT));
+        assert_eq!(with(third, ""), (31, LEFT));
         // A threat gives an instrument that no scene leaves to it.
         assert_eq!(
             with("threat 1 hat=off", "threat 1 pluck=up@3 hat=off"),
             (23, NOT_LEFT)
         );
+    }
+
+    #[test]
+    fn the_mix_reads_in_percent() {
+        let piece = read(&whole("")).unwrap();
+        assert_eq!(piece.mix(Instrument::Kick), [0.3, 0.3]);
+        assert_eq!(piece.mix(Instrument::Hat), [0.7, 0.4]);
+        assert_eq!(piece.mix(Instrument::Pluck), [0.2, 0.15]);
+        // A number of percent can have a point, and it is the nearest value to what is
+        // written.
+        assert_eq!(piece.mix(Instrument::Lead), [0.055, 0.1225]);
+        // The mix starts on line 12, with the kick.
+        let with = |old: &str, new: &str| {
+            let text = whole("");
+            assert!(text.contains(old), "{old}");
+            read(&text.replace(old, new))
+        };
+        let silent = with("mix kick 30% 30%", "mix kick 0% 100%").unwrap();
+        assert_eq!(silent.mix(Instrument::Kick), [0.0, 1.0]);
+        let bad = [
+            "30 30%",
+            "30% 30",
+            "30%",
+            "30% 101%",
+            "30% 100.1%",
+            "-3% 30%",
+            "30% .5%",
+            "30% 5.%",
+            "30% 1.2.3%",
+            "30% 0.12345%",
+            "30% 12345678%",
+            "30% %",
+            "30% 30 %",
+        ];
+        for levels in bad {
+            let fault = with("mix kick 30% 30%", &format!("mix kick {levels}")).unwrap_err();
+            assert_eq!((fault.line, fault.what), (12, MIX), "{levels}");
+        }
+        let fault = |old: &str, new: &str| {
+            let fault = with(old, new).unwrap_err();
+            (fault.line, fault.what)
+        };
+        assert_eq!(fault("mix kick 30% 30%", "mix organ 30% 30%"), (12, MIX));
+        let extra = "this line has a word too many";
+        assert_eq!(
+            fault("mix kick 30% 30%", "mix kick 30% 30% 30%"),
+            (12, extra)
+        );
+        let twice = "this instrument is mixed twice";
+        assert_eq!(fault("mix hat 70% 40%", "mix kick 70% 40%"), (13, twice));
+        // Every instrument has its line.
+        let none = "the file has no `mix lead` line";
+        assert_eq!(fault("mix lead 5.5% 12.25%\n", ""), (16, none));
+        let none = "the file has no `mix bass` line";
+        assert_eq!(fault("mix bass 10% 10%\n", ""), (16, none));
     }
 
     #[test]

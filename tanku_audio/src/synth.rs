@@ -15,6 +15,8 @@ use crate::{
     DUCKED, SAMPLE_RATE,
     director::{Step, Tone},
     math::{Noise, frequency, sine},
+    notation::Instrument,
+    score::{SCORE, Score},
 };
 
 const RATE: f32 = SAMPLE_RATE as f32;
@@ -85,14 +87,6 @@ const SNARE_TONE: f32 = 220.0;
 const SNARE_TONE_FALL: f32 = fall(0.03);
 const SNARE_TONE_LEVEL: f32 = 0.7;
 const SNARE_SEED: u32 = 0x5EED_0003;
-
-/// How loud each instrument is on the left and on the right.
-const BASS_MIX: [f32; 2] = [0.10, 0.10];
-const PLUCK_MIX: [f32; 2] = [0.20, 0.10];
-const LEAD_MIX: [f32; 2] = [0.05, 0.08];
-const KICK_MIX: [f32; 2] = [0.32, 0.32];
-const HAT_MIX: [f32; 2] = [0.75, 0.45];
-const SNARE_MIX: [f32; 2] = [0.28, 0.28];
 
 /// A muffled music loses what is above this frequency, in Hz, and half its loudness.
 const MUFFLE_POLE: f32 = pole(600.0);
@@ -585,10 +579,20 @@ pub struct Synth {
     ducked: bool,
     /// How ducked the music is, from 0 to 1.
     duck: f32,
+    /// How loud each instrument is on the left and on the right, as its piece mixes it.
+    mix: [[f32; 2]; 6],
 }
 
+/// A synthesizer for the piece of the game.
 impl Default for Synth {
     fn default() -> Self {
+        Self::of(&SCORE)
+    }
+}
+
+impl Synth {
+    /// A synthesizer for a piece, which mixes its instruments as the file of that piece says.
+    pub fn of(score: &Score) -> Self {
         Self {
             bass: Bass::default(),
             plucks: std::array::from_fn(|_| Pluck::new()),
@@ -616,11 +620,10 @@ impl Default for Synth {
             dull: [[0.0; 2]; 2],
             ducked: false,
             duck: 0.0,
+            mix: Instrument::ALL.map(|instrument| score.piece.mix(instrument)),
         }
     }
-}
 
-impl Synth {
     /// Starts what a step asks for. `at` is where the step starts, in half frames since the
     /// piece began, which tells how many whole frames its notes last.
     pub fn play(&mut self, step: &Step, at: u64) {
@@ -709,15 +712,17 @@ impl Synth {
         // Both leave the level as it is, to the bit, when the music is neither.
         let level = (1.0 - MUFFLE_LEVEL * self.muffle) * (1.0 - (1.0 - DUCKED) * self.duck);
 
+        // In the order of the instruments.
+        let [of_kick, of_hat, of_snare, of_bass, of_pluck, of_lead] = self.mix;
         let mut out = [0.0; 2];
         for (side, out) in out.iter_mut().enumerate() {
-            let mix = bass * BASS_MIX[side]
-                + pluck * PLUCK_MIX[side]
-                + echo * PLUCK_MIX[1 - side]
-                + lead * LEAD_MIX[side]
-                + kick * KICK_MIX[side]
-                + hat * HAT_MIX[side]
-                + snare * SNARE_MIX[side];
+            let mix = bass * of_bass[side]
+                + pluck * of_pluck[side]
+                + echo * of_pluck[1 - side]
+                + lead * of_lead[side]
+                + kick * of_kick[side]
+                + hat * of_hat[side]
+                + snare * of_snare[side];
             // The muffled version is always computed, so that going to it is smooth.
             let [first, second] = &mut self.dull[side];
             *first += MUFFLE_POLE * (mix - *first);

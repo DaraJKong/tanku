@@ -40,3 +40,10 @@ threat 4  bass=leaping@2  pluck=fast@3      lead=ornate@4+ornate@5:130
 
 roll 2 hat snare 40 255
 link 2 5 4
+
+mix kick  32% 32%
+mix hat   75% 45%
+mix snare 28% 28%
+mix bass  10% 10%
+mix pluck 20% 10%
+mix lead   5%  8%

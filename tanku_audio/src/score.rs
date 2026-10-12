@@ -621,6 +621,12 @@ mod tests {
             (Instrument::Hat, Instrument::Snare)
         );
         assert_eq!((LINK.beats, LINK.degree, LINK.notes), (2, 5, 4));
+
+        // The mix: each instrument on the left and on the right, in their order.
+        let mix = Instrument::ALL.map(|instrument| PIECE.mix(instrument));
+        let (drums, pitched) = mix.split_at(3);
+        assert_eq!(drums, [[0.32, 0.32], [0.75, 0.45], [0.28, 0.28]]);
+        assert_eq!(pitched, [[0.10, 0.10], [0.20, 0.10], [0.05, 0.08]]);
     }
 
     #[test]

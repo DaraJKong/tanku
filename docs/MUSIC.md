@@ -11,7 +11,7 @@ All numbers and all notes in this document are starting values to tune by ear.
 | Topic | Summary |
 |---|---|
 | Piece | One, in A, at 120 beats per minute and at 105 in its bridge, without an end |
-| Written by hand | Three motifs, the chords and the melody of each section, twelve patterns with their levels, the arrangement, the tempos, the key and its two modes, the roll and the connection. They are in one file, [`music.score`](#the-file). |
+| Written by hand | Three motifs, the chords and the melody of each section, twelve patterns with their levels, the arrangement, the tempos, the key and its two modes, the roll, the connection and the mix. They are in one file, [`music.score`](#the-file). |
 | Derived by rule | Everything else: the notes of each mode, the skeleton, the ornaments and the answers of a melody, every connection, every sound |
 | Instruments | Bass, pluck, lead, kick, hi-hat and snare, all synthesized by the game |
 | Follows | The place (bay, corridor, arena), the fight (on or off) and the threat (the highest brain tier awake) |
@@ -95,7 +95,7 @@ The tonic is A because of the cues. Those that play notes already play A and E: 
 
 ## Material
 
-Five things are written by hand: the motifs, the sections with their chords, the patterns, the arrangement, and a few numbers, which are the tempos, the key, the roll and the connection. They are in one file.
+Five things are written by hand: the motifs, the sections with their chords, the patterns, the arrangement, and a few numbers, which are the tempos, the key, the roll, the connection and the mix. They are in one file.
 
 ### The file
 
@@ -143,6 +143,13 @@ threat 4  bass=leaping@2  pluck=fast@3      lead=ornate@4+ornate@5:130
 
 roll 2 hat snare 40 255
 link 2 5 4
+
+mix kick  32% 32%
+mix hat   75% 45%
+mix snare 28% 28%
+mix bass  10% 10%
+mix pluck 20% 10%
+mix lead   5%  8%
 ```
 
 The file is text. It has one record per line, with its words apart by spaces. An empty line is ignored, and so is a line that starts with `#`.
@@ -160,6 +167,7 @@ The file is text. It has one record per line, with its words apart by spaces. An
 | `threat` | A threat, from 0 to 4, and what the instruments play at it |
 | `roll` | The roll that announces a fight: its beats, the drum that rolls, the drum that rolls in an arena, and how loud it is at its start and at its end |
 | `link` | The [connection](#connection) out of a fight: its beats, the degree that it goes to, and how many notes it has at most |
+| `mix` | An instrument, then how loud it is on the left and on the right, in percent of the loudest that a sound can be. Every instrument has its line. |
 
 The chords of a section are two words of four, one chord per bar. A chord is the degree that it is built on, or `C` for the chord that gives the mode its color. The melody of a section is eight bars of motifs, one word for each: `A` is motif A as it is written, `a` is motif A with its turn, and `C:7` is motif C with its last note on degree 7.
 
@@ -211,7 +219,7 @@ After its scene, a `play` line has the sections that play in turn, with a comma 
 
 A `threat` line is written in the same way, without `*`. It only names instruments that a scene leaves to the threat.
 
-The file doesn't hold the [instruments](#instruments) yet. How each one sounds, and how loud it is against the others, is in the code. So are the rules: how a line is derived from a melody, and how the music follows the game from one scene to the next.
+The file doesn't hold how each [instrument](#instruments) sounds yet: that is in the code. So are the rules: how a line is derived from a melody, and how the music follows the game from one scene to the next.
 
 After a change of the file, two commands tell what it did:
 
@@ -398,7 +406,7 @@ The kick has no noise in it because every weapon cue has some. The bass stays ab
 - **Under the cues.** At the default settings, the loudest arrangement peaks 12 dB below a shot fired next to the player. With Music all the way up it peaks 6 dB below that shot.
 - **Melody on top.** The melody is the loudest thing with a pitch. The arpeggio of the pluck and the octave that the lead adds at threat 4 are quieter than the line they go with.
 - **Ducking.** A mine warns for 0.6 s before it blows, unless a bullet or a blast sets it off. While that warning sounds within hearing range, the music is half as loud. It gets there in 0.02 s, in time for the first beep, and takes 0.2 s to come back once the warning is over. Hearing range is 50 m from the middle of the screen. No other cue ducks the music.
-- **Stereo.** The music is in stereo and the cues stay in the middle. The pluck and the lead, which share the pitches of the cues, sit to the sides.
+- **Stereo.** The music is in stereo and the cues stay in the middle. The pluck and the lead, which share the pitches of the cues, sit to the sides. How loud each instrument is on each side is in the `mix` lines of [the file](#the-file).
 - **Dry.** There is no reverb. The arpeggio of the pluck has one echo, three steps later, a third as loud and on the other side. Its melodies have none: with an echo, the intro sounded too relaxed.
 - **No clipping.** The sum of the instruments goes through a soft limit.
 
@@ -524,7 +532,7 @@ With `?probe` after its address, the page shows how long its frames are, how far
 Some tests say what the piece is today:
 
 - **Stable.** Thirty-two seconds of each arrangement match a stored value, as the map of a seed does, and so does each cue.
-- **As written.** The file has the motifs, the chords, the patterns, the arrangement and the numbers of this document.
+- **As written.** The file has the motifs, the chords, the patterns, the arrangement, the mix and the numbers of this document.
 - **On time.** A fight that is announced on each of the 16 steps of a bar gives a roll at once and the fight two beats later. A fight that ends on each of them plays on to its next beat, and gives a connection there and the bridge two beats later.
 - **Connected.** For every note the lead can be on, the connection goes to degree 5 one step of the scale at a time and never turns back.
 
