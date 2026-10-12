@@ -262,7 +262,7 @@ Software is the enemy's controller. Its price is a share of the tank's total bud
 | Brain | 1, Grunt | 8% | Keeps its distance, avoids walls and mines, uses mines and shield by reflex. |
 | Brain | 2, Soldier | 16% | Dodges bullets flying straight at it, reloads behind cover, spreads out from its allies. |
 | Brain | 3, Veteran | 24% | Dodges ricochets, shoots down incoming bullets, mines the players' routes, shields only when it can't dodge. |
-| Brain | 4, Ace | 32% | Coordinates with allies for crossfire, baits shots, retreats when alone. |
+| Brain | 4, Ace | 32% | Dodges shots that are aimed ahead of it, coordinates with allies for crossfire, baits shots, retreats when alone. |
 | Ballistics | 0 | 0% | Aims at where the target is. |
 | Ballistics | 1 | 5% | Leads moving targets. |
 | Ballistics | 2 | 10% | Finds single-bounce shots. |
