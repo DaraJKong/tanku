@@ -206,6 +206,7 @@ fn spawn(
             SimEvent::BlockDestroyed { at } => (at, 0.5, 2.4, 0.3, &glows.spark),
             SimEvent::Shot { at, .. } => (at, 0.8, 0.7, 0.1, &glows.spark),
             SimEvent::Ricochet { at } => (at, 0.8, 0.6, 0.12, &glows.spark),
+            SimEvent::BulletSplit { at } => (at, 0.8, 1.0, 0.14, &glows.spark),
             SimEvent::ShieldBlocked { at } => (at, 0.6, 3.4, 0.2, &glows.spark),
             SimEvent::PlayerRespawned { at } | SimEvent::TankRepaired { at } => {
                 (at, 0.6, 4.0, 0.5, &glows.cold)

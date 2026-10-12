@@ -17,7 +17,7 @@ use tanku_core::{
     map::SectorKind,
     rules::{BLAST_RADIUS, BLOCK_SIZE, BULLET_RADIUS, MINE_RADIUS, MINE_TRIGGER_RADIUS},
     sim::{
-        Barrier, Block, Bullet, ExplosiveCrate, Mine, MineState, Planned, Position,
+        Barrier, Block, Bullet, ExplosiveCrate, Kind, Mine, MineState, Planned, Position,
         PreviousPosition, Run, Sector,
     },
     stats::Stat,
@@ -56,6 +56,21 @@ const STRIPE_WIDTH: f32 = 0.12;
 const STRIPE_GAP: f32 = 0.09;
 /// Stripes are dark on a bright bullet. A vertex color multiplies the color of the material.
 const STRIPE_COLOR: [f32; 4] = [0.03, 0.03, 0.04, 1.0];
+/// How far ahead of its two ends the point of a chevron is, on a bullet that seeks.
+const CHEVRON_LEAN: f32 = 0.14;
+/// Length and width of the seam along a bullet that splits.
+const SEAM: Vec2 = Vec2::new(0.76, 0.06);
+/// A bullet that explodes, along its line of flight from its middle: where its round part is
+/// cut flat, where the red line across it starts and ends, and where its flat end starts. A
+/// gap parts each from the next, through which the floor shows.
+const GRENADE_CUT: f32 = 0.11;
+const RED_LINE: (f32, f32) = (0.17, 0.29);
+const FLAT_END: f32 = 0.35;
+/// The red line is a little wider than the bullet that it cuts.
+const RED_LINE_RADIUS: f32 = 0.3;
+/// Length and width of the trail behind a bullet that explodes, and how much of it shows.
+const TRAIL: Vec2 = Vec2::new(1.8, 0.08);
+const TRAIL_STRENGTH: f32 = 0.45;
 /// The patch of light under a bullet, which shows where it is above the ground.
 const POOL_SIZE: f32 = 0.9;
 /// One copy of the floor texture covers the square between two heavy lines of the grid.
@@ -101,6 +116,13 @@ pub struct Shapes {
     bullets: Vec<Handle<Mesh>>,
     /// The same for bullets that still pierce: they have a pointed tip.
     darts: Vec<Handle<Mesh>>,
+    /// The same for bullets that seek at their bounces: a chevron stands for each stripe.
+    seekers: Vec<Handle<Mesh>>,
+    /// A bullet that splits and one that explodes. Neither bounces.
+    splitter: Handle<Mesh>,
+    grenade: Handle<Mesh>,
+    /// The trail of a bullet that explodes, 1 long: it runs back from where it is put.
+    trail: Handle<Mesh>,
 }
 
 #[derive(Resource)]
@@ -119,6 +141,8 @@ pub struct Paints {
     bullet: Handle<StandardMaterial>,
     /// The patch of light under a bullet.
     pool: Handle<StandardMaterial>,
+    /// The trail of a bullet that explodes.
+    trail: Handle<StandardMaterial>,
     mine_light: Handle<StandardMaterial>,
     trigger: Handle<StandardMaterial>,
     blast: Handle<StandardMaterial>,
@@ -142,6 +166,32 @@ struct Walls;
 enum BarrierPart {
     Curtain,
     Lines,
+}
+
+/// The shell of a bullet: the part that says what the bullet does. It turns around the line
+/// of flight to face the camera.
+#[derive(Component)]
+struct Shell;
+
+/// The trail of a bullet that explodes. It grows from where the bullet was first seen.
+#[derive(Component)]
+struct Trail {
+    from: Vec2,
+}
+
+/// What a bullet is drawn as, which says what it does besides flying straight and bouncing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Look {
+    /// Round at both ends.
+    Round,
+    /// With a pointed tip: it pierces.
+    Dart,
+    /// With chevrons in the place of the stripes: it seeks at its bounces.
+    Seeker,
+    /// With a seam along it and no stripe: it splits.
+    Splitter,
+    /// With a flat end, and a red line that cuts it near that end: it explodes.
+    Grenade,
 }
 
 /// The parts of a mine that come and go with its state.
@@ -169,6 +219,7 @@ pub fn plugin(app: &mut App) {
             ),
             (wake_sectors, paint_barriers, blink_mines, stripe_bullets),
             place,
+            (roll_bullets, stretch_trails),
         )
             .chain(),
     );
@@ -217,6 +268,20 @@ pub fn setup(
     );
     let mut disc = Draft::default();
     disc.disc(Vec3::ZERO, 0.5, Color::WHITE);
+    let mut trail = Draft::default();
+    trail.line(Vec3::ZERO, Vec3::NEG_X, TRAIL.y, Color::WHITE);
+    let bounces = 0..=Stat::Ricochet.max_level();
+    let mut bullets = |look: Look| -> Vec<Handle<Mesh>> {
+        let bounces = bounces.clone();
+        bounces
+            .map(|stripes| meshes.add(bullet_mesh(look, stripes)))
+            .collect()
+    };
+    let (rounds, darts, seekers) = (
+        bullets(Look::Round),
+        bullets(Look::Dart),
+        bullets(Look::Seeker),
+    );
     commands.insert_resource(Shapes {
         cube: meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
         sphere: meshes.add(Sphere::new(0.5)),
@@ -228,12 +293,12 @@ pub fn setup(
         mine: meshes.add(mine_drawing().build()),
         trigger,
         blast,
-        bullets: (0..=Stat::Ricochet.max_level())
-            .map(|stripes| meshes.add(bullet_mesh(false, stripes)))
-            .collect(),
-        darts: (0..=Stat::Ricochet.max_level())
-            .map(|stripes| meshes.add(bullet_mesh(true, stripes)))
-            .collect(),
+        bullets: rounds,
+        darts,
+        seekers,
+        splitter: meshes.add(bullet_mesh(Look::Splitter, 0)),
+        grenade: meshes.add(bullet_mesh(Look::Grenade, 0)),
+        trail: meshes.add(trail.build()),
     });
 
     let grid = images.add(grid_texture());
@@ -257,6 +322,7 @@ pub fn setup(
         barrier_unlocked: paint(materials, theme::GOOD),
         bullet: paint(materials, theme::BULLET),
         pool: paint(materials, theme::BULLET.with_alpha(0.13)),
+        trail: paint(materials, theme::BULLET.with_alpha(TRAIL_STRENGTH)),
         mine_light: paint(materials, theme::DANGER),
         trigger: paint(materials, theme::DANGER.with_alpha(0.6)),
         blast: paint(materials, theme::DANGER),
@@ -580,93 +646,232 @@ fn barrier_drawing(length: f32) -> Draft {
     draft
 }
 
-/// The mesh of a bullet: a shape turned around its line of flight, with its stripes.
-///
-/// Stripes are evenly spaced and centered on the middle of the bullet.
-fn bullet_mesh(pointed: bool, stripes: u8) -> Mesh {
-    const AROUND: usize = 12;
-    const CAP: usize = 4;
-    // The outline from the tail to the tip, as a distance along the axis and a radius.
-    let rounded = |forward: f32| {
-        (0..=CAP).map(move |step| {
-            let angle = step as f32 / CAP as f32 * std::f32::consts::FRAC_PI_2;
-            let (along, radius) = (angle.cos(), angle.sin());
-            (
-                forward * (BULLET_BODY + BULLET_RADIUS * along),
-                BULLET_RADIUS * radius,
-            )
-        })
-    };
-    let mut outline: Vec<(f32, f32)> = rounded(-1.0).collect();
+/// A solid turned around the line of flight, which is `+x`: the surface between rings around
+/// that line, as triangles that carry their colors.
+#[derive(Default)]
+struct Turned {
+    positions: Vec<Vec3>,
+    normals: Vec<Vec3>,
+    colors: Vec<[f32; 4]>,
+}
+
+impl Turned {
+    /// Adds the surface between this many rings, from the tail to the tip. `ring` tells how
+    /// far along the line of flight a ring is at an angle around it, and how far from the
+    /// line. The angles are those of `around`, from the top, and the surface is flat between
+    /// two of them. `color` is that of the band after a ring, between an angle and the next.
+    fn bands(
+        &mut self,
+        around: &[f32],
+        rings: usize,
+        ring: impl Fn(usize, f32) -> (f32, f32),
+        color: impl Fn(usize, usize) -> [f32; 4],
+    ) {
+        let outward = |angle: f32| Vec3::new(0.0, angle.cos(), angle.sin());
+        let corner = |index: usize, angle: f32| {
+            let (along, radius) = ring(index, angle);
+            (Vec3::X * along + outward(angle) * radius, outward(angle))
+        };
+        for band in 0..rings.saturating_sub(1) {
+            for (facet, &here) in around.iter().enumerate() {
+                let next = around[(facet + 1) % around.len()];
+                let (from, to) = ((band, here), (band, next));
+                let (far, near) = ((band + 1, next), (band + 1, here));
+                // Two triangles, counterclockwise seen from outside. One of them is flat
+                // where a ring is a single point, as at the tail and at the tip.
+                for triangle in [[from, to, near], [to, far, near]] {
+                    let corners = triangle.map(|(index, angle)| corner(index, angle));
+                    let [a, b, c] = corners.map(|(place, _)| place);
+                    if (b - a).cross(c - a).length_squared() < 1e-12 {
+                        continue;
+                    }
+                    for (place, normal) in corners {
+                        self.positions.push(place);
+                        self.normals.push(normal);
+                        self.colors.push(color(band, facet));
+                    }
+                }
+            }
+        }
+    }
+
+    fn build(self) -> Mesh {
+        let count = self.positions.len();
+        Mesh::new(
+            PrimitiveTopology::TriangleList,
+            RenderAssetUsages::default(),
+        )
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, self.positions)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, self.normals)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, vec![Vec2::ZERO; count])
+        .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, self.colors)
+    }
+}
+
+/// One of the two round ends of a bullet, from the line of flight outward: the tail, or the
+/// tip, as distances along the line of flight and from it.
+fn round_end(forward: f32) -> impl Iterator<Item = (f32, f32)> {
+    const STEPS: usize = 4;
+    (0..=STEPS).map(move |step| {
+        let angle = step as f32 / STEPS as f32 * std::f32::consts::FRAC_PI_2;
+        let (along, radius) = (angle.cos(), angle.sin());
+        (
+            forward * (BULLET_BODY + BULLET_RADIUS * along),
+            BULLET_RADIUS * radius,
+        )
+    })
+}
+
+/// The outline of a bullet from its tail to its tip, which is round or pointed.
+fn bullet_outline(pointed: bool) -> Vec<(f32, f32)> {
+    let mut outline: Vec<(f32, f32)> = round_end(-1.0).collect();
     if pointed {
         outline.push((BULLET_BODY, BULLET_RADIUS));
         outline.push((BULLET_BODY + DART_TIP, 0.0));
     } else {
-        outline.extend(rounded(1.0).collect::<Vec<_>>().into_iter().rev());
+        outline.extend(round_end(1.0).collect::<Vec<_>>().into_iter().rev());
     }
+    outline
+}
 
-    let edges: Vec<f32> = (0..stripes)
+/// How far from its line of flight the skin of a round bullet is, this far along the line
+/// from the middle of the bullet.
+fn girth(along: f32) -> f32 {
+    let past = (along.abs() - BULLET_BODY).max(0.0);
+    (BULLET_RADIUS * BULLET_RADIUS - past * past)
+        .max(0.0)
+        .sqrt()
+}
+
+/// Where the stripes of a bullet start and end along it, from its middle. They are evenly
+/// spaced and centered on the middle of the bullet.
+fn stripe_edges(stripes: u8) -> Vec<f32> {
+    (0..stripes)
         .flat_map(|stripe| {
             let spacing = STRIPE_WIDTH + STRIPE_GAP;
             let center = (stripe as f32 - (stripes as f32 - 1.0) / 2.0) * spacing;
             [center - STRIPE_WIDTH / 2.0, center + STRIPE_WIDTH / 2.0]
         })
-        .collect();
-    // The outline is cut where a stripe starts or ends, so that each band has one color.
+        .collect()
+}
+
+/// Whether a place along a bullet is inside one of its stripes.
+fn striped(edges: &[f32], along: f32) -> bool {
+    edges
+        .chunks(2)
+        .any(|stripe| along > stripe[0] && along < stripe[1])
+}
+
+/// An outline with a ring more wherever it crosses one of these places along the line of
+/// flight, so that every band of it lies on one side of each place.
+fn cut(outline: &[(f32, f32)], places: &[f32]) -> Vec<(f32, f32)> {
     let mut rings: Vec<(f32, f32)> = Vec::new();
     for ends in outline.windows(2) {
         let (from, to) = (ends[0], ends[1]);
         rings.push(from);
-        for &edge in &edges {
-            if edge > from.0 && edge < to.0 {
-                let share = (edge - from.0) / (to.0 - from.0);
-                rings.push((edge, from.1 + (to.1 - from.1) * share));
+        for &place in places {
+            if place > from.0 && place < to.0 {
+                let share = (place - from.0) / (to.0 - from.0);
+                rings.push((place, from.1 + (to.1 - from.1) * share));
             }
         }
     }
     rings.push(outline[outline.len() - 1]);
+    rings
+}
 
-    let (mut positions, mut normals, mut colors) = (Vec::new(), Vec::new(), Vec::new());
-    for ends in rings.windows(2) {
-        let (from, to) = (ends[0], ends[1]);
-        let middle = (from.0 + to.0) / 2.0;
-        let striped = edges
-            .chunks(2)
-            .any(|stripe| middle > stripe[0] && middle < stripe[1]);
-        let color = if striped {
-            STRIPE_COLOR
-        } else {
-            [1.0, 1.0, 1.0, 1.0]
-        };
-        for side in 0..AROUND {
-            let outward = |side: usize| {
-                let angle = side as f32 / AROUND as f32 * std::f32::consts::TAU;
-                Vec3::new(0.0, angle.cos(), angle.sin())
+/// The mesh of a bullet: a shape turned around its line of flight, with what says what the
+/// bullet does. A round bullet and a pointed one have a stripe for each bounce they have
+/// left, and a bullet that seeks has a chevron in the place of each stripe.
+fn bullet_mesh(look: Look, stripes: u8) -> Mesh {
+    const AROUND: usize = 12;
+    const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
+    let even: Vec<f32> = (0..AROUND)
+        .map(|side| side as f32 / AROUND as f32 * std::f32::consts::TAU)
+        .collect();
+    let edges = stripe_edges(stripes);
+    let paint = |dark: bool| if dark { STRIPE_COLOR } else { WHITE };
+    let mut turned = Turned::default();
+    match look {
+        // Its stripes lean: each is ahead on top of the bullet and behind on its sides, which
+        // makes a chevron seen from above. Every ring leans as they do, on the skin of a
+        // round bullet: wholly where a stripe can be, and less and less toward the two ends,
+        // where a ring is a point.
+        Look::Seeker if stripes > 0 => {
+            const RINGS: usize = 30;
+            let reach = BULLET_BODY + BULLET_RADIUS;
+            let most = stripe_edges(Stat::Ricochet.max_level());
+            let whole = most.iter().copied().fold(0.0, f32::max);
+            let lean = |angle: f32, place: f32| {
+                let fade = ((reach - place.abs()) / (reach - whole)).clamp(0.0, 1.0);
+                CHEVRON_LEAN * (0.5 - angle.sin().abs()) * fade
             };
-            let (here, next) = (outward(side), outward(side + 1));
-            let corner = |ring: (f32, f32), outward: Vec3| Vec3::X * ring.0 + outward * ring.1;
-            // Two triangles, counterclockwise seen from outside. One of them is flat at the tail
-            // and at the tip, where a ring is a single point.
-            let triangles = [
-                (from.1 > 0.0).then_some([(from, here), (from, next), (to, here)]),
-                (to.1 > 0.0).then_some([(from, next), (to, next), (to, here)]),
+            let spread = (0..=RINGS).map(|ring| reach * (2.0 * ring as f32 / RINGS as f32 - 1.0));
+            let mut places: Vec<f32> = spread.chain(edges.iter().copied()).collect();
+            places.sort_by(f32::total_cmp);
+            places.dedup_by(|a, b| (*a - *b).abs() < 1e-5);
+            let middle = |band: usize| (places[band] + places[band + 1]) / 2.0;
+            turned.bands(
+                &even,
+                places.len(),
+                |ring, angle| {
+                    let along = places[ring] + lean(angle, places[ring]);
+                    (along, girth(along))
+                },
+                |band, _| paint(striped(&edges, middle(band))),
+            );
+        }
+        // A bullet that seeks and has no bounce left is a round bullet.
+        Look::Round | Look::Dart | Look::Seeker => {
+            let rings = cut(&bullet_outline(look == Look::Dart), &edges);
+            let middle = |band: usize| (rings[band].0 + rings[band + 1].0) / 2.0;
+            turned.bands(
+                &even,
+                rings.len(),
+                |ring, _| rings[ring],
+                |band, _| paint(striped(&edges, middle(band))),
+            );
+        }
+        // A seam along the top of the bullet: a narrow strip there, dark for the length of
+        // the seam.
+        Look::Splitter => {
+            let half = (SEAM.y / 2.0 / BULLET_RADIUS).asin();
+            let mut around = even.clone();
+            around[0] = half;
+            around.push(std::f32::consts::TAU - half);
+            let seam = around.len() - 1;
+            let ends = [-SEAM.x / 2.0, SEAM.x / 2.0];
+            let rings = cut(&bullet_outline(false), &ends);
+            let middle = |band: usize| (rings[band].0 + rings[band + 1].0) / 2.0;
+            turned.bands(
+                &around,
+                rings.len(),
+                |ring, _| rings[ring],
+                |band, facet| paint(facet == seam && middle(band).abs() < SEAM.x / 2.0),
+            );
+        }
+        // Three pieces with flat ends: the round tail, the red line and the flat end.
+        Look::Grenade => {
+            let red = theme::DANGER.to_linear().to_f32_array();
+            let slab = |from: f32, to: f32, radius: f32| {
+                vec![(from, 0.0), (from, radius), (to, radius), (to, 0.0)]
+            };
+            let mut tail: Vec<(f32, f32)> = round_end(-1.0).collect();
+            tail.extend([(GRENADE_CUT, BULLET_RADIUS), (GRENADE_CUT, 0.0)]);
+            let pieces = [
+                (tail, WHITE),
+                (slab(RED_LINE.0, RED_LINE.1, RED_LINE_RADIUS), red),
+                (
+                    slab(FLAT_END, BULLET_BODY + BULLET_RADIUS, BULLET_RADIUS),
+                    WHITE,
+                ),
             ];
-            for (ring, outward) in triangles.into_iter().flatten().flatten() {
-                positions.push(corner(ring, outward));
-                normals.push(outward);
-                colors.push(color);
+            for (rings, color) in pieces {
+                turned.bands(&even, rings.len(), |ring, _| rings[ring], |_, _| color);
             }
         }
     }
-    let count = positions.len();
-    Mesh::new(
-        PrimitiveTopology::TriangleList,
-        RenderAssetUsages::default(),
-    )
-    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
-    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
-    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, vec![Vec2::ZERO; count])
-    .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, colors)
+    turned.build()
 }
 
 /// Cuts a simple polygon into triangles by clipping its ears.
@@ -1060,19 +1265,22 @@ fn blink_mines(
     }
 }
 
-/// The shape of a bullet shows what it can still do: a stripe for each bounce it has left,
-/// and a pointed tip as long as it pierces.
+/// The shape of a bullet shows what it does and what it can still do: a stripe for each
+/// bounce it has left, or a chevron if it seeks at its bounces, a pointed tip as long as it
+/// pierces, a seam until it splits, and a flat end with a red line if it explodes.
 fn bullet_shape<'a>(shapes: &'a Shapes, bullet: &Bullet) -> &'a Handle<Mesh> {
-    let shapes = if bullet.pierces_left > 0 {
-        &shapes.darts
-    } else {
-        &shapes.bullets
+    let shapes = match bullet.kind {
+        Kind::Splitting { .. } => return &shapes.splitter,
+        Kind::Exploding => return &shapes.grenade,
+        Kind::Seeking => &shapes.seekers,
+        Kind::Plain if bullet.pierces_left > 0 => &shapes.darts,
+        Kind::Plain => &shapes.bullets,
     };
     &shapes[(bullet.bounces_left as usize).min(shapes.len() - 1)]
 }
 
-/// Every bullet looks the same, whoever fired it: white, the brightest thing on the sheet,
-/// with a patch of light on the floor under it.
+/// Every bullet is white, whoever fired it: the brightest thing on the sheet, with a patch
+/// of light on the floor under it. A bullet that explodes leaves a thin trail.
 fn dress_bullets(
     mut commands: Commands,
     bullets: Query<(Entity, &Bullet, &Position), Added<Bullet>>,
@@ -1080,34 +1288,57 @@ fn dress_bullets(
     paints: Res<Paints>,
 ) {
     for (entity, bullet, position) in &bullets {
-        commands.entity(entity).insert((
-            Mesh3d(bullet_shape(&shapes, bullet).clone()),
-            MeshMaterial3d(paints.bullet.clone()),
+        let mut dressed = commands.entity(entity);
+        dressed.insert((
             Transform {
                 translation: to_world(position.0, BULLET_HEIGHT),
                 rotation: facing(bullet.velocity.to_angle()),
                 ..default()
             },
-            // On the floor, under the bullet.
-            children![(
-                Mesh3d(shapes.disc.clone()),
-                MeshMaterial3d(paints.pool.clone()),
-                Transform::from_xyz(0.0, 4.0 * LIFT - BULLET_HEIGHT, 0.0)
-                    .with_scale(Vec3::new(POOL_SIZE, 1.0, POOL_SIZE)),
-            )],
+            children![
+                (
+                    Shell,
+                    Mesh3d(bullet_shape(&shapes, bullet).clone()),
+                    MeshMaterial3d(paints.bullet.clone()),
+                ),
+                // On the floor, under the bullet.
+                (
+                    Mesh3d(shapes.disc.clone()),
+                    MeshMaterial3d(paints.pool.clone()),
+                    Transform::from_xyz(0.0, 4.0 * LIFT - BULLET_HEIGHT, 0.0)
+                        .with_scale(Vec3::new(POOL_SIZE, 1.0, POOL_SIZE)),
+                ),
+            ],
         ));
+        // A guest may have hidden the bullet already.
+        dressed.insert_if_new(Visibility::default());
+        if bullet.kind == Kind::Exploding {
+            // Behind the tail of the bullet, and of no length yet.
+            let tail = Vec3::NEG_X * (BULLET_BODY + BULLET_RADIUS);
+            dressed.with_child((
+                Trail { from: position.0 },
+                Mesh3d(shapes.trail.clone()),
+                MeshMaterial3d(paints.trail.clone()),
+                Transform::from_translation(tail).with_scale(Vec3::new(0.0, 1.0, 1.0)),
+            ));
+        }
     }
 }
 
 /// A bullet loses a stripe when it bounces and its tip when it pierces.
 fn stripe_bullets(
-    mut bullets: Query<(&Bullet, &mut Mesh3d), Changed<Bullet>>,
+    bullets: Query<(&Bullet, &Children), Changed<Bullet>>,
+    mut shells: Query<&mut Mesh3d, With<Shell>>,
     shapes: Res<Shapes>,
 ) {
-    for (bullet, mut mesh) in &mut bullets {
+    for (bullet, children) in &bullets {
         let wanted = bullet_shape(&shapes, bullet);
-        if mesh.0 != *wanted {
-            mesh.0 = wanted.clone();
+        for child in children.iter() {
+            if let Ok(mut mesh) = shells.get_mut(child)
+                && mesh.0 != *wanted
+            {
+                mesh.0 = wanted.clone();
+            }
         }
     }
 }
@@ -1136,6 +1367,52 @@ pub fn place(
         if let Some(bullet) = bullet {
             transform.rotation = facing(bullet.velocity.to_angle());
         }
+    }
+}
+
+/// The turn around its line of flight that brings the top of a bullet to face a point: the
+/// bullet is here and flies this way, and the point is there.
+fn roll_toward(bullet: &Transform, eye: Vec3) -> Quat {
+    let toward = bullet.rotation.inverse() * (eye - bullet.translation);
+    Quat::from_rotation_x(toward.z.atan2(toward.y))
+}
+
+/// The shell of a bullet turns its top to the camera, so that a seam and the point of a
+/// chevron are seen in the middle of the bullet whichever way it flies.
+fn roll_bullets(
+    cameras: Query<&Transform, With<Camera3d>>,
+    bullets: Query<(&Transform, &Children), With<Bullet>>,
+    mut shells: Query<&mut Transform, (With<Shell>, Without<Bullet>, Without<Camera3d>)>,
+) {
+    let Ok(camera) = cameras.single() else {
+        return;
+    };
+    for (bullet, children) in &bullets {
+        for child in children.iter() {
+            if let Ok(mut shell) = shells.get_mut(child) {
+                shell.rotation = roll_toward(bullet, camera.translation);
+            }
+        }
+    }
+}
+
+/// How long the trail of a bullet is when the bullet is this far from where it started: it
+/// grows behind the tail of the bullet, up to its full length.
+fn trail_length(flown: f32) -> f32 {
+    (flown - BULLET_BODY - BULLET_RADIUS).clamp(0.0, TRAIL.x)
+}
+
+/// The trail of a bullet that explodes follows it from where it was fired.
+fn stretch_trails(
+    bullets: Query<&Transform, With<Bullet>>,
+    mut trails: Query<(&Trail, &ChildOf, &mut Transform), Without<Bullet>>,
+) {
+    for (trail, child_of, mut transform) in &mut trails {
+        let Ok(bullet) = bullets.get(child_of.parent()) else {
+            continue;
+        };
+        let flown = to_ground(bullet.translation).distance(trail.from);
+        transform.scale.x = trail_length(flown);
     }
 }
 
@@ -1534,9 +1811,9 @@ mod tests {
         assert!(high.y < 0.1);
     }
 
-    /// The triangles of a bullet, and whether each is part of a stripe.
-    fn bullet_triangles(pointed: bool, stripes: u8) -> Vec<([Vec3; 3], bool)> {
-        let mesh = bullet_mesh(pointed, stripes);
+    /// The triangles of a bullet, each with its color.
+    fn painted_triangles(look: Look, stripes: u8) -> Vec<([Vec3; 3], [f32; 4])> {
+        let mesh = bullet_mesh(look, stripes);
         let positions = mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap();
         let Some(VertexAttributeValues::Float32x4(colors)) = mesh.attribute(Mesh::ATTRIBUTE_COLOR)
         else {
@@ -1547,19 +1824,41 @@ mod tests {
             .zip(colors.chunks(3))
             .map(|(corners, colors)| {
                 let corners = [corners[0], corners[1], corners[2]].map(Vec3::from);
-                (corners, colors[0] == STRIPE_COLOR)
+                (corners, colors[0])
             })
             .collect()
     }
 
+    /// The triangles of a bullet, and whether each is part of a stripe.
+    fn bullet_triangles(look: Look, stripes: u8) -> Vec<([Vec3; 3], bool)> {
+        let painted = painted_triangles(look, stripes).into_iter();
+        painted
+            .map(|(corners, color)| (corners, color == STRIPE_COLOR))
+            .collect()
+    }
+
+    /// The stretches along the line of flight that these stretches cover, joined where they
+    /// touch.
+    fn joined(mut stretches: Vec<(f32, f32)>) -> Vec<(f32, f32)> {
+        stretches.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let mut bands: Vec<(f32, f32)> = Vec::new();
+        for (from, to) in stretches {
+            match bands.last_mut() {
+                Some(band) if from <= band.1 + 1e-4 => band.1 = band.1.max(to),
+                _ => bands.push((from, to)),
+            }
+        }
+        bands
+    }
+
     #[test]
     fn bullets_show_one_stripe_for_each_bounce_left() {
-        for (pointed, stripes) in [false, true]
+        for (look, stripes) in [Look::Round, Look::Dart]
             .into_iter()
-            .flat_map(|pointed| (0..=3u8).map(move |stripes| (pointed, stripes)))
+            .flat_map(|look| (0..=3u8).map(move |stripes| (look, stripes)))
         {
-            // The dark stretches along the axis, joined where they touch.
-            let mut dark: Vec<(f32, f32)> = bullet_triangles(pointed, stripes)
+            // The dark stretches along the axis.
+            let dark: Vec<(f32, f32)> = bullet_triangles(look, stripes)
                 .into_iter()
                 .filter(|(_, striped)| *striped)
                 .map(|(corners, _)| {
@@ -1570,14 +1869,7 @@ mod tests {
                     )
                 })
                 .collect();
-            dark.sort_by(|a, b| a.0.total_cmp(&b.0));
-            let mut bands: Vec<(f32, f32)> = Vec::new();
-            for (from, to) in dark {
-                match bands.last_mut() {
-                    Some(band) if from <= band.1 + 1e-4 => band.1 = band.1.max(to),
-                    _ => bands.push((from, to)),
-                }
-            }
+            let bands = joined(dark);
             assert_eq!(bands.len(), stripes as usize);
 
             // Stripes have the same width, are evenly spaced and centered on the bullet.
@@ -1593,16 +1885,328 @@ mod tests {
     }
 
     #[test]
+    fn a_bullet_that_seeks_shows_a_chevron_for_each_bounce_left() {
+        // Without a bounce left, it is a round bullet.
+        let plain = |look: Look| painted_triangles(look, 0);
+        assert_eq!(plain(Look::Seeker), plain(Look::Round));
+        for stripes in 1..=3u8 {
+            let triangles = bullet_triangles(Look::Seeker, stripes);
+            // Its skin is that of a round bullet, from end to end.
+            let reach = BULLET_BODY + BULLET_RADIUS;
+            let corners = triangles.iter().flat_map(|(corners, _)| *corners);
+            for corner in corners.clone() {
+                let radius = Vec2::new(corner.y, corner.z).length();
+                assert!((radius - girth(corner.x)).abs() < 1e-4, "{corner}");
+            }
+            let along = corners.map(|corner| corner.x);
+            assert!((along.clone().fold(f32::MAX, f32::min) + reach).abs() < 1e-5);
+            assert!((along.fold(f32::MIN, f32::max) - reach).abs() < 1e-5);
+            // The dark stretches along a line on the skin: the top of the bullet, or one of
+            // its sides.
+            let dark_along =
+                |on_the_line: fn(Vec3) -> bool| {
+                    let edges = triangles.iter().filter(|(_, striped)| *striped).filter_map(
+                        |(corners, _)| {
+                            let on: Vec<f32> = corners
+                                .iter()
+                                .filter(|corner| on_the_line(**corner))
+                                .map(|corner| corner.x)
+                                .collect();
+                            (on.len() == 2).then(|| (on[0].min(on[1]), on[0].max(on[1])))
+                        },
+                    );
+                    joined(edges.collect())
+                };
+            let top = dark_along(|corner| corner.z.abs() < 1e-5 && corner.y > 0.0);
+            let side = dark_along(|corner| corner.y.abs() < 1e-5 && corner.z > 0.0);
+            assert_eq!(
+                (top.len(), side.len()),
+                (stripes as usize, stripes as usize)
+            );
+            // A chevron is as wide as a stripe and stands where the stripe would, but for its
+            // lean: its point is ahead on top of the bullet, and its ends are behind on the
+            // sides.
+            let centers = |bands: &[(f32, f32)]| -> Vec<f32> {
+                bands.iter().map(|band| (band.0 + band.1) / 2.0).collect()
+            };
+            for (top, side) in top.iter().zip(&side) {
+                assert!((top.1 - top.0 - STRIPE_WIDTH).abs() < 1e-4);
+                assert!((side.1 - side.0 - STRIPE_WIDTH).abs() < 1e-4);
+                assert!((top.0 - side.0 - CHEVRON_LEAN).abs() < 1e-4);
+            }
+            let (top, side) = (centers(&top), centers(&side));
+            assert!((top.iter().sum::<f32>() / stripes as f32 - CHEVRON_LEAN / 2.0).abs() < 1e-4);
+            assert!((side.iter().sum::<f32>() / stripes as f32 + CHEVRON_LEAN / 2.0).abs() < 1e-4);
+            for pair in top.windows(2) {
+                assert!((pair[1] - pair[0] - STRIPE_WIDTH - STRIPE_GAP).abs() < 1e-4);
+            }
+        }
+    }
+
+    #[test]
+    fn a_bullet_that_splits_shows_a_seam_and_no_stripe() {
+        let triangles = bullet_triangles(Look::Splitter, 0);
+        let dark: Vec<[Vec3; 3]> = triangles
+            .iter()
+            .filter(|(_, striped)| *striped)
+            .map(|(corners, _)| *corners)
+            .collect();
+        assert!(!dark.is_empty());
+        // The seam runs along the top of the bullet, as long and as wide as it is said to be.
+        let corners = dark.iter().flatten();
+        let reach = |of: fn(&Vec3) -> f32| corners.clone().map(of).fold(f32::MIN, f32::max);
+        assert!((reach(|corner| corner.x) - SEAM.x / 2.0).abs() < 1e-4);
+        assert!((reach(|corner| -corner.x) - SEAM.x / 2.0).abs() < 1e-4);
+        assert!((reach(|corner| corner.z) - SEAM.y / 2.0).abs() < 1e-4);
+        assert!((reach(|corner| -corner.z) - SEAM.y / 2.0).abs() < 1e-4);
+        assert!(corners.clone().all(|corner| corner.y > 0.0));
+        // The rest is the round bullet, white all around.
+        let white = triangles.iter().filter(|(_, striped)| !*striped);
+        let below = white.filter(|(corners, _)| corners.iter().all(|corner| corner.y < -0.1));
+        assert!(below.count() > 0);
+        let reach = BULLET_BODY + BULLET_RADIUS;
+        let along = triangles
+            .iter()
+            .flat_map(|(corners, _)| corners.map(|corner| corner.x));
+        assert!((along.clone().fold(f32::MAX, f32::min) + reach).abs() < 1e-5);
+        assert!((along.fold(f32::MIN, f32::max) - reach).abs() < 1e-5);
+    }
+
+    #[test]
+    fn a_bullet_that_explodes_shows_a_flat_end_and_a_red_line_that_cuts_it() {
+        let red = theme::DANGER.to_linear().to_f32_array();
+        let triangles = painted_triangles(Look::Grenade, 0);
+        let radius = |corner: &Vec3| Vec2::new(corner.y, corner.z).length();
+        let reach = BULLET_BODY + BULLET_RADIUS;
+        // The stretches along the line of flight that each color covers.
+        let stretches = |wanted: [f32; 4]| {
+            let of_the_color = triangles.iter().filter(|(_, color)| *color == wanted);
+            joined(
+                of_the_color
+                    .map(|(corners, _)| {
+                        let along = corners.map(|corner| corner.x);
+                        (
+                            along.into_iter().fold(f32::MAX, f32::min),
+                            along.into_iter().fold(f32::MIN, f32::max),
+                        )
+                    })
+                    .collect(),
+            )
+        };
+        let close = |found: (f32, f32), wanted: (f32, f32)| {
+            (found.0 - wanted.0).abs() < 1e-5 && (found.1 - wanted.1).abs() < 1e-5
+        };
+        // The round part and the flat end are white, with the red line between them and a
+        // gap on each side of it.
+        let white = stretches([1.0, 1.0, 1.0, 1.0]);
+        assert_eq!(white.len(), 2);
+        assert!(close(white[0], (-reach, GRENADE_CUT)), "{white:?}");
+        assert!(close(white[1], (FLAT_END, reach)), "{white:?}");
+        let line = stretches(red);
+        assert_eq!(line.len(), 1);
+        assert!(close(line[0], RED_LINE), "{line:?}");
+        assert!(RED_LINE.0 > GRENADE_CUT && FLAT_END > RED_LINE.1);
+        assert_eq!(triangles.len(), {
+            let colored = |(_, color): &&([Vec3; 3], [f32; 4])| *color == red || color[0] == 1.0;
+            triangles.iter().filter(colored).count()
+        });
+        // The line is a little wider than the bullet, and the bullet ends flat: as wide at
+        // its very end as anywhere.
+        let corners = triangles.iter().flat_map(|(corners, color)| {
+            let color = *color;
+            corners.iter().map(move |corner| (corner, color))
+        });
+        let widest = |wanted: fn(&Vec3, [f32; 4]) -> bool| {
+            let radii = corners
+                .clone()
+                .filter(|(corner, color)| wanted(corner, *color))
+                .map(|(corner, _)| radius(corner));
+            radii.fold(0.0, f32::max)
+        };
+        assert!((widest(|_, color| color[0] == 1.0) - BULLET_RADIUS).abs() < 1e-5);
+        let red_width = widest(|_, color| color[0] != 1.0);
+        assert!((red_width - RED_LINE_RADIUS).abs() < 1e-5);
+        assert!(red_width > BULLET_RADIUS && red_width < 1.5 * BULLET_RADIUS);
+        let end = widest(|corner, _| corner.x > BULLET_BODY + BULLET_RADIUS - 1e-5);
+        assert!((end - BULLET_RADIUS).abs() < 1e-5);
+    }
+
+    #[test]
     fn bullets_show_their_outside() {
         // A face is drawn from the side on which its corners turn counterclockwise.
-        for pointed in [false, true] {
-            for (corners, _) in bullet_triangles(pointed, 2) {
+        for look in [Look::Round, Look::Dart, Look::Seeker, Look::Splitter] {
+            for (corners, _) in bullet_triangles(look, 2) {
                 let facing = (corners[1] - corners[0]).cross(corners[2] - corners[0]);
                 let center = (corners[0] + corners[1] + corners[2]) / 3.0;
                 let away_from_axis = Vec3::new(0.0, center.y, center.z);
-                assert!(facing.dot(away_from_axis) > 0.0, "{corners:?}");
+                assert!(facing.dot(away_from_axis) > 0.0, "{look:?} {corners:?}");
             }
         }
+        // The pieces of a bullet that explodes have flat ends, which face along the line of
+        // flight: away from the middle of the piece.
+        let reach = BULLET_BODY + BULLET_RADIUS;
+        let pieces = [(-reach, GRENADE_CUT), RED_LINE, (FLAT_END, reach)];
+        for (corners, _) in bullet_triangles(Look::Grenade, 0) {
+            let facing = (corners[1] - corners[0]).cross(corners[2] - corners[0]);
+            let center = (corners[0] + corners[1] + corners[2]) / 3.0;
+            let holds =
+                |piece: &&(f32, f32)| center.x > piece.0 - 1e-5 && center.x < piece.1 + 1e-5;
+            let piece = pieces.iter().find(holds).unwrap();
+            let outward = Vec3::new(center.x - (piece.0 + piece.1) / 2.0, center.y, center.z);
+            assert!(facing.dot(outward) > 0.0, "{corners:?}");
+        }
+    }
+
+    #[test]
+    fn the_shell_of_a_bullet_turns_its_top_to_the_camera() {
+        // A camera to the south of the bullets, high above the ground, as in the game.
+        let eye = Vec3::new(0.0, 20.0, 10.0);
+        for heading in [0.0, 0.7, 1.6, 3.0, -2.2] {
+            let bullet = Transform {
+                translation: to_world(Vec2::new(3.0, 4.0), BULLET_HEIGHT),
+                rotation: facing(heading),
+                ..default()
+            };
+            let roll = roll_toward(&bullet, eye);
+            // The bullet still flies the same way, and its top is as near to the camera as a
+            // turn around its line of flight can bring it.
+            let (along, top) = (bullet.rotation * Vec3::X, bullet.rotation * roll * Vec3::Y);
+            assert!((bullet.rotation * roll * Vec3::X).distance(along) < 1e-5);
+            let toward = eye - bullet.translation;
+            let across = (toward - along * toward.dot(along)).normalize();
+            assert!(top.distance(across) < 1e-4, "{heading}: {top} {across}");
+        }
+    }
+
+    #[test]
+    fn the_trail_of_a_bullet_that_explodes_grows_behind_it() {
+        // Nothing while the bullet is no further than its own length from where it started,
+        // then as much as it has flown, up to the length of the trail.
+        assert_eq!(trail_length(0.0), 0.0);
+        assert_eq!(trail_length(BULLET_BODY + BULLET_RADIUS), 0.0);
+        assert!(close(trail_length(1.0), 1.0 - BULLET_BODY - BULLET_RADIUS));
+        assert_eq!(trail_length(40.0), TRAIL.x);
+
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<StandardMaterial>>()
+            .init_resource::<Assets<Image>>()
+            .init_resource::<Time<Fixed>>()
+            .add_systems(PreStartup, setup)
+            .add_systems(
+                Update,
+                (dress_bullets, stripe_bullets, place, stretch_trails).chain(),
+            );
+        let bullet = |kind: Kind| Bullet {
+            owner: Entity::PLACEHOLDER,
+            team: tanku_core::sim::Team::Enemies,
+            sector: 1,
+            velocity: Vec2::X * 9.0,
+            bounces_left: 0,
+            pierces_left: 0,
+            bounced: false,
+            kind,
+        };
+        let at = Vec2::new(2.0, 5.0);
+        let place = (Position(at), PreviousPosition(at));
+        let exploding = app.world_mut().spawn((bullet(Kind::Exploding), place)).id();
+        let plain = app.world_mut().spawn((bullet(Kind::Plain), place)).id();
+        app.update();
+        let trails = |app: &mut App, bullet: Entity| -> Vec<f32> {
+            let world = app.world_mut();
+            let children: Vec<Entity> = world.get::<Children>(bullet).unwrap().iter().collect();
+            let trail = |child: &Entity| world.get::<Trail>(*child).is_some();
+            let length = |child: Entity| world.get::<Transform>(child).unwrap().scale.x;
+            children.into_iter().filter(trail).map(length).collect()
+        };
+        // Only the bullet that explodes has a trail, which is of no length at first.
+        assert_eq!(trails(&mut app, exploding), [0.0]);
+        assert_eq!(trails(&mut app, plain), [] as [f32; 0]);
+        for (flown, wanted) in [(1.0, 0.55), (3.0, TRAIL.x)] {
+            let there = at + Vec2::X * flown;
+            let mut entity = app.world_mut().entity_mut(exploding);
+            entity.insert((Position(there), PreviousPosition(there)));
+            app.update();
+            let found = trails(&mut app, exploding);
+            assert!(close(found[0], wanted), "{found:?}");
+        }
+    }
+
+    #[test]
+    fn the_shell_of_a_bullet_follows_what_the_bullet_can_still_do() {
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<StandardMaterial>>()
+            .init_resource::<Assets<Image>>()
+            .add_systems(PreStartup, setup)
+            .add_systems(Update, (dress_bullets, stripe_bullets).chain());
+        let bullet = |kind: Kind, bounces_left: u8, pierces_left: u8| Bullet {
+            owner: Entity::PLACEHOLDER,
+            team: tanku_core::sim::Team::Enemies,
+            sector: 1,
+            velocity: Vec2::X * 9.0,
+            bounces_left,
+            pierces_left,
+            bounced: false,
+            kind,
+        };
+        let shell = |app: &mut App, bullet: Entity| -> Handle<Mesh> {
+            let world = app.world_mut();
+            let children: Vec<Entity> = world.get::<Children>(bullet).unwrap().iter().collect();
+            let shells: Vec<Entity> = children
+                .into_iter()
+                .filter(|child| world.get::<Shell>(*child).is_some())
+                .collect();
+            assert_eq!(shells.len(), 1);
+            world.get::<Mesh3d>(shells[0]).unwrap().0.clone()
+        };
+        let splitting = Kind::Splitting {
+            fuse: 1.0,
+            bounces: 2,
+        };
+        let spawned = [
+            bullet(Kind::Plain, 2, 0),
+            bullet(Kind::Plain, 1, 1),
+            bullet(Kind::Seeking, 3, 0),
+            bullet(splitting, 0, 0),
+            bullet(Kind::Exploding, 0, 0),
+        ]
+        .map(|bullet| app.world_mut().spawn(bullet).id());
+        app.update();
+        let shapes = |app: &App| -> [Handle<Mesh>; 5] {
+            let shapes = app.world().resource::<Shapes>();
+            [
+                shapes.bullets[2].clone(),
+                shapes.darts[1].clone(),
+                shapes.seekers[3].clone(),
+                shapes.splitter.clone(),
+                shapes.grenade.clone(),
+            ]
+        };
+        let wanted = shapes(&app);
+        for (entity, wanted) in spawned.into_iter().zip(wanted) {
+            assert_eq!(shell(&mut app, entity), wanted);
+            // The bullet itself is no drawing: its shell is, and turns on it.
+            assert!(app.world().get::<Mesh3d>(entity).is_none());
+            assert!(app.world().get::<Visibility>(entity).is_some());
+        }
+        // A bounce takes a chevron off a bullet that seeks, as it takes a stripe off another.
+        let seeker = spawned[2];
+        app.world_mut()
+            .get_mut::<Bullet>(seeker)
+            .unwrap()
+            .bounces_left = 1;
+        app.update();
+        let one_chevron = app.world().resource::<Shapes>().seekers[1].clone();
+        assert_eq!(shell(&mut app, seeker), one_chevron);
+        // A bullet that a guest has hidden stays hidden when it is dressed.
+        let hidden = (bullet(Kind::Plain, 0, 0), Visibility::Hidden);
+        let hidden = app.world_mut().spawn(hidden).id();
+        app.update();
+        assert_eq!(
+            app.world().get::<Visibility>(hidden),
+            Some(&Visibility::Hidden)
+        );
     }
 
     #[test]

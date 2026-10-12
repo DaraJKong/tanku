@@ -63,8 +63,9 @@ use bevy::{
 use tanku_core::{
     modes::{Difficulty, Unlock},
     sim::{
-        Barrier, Blow, Bullet, Enemy, Life, Mine, MineState, Motion, Position, PreviousPosition,
-        Run, RunPhase, RunRequest, Shield, ShieldState, SimEvent, Tank, TankCommand, Team, Weapon,
+        Barrier, Blow, Bullet, Enemy, Kind, Life, Mine, MineState, Motion, Position,
+        PreviousPosition, Run, RunPhase, RunRequest, Shield, ShieldState, SimEvent, Tank,
+        TankCommand, Team, Weapon,
     },
     stats::{Class, Genome, Stat},
 };
@@ -689,21 +690,34 @@ fn run_script(
             }
         }
         // Rows of bullets that hardly move: players' then enemies', normal then piercing, with
-        // no bounce left on the west side and the most on the east side.
+        // no bounce left on the west side and the most on the east side. Then a row of bullets
+        // that seek, and a bullet that splits next to one that explodes.
         "lineup" => {
             let (Ok((owner, position)), Some(run)) = (player.single(), run.as_ref()) else {
                 return;
             };
             let position = *position;
+            // It splits long after the script is over.
+            let splitting = Kind::Splitting {
+                fuse: f32::MAX,
+                bounces: 1,
+            };
+            let most = Stat::Ricochet.max_level();
             let kinds = [
-                (Team::Players, 0),
-                (Team::Players, 1),
-                (Team::Enemies, 0),
-                (Team::Enemies, 1),
+                (Team::Players, 0, Kind::Plain, most),
+                (Team::Players, 1, Kind::Plain, most),
+                (Team::Enemies, 0, Kind::Plain, most),
+                (Team::Enemies, 1, Kind::Plain, most),
+                (Team::Enemies, 0, Kind::Seeking, most),
+                (Team::Enemies, 0, splitting, 0),
+                (Team::Enemies, 0, Kind::Exploding, 0),
             ];
-            for (row, (team, pierces_left)) in kinds.into_iter().enumerate() {
-                for bounces_left in 0..=Stat::Ricochet.max_level() {
-                    let offset = Vec2::new(bounces_left as f32 * 1.6 - 2.4, 2.5 + row as f32 * 1.2);
+            for (row, (team, pierces_left, kind, most)) in kinds.into_iter().enumerate() {
+                // The two that never bounce share a row.
+                let (row, first) = if row == 6 { (5, 2) } else { (row, 0) };
+                for bounces_left in 0..=most {
+                    let column = (first + bounces_left) as f32;
+                    let offset = Vec2::new(column * 1.6 - 2.4, 2.5 + row as f32 * 1.2);
                     commands.spawn((
                         Bullet {
                             owner,
@@ -713,7 +727,7 @@ fn run_script(
                             bounces_left,
                             pierces_left,
                             bounced: false,
-                            kind: default(),
+                            kind,
                         },
                         Position(position.0 + offset),
                         PreviousPosition(position.0 + offset),

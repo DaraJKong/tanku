@@ -67,7 +67,8 @@ fn play(
                 at,
                 team: Team::Enemies,
             } => (Cue::EnemyShot, Some(at)),
-            SimEvent::Ricochet { at } => (Cue::Ricochet, Some(at)),
+            // A bullet that splits sounds as one that bounces: it leaves another way.
+            SimEvent::Ricochet { at } | SimEvent::BulletSplit { at } => (Cue::Ricochet, Some(at)),
             SimEvent::BulletDestroyed { at, .. } => (Cue::Pop, Some(at)),
             SimEvent::MinePlaced { at } => (Cue::MinePlaced, Some(at)),
             SimEvent::MineTriggered { at } => (Cue::MineTriggered, Some(at)),
