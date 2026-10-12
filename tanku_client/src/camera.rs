@@ -2,6 +2,9 @@
 //!
 //! Once a sector is quiet, the view runs ahead of a tank that comes close to its barrier, so
 //! that the players can study the next group before they cross.
+//!
+//! In arena mode, the view stays on the room and on the tanks that wait in reserve south of
+//! it: on a screen that is wide enough, all of it shows at once.
 
 use std::f32::consts::FRAC_PI_2;
 
@@ -11,7 +14,8 @@ use bevy::{
 };
 use tanku_core::{
     geom,
-    sim::{Barrier, Bullet, Enemy, Player, Run, Tank, Team, Wreck},
+    map::{SectorKind, reserve_depth},
+    sim::{Barrier, Bullet, Enemy, Player, Run, Sector, Tank, Team, Wreck},
 };
 
 use crate::{crew::Own, scene, settings::Settings, theme};
@@ -33,6 +37,15 @@ const APPROACH: (f32, f32) = (13.0, 5.0);
 /// How fast the view runs ahead, and how fast it comes back to the tank: the shares of the way
 /// that are left after a second are `e` to the power of minus these.
 const PAST_RATES: (f32, f32) = (1.0, 0.8);
+
+/// How much of the void around the room of arena mode the view shows, past its walls.
+const ROOM_MARGIN: f32 = 1.0;
+/// How far south of the tank the view of arena mode looks. Where the room and the tanks in
+/// reserve south of it don't fit on the screen together, the reserve shows whole unless the
+/// tank is far in the north of the room.
+const RESERVE_LEAN: f32 = 6.0;
+/// The shape of a screen whose size isn't known: as wide as most are.
+const USUAL_SHAPE: f32 = 16.0 / 9.0;
 
 #[derive(Component)]
 pub struct MainCamera;
@@ -207,6 +220,58 @@ fn eye(focus: Vec2, yaw: f32, span: f32) -> Transform {
     Transform::from_translation(focus + offset).looking_at(focus, Vec3::Y)
 }
 
+/// How far the ground that the view shows reaches from the point it looks at, in meters:
+/// toward the bottom of the screen, toward its top, and to each side at the bottom, where
+/// the view is narrowest. For a view of this many meters from bottom to top, on a screen
+/// that is this many times as wide as it is high.
+fn reach(span: f32, shape: f32) -> (f32, f32, f32) {
+    let (pitch, half) = (PITCH.to_radians(), FIELD_OF_VIEW.to_radians() / 2.0);
+    let distance = span * pitch.sin() / (2.0 * half.tan());
+    let (height, back) = (distance * pitch.sin(), distance * pitch.cos());
+    let near = back - height / (pitch + half).tan();
+    let far = height / (pitch - half).tan() - back;
+    // The foot of the screen is seen at the edge of the field of view: its width is that of
+    // the view at the depth of that ground, which is less than the way to it.
+    let side = height / (pitch + half).sin() * half.sin() * shape;
+    (near, far, side)
+}
+
+/// Keeps the view on a stretch of ground: the point to look at, moved as little as it takes
+/// for the view to show nothing past the bounds. Along an axis where the view shows more
+/// than the bounds hold, they stay in its middle.
+fn hold_on(target: Vec2, yaw: f32, reach: (f32, f32, f32), (min, max): (Vec2, Vec2)) -> Vec2 {
+    let (near, far, side) = reach;
+    // The corners of what the view shows, around the point that it looks at.
+    let turn = Vec2::from_angle(yaw);
+    let corners = [(-side, -near), (side, -near), (side, far), (-side, far)];
+    let corners = corners.map(|(x, y)| turn.rotate(Vec2::new(x, y)));
+    let low = corners.into_iter().reduce(Vec2::min).unwrap_or_default();
+    let high = corners.into_iter().reduce(Vec2::max).unwrap_or_default();
+    let (from, to) = (min - low, max - high);
+    let held = |wanted: f32, from: f32, to: f32| {
+        if from <= to {
+            wanted.clamp(from, to)
+        } else {
+            (from + to) / 2.0
+        }
+    };
+    Vec2::new(held(target.x, from.x, to.x), held(target.y, from.y, to.y))
+}
+
+/// The ground that the view of a run in arena mode stays on: the room, a little of the void
+/// around it, and the tanks that wait in reserve south of it, which take more ground among
+/// several players.
+fn room_ground(sector: &Sector, solo: bool) -> Option<(Vec2, Vec2)> {
+    let plan = &sector.layout.plan;
+    (plan.kind == SectorKind::Room).then(|| {
+        let reserve = Vec2::new(ROOM_MARGIN, reserve_depth(solo));
+        (
+            plan.min.as_vec2() - reserve,
+            plan.max.as_vec2() + Vec2::splat(ROOM_MARGIN),
+        )
+    })
+}
+
 pub fn follow(
     time: Res<Time>,
     settings: Res<Settings>,
@@ -216,7 +281,8 @@ pub fn follow(
     barriers: Query<&Barrier>,
     enemies: Query<&Tank, With<Enemy>>,
     bullets: Query<&Bullet>,
-    mut camera: Single<&mut Transform, With<MainCamera>>,
+    sectors: Query<&Sector>,
+    mut camera: Single<(&mut Transform, Option<&Camera>), With<MainCamera>>,
 ) {
     let seconds = time.delta_secs();
     view.hold = (view.hold - seconds).max(0.0);
@@ -259,6 +325,21 @@ pub fn follow(
         };
         view.past = view.past.lerp(past, 1.0 - (-rate * seconds).exp());
         let target = at + ahead + view.past;
+        // In arena mode, the view stays on the room.
+        let solo = run.as_ref().is_none_or(|run| run.solo);
+        let mut grounds = sectors
+            .iter()
+            .filter_map(|sector| room_ground(sector, solo));
+        let target = match grounds.next() {
+            Some(ground) => {
+                let size = camera.1.and_then(Camera::logical_viewport_size);
+                let shape = size.map_or(USUAL_SHAPE, |size| size.x / size.y);
+                let span = view.span.unwrap_or(VISIBLE_GROUND);
+                let leaning = target - Vec2::Y * RESERVE_LEAN;
+                hold_on(leaning, view.yaw, reach(span, shape), ground)
+            }
+            None => target,
+        };
         // A jump means a new run or a respawn: go there at once.
         view.focus = if view.focus.distance(target) > 40.0 {
             target
@@ -277,7 +358,7 @@ pub fn follow(
     let jitter = Vec2::new(view.jitter(), view.jitter()) * strength;
 
     let span = view.span.unwrap_or(VISIBLE_GROUND);
-    **camera = eye(view.focus + jitter, view.yaw, span);
+    *camera.0 = eye(view.focus + jitter, view.yaw, span);
 }
 
 #[cfg(test)]
@@ -371,6 +452,168 @@ mod tests {
 
     fn near(found: f32, wanted: f32) -> bool {
         (found - wanted).abs() < 0.05 * wanted.abs().max(1.0)
+    }
+
+    #[test]
+    fn the_view_reaches_as_far_as_the_screen_shows() {
+        for shape in [4.0 / 3.0, 16.0 / 10.0, 16.0 / 9.0, 21.0 / 9.0] {
+            let (close, far, side) = reach(VISIBLE_GROUND, shape);
+            let eye = super::eye(Vec2::ZERO, 0.0, VISIBLE_GROUND);
+            let on_screen = |x: f32, y: f32| shows(&eye, shape, Vec2::new(x, y));
+            // The ground shows as far as its reach toward the top and toward the bottom of
+            // the screen, and to each side at the bottom, where the view is narrowest.
+            assert!(on_screen(0.0, far - 0.05) && !on_screen(0.0, far + 0.05));
+            assert!(on_screen(0.0, 0.05 - close) && !on_screen(0.0, -0.05 - close));
+            assert!(on_screen(side - 0.05, 0.05 - close), "{shape}");
+            assert!(!on_screen(side + 0.05, 0.05 - close), "{shape}");
+            assert!(on_screen(-side - 1.0, far - 0.05), "{shape}");
+            // From bottom to top, that is the span of the view.
+            assert!(near(close + far, VISIBLE_GROUND), "{}", close + far);
+        }
+    }
+
+    #[test]
+    fn the_view_holds_on_a_stretch_of_ground() {
+        let reach = (10.0, 14.0, 20.0);
+        let wide = (Vec2::new(-50.0, -30.0), Vec2::new(50.0, 40.0));
+        // In the middle of a stretch that is larger than the view, the view goes where it is
+        // asked to.
+        let asked = Vec2::new(3.0, 5.0);
+        assert_eq!(hold_on(asked, 0.0, reach, wide), asked);
+        // Near an edge, it stops where it would show what lies past it.
+        assert_eq!(
+            hold_on(Vec2::new(45.0, 39.0), 0.0, reach, wide),
+            Vec2::new(30.0, 26.0)
+        );
+        assert_eq!(
+            hold_on(Vec2::new(-45.0, -29.0), 0.0, reach, wide),
+            Vec2::new(-30.0, -20.0)
+        );
+        // A stretch that the view holds whole stays in its middle, wherever it is asked to
+        // look. The view reaches further up the screen than down.
+        let small = (Vec2::new(-15.0, 0.0), Vec2::new(15.0, 20.0));
+        for asked in [Vec2::ZERO, Vec2::new(14.0, 19.0), Vec2::new(-90.0, 90.0)] {
+            assert_eq!(hold_on(asked, 0.0, reach, small), Vec2::new(0.0, 8.0));
+        }
+        // It may fit one way and not the other.
+        let long = (Vec2::new(-15.0, 0.0), Vec2::new(15.0, 60.0));
+        assert_eq!(
+            hold_on(Vec2::new(9.0, 2.0), 0.0, reach, long),
+            Vec2::new(0.0, 10.0)
+        );
+        assert_eq!(
+            hold_on(Vec2::new(9.0, 30.0), 0.0, reach, long),
+            Vec2::new(0.0, 30.0)
+        );
+        // With north on the right of the screen, the view reaches 14 m to the west, 10 m to
+        // the east, and 20 m to the north and to the south.
+        let turned = hold_on(Vec2::new(45.0, 39.0), FRAC_PI_2, reach, wide);
+        assert!(turned.distance(Vec2::new(40.0, 20.0)) < 1e-3, "{turned}");
+    }
+
+    /// A world with the room of a seed, a camera, and the tank of a player somewhere in it.
+    fn world_in_a_room(seed: u64, at: Vec2, solo: bool) -> App {
+        let mut app = world_with_a_tank();
+        let layout = tanku_core::map::Room::new(seed).shell();
+        app.world_mut().spawn(Sector { layout });
+        let mut run = Run {
+            arena: true,
+            solo,
+            ..run_in(1)
+        };
+        (run.players, run.team) = if solo { (1, 1) } else { (4, 4) };
+        app.insert_resource(run);
+        app.world_mut().resource_mut::<View>().aim = at;
+        let world = app.world_mut();
+        let mut tanks = world.query_filtered::<&mut Transform, With<Player>>();
+        tanks.single_mut(world).unwrap().translation = scene::to_world(at, 0.0);
+        app
+    }
+
+    /// Where the camera stands.
+    fn eye_of(app: &mut App) -> Transform {
+        let world = app.world_mut();
+        let mut camera = world.query_filtered::<&Transform, With<MainCamera>>();
+        *camera.single(world).unwrap()
+    }
+
+    #[test]
+    fn the_view_of_arena_mode_holds_the_room_and_the_tanks_in_reserve() {
+        use tanku_core::map::Room;
+        const SHAPE: f32 = 16.0 / 9.0;
+        for seed in 0..24 {
+            let room = Room::new(seed);
+            let (min, max) = (room.plan().min.as_vec2(), room.plan().max.as_vec2());
+            let corners: Vec<Vec2> = room.plan().outline.iter().map(|c| c.as_vec2()).collect();
+            let spots = [
+                room.start().as_vec2(),
+                min + Vec2::splat(3.0),
+                max - Vec2::splat(3.0),
+                Vec2::new(min.x + 3.0, max.y - 3.0),
+                Vec2::new(max.x - 3.0, min.y + 3.0),
+            ];
+            // A single player sees the whole room and the largest group in reserve, on a
+            // wide screen, wherever the tank is: the view doesn't move.
+            let mut eyes: Vec<Vec3> = Vec::new();
+            for at in spots {
+                let mut app = world_in_a_room(seed, at, true);
+                wait(&mut app, A_WHILE);
+                let eye = eye_of(&mut app);
+                eyes.push(eye.translation);
+                for &corner in &corners {
+                    assert!(
+                        shows(&eye, SHAPE, corner),
+                        "seed {seed}: {corner} from {at}"
+                    );
+                }
+                for place in room.reserve(&[3, 3]) {
+                    // A tank in reserve is 2 m long.
+                    for end in [Vec2::Y, Vec2::NEG_Y] {
+                        assert!(shows(&eye, SHAPE, place + end * 1.3), "seed {seed}");
+                    }
+                }
+            }
+            assert!(eyes.iter().all(|eye| eye.distance(eyes[0]) < 0.01));
+
+            // Several players call for groups that take two rows. Those show whole, and so
+            // does the tank that the view follows, wherever it is.
+            for at in spots {
+                let mut app = world_in_a_room(seed, at, false);
+                wait(&mut app, A_WHILE);
+                let eye = eye_of(&mut app);
+                assert!(shows(&eye, SHAPE, at), "seed {seed}: the tank at {at}");
+                let far_north = at.y > max.y - 8.0;
+                for place in room.reserve(&[8, 7]) {
+                    for end in [Vec2::new(0.9, 1.3), Vec2::new(-0.9, -1.3)] {
+                        let seen = shows(&eye, SHAPE, place + end);
+                        assert!(seen || far_north, "seed {seed}: {place} from {at}");
+                    }
+                }
+                // The view never leaves the room for the void.
+                let focus = app.world().resource::<View>().focus();
+                assert!(focus.cmpgt(min).all() && focus.cmplt(max).all(), "{focus}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_view_of_arena_mode_follows_the_tank_on_a_screen_that_is_too_narrow() {
+        // Half as wide as it is high: the room doesn't fit across.
+        let (close, far, side) = reach(VISIBLE_GROUND, 0.5);
+        let room = tanku_core::map::Room::new(7);
+        let (min, max) = (room.plan().min.as_vec2(), room.plan().max.as_vec2());
+        let ground = (
+            min - Vec2::new(ROOM_MARGIN, reserve_depth(true)),
+            max + Vec2::splat(ROOM_MARGIN),
+        );
+        let held = |at: Vec2| hold_on(at, 0.0, (close, far, side), ground);
+        // The view follows the tank from side to side, and stops at the walls.
+        let middle = held(Vec2::new(2.0, 12.0));
+        assert!((middle.x - 2.0).abs() < 1e-3);
+        assert!((held(Vec2::new(max.x, 12.0)).x - (max.x + ROOM_MARGIN - side)).abs() < 1e-3);
+        assert!((held(Vec2::new(min.x, 12.0)).x - (min.x - ROOM_MARGIN + side)).abs() < 1e-3);
+        // From south to north the room fits, and stays where it is.
+        assert_eq!(held(Vec2::new(2.0, 1.0)).y, held(Vec2::new(2.0, 22.0)).y);
     }
 
     #[test]
