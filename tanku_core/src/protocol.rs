@@ -31,7 +31,7 @@ use crate::{
 /// Counts the changes to what the server and its clients tell each other since the version of
 /// the game was last raised. Two builds that don't count the same don't speak the same, so
 /// they don't join each other: raise this with every such change.
-pub const REVISION: u32 = 2;
+pub const REVISION: u32 = 0;
 
 /// The port a game listens on unless it is told otherwise.
 pub const PORT: u16 = 28405;

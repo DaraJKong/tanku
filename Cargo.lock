@@ -5342,7 +5342,7 @@ dependencies = [
 
 [[package]]
 name = "music_editor"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "bevy",
  "tanku_audio",
@@ -7690,14 +7690,14 @@ dependencies = [
 
 [[package]]
 name = "tanku_audio"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "criterion 0.8.2",
 ]
 
 [[package]]
 name = "tanku_client"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "bevy",
  "lightyear",
@@ -7709,7 +7709,7 @@ dependencies = [
 
 [[package]]
 name = "tanku_core"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "bevy",
  "criterion 0.8.2",
@@ -7721,7 +7721,7 @@ dependencies = [
 
 [[package]]
 name = "tanku_server"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "bevy",
  "criterion 0.8.2",
