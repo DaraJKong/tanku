@@ -968,7 +968,7 @@ mod tests {
     use super::*;
     use crate::state::Tab;
 
-    const FILE: &str = include_str!("../../tanku_audio/music.score");
+    const FILE: &str = crate::fixture::FILE;
 
     fn open() -> (Doc, View) {
         let doc = Doc::of(FILE, None).unwrap();

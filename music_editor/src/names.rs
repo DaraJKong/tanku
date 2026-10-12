@@ -213,12 +213,10 @@ pub fn heard(score: &Score, rhythm: &Rhythm, mode: Mode, written: u8) -> [Option
 
 #[cfg(test)]
 mod tests {
-    use tanku_audio::{
-        checks,
-        score::{PIECE, SCORE},
-    };
+    use tanku_audio::checks;
 
     use super::*;
+    use crate::fixture::{PIECE, SCORE};
 
     #[test]
     fn a_chord_has_the_name_of_its_root_and_of_its_third() {

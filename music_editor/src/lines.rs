@@ -350,7 +350,6 @@ pub fn number(value: f32) -> String {
 
 #[cfg(test)]
 mod tests {
-    use tanku_audio::score::PIECE;
 
     #[test]
     fn every_line_of_the_file_has_its_part() {
@@ -405,13 +404,14 @@ mod tests {
     }
 
     use super::*;
+    use crate::fixture::PIECE;
 
     fn lines(text: &str) -> Vec<String> {
         text.lines().map(str::to_string).collect()
     }
 
     /// The file of the game.
-    const FILE: &str = include_str!("../../tanku_audio/music.score");
+    const FILE: &str = crate::fixture::FILE;
 
     #[test]
     fn a_word_is_replaced_where_it_stands() {
@@ -507,7 +507,7 @@ mod tests {
     }
 
     #[test]
-    fn the_records_of_the_game_are_written_as_its_file_has_them() {
+    fn records_are_written_as_the_file_has_them() {
         let file = lines(FILE);
         // Motifs and their turn.
         for motif in PIECE.motifs() {

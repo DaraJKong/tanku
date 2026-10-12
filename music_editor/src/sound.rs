@@ -260,7 +260,7 @@ impl Iterator for Stream {
 
 #[cfg(test)]
 mod tests {
-    use tanku_audio::{Place, notation::read, score::game};
+    use tanku_audio::{Place, notation::read};
 
     use super::*;
 
@@ -287,11 +287,11 @@ mod tests {
         assert_eq!(engine.heard(), Heard::default());
         assert!(!engine.playing());
 
-        engine.play(game(), fight());
+        engine.play(crate::fixture::score(), fight());
         let heard = listen(&mut stream, 44_100);
         assert!(heard.iter().any(|sample| sample.abs() > 0.1));
         // It is the music of the game, to the sample.
-        let (mut music, _) = music_of(game(), fight());
+        let (mut music, _) = music_of(crate::fixture::score(), fight());
         let mut frames = vec![0.0; 2 * 44_100];
         music.render(&mut frames);
         assert!(heard == frames);
@@ -306,7 +306,7 @@ mod tests {
     #[test]
     fn a_music_that_stops_dies_away_in_a_moment() {
         let (mut engine, mut stream) = engine();
-        engine.play(game(), fight());
+        engine.play(crate::fixture::score(), fight());
         listen(&mut stream, 20 * BLOCK_FRAMES);
         engine.stop();
         // Four blocks later it is silent, and nothing jumped on the way.
@@ -323,11 +323,10 @@ mod tests {
 
     #[test]
     fn another_state_of_the_piece_goes_on_from_where_the_music_is() {
-        let text = include_str!("../../tanku_audio/music.score")
-            .replace("mix kick  32% 32%", "mix kick  0% 0%");
+        let text = crate::fixture::FILE.replace("mix kick  32% 32%", "mix kick  0% 0%");
         let other = Arc::new(Score::new(read(&text).unwrap()));
         let (mut engine, mut stream) = engine();
-        engine.play(game(), fight());
+        engine.play(crate::fixture::score(), fight());
         listen(&mut stream, 2 * 44_100);
         let before = engine.heard().spot.unwrap();
         engine.rescore(other);

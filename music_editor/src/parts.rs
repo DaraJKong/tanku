@@ -502,11 +502,11 @@ pub fn share(dial: &Dial) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use tanku_audio::score::PIECE;
 
     use super::*;
+    use crate::fixture::PIECE;
 
-    const FILE: &str = include_str!("../../tanku_audio/music.score");
+    const FILE: &str = crate::fixture::FILE;
 
     fn line(head: &str) -> &'static str {
         FILE.lines().find(|line| line.starts_with(head)).unwrap()

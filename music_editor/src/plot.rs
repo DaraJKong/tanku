@@ -193,11 +193,11 @@ pub fn picture(heard: Option<&Heard>) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use tanku_audio::score::PIECE;
 
     use super::*;
+    use crate::fixture::PIECE;
 
-    const FILE: &str = include_str!("../../tanku_audio/music.score");
+    const FILE: &str = crate::fixture::FILE;
 
     fn lines() -> Vec<String> {
         FILE.lines().map(str::to_string).collect()

@@ -255,17 +255,17 @@ mod tests {
 
     use super::*;
 
-    const FILE: &str = include_str!("../../tanku_audio/music.score");
+    const FILE: &str = crate::fixture::FILE;
 
     fn doc() -> Doc {
         Doc::of(FILE, None).unwrap()
     }
 
     #[test]
-    fn the_file_of_the_game_opens_as_it_is() {
+    fn a_file_opens_as_it_is() {
         let doc = doc();
         assert_eq!(doc.text(), FILE);
-        assert_eq!(doc.piece(), &tanku_audio::score::PIECE);
+        assert_eq!(doc.piece(), &*crate::fixture::PIECE);
         assert_eq!(doc.lines().len(), 56);
         assert_eq!((doc.unsaved(), doc.revision()), (0, 0));
         assert!(!doc.can_undo() && !doc.can_redo());

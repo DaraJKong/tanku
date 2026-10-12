@@ -207,12 +207,12 @@ mod tests {
     use tanku_audio::{
         director::{Director, Step},
         notation::Form,
-        score::PIECE,
     };
 
     use super::*;
+    use crate::fixture::PIECE;
 
-    const FILE: &str = include_str!("../../tanku_audio/music.score");
+    const FILE: &str = crate::fixture::FILE;
 
     fn lines() -> Vec<String> {
         FILE.lines().map(str::to_string).collect()
@@ -246,7 +246,7 @@ mod tests {
 
     #[test]
     fn the_game_is_the_piece_as_it_is() {
-        assert_eq!(*heard(&Audition::Game), Score::new(PIECE));
+        assert_eq!(*heard(&Audition::Game), Score::new(*PIECE));
         assert_eq!(Audition::Game.context(), None);
     }
 

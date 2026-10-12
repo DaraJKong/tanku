@@ -870,7 +870,7 @@ mod tests {
     use super::*;
     use crate::state::Field;
 
-    const FILE: &str = include_str!("../../../tanku_audio/music.score");
+    const FILE: &str = crate::fixture::FILE;
 
     /// The document of the game with the two systems that take the mouse and the keys, in
     /// frames of a tenth of a second.

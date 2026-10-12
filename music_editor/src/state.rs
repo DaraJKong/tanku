@@ -415,9 +415,9 @@ pub enum Ending {
 
 #[cfg(test)]
 mod tests {
-    use tanku_audio::score::PIECE;
 
     use super::*;
+    use crate::fixture::PIECE;
 
     #[test]
     fn the_play_button_plays_the_thing_of_the_tab() {

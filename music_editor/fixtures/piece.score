@@ -1,0 +1,56 @@
+# The music of Tanku, as it is written by hand. docs/MUSIC.md says what each line means.
+tanku-music 1
+
+tempo 120
+key A dorian aeolian
+
+motif A 1..2 ..3. 5..3 ..2. | 3..5 ..6. .... 5...
+motif B 8... ..9. 8... 6... | 5..6 ..5. 3..2 ..1.
+motif C ---- 5.8. ---- ----
+turn  A 3..5 ..2. .... 5...
+
+pat kick  heart    x.o. .... .... .... 180 135
+pat kick  fight    x... x... x... x... 255
+pat hat   corridor ..x. ..x. ..x. ..x. 190
+pat hat   arena    ooxo ooxo ooxo ooxo 200 100
+pat snare arena    .... x... .... x... 230
+pat bass  long     R... .... .... .... 255
+pat bass  plain    R..R ..R. R..R ..R. 255
+pat bass  leaping  R..O ..R. R..O ..V. 255
+pat bass  pair     ---- ---- 5-5. .... 255
+pat pluck arpeggio x.x. x.x. x.x. x.x. 150 echo
+pat pluck fast     xxxx xxxx xxxx xxxx 150 echo
+pat pluck tick     5.9. 5.9. 5.9. 5.9. 110
+
+sec intro  11C4 11C5  A A A a
+sec verse  11C4 11C5  A A A a
+sec chorus 451C 4511  B B B B
+sec bridge 5555 5555  C C:7 C C:9 C C:7 C C:4  105
+
+play menu     intro         bass=long@2 pluck=melody@4
+play calm     bridge        kick=heart bass=pair@1 pluck=melody@3/tick@2 lead=answer@4:150
+play corridor verse,chorus  kick=fight hat=corridor bass=* pluck=* lead=*
+play arena    verse,chorus  kick=fight hat=arena snare=arena bass=* pluck=* lead=*
+
+threat 0  bass=plain@2    pluck=arpeggio@3
+threat 1  bass=plain@2    pluck=arpeggio@3  lead=skeleton@4
+threat 2  bass=leaping@2  pluck=arpeggio@3  lead=melody@4
+threat 3  bass=leaping@2  pluck=arpeggio@3  lead=ornate@4
+threat 4  bass=leaping@2  pluck=fast@3      lead=ornate@4+ornate@5:130
+
+roll 2 hat snare 40 255
+link 2 5 4
+
+mix kick  32% 32%
+mix hat   75% 45%
+mix snare 28% 28%
+mix bass  10% 10%
+mix pluck 20% 10%
+mix lead   5%  8%
+
+sound kick  pitch 110Hz 55Hz 30ms  decay 45ms
+sound hat   above 7000Hz  decay 8ms
+sound snare band 2000Hz 1600Hz  decay 35ms  tone 220Hz 30ms 70%
+sound bass  rise 3ms  filter 1400Hz 300Hz 50ms
+sound pluck ring 1000ms  smooth 3  echo 3 33%
+sound lead  width 30%  rise 4ms  below 3000Hz  vibrato 136ms 0.4% 5.5Hz

@@ -12,6 +12,8 @@ mod audition;
 mod checks;
 mod dev;
 mod doc;
+#[cfg(test)]
+mod fixture;
 mod lines;
 mod names;
 mod parts;
