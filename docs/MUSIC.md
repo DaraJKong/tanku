@@ -213,6 +213,8 @@ The arrangement has a `play` line for each of the four scenes that it tells apar
 | `corridor` | A fight in a corridor |
 | `arena` | A fight in an arena, which is in the second mode of the key |
 
+The room of arena mode is an arena to the music: its lulls are `calm`, and its fights are those of an arena, from the first group to the last.
+
 After its scene, a `play` line has the sections that play in turn, with a comma between two of them, then what the instruments play. An instrument is the `kick`, the `hat`, the `snare`, the `bass`, the `pluck` or the `lead`, and one that the line doesn't name is silent:
 
 | Written | What the instrument plays |
