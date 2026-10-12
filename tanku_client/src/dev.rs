@@ -5,7 +5,8 @@
 //! `start SEED PLAYERS DIFFICULTY`, which starts a run in normal mode unless `hard` is asked
 //! for, in the tank of the command line if `--tank` gave one, `seat NUMBER`, `repair SECONDS` and `shield SECONDS`, which hold the
 //! key of that name for so long, `wait SECONDS`, `warp SECTOR`, `unlock`, which unlocks every
-//! mode and option,
+//! mode and option, or those that it names, as `unlock seed free`, `tank TANK`, which builds the tank of the garage as the command line
+//! writes one,
 //! `host PORT`, which opens a game for others to join, and takes browsers on the port after
 //! that one, `join ADDRESS`, which joins a game by its address or by what its host hands out
 //! for browsers,
@@ -71,8 +72,9 @@ use crate::{
     Overlay, Screen,
     audio::Muted,
     camera::{MainCamera, View},
-    cli::Options,
+    cli::{self, Options},
     crew::{LocalSeat, Own},
+    garage::Garage,
     host::{HostPort, WebPort},
     input,
     music::Baton,
@@ -381,12 +383,13 @@ fn run_script(
         ResMut<Assets<Image>>,
         Single<(Entity, &RenderTarget, &mut Projection), With<MainCamera>>,
     ),
-    (baton, tape, mut seat, mut unlocks, options): (
+    (baton, tape, mut seat, mut unlocks, options, mut garage): (
         Res<Baton>,
         Option<Res<Tape>>,
         ResMut<LocalSeat>,
         ResMut<Unlocks>,
         Res<Options>,
+        ResMut<Garage>,
     ),
     (mut session_requests, mut keys, mut port, mut web): (
         MessageWriter<SessionRequest>,
@@ -414,13 +417,25 @@ fn run_script(
                 players: (number(2) as u32).max(1),
                 drawn: true,
                 difficulty: Difficulty::of_key(word(3)).unwrap_or_default(),
+                // A tank from the command line makes it a run of free mode.
+                free: options.tank.is_some(),
                 tanks: options.tanks(),
             });
             screen.set(Screen::Playing);
         }
         "wait" => script.wait = number(1),
-        // Unlocks every mode and option, as a player has who earned them all.
-        "unlock" => *unlocks = Unlocks::of(&Unlock::ALL),
+        // Unlocks the modes and the options that are named, as `seed` or `free` or `hard`,
+        // or all of them if none is: as a player has who earned them.
+        "unlock" => {
+            let named = |unlock: &Unlock| words.len() == 1 || words[1..].contains(&unlock.key());
+            let earned: Vec<Unlock> = Unlock::ALL.into_iter().filter(named).collect();
+            *unlocks = Unlocks::of(&earned);
+        }
+        // Builds the tank of the garage, as the command line writes a tank.
+        "tank" => match cli::tank(word(1)) {
+            Ok(tank) => garage.tank = tank,
+            Err(why) => warn!("no tank can be built as asked: {why}"),
+        },
         // Opens a game for others to join, on a port of its own if one is given. Browsers
         // are then taken on the port after it.
         "host" => {

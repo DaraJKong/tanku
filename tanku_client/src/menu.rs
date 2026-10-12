@@ -14,7 +14,7 @@ use tanku_core::{
     rules::{MAX_PLAYERS, PLAYTEST_LAST_SECTOR, TICK_RATE},
     seed::{self, VERSION},
     sim::{Playtest, Run, RunPhase, RunRequest, SimEvent},
-    stats::Genome,
+    stats::{Genome, PLAYER_BUDGET, Stat},
 };
 
 use crate::{
@@ -23,10 +23,11 @@ use crate::{
     cli::Options,
     crew::LocalSeat,
     exhibit::{self, Exhibit, Show},
+    garage::Garage,
     net, report,
     scene::Paints,
     session::{Drawn, Found, Game, Invitation, Notice, Session, SessionRequest},
-    settings::{Action, Binding, Records, Settings},
+    settings::{Action, Binding, League, Records, Settings},
     theme,
     unlocks::{self, Unlocks},
 };
@@ -41,6 +42,9 @@ const EXHIBIT_PLACE: Vec2 = Vec2::new(3.2, 0.2);
 const ADDRESS_LENGTH: usize = 64;
 /// The longest seed that a player types: as many letters as the screens have room for.
 const SEED_LENGTH: usize = 10;
+/// How wide the columns of the table of the garage are: the stat, its level between the two
+/// buttons that change it, what the level gives, its price and the price of one more.
+const GARAGE_COLUMNS: [f32; 5] = [104.0, 106.0, 134.0, 52.0, 44.0];
 /// What the solo screen says of hard mode when it is chosen.
 const HARD_MODE: &str = "In hard mode, enemies have more points, every brain from the first \
                          sector, and the guns and the experience of twenty sectors further.";
@@ -56,8 +60,18 @@ enum Press {
     Redraw,
     /// On that screen: sets how hard the run is.
     Difficulty(Difficulty),
-    /// On the main menu: lists the best runs of a difficulty.
-    List(Difficulty),
+    /// On that screen: turns free mode on or off.
+    Free(bool),
+    /// On that screen: opens the garage.
+    OpenGarage,
+    /// In the garage: gives the tank a level more or less of a stat.
+    Level(Stat, i8),
+    /// In the garage: brings the standard tank back.
+    Standard,
+    /// Leaves the garage for the screen that opened it.
+    CloseGarage,
+    /// On the main menu: lists the best runs of a league.
+    List(League),
     OpenAchievements,
     /// Opens a game on this machine for others to join.
     Host,
@@ -105,6 +119,10 @@ enum Press {
 #[derive(Component)]
 struct Primary;
 
+/// A button that is on: it is edged with the accent, and a press turns it off.
+#[derive(Component)]
+struct Lit;
+
 #[derive(Component)]
 struct PauseRoot;
 
@@ -117,13 +135,16 @@ struct LobbyRoot;
 #[derive(Component)]
 struct SoloRoot;
 
+#[derive(Component)]
+struct GarageRoot;
+
 /// Where the main menu lists the best runs of a difficulty.
 #[derive(Component)]
 struct RecordList;
 
-/// The difficulty whose best runs the main menu lists.
+/// The league whose best runs the main menu lists.
 #[derive(Resource, Default)]
-struct Listed(Difficulty);
+struct Listed(League);
 
 /// The text that shows the address being typed.
 #[derive(Component)]
@@ -153,6 +174,8 @@ struct Setup {
     /// Whether the player typed the seed. The game drew it otherwise.
     typed: bool,
     difficulty: Difficulty,
+    /// Whether the run is in free mode, in the tank of the player's garage.
+    free: bool,
 }
 
 /// The players whom the lobby of a host tells how to join: those at a desktop game, or
@@ -201,6 +224,7 @@ pub fn plugin(app: &mut App) {
     // The player's tank stands behind the menus that come before a run.
     let before_a_run = in_state(Screen::Menu)
         .or_else(in_state(Screen::Solo))
+        .or_else(in_state(Screen::Garage))
         .or_else(in_state(Screen::Achievements))
         .or_else(in_state(Screen::Join))
         .or_else(in_state(Screen::Lobby));
@@ -214,14 +238,22 @@ pub fn plugin(app: &mut App) {
         .insert_resource(Destination(1))
         .add_systems(
             OnEnter(Screen::Menu),
-            (list_what_was_played, main_menu).chain(),
+            (remember_the_last_run, main_menu).chain(),
         )
-        .add_systems(OnEnter(Screen::Solo), draw_a_seed_for_one)
+        // A player who comes back from the garage finds the run as they had set it up.
+        .add_systems(
+            OnTransition {
+                exited: Screen::Menu,
+                entered: Screen::Solo,
+            },
+            draw_a_seed_for_one,
+        )
         .add_systems(OnEnter(Screen::Achievements), achievements_screen)
         .add_systems(OnEnter(Screen::Join), join_screen)
         .add_systems(OnEnter(Screen::Lobby), draw_a_seed)
         .add_systems(OnExit(Screen::Menu), put_the_exhibit_away)
         .add_systems(OnExit(Screen::Solo), put_the_exhibit_away)
+        .add_systems(OnExit(Screen::Garage), put_the_exhibit_away)
         .add_systems(OnExit(Screen::Achievements), put_the_exhibit_away)
         .add_systems(OnExit(Screen::Join), put_the_exhibit_away)
         .add_systems(OnExit(Screen::Lobby), put_the_exhibit_away)
@@ -240,6 +272,7 @@ pub fn plugin(app: &mut App) {
             (
                 (capture_binding, type_address, type_seed, press, escape).chain(),
                 (solo_screen.run_if(in_state(Screen::Solo)), show_seed).chain(),
+                garage_screen.run_if(in_state(Screen::Garage)),
                 refresh_pause
                     .run_if(in_state(Overlay::Pause).and_then(resource_exists::<Playtest>)),
                 refresh_settings.run_if(in_state(Overlay::Settings)),
@@ -498,26 +531,29 @@ fn level(wanted: f32) -> f32 {
     (wanted * 10.0).round().clamp(0.0, 10.0) / 10.0
 }
 
-/// The best run of a difficulty and of a team of some size, or of a single player.
-fn record_line(records: &Records, difficulty: Difficulty, players: u32) -> String {
-    let (best, none) = match difficulty {
-        Difficulty::Normal => ("Best run", "No run yet"),
-        Difficulty::Hard => ("Best run in hard mode", "No run in hard mode yet"),
+/// The best run of a league and of a team of some size, or of a single player.
+fn record_line(records: &Records, league: League, players: u32) -> String {
+    let (best, none) = match league.words() {
+        Some(words) => (
+            format!("Best run in {words}"),
+            format!("No run in {words} yet"),
+        ),
+        None => ("Best run".to_string(), "No run yet".to_string()),
     };
-    match records.best(difficulty, players) {
+    match records.best(league, players) {
         Some(record) => format!(
             "{best}: sector {}, seed {}, v{}",
             record.sector, record.seed, record.version
         ),
-        None => none.to_string(),
+        None => none,
     }
 }
 
-/// The best runs of a difficulty, a line for each size of team that has one: a single player
+/// The best runs of a league, a line for each size of team that has one: a single player
 /// first.
-fn records_of(records: &Records, difficulty: Difficulty) -> Vec<String> {
+fn records_of(records: &Records, league: League) -> Vec<String> {
     let teams = (1..=MAX_PLAYERS).filter_map(|players| {
-        let record = records.best(difficulty, players)?;
+        let record = records.best(league, players)?;
         let whose = match players {
             1 => "Best run".to_string(),
             players => format!("{players} players"),
@@ -545,20 +581,54 @@ fn status_line(parent: &mut ChildSpawnerCommands) {
     parent.spawn((StatusLine, theme::text("", 17.0, theme::DANGER)));
 }
 
-/// The main menu first lists the best runs of the difficulty that the player chose last
-/// for a run of their own.
-fn list_what_was_played(
+/// The main menu opens on what the player chose last for a run of their own: it draws the
+/// tank of that run, and first lists the best runs of its league.
+fn remember_the_last_run(
     settings: Res<Settings>,
     unlocks: Res<Unlocks>,
     options: Res<Options>,
+    mut setup: ResMut<Setup>,
     mut listed: ResMut<Listed>,
 ) {
-    listed.0 = last_difficulty(&settings, &unlocks, &options);
+    setup.difficulty = last_difficulty(&settings, &unlocks, &options);
+    setup.free = last_free(&settings, &unlocks, &options);
+    listed.0 = League {
+        difficulty: setup.difficulty,
+        free: setup.free,
+    };
 }
 
-/// Lists the best runs of a difficulty on the main menu, again whenever there is a new one
-/// or the player asks for those of another difficulty. A difficulty is only offered once the
-/// player has a run in it.
+/// A small button of the record list that turns a league on or off. It is lit while its
+/// league is the one that is listed.
+fn league_switch(parent: &mut ChildSpawnerCommands, name: &str, to: League, lit: bool) {
+    let node = Node {
+        padding: UiRect::axes(px(8), px(2)),
+        border: UiRect::all(px(1)),
+        ..default()
+    };
+    let (edge, ink) = if lit {
+        (theme::ACCENT, theme::ACCENT)
+    } else {
+        (theme::RULE, theme::TEXT)
+    };
+    let button = (
+        Button,
+        Press::List(to),
+        node,
+        BackgroundColor(theme::SURFACE_RAISED),
+        BorderColor::all(edge),
+        children![theme::label(name, 12.0, ink)],
+    );
+    if lit {
+        parent.spawn((button, Lit));
+    } else {
+        parent.spawn(button);
+    }
+}
+
+/// Lists the best runs of a league on the main menu, again whenever there is a new one or
+/// the player asks for those of another league. Hard mode and free mode each have a switch,
+/// once the player has a run in them.
 fn list_records(
     mut commands: Commands,
     records: Res<Records>,
@@ -569,48 +639,58 @@ fn list_records(
         if !records.is_changed() && !listed.is_changed() && !fresh.is_added() {
             continue;
         }
-        let (name, none) = match listed.0 {
-            Difficulty::Normal => ("RECORD", "No run yet"),
-            Difficulty::Hard => ("RECORD IN HARD MODE", "No run in hard mode yet"),
+        let league = listed.0;
+        let hard = league.difficulty == Difficulty::Hard;
+        // A switch is there while it is on, and once some run was of its kind.
+        let played = |of_kind: fn(League) -> bool| {
+            League::all()
+                .filter(|league| of_kind(*league))
+                .any(|league| !records_of(&records, league).is_empty())
         };
-        let other = match listed.0 {
-            Difficulty::Normal => Difficulty::Hard,
-            Difficulty::Hard => Difficulty::Normal,
-        };
-        let offered = listed.0 != Difficulty::Normal || !records_of(&records, other).is_empty();
-        let mut lines = records_of(&records, listed.0);
+        let offers_hard = hard || played(|league| league.difficulty == Difficulty::Hard);
+        let offers_free = league.free || played(|league| league.free);
+        let mut lines = records_of(&records, league);
         if lines.is_empty() {
-            lines.push(none.to_string());
+            lines.push(match league.words() {
+                Some(words) => format!("No run in {words} yet"),
+                None => "No run yet".to_string(),
+            });
         }
         commands
             .entity(list)
             .despawn_related::<Children>()
             .with_children(|record| {
                 let header = Node {
-                    justify_content: JustifyContent::SpaceBetween,
                     align_items: AlignItems::Center,
-                    column_gap: px(12),
+                    column_gap: px(8),
                     ..default()
                 };
                 record.spawn(header).with_children(|header| {
-                    header.spawn(theme::label(name, 12.0, theme::TEXT_DIM));
-                    if offered {
-                        let to = match other {
-                            Difficulty::Normal => "Normal mode",
-                            Difficulty::Hard => "Hard mode",
+                    header.spawn((
+                        Node {
+                            flex_grow: 1.0,
+                            ..default()
+                        },
+                        children![theme::label("RECORD", 12.0, theme::TEXT_DIM)],
+                    ));
+                    if offers_hard {
+                        let difficulty = if hard {
+                            Difficulty::Normal
+                        } else {
+                            Difficulty::Hard
                         };
-                        header.spawn((
-                            Button,
-                            Press::List(other),
-                            Node {
-                                padding: UiRect::axes(px(8), px(2)),
-                                border: UiRect::all(px(1)),
-                                ..default()
-                            },
-                            BackgroundColor(theme::SURFACE_RAISED),
-                            BorderColor::all(theme::RULE),
-                            children![theme::label(to, 12.0, theme::TEXT)],
-                        ));
+                        let to = League {
+                            difficulty,
+                            ..league
+                        };
+                        league_switch(header, "Hard mode", to, hard);
+                    }
+                    if offers_free {
+                        let to = League {
+                            free: !league.free,
+                            ..league
+                        };
+                        league_switch(header, "Free mode", to, league.free);
                     }
                 });
                 for line in lines {
@@ -620,15 +700,19 @@ fn list_records(
     }
 }
 
-fn main_menu(mut commands: Commands, playtest: Option<Res<Playtest>>, options: Res<Options>) {
-    // What the drawing shows: the standard tank, or the one that a playtest brought, which
-    // may have points left over.
-    let (drawn, budget) = match options.tank {
-        Some(tank) => (
-            "PLAYTEST TANK",
-            format!("{} OF {} POINTS", tank.cost(), tank.budget),
-        ),
-        None => ("PLAYER TANK", format!("{} POINTS", Genome::PLAYER.budget)),
+fn main_menu(
+    mut commands: Commands,
+    playtest: Option<Res<Playtest>>,
+    (setup, options, garage): (Res<Setup>, Res<Options>, Res<Garage>),
+) {
+    // What the drawing shows: the standard tank, the one that the player built for free
+    // mode or the one that a playtest brought. Those two may have points left over.
+    let tank = shown_tank(Screen::Menu, &setup, &options, &garage);
+    let spent = format!("{} OF {} POINTS", tank.cost(), tank.budget);
+    let (drawn, budget) = match (options.tank.is_some(), is_free(&setup, &options)) {
+        (true, _) => ("PLAYTEST TANK", spent),
+        (false, true) => ("GARAGE TANK", spent),
+        (false, false) => ("PLAYER TANK", format!("{} POINTS", tank.budget)),
     };
     commands
         .spawn((
@@ -747,10 +831,12 @@ fn exhibit(
     mut meshes: ResMut<Assets<Mesh>>,
     mut view: ResMut<View>,
     screen: Res<State<Screen>>,
-    options: Res<Options>,
-    mut shown: Local<Option<Screen>>,
+    (setup, options, garage): (Res<Setup>, Res<Options>, Res<Garage>),
+    mut shown: Local<Option<(Screen, Genome)>>,
 ) {
-    let wanted = *screen.get();
+    // The drawing follows the tank: every change in the garage shows at once.
+    let genome = shown_tank(*screen.get(), &setup, &options, &garage);
+    let wanted = (*screen.get(), genome);
     if !exhibits.is_empty() && *shown == Some(wanted) {
         return;
     }
@@ -758,8 +844,6 @@ fn exhibit(
         commands.entity(stale).despawn();
     }
     *shown = Some(wanted);
-    // A playtest that brought a tank of its own plays in it, and shows it.
-    let genome = options.tank.unwrap_or(Genome::PLAYER);
     let show = Show {
         genome,
         color: theme::PLAYER,
@@ -774,9 +858,24 @@ fn exhibit(
         &mut meshes,
         &paints,
         &mut view,
-        wanted,
+        wanted.0,
         &show,
     );
+}
+
+/// The tank that the menus draw on a screen: the one that the player takes into a run from
+/// there.
+fn shown_tank(screen: Screen, setup: &Setup, options: &Options, garage: &Garage) -> Genome {
+    let alone = matches!(screen, Screen::Menu | Screen::Solo | Screen::Achievements);
+    match screen {
+        // The garage draws the tank that is being built.
+        Screen::Garage => garage.tank,
+        // A single player in free mode has the tank that they built or brought.
+        _ if alone && is_free(setup, options) => own_tank(options, garage),
+        // Several players have the standard tank, and the host of a playtest the one that
+        // it brought.
+        _ => options.tank.unwrap_or(Genome::PLAYER),
+    }
 }
 
 /// What a key does to the address being typed.
@@ -875,8 +974,8 @@ fn tell_how_it_goes(
     }
 }
 
-/// Draws a seed for the run that a single player sets up. Its difficulty is the one that the
-/// player chose last, if it is still theirs to choose.
+/// Draws a seed for the run that a single player sets up. Its difficulty and its mode are
+/// those that the player chose last, if they are still theirs to choose.
 fn draw_a_seed_for_one(
     options: Res<Options>,
     time: Res<Time<Real>>,
@@ -888,6 +987,7 @@ fn draw_a_seed_for_one(
         seed: new_seed(&options, time.elapsed().as_nanos() as u64),
         typed: false,
         difficulty: last_difficulty(&settings, &unlocks, &options),
+        free: last_free(&settings, &unlocks, &options),
     };
 }
 
@@ -910,6 +1010,24 @@ fn last_difficulty(settings: &Settings, unlocks: &Unlocks, options: &Options) ->
         .unwrap_or_default()
 }
 
+/// Whether the player chose free mode for the last run of their own, if it is still theirs
+/// to choose.
+fn last_free(settings: &Settings, unlocks: &Unlocks, options: &Options) -> bool {
+    settings.solo_free && open(unlocks, options, Unlock::FreeMode)
+}
+
+/// Whether the next run of a single player is in free mode: they chose it, or a playtest
+/// brought a tank of its own, which every one of its runs is in.
+fn is_free(setup: &Setup, options: &Options) -> bool {
+    setup.free || options.tank.is_some()
+}
+
+/// The tank that a single player has in free mode: the one that a playtest brought, or else
+/// the one of their garage.
+fn own_tank(options: &Options, garage: &Garage) -> Genome {
+    options.tank.unwrap_or(garage.tank)
+}
+
 /// What a key does to the seed being typed. A seed is made of letters and digits, and reads
 /// the same in small letters and in capitals.
 fn typed_seed(seed: &mut String, key: &Key, text: Option<&str>) {
@@ -925,30 +1043,50 @@ fn typed_seed(seed: &mut String, key: &Key, text: Option<&str>) {
     }
 }
 
-/// What starts the run of a single player: on a seed that the game drew for it or not, and
-/// in the tank of the command line if a playtest brought one.
-fn solo_run(seed: String, drawn: bool, difficulty: Difficulty, options: &Options) -> RunRequest {
+/// What starts the run of a single player: on a seed that the game drew for it or not, in a
+/// league, and in free mode in the tank that the player built or brought.
+fn solo_run(
+    seed: String,
+    drawn: bool,
+    league: League,
+    options: &Options,
+    garage: &Garage,
+) -> RunRequest {
+    let tanks = if league.free {
+        vec![own_tank(options, garage)]
+    } else {
+        Vec::new()
+    };
     RunRequest::Start {
         seed,
         players: 1,
         drawn,
-        difficulty,
-        tanks: options.tanks(),
+        difficulty: league.difficulty,
+        free: league.free,
+        tanks,
+    }
+}
+
+/// The league of the run that a single player set up.
+fn league_of(setup: &Setup, options: &Options) -> League {
+    League {
+        difficulty: setup.difficulty,
+        free: is_free(setup, options),
     }
 }
 
 /// Starts the run that a single player set up. A run needs a seed.
 fn begin(
     setup: &Setup,
-    options: &Options,
+    (options, garage): (&Options, &Garage),
     requests: &mut MessageWriter<RunRequest>,
     screen: &mut NextState<Screen>,
 ) {
     if setup.seed.is_empty() {
         return;
     }
-    let seed = setup.seed.clone();
-    requests.write(solo_run(seed, !setup.typed, setup.difficulty, options));
+    let (seed, league) = (setup.seed.clone(), league_of(setup, options));
+    requests.write(solo_run(seed, !setup.typed, league, options, garage));
     screen.set(Screen::Playing);
 }
 
@@ -958,7 +1096,7 @@ fn type_seed(
     mut keys: MessageReader<KeyboardInput>,
     screen: Res<State<Screen>>,
     unlocks: Res<Unlocks>,
-    options: Res<Options>,
+    (options, garage): (Res<Options>, Res<Garage>),
     mut setup: ResMut<Setup>,
     mut requests: MessageWriter<RunRequest>,
     mut next_screen: ResMut<NextState<Screen>>,
@@ -970,7 +1108,7 @@ fn type_seed(
             continue;
         }
         if key.logical_key == Key::Enter {
-            begin(&setup, &options, &mut requests, &mut next_screen);
+            begin(&setup, (&options, &garage), &mut requests, &mut next_screen);
         } else if typing {
             // The first key takes the place of a seed that the game drew.
             let mut seed = String::new();
@@ -1011,25 +1149,21 @@ fn solo_screen(
     mut commands: Commands,
     setup: Res<Setup>,
     unlocks: Res<Unlocks>,
-    options: Res<Options>,
+    (options, garage): (Res<Options>, Res<Garage>),
     roots: Query<Entity, With<SoloRoot>>,
 ) {
-    if !roots.is_empty() && !setup.is_changed() && !unlocks.is_changed() {
+    let stale = setup.is_changed() || unlocks.is_changed() || garage.is_changed();
+    if !roots.is_empty() && !stale {
         return;
     }
     for root in &roots {
         commands.entity(root).despawn();
     }
-    // Free mode is not in the game yet: once it is unlocked, it says so.
-    let waits = |unlock: Unlock| {
-        if open(&unlocks, &options, unlock) {
-            "Not in the game yet".to_string()
-        } else {
-            unlocks::condition(unlock)
-        }
-    };
     let hard = plays(&unlocks, &options, Difficulty::Hard);
     let types = open(&unlocks, &options, Unlock::ChosenSeed);
+    // A playtest that brought a tank plays every run in it: it has no garage to open.
+    let (free, brought) = (is_free(&setup, &options), options.tank.is_some());
+    let frees = open(&unlocks, &options, Unlock::FreeMode);
     commands
         .spawn((
             SoloRoot,
@@ -1072,8 +1206,32 @@ fn solo_screen(
                     line(parent, HARD_MODE, theme::TEXT_DIM);
                 }
                 row(parent, "Free mode", |row| {
-                    row.spawn(theme::text(waits(Unlock::FreeMode), 16.0, theme::TEXT_DIM));
+                    if brought {
+                        let told = "On, in the tank of this playtest";
+                        row.spawn(theme::text(told, 16.0, theme::TEXT));
+                    } else if frees {
+                        for (name, on) in [("Off", false), ("On", true)] {
+                            choice(row, name, 90.0, Press::Free(on), setup.free == on);
+                        }
+                    } else {
+                        let unlock = unlocks::condition(Unlock::FreeMode);
+                        row.spawn(theme::text(unlock, 16.0, theme::TEXT_DIM));
+                    }
                 });
+                // In free mode, the player's tank is the one of their garage.
+                if free && !brought {
+                    row(parent, "Tank", |row| {
+                        let spent = format!("{} of {PLAYER_BUDGET} points", garage.tank.cost());
+                        row.spawn((
+                            Node {
+                                min_width: px(130),
+                                ..default()
+                            },
+                            children![theme::text(spent, 16.0, theme::TEXT)],
+                        ));
+                        small(row, "Garage", 110.0, Press::OpenGarage);
+                    });
+                }
                 row(parent, "Seed", |row| {
                     row.spawn((
                         Node {
@@ -1095,15 +1253,170 @@ fn solo_screen(
                 };
                 line(parent, hint, theme::TEXT_DIM);
                 // A playtest earns nothing either way, and says what it is elsewhere.
-                if setup.typed && unlocks.wanting() && !options.playtest {
-                    line(
-                        parent,
-                        "A run on a typed seed earns no achievement.",
-                        theme::TEXT,
-                    );
+                let unearned = match (free, setup.typed) {
+                    (true, _) => Some("A run in free mode earns no achievement."),
+                    (false, true) => Some("A run on a typed seed earns no achievement."),
+                    (false, false) => None,
+                };
+                if let Some(why) = unearned.filter(|_| unlocks.wanting() && !options.playtest) {
+                    line(parent, why, theme::TEXT);
                 }
                 primary(parent, "Start", Press::Begin);
                 button(parent, "Back", Press::Abandon);
+            });
+        });
+}
+
+/// A cell of the table of the garage: a box of a width that holds what a column tells of a
+/// stat.
+fn cell(parent: &mut ChildSpawnerCommands, width: f32, content: impl Bundle) {
+    parent.spawn((
+        Node {
+            width: px(width),
+            ..default()
+        },
+        children![content],
+    ));
+}
+
+/// The button that gives the tank of the garage a level more or less of a stat. Where the
+/// garage lets no such level be, a dim box of the same size stands in its place.
+fn step(parent: &mut ChildSpawnerCommands, garage: &Garage, stat: Stat, by: i8) {
+    let sign = if by > 0 { "+" } else { "-" };
+    if garage.changed(stat, by).is_some() {
+        return small(parent, sign, 34.0, Press::Level(stat, by));
+    }
+    parent.spawn((
+        Node {
+            padding: UiRect::axes(px(6), px(5)),
+            ..button_node(px(34.0))
+        },
+        BorderColor::all(theme::RULE_DIM),
+        children![theme::text(sign, 16.0, theme::RULE)],
+    ));
+}
+
+/// What the level of a stat gives the tank of the garage. A stat that a tank does without
+/// says so: the report of a run only lists the parts that a tank has.
+fn gives(tank: &Genome, stat: Stat) -> String {
+    let without = matches!(stat, Stat::Ricochet | Stat::Mines | Stat::Piercing);
+    if without && tank.level(stat) == 0 {
+        return "None".to_string();
+    }
+    report::gives(tank, stat)
+}
+
+/// The garage: where a player spends the points of their tank for free mode. Every stat has
+/// its level, what that level gives, what it costs and what one more level would cost. The
+/// tank is drawn next to the list as it will look, and follows every change.
+fn garage_screen(
+    mut commands: Commands,
+    garage: Res<Garage>,
+    roots: Query<Entity, With<GarageRoot>>,
+) {
+    if !roots.is_empty() && !garage.is_changed() {
+        return;
+    }
+    for root in &roots {
+        commands.entity(root).despawn();
+    }
+    let tank = garage.tank;
+    commands
+        .spawn((
+            GarageRoot,
+            DespawnOnExit(Screen::Garage),
+            Node {
+                width: percent(100),
+                height: percent(100),
+                ..default()
+            },
+            GlobalZIndex(10),
+            children![sheet_edge()],
+        ))
+        .with_children(|root| {
+            margin(root, 500.0, |parent| {
+                parent.spawn(theme::label("Tank of free mode", 13.0, theme::TEXT_DIM));
+                parent.spawn(theme::title("Garage", 84.0, theme::TEXT));
+                let table = Node {
+                    flex_direction: FlexDirection::Column,
+                    row_gap: px(4),
+                    padding: UiRect::axes(px(12), px(8)),
+                    ..default()
+                };
+                parent.spawn(ruled(table)).with_children(|table| {
+                    let line = Node {
+                        column_gap: px(6),
+                        align_items: AlignItems::Center,
+                        ..default()
+                    };
+                    let head = |name: &'static str| theme::label(name, 12.0, theme::TEXT_DIM);
+                    table.spawn(line.clone()).with_children(|names| {
+                        cell(names, GARAGE_COLUMNS[0], head("Stat"));
+                        cell(names, GARAGE_COLUMNS[1], head("Level"));
+                        cell(names, GARAGE_COLUMNS[2], head("Gives"));
+                        cell(names, GARAGE_COLUMNS[3], head("Price"));
+                        cell(names, GARAGE_COLUMNS[4], head("Next"));
+                    });
+                    for stat in Stat::GARAGE {
+                        let level = tank.level(stat);
+                        // What one more level would cost, where there is one.
+                        let next = (level < stat.max_level())
+                            .then(|| stat.price(level + 1) - stat.price(level));
+                        let next = next.map_or(String::new(), |price| format!("+{price}"));
+                        let name = report::stat_name(stat);
+                        table.spawn(line.clone()).with_children(|row| {
+                            cell(row, GARAGE_COLUMNS[0], theme::text(name, 16.0, theme::TEXT));
+                            let steps = Node {
+                                width: px(GARAGE_COLUMNS[1]),
+                                column_gap: px(6),
+                                align_items: AlignItems::Center,
+                                ..default()
+                            };
+                            row.spawn(steps).with_children(|steps| {
+                                step(steps, &garage, stat, -1);
+                                let figure = theme::figure(level.to_string(), 16.0, theme::TEXT);
+                                steps.spawn((
+                                    Node {
+                                        width: px(20),
+                                        justify_content: JustifyContent::Center,
+                                        ..default()
+                                    },
+                                    children![figure],
+                                ));
+                                step(steps, &garage, stat, 1);
+                            });
+                            let gives = gives(&tank, stat);
+                            cell(
+                                row,
+                                GARAGE_COLUMNS[2],
+                                theme::text(gives, 16.0, theme::TEXT),
+                            );
+                            let price = stat.price(level).to_string();
+                            cell(
+                                row,
+                                GARAGE_COLUMNS[3],
+                                theme::figure(price, 16.0, theme::TEXT),
+                            );
+                            cell(
+                                row,
+                                GARAGE_COLUMNS[4],
+                                theme::figure(next, 16.0, theme::TEXT_DIM),
+                            );
+                        });
+                    }
+                });
+                parent
+                    .spawn(ruled(Node {
+                        align_self: AlignSelf::Stretch,
+                        ..default()
+                    }))
+                    .with_children(|figures| {
+                        let (spent, left) = (tank.cost(), garage.left());
+                        figure(figures, "POINTS SPENT", spent.to_string(), false);
+                        figure(figures, "POINTS LEFT", left.to_string(), true);
+                    });
+                primary(parent, "Done", Press::CloseGarage);
+                button(parent, "Standard tank", Press::Standard);
             });
         });
 }
@@ -1688,7 +2001,7 @@ fn new_seed(options: &Options, entropy: u64) -> String {
 /// Keeps the record of a run for a team of the size it started with, unless it was a playtest.
 /// Returns whether the record is new.
 fn keep_record(records: &mut Records, run: &Run) -> bool {
-    !run.playtest && records.submit(run.difficulty, run.team, run.cleared, &run.seed_text)
+    !run.playtest && records.submit(League::of(run), run.team, run.cleared, &run.seed_text)
 }
 
 /// Where a run ended, as the stamp of the game over screen tells it.
@@ -1717,10 +2030,12 @@ fn game_over(
         1 => "SOLO".to_string(),
         team => format!("CO-OP \u{b7} {team} PLAYERS"),
     };
-    let difficulty = run
-        .as_ref()
-        .map_or(Difficulty::Normal, |run| run.difficulty);
-    let mode = match difficulty {
+    let league = run.as_ref().map(|run| League::of(run)).unwrap_or_default();
+    let mode = match league.free {
+        true if !playtest => format!("{mode} \u{b7} FREE MODE"),
+        _ => mode,
+    };
+    let mode = match league.difficulty {
         Difficulty::Normal => mode,
         Difficulty::Hard => format!("{mode} \u{b7} HARD MODE"),
     };
@@ -1787,7 +2102,7 @@ fn game_over(
                 } else if outcome.new_record {
                     line(parent, "New record", theme::GOOD);
                 } else {
-                    let best = record_line(&records, difficulty, team);
+                    let best = record_line(&records, league, team);
                     line(parent, best, theme::TEXT_DIM);
                 }
                 for &unlock in &unlocks.new {
@@ -1797,12 +2112,17 @@ fn game_over(
                 // A player who has everything is not told what they miss.
                 let wanting = unlocks.wanting() && !playtest;
                 if wanting && run.as_ref().is_some_and(|run| !run.earns) {
-                    let why = "This run earned no achievement: its seed was typed or played again.";
+                    // In free mode, the next run earns nothing either, retry or not.
+                    let why = if league.free {
+                        "Runs in free mode earn no achievement."
+                    } else {
+                        "This run earned no achievement: its seed was typed or played again."
+                    };
                     line(parent, why, theme::TEXT_DIM);
                 }
                 let retry = |buttons: &mut ChildSpawnerCommands| {
                     primary(buttons, "Retry this seed", Press::Retry);
-                    if wanting {
+                    if wanting && !league.free {
                         line(buttons, "A retry earns no achievement.", theme::TEXT_DIM);
                     }
                 };
@@ -1972,7 +2292,12 @@ fn press(
     mut destination: ResMut<Destination>,
     (options, run, time): (Res<Options>, Option<Res<Run>>, Res<Time<Real>>),
     (session, mut address, mut notice): (Res<Session>, ResMut<Address>, ResMut<Notice>),
-    (mut setup, mut drawn, mut listed): (ResMut<Setup>, ResMut<Drawn>, ResMut<Listed>),
+    (mut setup, mut drawn, mut listed, mut garage): (
+        ResMut<Setup>,
+        ResMut<Drawn>,
+        ResMut<Listed>,
+        ResMut<Garage>,
+    ),
     (found, mut way, invitation, mut clipboard, mut copied): (
         Res<Found>,
         ResMut<Way>,
@@ -2000,7 +2325,7 @@ fn press(
                 notice.0 = None;
                 next_screen.set(Screen::Solo);
             }
-            Press::Begin => begin(&setup, &options, &mut requests, &mut next_screen),
+            Press::Begin => begin(&setup, (&options, &garage), &mut requests, &mut next_screen),
             Press::Redraw => (setup.seed, setup.typed) = (fresh_seed(), false),
             // The choice is kept for the next time.
             Press::Difficulty(difficulty) => {
@@ -2009,7 +2334,26 @@ fn press(
                     settings.solo_difficulty = difficulty;
                 }
             }
-            Press::List(difficulty) => listed.0 = difficulty,
+            // The choice is kept for the next time.
+            Press::Free(on) => {
+                setup.free = on;
+                if settings.solo_free != on {
+                    settings.solo_free = on;
+                }
+            }
+            Press::OpenGarage => next_screen.set(Screen::Garage),
+            Press::Level(stat, by) => {
+                if let Some(tank) = garage.changed(stat, by) {
+                    garage.tank = tank;
+                }
+            }
+            Press::Standard => {
+                if garage.tank != Genome::PLAYER {
+                    garage.tank = Genome::PLAYER;
+                }
+            }
+            Press::CloseGarage => next_screen.set(Screen::Solo),
+            Press::List(league) => listed.0 = league,
             Press::OpenAchievements => next_screen.set(Screen::Achievements),
             Press::NewRun | Press::Retry => {
                 // A seed that is played again was not drawn for the run: it can be practiced.
@@ -2020,10 +2364,11 @@ fn press(
                 notice.0 = None;
                 match *session {
                     Session::Solo => {
-                        // The next run is as hard as the one that is over.
-                        let difficulty = run.as_ref().map(|run| run.difficulty);
-                        let difficulty = difficulty.unwrap_or(setup.difficulty);
-                        requests.write(solo_run(seed, fresh, difficulty, &options));
+                        // The next run is as hard as the one that is over, and in the
+                        // same tank.
+                        let league = run.as_ref().map(|run| League::of(run));
+                        let league = league.unwrap_or(league_of(&setup, &options));
+                        requests.write(solo_run(seed, fresh, league, &options, &garage));
                         next_screen.set(Screen::Playing);
                         next_overlay.set(Overlay::None);
                     }
@@ -2164,6 +2509,10 @@ fn escape(
         next_screen.set(Screen::Menu);
         return;
     }
+    if *screen.get() == Screen::Garage && *overlay.get() == Overlay::None {
+        next_screen.set(Screen::Solo);
+        return;
+    }
     if *screen.get() == Screen::Join && *overlay.get() == Overlay::None {
         if *session == Session::Guest {
             session_requests.write(SessionRequest::Leave);
@@ -2186,14 +2535,18 @@ fn hover(
         (
             &Interaction,
             Has<Primary>,
+            Has<Lit>,
             &mut BackgroundColor,
             &mut BorderColor,
         ),
         (Changed<Interaction>, With<Press>),
     >,
 ) {
-    for (interaction, primary, mut color, mut border) in &mut buttons {
+    for (interaction, primary, lit, mut color, mut border) in &mut buttons {
         let (fill, edge) = match (interaction, primary) {
+            // A button that is on keeps the edge that says so.
+            (Interaction::Hovered, false) if lit => (theme::SURFACE_HOVERED, theme::ACCENT),
+            (Interaction::None, false) if lit => (theme::SURFACE_RAISED, theme::ACCENT),
             (Interaction::Pressed, true) => (theme::TEXT, theme::TEXT),
             (Interaction::Pressed, false) => (theme::ACCENT, theme::ACCENT),
             (Interaction::Hovered, true) => (theme::ACCENT_HOVERED, theme::ACCENT_HOVERED),
@@ -2326,7 +2679,12 @@ mod tests {
             }),
             playtest: false,
             earns: true,
+            free: false,
         }
+    }
+
+    fn league(difficulty: Difficulty, free: bool) -> League {
+        League { difficulty, free }
     }
 
     /// A tank that a playtest brings: the fastest engine, the fastest gun and the fastest
@@ -2384,12 +2742,15 @@ mod tests {
                     .insert_resource(Notice(Some(LONG_NOTICE.into())));
                 build(app, main_menu);
             }),
-            ("the main menu with the records of hard mode", |app| {
-                app.insert_resource(Records::of_every_team(128, LONG_SEED))
-                    .insert_resource(Listed(Difficulty::Hard))
-                    .insert_resource(Notice(Some(LONG_NOTICE.into())));
-                build(app, main_menu);
-            }),
+            (
+                "the main menu with the records of hard mode and free mode",
+                |app| {
+                    app.insert_resource(Records::of_every_team(128, LONG_SEED))
+                        .insert_resource(Listed(league(Difficulty::Hard, true)))
+                        .insert_resource(Notice(Some(LONG_NOTICE.into())));
+                    build(app, main_menu);
+                },
+            ),
             // A notice on top of this one would cross the fine line around the sheet by a
             // few pixels in the smallest windows. A playtest is a tool of the game's makers.
             ("the main menu of a playtest", |app| {
@@ -2422,6 +2783,7 @@ mod tests {
                     seed: "85GVTHQA".into(),
                     typed: false,
                     difficulty: Difficulty::Normal,
+                    free: false,
                 });
                 build(app, solo_screen);
             }),
@@ -2434,6 +2796,7 @@ mod tests {
                         seed: LONG_SEED.into(),
                         typed: true,
                         difficulty: Difficulty::Normal,
+                        free: false,
                     });
                 build(app, solo_screen);
             }),
@@ -2446,8 +2809,52 @@ mod tests {
                         seed: LONG_SEED.into(),
                         typed: true,
                         difficulty: Difficulty::Hard,
+                        free: false,
                     });
                 build(app, solo_screen);
+            }),
+            // Free mode and hard mode are both on, a seed was typed and something is left
+            // to unlock: the screen then holds every row and every note that it has.
+            ("the solo screen in free mode", |app| {
+                let unlocks = [Unlock::ChosenSeed, Unlock::FreeMode, Unlock::HardMode];
+                app.insert_resource(Unlocks::of(&unlocks))
+                    .insert_resource(Garage { tank: racer() })
+                    .insert_resource(Setup {
+                        seed: LONG_SEED.into(),
+                        typed: true,
+                        difficulty: Difficulty::Hard,
+                        free: true,
+                    });
+                build(app, solo_screen);
+            }),
+            (
+                "the solo screen of a playtest in a tank of its own",
+                |app| {
+                    app.insert_resource(Options {
+                        playtest: true,
+                        seed: Some("85GVTHQA".into()),
+                        tank: Some(racer()),
+                    });
+                    build(app, solo_screen);
+                },
+            ),
+            // The standard tank spends every point: no level can be added to it.
+            ("the garage", |app| build(app, garage_screen)),
+            // A tank with points left, whose stats say the most about what they give.
+            ("the garage with points left", |app| {
+                let parts = [
+                    (Stat::Engine, 6),
+                    (Stat::Tracks, 4),
+                    (Stat::Muzzle, 5),
+                    (Stat::Magazine, 1),
+                    (Stat::Loader, 5),
+                    (Stat::Ricochet, 2),
+                    (Stat::Shield, 1),
+                ];
+                let tank = Genome::of_the_garage(&parts).unwrap();
+                assert_eq!(tank.cost(), 58);
+                app.insert_resource(Garage { tank });
+                build(app, garage_screen);
             }),
             ("the achievements", |app| {
                 app.insert_resource(Unlocks::of(&[Unlock::ChosenSeed, Unlock::HardMode]));
@@ -2526,13 +2933,14 @@ mod tests {
                     .insert_resource(Records::of_every_team(128, "85GVTHQA"));
                 build(app, game_over);
             }),
-            // A run of four players in hard mode, on a seed as long as one gets: the lines
-            // of the report are then as long as they get.
-            ("the report of a run in hard mode", |app| {
+            // A run of four players in hard mode and in free mode, on a seed as long as one
+            // gets: the lines of the report are then as long as they get.
+            ("the report of a run in hard mode and free mode", |app| {
                 let run = Run {
                     seed_text: LONG_SEED.into(),
                     difficulty: Difficulty::Hard,
                     earns: false,
+                    free: true,
                     ..lost_run(4)
                 };
                 app.insert_resource(run)
@@ -2609,6 +3017,7 @@ mod tests {
             .init_resource::<Address>()
             .init_resource::<Setup>()
             .init_resource::<Listed>()
+            .init_resource::<Garage>()
             .init_resource::<Unlocks>()
             .init_resource::<Way>()
             .init_resource::<Copied>()
@@ -2894,34 +3303,48 @@ mod tests {
     }
 
     #[test]
-    fn a_run_sets_the_record_of_its_difficulty_and_of_a_team_of_its_size() {
-        use Difficulty::{Hard, Normal};
-        let run = |difficulty: Difficulty, team: u32, cleared: u32| Run {
-            difficulty,
+    fn a_run_sets_the_record_of_its_league_and_of_a_team_of_its_size() {
+        let (normal, hard) = (League::default(), league(Difficulty::Hard, false));
+        let free = league(Difficulty::Normal, true);
+        let run = |league: League, team: u32, cleared: u32| Run {
+            difficulty: league.difficulty,
+            free: league.free,
             cleared,
             ..lost_run(team)
         };
         let mut records = Records::default();
-        assert!(keep_record(&mut records, &run(Hard, 1, 3)));
-        assert!(records.best(Normal, 1).is_none());
-        assert_eq!(records.best(Hard, 1).unwrap().sector, 3);
+        assert!(keep_record(&mut records, &run(hard, 1, 3)));
+        assert!(records.best(normal, 1).is_none());
+        assert_eq!(records.best(hard, 1).unwrap().sector, 3);
         // A run in normal mode that got further is no record of hard mode.
-        assert!(keep_record(&mut records, &run(Normal, 1, 12)));
-        assert_eq!(records.best(Hard, 1).unwrap().sector, 3);
-        assert!(!keep_record(&mut records, &run(Hard, 1, 3)));
-        assert!(keep_record(&mut records, &run(Hard, 2, 1)));
-        // The report and the main menu say which difficulty a best run is of.
+        assert!(keep_record(&mut records, &run(normal, 1, 12)));
+        assert_eq!(records.best(hard, 1).unwrap().sector, 3);
+        assert!(!keep_record(&mut records, &run(hard, 1, 3)));
+        assert!(keep_record(&mut records, &run(hard, 2, 1)));
+        // Nor is a run in free mode a record of the standard tank, however far it got.
+        assert!(keep_record(&mut records, &run(free, 1, 40)));
+        assert_eq!(records.best(normal, 1).unwrap().sector, 12);
+        assert_eq!(records.best(free, 1).unwrap().sector, 40);
+        // The report and the main menu say which league a best run is of.
         assert_eq!(
-            record_line(&records, Normal, 1),
+            record_line(&records, normal, 1),
             format!("Best run: sector 12, seed 85GVTHQA, v{VERSION}")
         );
         assert_eq!(
-            record_line(&records, Hard, 1),
+            record_line(&records, hard, 1),
             format!("Best run in hard mode: sector 3, seed 85GVTHQA, v{VERSION}")
         );
-        assert_eq!(record_line(&records, Normal, 3), "No run yet");
-        assert_eq!(record_line(&records, Hard, 3), "No run in hard mode yet");
-        let hard = records_of(&records, Hard);
+        assert_eq!(
+            record_line(&records, free, 1),
+            format!("Best run in free mode: sector 40, seed 85GVTHQA, v{VERSION}")
+        );
+        assert_eq!(record_line(&records, normal, 3), "No run yet");
+        assert_eq!(record_line(&records, hard, 3), "No run in hard mode yet");
+        assert_eq!(
+            record_line(&records, league(Difficulty::Hard, true), 1),
+            "No run in hard mode and free mode yet"
+        );
+        let hard = records_of(&records, hard);
         assert_eq!(hard.len(), 2);
         assert!(hard[0].starts_with("Best run: sector 3"));
         assert!(hard[1].starts_with("2 players: sector 1"));
@@ -2981,8 +3404,9 @@ mod tests {
         assert_eq!(offered(playtest), [Difficulty::Hard]);
     }
 
-    /// What the solo screen sets up for a player who chose a difficulty last.
-    fn set_up(last: Difficulty, unlocks: &[Unlock], playtest: bool) -> Difficulty {
+    /// What the solo screen sets up for a player who chose a difficulty last, and free mode
+    /// with it: the difficulty of the run, and whether it is in free mode.
+    fn set_up_as(last: Difficulty, unlocks: &[Unlock], playtest: bool) -> (Difficulty, bool) {
         let mut world = World::new();
         world.insert_resource(Options {
             playtest,
@@ -2990,14 +3414,18 @@ mod tests {
         });
         world.insert_resource(Time::<Real>::default());
         let mut settings = Settings::default();
-        settings.solo_difficulty = last;
+        (settings.solo_difficulty, settings.solo_free) = (last, true);
         world.insert_resource(settings);
         world.insert_resource(Unlocks::of(unlocks));
         world.init_resource::<Setup>();
         world.run_system_once(draw_a_seed_for_one).unwrap();
         let setup = world.resource::<Setup>();
         assert!(!setup.seed.is_empty() && !setup.typed);
-        setup.difficulty
+        (setup.difficulty, setup.free)
+    }
+
+    fn set_up(last: Difficulty, unlocks: &[Unlock], playtest: bool) -> Difficulty {
+        set_up_as(last, unlocks, playtest).0
     }
 
     #[test]
@@ -3010,80 +3438,178 @@ mod tests {
         // A choice that was made in a playtest is not one for a run that counts.
         assert_eq!(set_up(Hard, &[Unlock::ChosenSeed], false), Normal);
         assert_eq!(set_up(Hard, &[], true), Hard);
+        // Free mode is kept in the same way, each on its own.
+        let free = Unlock::FreeMode;
+        assert_eq!(set_up_as(Hard, &[free], false), (Normal, true));
+        assert_eq!(set_up_as(Hard, &[Unlock::HardMode], false), (Hard, false));
+        assert_eq!(
+            set_up_as(Hard, &[free, Unlock::HardMode], false),
+            (Hard, true)
+        );
+        assert_eq!(set_up_as(Normal, &[], true), (Normal, true));
     }
 
     #[test]
-    fn the_solo_screen_starts_a_run_of_the_difficulty_and_on_the_seed_that_it_shows() {
+    fn the_solo_screen_starts_the_run_that_it_shows() {
         fn start(
             setup: Res<Setup>,
-            options: Res<Options>,
+            (options, garage): (Res<Options>, Res<Garage>),
             mut requests: MessageWriter<RunRequest>,
             mut screen: ResMut<NextState<Screen>>,
         ) {
-            begin(&setup, &options, &mut requests, &mut screen);
+            begin(&setup, (&options, &garage), &mut requests, &mut screen);
         }
-        let asked_with = |setup: Setup, options: Options| {
+        // What the screen asks for: the seed, whether the game drew it, the difficulty,
+        // whether the run is in free mode, and the tank of the player if it is.
+        type Asked = (String, bool, Difficulty, bool, Vec<Genome>);
+        let asked = |setup: Setup, options: Options, garage: Garage| -> Vec<Asked> {
             let mut world = World::new();
             world.insert_resource(setup);
             world.insert_resource(options);
+            world.insert_resource(garage);
             world.init_resource::<Messages<RunRequest>>();
             world.init_resource::<NextState<Screen>>();
             world.run_system_once(start).unwrap();
             let mut requests = world.resource_mut::<Messages<RunRequest>>();
-            let asked: Vec<RunRequest> = requests.drain().collect();
-            asked
+            let told = |request: RunRequest| match request {
+                RunRequest::Start {
+                    seed,
+                    players: 1,
+                    drawn,
+                    difficulty,
+                    free,
+                    tanks,
+                } => (seed, drawn, difficulty, free, tanks),
+                other => panic!("{other:?}"),
+            };
+            requests.drain().map(told).collect()
         };
-        let asked = |setup: Setup| asked_with(setup, Options::default());
-        let started = asked(Setup {
+        let built = Garage { tank: racer() };
+        let typed = Setup {
             seed: "TANKU".into(),
             typed: true,
             difficulty: Difficulty::Hard,
-        });
-        let [
-            RunRequest::Start {
-                seed,
-                players,
-                drawn,
-                difficulty,
-                tanks,
-            },
-        ] = started.as_slice()
-        else {
-            panic!("{started:?}");
+            free: false,
         };
-        // A seed that was typed is not one that the game drew.
-        assert_eq!((seed.as_str(), *players, *drawn), ("TANKU", 1, false));
-        assert_eq!(*difficulty, Difficulty::Hard);
-        // The player has the standard tank.
-        assert!(tanks.is_empty());
+        // A seed that was typed is not one that the game drew. Outside free mode, the
+        // player has the standard tank, whatever stands in their garage.
+        assert_eq!(
+            asked(typed, Options::default(), built),
+            [(
+                "TANKU".to_string(),
+                false,
+                Difficulty::Hard,
+                false,
+                Vec::new()
+            )]
+        );
         // A run needs a seed.
-        assert!(asked(Setup::default()).is_empty());
-        // A playtest that brought a tank of its own starts its runs in it.
-        let options = Options {
+        assert!(asked(Setup::default(), Options::default(), built).is_empty());
+        // In free mode, the player has the tank of their garage, which is the standard one
+        // until they build another.
+        let free = || Setup {
+            seed: "TANKU".into(),
+            free: true,
+            ..default()
+        };
+        assert_eq!(
+            asked(free(), Options::default(), built),
+            [(
+                "TANKU".to_string(),
+                true,
+                Difficulty::Normal,
+                true,
+                vec![racer()]
+            )]
+        );
+        assert_eq!(
+            asked(free(), Options::default(), Garage::default())[0].4,
+            [Genome::PLAYER]
+        );
+        // A playtest that brought a tank of its own plays every run in free mode, in it.
+        let brought = Options {
             playtest: true,
             tank: Some(racer()),
             ..default()
         };
-        let setup = Setup {
+        let plain = Setup {
             seed: "TANKU".into(),
             ..default()
         };
-        let started = asked_with(setup, options);
-        let [RunRequest::Start { tanks, .. }] = started.as_slice() else {
-            panic!("{started:?}");
-        };
-        assert_eq!(*tanks, [racer()]);
+        assert_eq!(
+            asked(plain, brought, Garage::default()),
+            [(
+                "TANKU".to_string(),
+                true,
+                Difficulty::Normal,
+                true,
+                vec![racer()]
+            )]
+        );
+    }
+
+    /// What a screen of the menus says, a text at a time.
+    fn texts(screen: fn(&mut App)) -> Vec<String> {
+        let mut app = stage(screen, WINDOWS[0]);
+        let world = app.world_mut();
+        let mut texts = world.query::<&Text>();
+        texts.iter(world).map(|text| text.0.clone()).collect()
+    }
+
+    fn says(texts: &[String], wanted: &str) -> bool {
+        texts.iter().any(|text| text == wanted)
+    }
+
+    #[test]
+    fn the_report_of_a_run_says_why_it_earned_nothing() {
+        const TYPED: &str = "This run earned no achievement: its seed was typed or played again.";
+        const FREE: &str = "Runs in free mode earn no achievement.";
+        const RETRY: &str = "A retry earns no achievement.";
+        // A run that earns says nothing of itself, and warns of a retry.
+        let earned = texts(|app| {
+            app.insert_resource(lost_run(1));
+            build(app, game_over);
+        });
+        assert!(!says(&earned, TYPED) && !says(&earned, FREE) && says(&earned, RETRY));
+        assert!(says(&earned, "RUN REPORT \u{b7} SOLO"));
+        let retried = texts(|app| {
+            app.insert_resource(Run {
+                earns: false,
+                ..lost_run(1)
+            });
+            build(app, game_over);
+        });
+        assert!(says(&retried, TYPED) && !says(&retried, FREE) && says(&retried, RETRY));
+        // In free mode, a new run earns nothing either: the retry is not singled out.
+        let free = texts(|app| {
+            app.insert_resource(Run {
+                earns: false,
+                free: true,
+                difficulty: Difficulty::Hard,
+                ..lost_run(1)
+            });
+            build(app, game_over);
+        });
+        assert!(says(&free, FREE) && !says(&free, TYPED) && !says(&free, RETRY));
+        assert!(says(
+            &free,
+            "RUN REPORT \u{b7} SOLO \u{b7} FREE MODE \u{b7} HARD MODE"
+        ));
+        // A player who has everything is told nothing of what a run earns.
+        let complete = texts(|app| {
+            app.insert_resource(Unlocks::of(&Unlock::ALL))
+                .insert_resource(Run {
+                    earns: false,
+                    free: true,
+                    ..lost_run(1)
+                });
+            build(app, game_over);
+        });
+        assert!(!says(&complete, FREE) && !says(&complete, RETRY));
     }
 
     #[test]
     fn the_main_menu_names_the_tank_that_a_playtest_brought() {
-        let texts = |screen: fn(&mut App)| -> Vec<String> {
-            let mut app = stage(screen, WINDOWS[0]);
-            let world = app.world_mut();
-            let mut texts = world.query::<&Text>();
-            texts.iter(world).map(|text| text.0.clone()).collect()
-        };
-        let says = |texts: &[String], wanted: &str| texts.iter().any(|text| text == wanted);
         let standard = texts(|app| build(app, main_menu));
         assert!(says(&standard, "PLAYER TANK") && says(&standard, "59 POINTS"));
         // The tank of a playtest may have points left over, and the menu says so.
@@ -3097,39 +3623,224 @@ mod tests {
         });
         assert!(says(&brought, "PLAYTEST TANK") && says(&brought, "57 OF 59 POINTS"));
         assert!(!says(&brought, "PLAYER TANK"));
+        // In free mode, the tank is the one of the garage.
+        let built = texts(|app| {
+            app.insert_resource(Garage { tank: racer() })
+                .insert_resource(Setup {
+                    free: true,
+                    ..default()
+                });
+            build(app, main_menu);
+        });
+        assert!(says(&built, "GARAGE TANK") && says(&built, "57 OF 59 POINTS"));
     }
 
-    /// The difficulties whose best runs the main menu offers to list instead.
-    fn listed(screen: fn(&mut App)) -> Vec<Difficulty> {
+    /// The leagues whose best runs the main menu offers to list instead: those of normal
+    /// mode first, and the standard tank before free mode.
+    fn listed(screen: fn(&mut App)) -> Vec<League> {
         let listed = presses(screen).into_iter().filter_map(|press| match press {
-            Press::List(difficulty) => Some(difficulty),
+            Press::List(league) => Some(league),
             _ => None,
         });
-        listed.collect()
+        let mut listed: Vec<League> = listed.collect();
+        listed.sort_by_key(|league| (league.difficulty, league.free));
+        listed
     }
 
     #[test]
-    fn the_main_menu_lists_the_best_runs_of_hard_mode_once_there_is_one() {
-        // A player who never played in hard mode is shown the best runs of normal mode,
-        // and no way to others.
-        let normal = |app: &mut App| {
+    fn the_main_menu_lists_the_best_runs_of_a_league_once_there_is_one() {
+        let (normal, hard) = (League::default(), league(Difficulty::Hard, false));
+        let (free, both) = (
+            league(Difficulty::Normal, true),
+            league(Difficulty::Hard, true),
+        );
+        // A player who only played in normal mode and in the standard tank is shown those
+        // runs, and no way to others.
+        let plain = |app: &mut App| {
             let mut records = Records::default();
-            records.submit(Difficulty::Normal, 1, 12, "85GVTHQA");
+            records.submit(League::default(), 1, 12, "85GVTHQA");
             app.insert_resource(records);
             build(app, main_menu);
         };
-        assert_eq!(listed(normal), []);
-        let both = |app: &mut App| {
+        assert_eq!(listed(plain), []);
+        // Hard mode and free mode each have a switch once there is a run of theirs.
+        let every = |app: &mut App| {
             app.insert_resource(Records::of_every_team(128, "85GVTHQA"));
             build(app, main_menu);
         };
-        assert_eq!(listed(both), [Difficulty::Hard]);
-        // From the best runs of hard mode, there is always a way back.
-        let hard = |app: &mut App| {
-            app.insert_resource(Listed(Difficulty::Hard));
+        assert_eq!(listed(every), [free, hard]);
+        let hard_alone = |app: &mut App| {
+            let mut records = Records::default();
+            records.submit(league(Difficulty::Hard, false), 1, 2, "85GVTHQA");
+            app.insert_resource(records);
             build(app, main_menu);
         };
-        assert_eq!(listed(hard), [Difficulty::Normal]);
+        assert_eq!(listed(hard_alone), [hard]);
+        // A switch that is on leads back, runs or not.
+        let on = |app: &mut App| {
+            app.insert_resource(Listed(league(Difficulty::Hard, true)));
+            build(app, main_menu);
+        };
+        assert_eq!(listed(on), [free, hard]);
+        assert_ne!(both, normal);
+    }
+
+    #[test]
+    fn the_solo_screen_offers_free_mode_and_its_garage_once_it_is_unlocked() {
+        let offers = |screen: fn(&mut App)| -> (Vec<bool>, bool) {
+            let presses = presses(screen);
+            let free = presses.iter().filter_map(|press| match press {
+                Press::Free(on) => Some(*on),
+                _ => None,
+            });
+            (free.collect(), presses.contains(&Press::OpenGarage))
+        };
+        // Locked: nothing to choose.
+        assert_eq!(offers(|app| build(app, solo_screen)), (vec![], false));
+        // Unlocked and off: it can be turned on, and the garage waits for that.
+        let off = |app: &mut App| {
+            app.insert_resource(Unlocks::of(&[Unlock::FreeMode]));
+            build(app, solo_screen);
+        };
+        assert_eq!(offers(off), (vec![true], false));
+        let on = |app: &mut App| {
+            app.insert_resource(Unlocks::of(&[Unlock::FreeMode]))
+                .insert_resource(Setup {
+                    free: true,
+                    ..default()
+                });
+            build(app, solo_screen);
+        };
+        assert_eq!(offers(on), (vec![false], true));
+        // A playtest that brought a tank plays in it: it has nothing to choose or build.
+        let brought = |app: &mut App| {
+            app.insert_resource(Options {
+                playtest: true,
+                tank: Some(racer()),
+                ..default()
+            });
+            build(app, solo_screen);
+        };
+        assert_eq!(offers(brought), (vec![], false));
+    }
+
+    #[test]
+    fn the_garage_offers_the_levels_that_the_points_pay_for() {
+        let steps = |screen: fn(&mut App)| -> (Vec<Stat>, Vec<Stat>) {
+            let presses = presses(screen);
+            let of = |wanted: i8| -> Vec<Stat> {
+                let steps = presses.iter().filter_map(|press| match press {
+                    Press::Level(stat, by) if *by == wanted => Some(*stat),
+                    _ => None,
+                });
+                // In the order of the table.
+                let mut steps: Vec<Stat> = steps.collect();
+                steps.sort_by_key(|stat| *stat as usize);
+                steps
+            };
+            (of(-1), of(1))
+        };
+        // The standard tank spends every point: no level can be added, and every stat
+        // that it has can come down. It has no piercing to give up.
+        let (down, up) = steps(|app| build(app, garage_screen));
+        assert_eq!(up, []);
+        let has = |stat: &Stat| Genome::PLAYER.level(*stat) > 0;
+        let owned: Vec<Stat> = Stat::GARAGE.into_iter().filter(has).collect();
+        assert_eq!(down, owned);
+        // A tank with points left takes the levels that they pay for. Its engine stays.
+        let cheap = |app: &mut App| {
+            let parts = [
+                (Stat::Engine, 1),
+                (Stat::Muzzle, 7),
+                (Stat::Magazine, 5),
+                (Stat::Loader, 7),
+            ];
+            let tank = Genome::of_the_garage(&parts).unwrap();
+            assert_eq!(tank.cost(), 54);
+            app.insert_resource(Garage { tank });
+            build(app, garage_screen);
+        };
+        let (down, up) = steps(cheap);
+        assert_eq!(down, [Stat::Muzzle, Stat::Magazine, Stat::Loader]);
+        // Five points pay for a level of the engine, of the tracks needs an engine, which
+        // it has, a first bounce, a first mine or piercing bullets, and not for a shield.
+        let affordable = [
+            Stat::Engine,
+            Stat::Tracks,
+            Stat::Ricochet,
+            Stat::Mines,
+            Stat::Piercing,
+        ];
+        assert_eq!(up, affordable);
+    }
+
+    #[test]
+    fn the_garage_says_what_each_level_gives() {
+        let parts = [(Stat::Engine, 1), (Stat::Shield, 1), (Stat::Piercing, 1)];
+        let tank = Genome::of_the_garage(&parts).unwrap();
+        let told: Vec<String> = Stat::GARAGE.map(|stat| gives(&tank, stat)).to_vec();
+        let wanted = [
+            "2 m/s",
+            "90\u{b0}/s",
+            "6 m/s",
+            "1 round",
+            "4 s",
+            "None",
+            "None",
+            "10 s cooldown",
+            "1 bullet",
+        ];
+        assert_eq!(told, wanted);
+        let standard = Stat::GARAGE.map(|stat| gives(&Genome::PLAYER, stat));
+        let wanted = [
+            "5 m/s",
+            "315\u{b0}/s",
+            "9 m/s",
+            "5 rounds",
+            "1 s",
+            "1 bounce",
+            "2 mines",
+            "9 s cooldown",
+            "None",
+        ];
+        assert_eq!(standard.to_vec(), wanted);
+    }
+
+    #[test]
+    fn the_menus_draw_the_tank_that_the_player_takes_into_a_run() {
+        let garage = Garage { tank: racer() };
+        let (plain, free) = (
+            Setup::default(),
+            Setup {
+                free: true,
+                ..default()
+            },
+        );
+        let none = Options::default();
+        let alone = [Screen::Menu, Screen::Solo, Screen::Achievements];
+        for screen in alone {
+            assert_eq!(shown_tank(screen, &plain, &none, &garage), Genome::PLAYER);
+            assert_eq!(shown_tank(screen, &free, &none, &garage), racer());
+        }
+        // The garage draws what is being built, and a game of several players is in the
+        // standard tank.
+        assert_eq!(shown_tank(Screen::Garage, &plain, &none, &garage), racer());
+        for screen in [Screen::Join, Screen::Lobby] {
+            assert_eq!(shown_tank(screen, &free, &none, &garage), Genome::PLAYER);
+        }
+        // The tank that a playtest brought is drawn everywhere but in the garage.
+        let parts = [(Stat::Engine, 2), (Stat::Piercing, 1)];
+        let brought = Options {
+            playtest: true,
+            tank: Some(Genome::of_the_garage(&parts).unwrap()),
+            ..default()
+        };
+        for screen in alone.into_iter().chain([Screen::Join, Screen::Lobby]) {
+            assert_eq!(
+                shown_tank(screen, &plain, &brought, &garage),
+                brought.tank.unwrap()
+            );
+        }
     }
 
     #[test]
@@ -3151,6 +3862,7 @@ mod tests {
             lost_to: None,
             playtest: true,
             earns: false,
+            free: false,
         };
         let mut records = Records::default();
         assert!(!keep_record(&mut records, &run));

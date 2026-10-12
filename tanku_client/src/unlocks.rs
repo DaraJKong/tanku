@@ -87,7 +87,7 @@ pub fn difficulty_name(difficulty: Difficulty) -> &'static str {
 /// Whether what an achievement unlocks is in the game. Until it is, the achievement is
 /// earned and kept, and the player is told that nothing comes of it yet.
 pub fn built(unlock: Unlock) -> bool {
-    matches!(unlock, Unlock::ChosenSeed | Unlock::HardMode)
+    !matches!(unlock, Unlock::ImpossibleMode)
 }
 
 /// What a run must do to unlock it.
@@ -145,6 +145,15 @@ mod tests {
         let unlocks = Unlocks::of(&[Unlock::ChosenSeed, Unlock::HardMode]);
         assert_eq!(Unlocks::from_pairs(&unlocks.to_pairs()), unlocks);
         assert_eq!(Unlocks::from_pairs(&BTreeMap::new()), Unlocks::default());
+    }
+
+    #[test]
+    fn what_is_unlocked_is_in_the_game_except_the_impossible_mode() {
+        let waiting: Vec<Unlock> = Unlock::ALL
+            .into_iter()
+            .filter(|unlock| !built(*unlock))
+            .collect();
+        assert_eq!(waiting, [Unlock::ImpossibleMode]);
     }
 
     #[test]

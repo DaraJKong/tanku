@@ -83,7 +83,7 @@ fn count(number: u8, thing: &str) -> String {
     format!("{number} {thing}{plural}")
 }
 
-fn stat_name(stat: Stat) -> &'static str {
+pub fn stat_name(stat: Stat) -> &'static str {
     match stat {
         Stat::Engine => "Engine",
         Stat::Tracks => "Tracks",
@@ -101,7 +101,7 @@ fn stat_name(stat: Stat) -> &'static str {
 }
 
 /// What the level of a stat gives a tank, in the words of the specification.
-fn gives(genome: &Genome, stat: Stat) -> String {
+pub fn gives(genome: &Genome, stat: Stat) -> String {
     match stat {
         Stat::Engine if genome.top_speed() == 0.0 => "Fixed".to_string(),
         Stat::Engine => format!("{} m/s", plain(genome.top_speed())),

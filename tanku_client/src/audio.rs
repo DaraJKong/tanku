@@ -159,6 +159,7 @@ mod tests {
                 lost_to: None,
                 playtest: false,
                 earns: true,
+                free: false,
             })
             .add_message::<SimEvent>()
             .add_systems(Startup, setup)

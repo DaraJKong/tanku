@@ -12,7 +12,7 @@ use tanku_core::{
         Enemy, Gun, Player, Playtest, Position, Run, Shield, ShieldState, SimEvent, Tank,
         TankCommand, Team, Wreck,
     },
-    stats::Stat,
+    stats::{Genome, Stat},
 };
 
 use crate::{
@@ -721,12 +721,55 @@ fn shown(visible: bool) -> Display {
     }
 }
 
+/// How a run is played, as the display says it under the name of the game: alone or with
+/// others, and in free mode. A playtest says that it is one, because it sets no record.
+fn mode(run: &Run) -> String {
+    let players = match (run.playtest, run.solo) {
+        (true, _) => return "PLAYTEST".to_string(),
+        (false, true) => "SOLO",
+        (false, false) => "CO-OP",
+    };
+    if run.free {
+        format!("{players} \u{b7} FREE")
+    } else {
+        players.to_string()
+    }
+}
+
+/// What the start bay tells of the controls, with the keys of the player: of mines and of a
+/// shield only if their tank has them, and of the repair among several players.
+fn controls(key: impl Fn(Action) -> String, tank: &Genome, solo: bool) -> String {
+    let moves = Action::Up;
+    let moves = [moves, Action::Left, Action::Down, Action::Right].map(&key);
+    let mut first = format!(
+        "{} move, mouse aim, {} shoot",
+        moves.concat(),
+        key(Action::Shoot)
+    );
+    if tank.mines() > 0 {
+        first.push_str(&format!(", {} mine", key(Action::Mine)));
+    }
+    let mut second = String::new();
+    if tank.shield_cooldown().is_some() {
+        second.push_str(&format!("{} shield, ", key(Action::Shield)));
+    }
+    if !solo {
+        second.push_str(&format!("hold {} to repair, ", key(Action::Repair)));
+    }
+    let turns = (key(Action::RotateLeft), key(Action::RotateRight));
+    format!(
+        "{first}\n{second}{}/{} turn the view, Esc menu",
+        turns.0, turns.1
+    )
+}
+
 fn status(
     run: Option<Res<Run>>,
     playtest: Option<Res<Playtest>>,
     settings: Res<Settings>,
     seat: Res<LocalSeat>,
     crew: Query<(&Player, Has<Wreck>)>,
+    own: Query<&Tank, With<Own>>,
     tanks: Query<(&Position, Option<&Wreck>, &TankCommand, Has<Own>), With<Player>>,
     mut readouts: Query<(&Readout, &mut Text)>,
     mut pips: Query<(&Pip, &mut BackgroundColor, &mut BorderColor, &mut Node)>,
@@ -756,10 +799,7 @@ fn status(
     for (readout, mut text) in &mut readouts {
         let wanted = match readout {
             Readout::Player => format!("PLAYER {}", seat.0 + 1),
-            // A playtest says so, because it sets no record.
-            Readout::Mode if run.playtest => "PLAYTEST".to_string(),
-            Readout::Mode if run.solo => "SOLO".to_string(),
-            Readout::Mode => "CO-OP".to_string(),
+            Readout::Mode => mode(&run),
             Readout::Crew if run.solo => "LIVES".to_string(),
             Readout::Crew => "TEAM".to_string(),
             Readout::Sector if run.sector == 0 => "BAY".to_string(),
@@ -771,25 +811,10 @@ fn status(
             Readout::Earning if !run.earns && !run.playtest => "NO ACHIEVEMENTS".to_string(),
             Readout::Earning => String::new(),
             Readout::Difficulty => unlocks::difficulty_name(run.difficulty).to_uppercase(),
-            // The controls are shown where a run starts. Several players have one more.
+            // The controls are shown where a run starts.
             Readout::Hint if run.sector == 0 => {
-                let repair = if run.solo {
-                    String::new()
-                } else {
-                    format!("hold {} to repair, ", key(Action::Repair))
-                };
-                format!(
-                    "{}{}{}{} move, mouse aim, {} shoot, {} mine\n{} shield, {repair}{}/{} turn the view, Esc menu",
-                    key(Action::Up),
-                    key(Action::Left),
-                    key(Action::Down),
-                    key(Action::Right),
-                    key(Action::Shoot),
-                    key(Action::Mine),
-                    key(Action::Shield),
-                    key(Action::RotateLeft),
-                    key(Action::RotateRight),
-                )
+                let tank = own.single().map_or(Genome::PLAYER, |tank| tank.genome);
+                controls(key, &tank, run.solo)
             }
             Readout::Hint => String::new(),
             Readout::Repair => {
@@ -1449,6 +1474,78 @@ mod tests {
         assert_eq!(round_steps(2, 2, 0.0), (0, true));
         assert_eq!(round_steps(2, 2, 0.5), (DIAL_STEPS / 2, true));
         assert_eq!(round_steps(3, 2, 0.5), (0, false));
+    }
+
+    #[test]
+    fn the_display_says_how_a_run_is_played() {
+        let run = |solo: bool, free: bool, playtest: bool| Run {
+            seed_text: "TEST".into(),
+            seed: 1,
+            difficulty: default(),
+            players: if solo { 1 } else { 3 },
+            team: if solo { 1 } else { 3 },
+            solo,
+            sector: 1,
+            cleared: 0,
+            checkpoint: 0,
+            lives: 3,
+            kills: 0,
+            ticks: 0,
+            phase: tanku_core::sim::RunPhase::Playing,
+            lost_to: None,
+            playtest,
+            earns: !free && !playtest,
+            free,
+        };
+        assert_eq!(mode(&run(true, false, false)), "SOLO");
+        assert_eq!(mode(&run(false, false, false)), "CO-OP");
+        assert_eq!(mode(&run(true, true, false)), "SOLO \u{b7} FREE");
+        assert_eq!(mode(&run(false, true, false)), "CO-OP \u{b7} FREE");
+        // A playtest says that it is one, in a tank of its own or not.
+        assert_eq!(mode(&run(true, false, true)), "PLAYTEST");
+        assert_eq!(mode(&run(true, true, true)), "PLAYTEST");
+    }
+
+    #[test]
+    fn the_start_bay_tells_of_the_controls_that_the_tank_has() {
+        let key = |action: Action| match action {
+            Action::Up => "W",
+            Action::Left => "A",
+            Action::Down => "S",
+            Action::Right => "D",
+            Action::Shoot => "Left click",
+            Action::Mine => "Right click",
+            Action::Shield => "Space",
+            Action::Repair => "Left Shift",
+            Action::RotateLeft => "Q",
+            Action::RotateRight => "E",
+        };
+        let key = |action: Action| key(action).to_string();
+        assert_eq!(
+            controls(key, &Genome::PLAYER, true),
+            "WASD move, mouse aim, Left click shoot, Right click mine\n\
+             Space shield, Q/E turn the view, Esc menu"
+        );
+        assert_eq!(
+            controls(key, &Genome::PLAYER, false),
+            "WASD move, mouse aim, Left click shoot, Right click mine\n\
+             Space shield, hold Left Shift to repair, Q/E turn the view, Esc menu"
+        );
+        // A tank that a player built without mines or without a shield is told of
+        // neither.
+        let parts = [(Stat::Engine, 4), (Stat::Muzzle, 7)];
+        let bare = Genome::of_the_garage(&parts).unwrap();
+        assert_eq!(
+            controls(key, &bare, true),
+            "WASD move, mouse aim, Left click shoot\nQ/E turn the view, Esc menu"
+        );
+        let parts = [(Stat::Engine, 4), (Stat::Shield, 1)];
+        let shielded = Genome::of_the_garage(&parts).unwrap();
+        assert_eq!(
+            controls(key, &shielded, false),
+            "WASD move, mouse aim, Left click shoot\n\
+             Space shield, hold Left Shift to repair, Q/E turn the view, Esc menu"
+        );
     }
 
     #[test]

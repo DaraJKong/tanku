@@ -128,6 +128,7 @@ pub fn handle_requests(
                 players,
                 drawn,
                 difficulty,
+                free,
                 tanks,
             } => {
                 clear(&mut commands, &entities, &mut casualties);
@@ -159,7 +160,10 @@ pub fn handle_requests(
                     phase: RunPhase::Playing,
                     lost_to: None,
                     playtest: playtest.is_some(),
-                    earns: *drawn && playtest.is_none(),
+                    // A seed can't be practiced to unlock anything, and no tank can be
+                    // built for it.
+                    earns: *drawn && !*free && playtest.is_none(),
+                    free: *free,
                 });
                 events.write(SimEvent::RunStarted);
             }

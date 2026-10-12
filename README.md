@@ -4,9 +4,9 @@ A cooperative top-down tank game for one to four players, built with Rust and Be
 
 The solo game and co-op are playable, on Linux, on Windows and in a browser:
 
-- **Solo:** the corridor, the generated enemies with their classes and their brains, arenas and their waves, lives and checkpoints, the menus, the sound cues and the music. Runs unlock achievements: the first one lets the player type the seed of a run, and clearing sector 30 unlocks hard mode, whose enemies are stronger from the first sector.
+- **Solo:** the corridor, the generated enemies with their classes and their brains, arenas and their waves, lives and checkpoints, the menus, the sound cues and the music. Runs unlock achievements: the first one lets the player type the seed of a run. Clearing sector 20 unlocks free mode, in which the player spends the 59 points of their tank as they like, in a garage that draws the tank as they build it. Clearing sector 30 unlocks hard mode, whose enemies are stronger from the first sector.
 - **Co-op:** up to four players. One of them hosts a game, which the others find on the local network or join by its address, from a desktop build or from a browser. A destroyed tank is a wreck that a teammate repairs.
-- **Not in yet:** free mode with its garage, what a host sets for a game (its name, its password, its difficulty, free mode), and the ready check of the lobby. Until then, a game of several players is in normal mode.
+- **Not in yet:** what a host sets for a game (its name, its password, its difficulty, free mode), and the ready check of the lobby. Until then, a game of several players is in normal mode and in the standard tank.
 
 Co-op has been played by two players. With three or four, it is checked by tests and by scripted runs only. The build for Windows is checked under wine, not yet on Windows itself. The specification is in [docs/PROJECT.md](docs/PROJECT.md).
 
@@ -36,7 +36,7 @@ cargo run -p tanku_client
 | Turn the view | Q and E |
 | Menu | Esc |
 
-Settings, records and what the player has unlocked are kept in the user's configuration directory, under `tanku`.
+Settings, records, what the player has unlocked and the tank of their garage are kept in the user's configuration directory, under `tanku`.
 
 The interface is drawn for a window of 1600 by 900 pixels or more. A smaller window shows all of it smaller, so that every menu is whole from 1280 by 720 pixels on. The size that the settings give the interface comes on top of that.
 
@@ -80,8 +80,8 @@ cargo run -p tanku_client -- --playtest
 | Infinite lives | On from the start. The pause menu turns them off and on. |
 | Skip to a sector | The pause menu picks any sector up to 999. The tank comes back at the end of the sector before it, in front of its barrier, as it does after clearing that sector. |
 | Choose the seed | `--seed TEXT` after `--playtest` starts every run on that seed instead of a random one. |
-| Nothing locked | The solo screen takes a typed seed and offers hard mode, whatever the player has unlocked. |
-| Bring a tank | `--tank TANK` after `--playtest` starts every run in a tank of the player's own instead of the standard one: see [The garage check](#the-garage-check). |
+| Nothing locked | The solo screen takes a typed seed and offers hard mode and free mode, whatever the player has unlocked. |
+| Bring a tank | `--tank TANK` after `--playtest` starts every run in free mode, in that tank, without a visit to the garage: see [The garage check](#the-garage-check). |
 
 With a seed and a skip, a seed and a sector from a report are a few clicks away:
 
@@ -93,7 +93,7 @@ A playtest sets no record and earns no achievement. The web build has none, beca
 
 #### The garage check
 
-Free mode will let each player spend the 59 points of their tank as they like. Before its garage is built, a playtest takes such a tank from the command line, to find out whether one of them makes the game too easy: the same seed is played in the standard tank and in a few extreme ones.
+Free mode lets a player spend the 59 points of their tank as they like. A playtest takes such a tank from the command line, to find out whether one of them makes the game too easy: the same seed is played in the standard tank and in a few extreme ones, each a command away.
 
 A tank is written as its stats with their levels, with commas between them. A stat that isn't named is at level 0. The tank needs an engine, costs 59 points at most and may leave points over: the game says why it refuses a tank. `--help` lists the stats and what their levels cost, and [the specification](docs/PROJECT.md#hardware-stats) says what each level gives.
 
@@ -108,7 +108,7 @@ A tank is written as its stats with their levels, with commas between them. A st
 cargo run -p tanku_client -- --playtest --seed GARAGE --tank engine=4,tracks=5,muzzle=7,magazine=4,loader=6
 ```
 
-The main menu draws the tank and says how many of its points it spends. In a game of several players, the tank is the host's alone, and the others keep the standard one.
+The main menu draws the tank and says how many of its points it spends. In a game of several players, the tank is the host's alone, and the others keep the standard one. A tank from the command line doesn't change the one of the garage.
 
 ## Building
 

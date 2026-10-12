@@ -125,6 +125,7 @@ fn direct(
                         drawn,
                         difficulty: Difficulty::Normal,
                         // The host has the first seat, and the tank of a playtest is theirs.
+                        free: options.tank.is_some(),
                         tanks: options.tanks(),
                     });
                     next_screen.set(Screen::Playing);

@@ -124,6 +124,7 @@ mod tests {
             lost_to: None,
             playtest: false,
             earns,
+            free: false,
         }
     }
 

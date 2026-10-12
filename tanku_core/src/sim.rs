@@ -270,8 +270,12 @@ pub struct Run {
     /// Whether the run is the one of a playtest, which sets no record.
     pub playtest: bool,
     /// Whether the run earns achievements: it is the first on a seed that the game drew for
-    /// it, and no playtest. A seed that a player chose or plays again can be practiced.
+    /// it, in the standard tank, and no playtest. A seed that a player chose or plays again
+    /// can be practiced, and a tank can be built for a seed.
     pub earns: bool,
+    /// Whether the run is in free mode, in which the players build their own tanks. Its
+    /// record is one of free mode.
+    pub free: bool,
 }
 
 /// Present when the game was started as a playtest, which lets the player cheat. The runs of
@@ -294,6 +298,8 @@ pub enum RunRequest {
         /// achievements unless it is a playtest.
         drawn: bool,
         difficulty: Difficulty,
+        /// Whether the run is in free mode, in which the players build their own tanks.
+        free: bool,
         /// The tank of each seat, from the first one. A seat that has none here has the
         /// standard tank, and so has one whose tank no player may have built.
         tanks: Vec<Genome>,

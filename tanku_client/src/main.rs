@@ -9,6 +9,7 @@ mod discovery;
 mod draft;
 mod effects;
 mod exhibit;
+mod garage;
 #[cfg(not(target_arch = "wasm32"))]
 mod host;
 mod hud;
@@ -43,6 +44,8 @@ pub enum Screen {
     Menu,
     /// Where a single player sets up a run.
     Solo,
+    /// Where a player builds their tank for free mode.
+    Garage,
     /// Where the player sees what runs unlock, and what theirs have.
     Achievements,
     /// Where a player types the address of a game to join.
@@ -92,7 +95,12 @@ fn main() {
         .init_state::<Screen>()
         .init_state::<Overlay>()
         .add_plugins((crew::plugin, session::plugin, life::plugin))
-        .add_plugins((settings::plugin, sheet::plugin, unlocks::plugin))
+        .add_plugins((
+            settings::plugin,
+            sheet::plugin,
+            unlocks::plugin,
+            garage::plugin,
+        ))
         .add_plugins((
             theme::plugin,
             input::plugin,

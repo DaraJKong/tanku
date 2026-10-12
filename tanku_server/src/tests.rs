@@ -51,7 +51,8 @@ fn begin_in(seed: &str, players: u32, difficulty: Difficulty) -> App {
     begin_as(seed, players, difficulty, Vec::new())
 }
 
-/// Starts a run in which the first seats have tanks of their own.
+/// Starts a run in free mode in which the first seats have tanks of their own, or a run in
+/// the standard tank if none is given.
 fn begin_as(seed: &str, players: u32, difficulty: Difficulty, tanks: Vec<Genome>) -> App {
     let mut app = App::new();
     app.add_plugins((MinimalPlugins, CorePlugin, ServerPlugin));
@@ -60,6 +61,7 @@ fn begin_as(seed: &str, players: u32, difficulty: Difficulty, tanks: Vec<Genome>
         players,
         drawn: true,
         difficulty,
+        free: !tanks.is_empty(),
         tanks,
     });
     tick(&mut app, 1);
@@ -1733,6 +1735,7 @@ fn a_skip_asked_with_the_start_of_a_run_applies_to_that_run() {
         players: 1,
         drawn: true,
         difficulty: Difficulty::Normal,
+        free: false,
         tanks: Vec::new(),
     });
     skip_to(&mut app, 5);
@@ -2239,7 +2242,7 @@ fn a_veteran_lays_its_mines_where_the_player_is_likely_to_come() {
 
 #[test]
 fn a_run_earns_achievements_on_a_seed_that_was_drawn_for_it_unless_it_is_a_playtest() {
-    let earns = |drawn: bool, playtest: bool| {
+    let earns = |drawn: bool, playtest: bool, free: bool| {
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, CorePlugin, ServerPlugin));
         if playtest {
@@ -2252,15 +2255,20 @@ fn a_run_earns_achievements_on_a_seed_that_was_drawn_for_it_unless_it_is_a_playt
             players: 1,
             drawn,
             difficulty: Difficulty::Normal,
+            free,
             tanks: Vec::new(),
         });
         tick(&mut app, 1);
+        assert_eq!(run(&app).free, free);
         run(&app).earns
     };
-    assert!(earns(true, false));
+    assert!(earns(true, false, false));
     // A seed that a player chose, or plays again, can be practiced.
-    assert!(!earns(false, false));
-    assert!(!earns(true, true));
+    assert!(!earns(false, false, false));
+    assert!(!earns(true, true, false));
+    // A run in free mode earns nothing either, even in the standard tank: a tank can be
+    // built for a seed.
+    assert!(!earns(true, false, true));
 }
 
 /// A tank that a player may build: a fast gun whose bullets pierce and bounce three times,

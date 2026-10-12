@@ -7,7 +7,7 @@ use bevy::{
     prelude::*,
     window::{MonitorSelection, PresentMode, PrimaryWindow, WindowMode},
 };
-use tanku_core::{modes::Difficulty, seed::VERSION};
+use tanku_core::{modes::Difficulty, seed::VERSION, sim::Run};
 
 use crate::{audio::Muted, storage};
 
@@ -263,6 +263,8 @@ pub struct Settings {
     pub address: String,
     /// The difficulty that the player chose last for a run of their own.
     pub solo_difficulty: Difficulty,
+    /// Whether the player chose free mode for the last run of their own.
+    pub solo_free: bool,
 }
 
 impl Default for Settings {
@@ -280,6 +282,7 @@ impl Default for Settings {
             vsync: true,
             address: String::new(),
             solo_difficulty: Difficulty::Normal,
+            solo_free: false,
         }
     }
 }
@@ -385,6 +388,7 @@ impl Settings {
         settings.solo_difficulty = difficulty
             .and_then(|key| Difficulty::of_key(key))
             .unwrap_or_default();
+        settings.solo_free = flag("solo.free", settings.solo_free);
         for (action, bindings) in &mut settings.bindings {
             if let Some(saved) = pairs.get(action.key()) {
                 let mut codes = saved.split(',').map(|code| Binding::parse(code.trim()));
@@ -405,6 +409,7 @@ impl Settings {
         pairs.insert("address".to_string(), self.address.clone());
         let difficulty = self.solo_difficulty.key().to_string();
         pairs.insert("solo.difficulty".to_string(), difficulty);
+        pairs.insert("solo.free".to_string(), self.solo_free.to_string());
         for (action, bindings) in &self.bindings {
             let codes = bindings.map(|binding| binding.map_or("", Binding::code));
             pairs.insert(action.key().to_string(), codes.join(", "));
@@ -421,29 +426,64 @@ pub struct Record {
     pub version: String,
 }
 
-/// The best run per difficulty and number of players.
+/// What records tell apart, besides the number of players: how hard a run is, and whether
+/// its players built their own tanks.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct League {
+    pub difficulty: Difficulty,
+    pub free: bool,
+}
+
+impl League {
+    /// Every league there is: each difficulty in the standard tank, then in free mode.
+    pub fn all() -> impl Iterator<Item = League> {
+        [false, true].into_iter().flat_map(|free| {
+            let league = move |difficulty: Difficulty| League { difficulty, free };
+            Difficulty::ALL.into_iter().map(league)
+        })
+    }
+
+    /// The league that a run plays in.
+    pub fn of(run: &Run) -> Self {
+        Self {
+            difficulty: run.difficulty,
+            free: run.free,
+        }
+    }
+
+    /// What tells it from the league of normal mode in the standard tank, if anything does.
+    pub fn words(self) -> Option<&'static str> {
+        match (self.difficulty, self.free) {
+            (Difficulty::Normal, false) => None,
+            (Difficulty::Hard, false) => Some("hard mode"),
+            (Difficulty::Normal, true) => Some("free mode"),
+            (Difficulty::Hard, true) => Some("hard mode and free mode"),
+        }
+    }
+}
+
+/// The best run per league and number of players.
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
 pub struct Records(BTreeMap<String, Record>);
 
 impl Records {
-    fn key(difficulty: Difficulty, players: u32) -> String {
-        format!("{}.{players}", difficulty.key())
+    fn key(league: League, players: u32) -> String {
+        let difficulty = league.difficulty.key();
+        if league.free {
+            format!("{difficulty}.free.{players}")
+        } else {
+            format!("{difficulty}.{players}")
+        }
     }
 
-    pub fn best(&self, difficulty: Difficulty, players: u32) -> Option<&Record> {
-        self.0.get(&Self::key(difficulty, players))
+    pub fn best(&self, league: League, players: u32) -> Option<&Record> {
+        self.0.get(&Self::key(league, players))
     }
 
-    /// Keeps a run if it went further than the record of its difficulty and of a team of its
+    /// Keeps a run if it went further than the record of its league and of a team of its
     /// size. Returns whether it did.
-    pub fn submit(
-        &mut self,
-        difficulty: Difficulty,
-        players: u32,
-        sector: u32,
-        seed: &str,
-    ) -> bool {
-        let best = self.best(difficulty, players);
+    pub fn submit(&mut self, league: League, players: u32, sector: u32, seed: &str) -> bool {
+        let best = self.best(league, players);
         if sector <= best.map_or(0, |record| record.sector) {
             return false;
         }
@@ -452,7 +492,7 @@ impl Records {
             seed: seed.to_string(),
             version: VERSION.to_string(),
         };
-        self.0.insert(Self::key(difficulty, players), record);
+        self.0.insert(Self::key(league, players), record);
         storage::save(RECORDS_FILE, &self.to_pairs());
         true
     }
@@ -488,12 +528,12 @@ impl Records {
 #[cfg(test)]
 impl Records {
     /// The records of a player who got this far alone and in a team of every size, in every
-    /// difficulty. A test shows them, and nothing is saved.
+    /// league. A test shows them, and nothing is saved.
     pub fn of_every_team(sector: u32, seed: &str) -> Self {
         let mut records = Self::default();
-        for difficulty in Difficulty::ALL {
+        for league in League::all() {
             for players in 1..=tanku_core::rules::MAX_PLAYERS {
-                records.submit(difficulty, players, sector, seed);
+                records.submit(league, players, sector, seed);
             }
         }
         records
@@ -565,6 +605,7 @@ mod tests {
             camera_shake: false,
             address: "192.168.1.20:4000".to_string(),
             solo_difficulty: Difficulty::Hard,
+            solo_free: true,
             ..default()
         };
         settings.bind(Action::Shield, 0, Binding::Key(KeyCode::ShiftLeft));
@@ -616,26 +657,47 @@ mod tests {
 
     #[test]
     fn records_keep_the_best_run() {
-        use Difficulty::{Hard, Normal};
+        let league = |difficulty: Difficulty, free: bool| League { difficulty, free };
+        let (normal, hard) = (League::default(), league(Difficulty::Hard, false));
         let mut records = Records::default();
-        assert!(records.submit(Normal, 1, 7, "ABC"));
-        assert!(!records.submit(Normal, 1, 7, "DEF"));
-        assert!(!records.submit(Normal, 1, 0, "DEF"));
+        assert!(records.submit(normal, 1, 7, "ABC"));
+        assert!(!records.submit(normal, 1, 7, "DEF"));
+        assert!(!records.submit(normal, 1, 0, "DEF"));
         let reloaded = Records::from_pairs(&records.to_pairs());
         assert_eq!(reloaded, records);
-        let best = reloaded.best(Normal, 1).unwrap();
+        let best = reloaded.best(normal, 1).unwrap();
         assert_eq!((best.sector, best.seed.as_str()), (7, "ABC"));
-        assert!(reloaded.best(Normal, 2).is_none());
+        assert!(reloaded.best(normal, 2).is_none());
         // Each difficulty has records of its own, and so has each size of team.
-        assert!(reloaded.best(Hard, 1).is_none());
-        assert!(records.submit(Hard, 1, 2, "GHI"));
-        assert!(records.submit(Normal, 3, 4, "JKL"));
+        assert!(reloaded.best(hard, 1).is_none());
+        assert!(records.submit(hard, 1, 2, "GHI"));
+        assert!(records.submit(normal, 3, 4, "JKL"));
         let reloaded = Records::from_pairs(&records.to_pairs());
-        assert_eq!(reloaded.best(Normal, 1).unwrap().sector, 7);
-        assert_eq!(reloaded.best(Hard, 1).unwrap().sector, 2);
-        assert_eq!(reloaded.best(Normal, 3).unwrap().sector, 4);
-        assert!(reloaded.best(Hard, 3).is_none());
-        // The records of normal mode are kept as they were before there was another.
-        assert_eq!(Records::key(Normal, 1), "normal.1");
+        assert_eq!(reloaded.best(normal, 1).unwrap().sector, 7);
+        assert_eq!(reloaded.best(hard, 1).unwrap().sector, 2);
+        assert_eq!(reloaded.best(normal, 3).unwrap().sector, 4);
+        assert!(reloaded.best(hard, 3).is_none());
+        // The runs of free mode have records of their own in each difficulty: a tank that
+        // was built for a seed gets further than the standard one.
+        let (free, hard_and_free) = (
+            league(Difficulty::Normal, true),
+            league(Difficulty::Hard, true),
+        );
+        assert!(records.submit(free, 1, 30, "MNO"));
+        assert!(records.submit(hard_and_free, 1, 9, "PQR"));
+        let reloaded = Records::from_pairs(&records.to_pairs());
+        assert_eq!(reloaded.best(normal, 1).unwrap().sector, 7);
+        assert_eq!(reloaded.best(free, 1).unwrap().sector, 30);
+        assert_eq!(reloaded.best(hard, 1).unwrap().sector, 2);
+        assert_eq!(reloaded.best(hard_and_free, 1).unwrap().sector, 9);
+        // The records of the standard tank are kept as they were before there was another.
+        assert_eq!(Records::key(normal, 1), "normal.1");
+        assert_eq!(Records::key(hard, 2), "hard.2");
+        assert_eq!(Records::key(free, 1), "normal.free.1");
+        // There are four leagues, and one alone needs no words to be told.
+        let words: Vec<Option<&str>> = League::all().map(League::words).collect();
+        assert_eq!(words.len(), 4);
+        assert_eq!(words.iter().filter(|words| words.is_none()).count(), 1);
+        assert_eq!(League::all().next(), Some(normal));
     }
 }

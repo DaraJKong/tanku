@@ -34,7 +34,7 @@ fn tanks_explained() -> String {
 }
 
 /// Reads a tank as the command line writes it.
-fn tank(text: &str) -> Result<Genome, String> {
+pub fn tank(text: &str) -> Result<Genome, String> {
     let mut levels: Vec<(Stat, u8)> = Vec::new();
     let parts = text.split(',').map(str::trim);
     for part in parts.filter(|part| !part.is_empty()) {
@@ -123,8 +123,9 @@ impl Options {
         Ok(options)
     }
 
-    /// The tanks that a run of this game starts with, from the first seat: the one of the
-    /// command line, which is the player's own, and their host's among several players.
+    /// The tanks that a game of several players starts with, from the first seat: the one of
+    /// the command line, which is its host's. A browser hosts no game.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn tanks(&self) -> Vec<Genome> {
         self.tank.into_iter().collect()
     }
