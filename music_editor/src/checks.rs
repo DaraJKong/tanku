@@ -441,6 +441,33 @@ mod tests {
         }
     }
 
+    /// Prints how long each check takes on this machine, for a piece that was just changed:
+    /// `cargo test -p music_editor what_the_checks_cost -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "prints timings, and checks nothing"]
+    fn what_the_checks_cost() {
+        let changed = with("mix lead   5%  8%", "mix lead   6%  8%");
+        let (mut quick, mut slow) = (0.0, 0.0);
+        for item in ALL {
+            let start = Instant::now();
+            let standing = run(item, &changed, &crate::fixture::score());
+            let took = start.elapsed().as_secs_f32();
+            *(if item.quick() { &mut quick } else { &mut slow }) += took;
+            let kind = if item.quick() { "at once" } else { "listens" };
+            let holds = standing == Standing::Holds;
+            println!(
+                "{:>8.1} ms  {kind}  {} (holds: {holds})",
+                took * 1000.0,
+                item.title()
+            );
+        }
+        println!(
+            "{:>8.1} ms  the checks that are told at once",
+            quick * 1000.0
+        );
+        println!("{:>8.1} ms  the checks that listen", slow * 1000.0);
+    }
+
     #[test]
     fn the_quick_checks_are_told_at_once() {
         let mut checks = Checks::default();
