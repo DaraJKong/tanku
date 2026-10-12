@@ -1,10 +1,10 @@
-//! The piece that the game plays, as `music.score` writes it, and the rules that derive every
-//! other line from what is written there.
+//! The piece that the game plays: what `music.score` writes, with every line that the rules
+//! derive from it.
 //!
 //! Melodies are written in degrees of the scale and not in notes, so each of them exists in
 //! every mode. [`notation`] says how the file writes a bar.
 
-use crate::notation::{self, COLOR, Instrument, Link, Passage, Piece, REST, Rhythm, Roll, same};
+use crate::notation::{self, COLOR, Form, Link, PASSAGES, Piece, REST, Roll, same};
 pub use crate::notation::{BARS, BEAT, Cell, Line, Pattern, STEPS};
 
 /// The piece as its file writes it. The file is read while the crate is compiled: one that
@@ -13,6 +13,60 @@ pub const PIECE: Piece = match notation::read(include_str!("../music.score")) {
     Ok(piece) => piece,
     Err(fault) => fault.stop(),
 };
+
+/// The piece as the game plays it.
+pub static SCORE: Score = Score::new(PIECE);
+
+/// A piece with every line that the rules derive from what its file writes: what a director
+/// plays from.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Score {
+    pub piece: Piece,
+    /// For each section, its melody in each form: as it is written, its skeleton, with its
+    /// ornaments, and the answers to it.
+    lines: [[[Line; BARS]; 4]; PASSAGES],
+    /// How long a step of each section lasts, in half frames.
+    pace: [u32; PASSAGES],
+}
+
+impl Score {
+    pub const fn new(piece: Piece) -> Self {
+        let mut lines = [[[[REST; STEPS]; BARS]; 4]; PASSAGES];
+        let mut pace = [0; PASSAGES];
+        let mut index = 0;
+        while index < piece.passages().len() {
+            let passage = piece.section(index as u8);
+            // In the order of the forms.
+            lines[index] = [
+                passage.melody,
+                skeletons(passage.melody),
+                ornamented(passage.melody),
+                answers(passage.melody),
+            ];
+            pace[index] = step(passage.tempo);
+            index += 1;
+        }
+        Self { piece, lines, pace }
+    }
+
+    /// A bar of the melody of a section in one of its forms. The section is given by its
+    /// place among those of the piece.
+    pub const fn line(&self, section: u8, form: Form, bar: usize) -> &Line {
+        &self.lines[section as usize][form as usize][bar]
+    }
+
+    /// How long a step of a section lasts, in half frames.
+    pub const fn pace(&self, section: u8) -> u32 {
+        self.pace[section as usize]
+    }
+
+    /// The tonic of the piece in an octave, from 1, where the bass has its degrees, to 5,
+    /// above the lead. In the key of A they are the A of 55 Hz and the four above it, and
+    /// another key is at most six semitones away.
+    pub const fn tonic(&self, octave: u8) -> u8 {
+        (A1 as i8 + 12 * (octave as i8 - 1) + self.piece.key.offset()) as u8
+    }
+}
 
 /// Half frames in a minute of music.
 const MINUTE: u32 = 60 * 2 * crate::SAMPLE_RATE;
@@ -31,17 +85,6 @@ pub const A4: u8 = 69;
 pub const A3: u8 = A4 - 12;
 pub const A2: u8 = A3 - 12;
 pub const A1: u8 = A2 - 12;
-
-/// The tonic of the piece in the octaves of those four, from the bass up to the lead. In the
-/// key of A they are those four, and another key is at most six semitones away.
-pub const T4: u8 = tonic(A4);
-pub const T3: u8 = tonic(A3);
-pub const T2: u8 = tonic(A2);
-pub const T1: u8 = tonic(A1);
-
-const fn tonic(a: u8) -> u8 {
-    (a as i8 + PIECE.key.offset()) as u8
-}
 
 /// The mode of the piece, which every section is in but the fights of an arena.
 pub const HOME: Mode = PIECE.key.home;
@@ -149,66 +192,6 @@ impl Mode {
     }
 }
 
-/// A section of the file by its name.
-macro_rules! passage {
-    ($name:literal) => {
-        match PIECE.passage($name) {
-            Some(passage) => passage,
-            None => panic!(concat!("music.score has no line `sec ", $name, "`")),
-        }
-    };
-}
-
-/// The four sections: eight bars each, with their chords, their melody and their tempo. The
-/// intro and the verse have the same melody, on the pluck for one and on the lead for the
-/// other.
-pub const INTRO: Passage = passage!("intro");
-pub const VERSE: Passage = passage!("verse");
-pub const CHORUS: Passage = passage!("chorus");
-/// The bridge has no chords: its bass stays on one degree. Its melody is a call in every bar.
-pub const BRIDGE: Passage = passage!("bridge");
-/// What the lead answers to each call of the bridge.
-pub const BRIDGE_ANSWERS: [Line; BARS] = answers(BRIDGE.melody);
-
-/// A pattern of the file by its instrument and its name.
-macro_rules! rhythm {
-    ($instrument:ident, $written:literal, $name:literal) => {
-        match PIECE.rhythm(Instrument::$instrument, $name) {
-            Some(rhythm) => rhythm,
-            None => panic!(concat!(
-                "music.score has no line `pat ",
-                $written,
-                " ",
-                $name,
-                "`"
-            )),
-        }
-    };
-}
-
-/// The kick of the bridge: the two beats of a heart. A bar of the bridge is these two hits,
-/// the call of the pluck, the two notes of the bass and the answer of the lead, one beat each,
-/// over the tick.
-pub const KICK_HEART: Rhythm = rhythm!(Kick, "kick", "heart");
-pub const KICK_FIGHT: Rhythm = rhythm!(Kick, "kick", "fight");
-pub const HAT_CORRIDOR: Rhythm = rhythm!(Hat, "hat", "corridor");
-/// Every step, and louder on the steps of the corridor.
-pub const HAT_ARENA: Rhythm = rhythm!(Hat, "hat", "arena");
-pub const SNARE_ARENA: Rhythm = rhythm!(Snare, "snare", "arena");
-pub const BASS_LONG: Rhythm = rhythm!(Bass, "bass", "long");
-pub const BASS_PLAIN: Rhythm = rhythm!(Bass, "bass", "plain");
-pub const BASS_LEAPING: Rhythm = rhythm!(Bass, "bass", "leaping");
-/// What the bass plays in every bar of the bridge: two notes in a row on the degree that the
-/// bridge never leaves, the second held under the answer of the lead.
-pub const BASS_PAIR: Rhythm = rhythm!(Bass, "bass", "pair");
-/// The root, the third and the fifth of the chord in turn, rising.
-pub const PLUCK_ARPEGGIO: Rhythm = rhythm!(Pluck, "pluck", "arpeggio");
-/// The same, twice as fast.
-pub const PLUCK_FAST: Rhythm = rhythm!(Pluck, "pluck", "fast");
-/// The tick of the bridge: under its call, the pluck rocks on every half beat between the
-/// degree that the bridge never leaves and the fifth above it.
-pub const PLUCK_TICK: Rhythm = rhythm!(Pluck, "pluck", "tick");
-
 /// Notes of a melody that lie a semitone above the root of their chord and don't pass
 /// quickly enough: in one step if they start on a beat, in three at most otherwise. `chords`
 /// has the degree that the chord of each bar is built on. This is the check that guards every
@@ -228,19 +211,6 @@ pub fn rubs(mode: Mode, lines: &[Line; BARS], chords: &[u8; BARS]) -> usize {
     }
     count
 }
-
-// What plays when is in the code, which asks for each section and each pattern by its name: a
-// file can change them, and can't add one.
-const _: () = assert!(
-    PIECE.passages().len() <= 4,
-    "music.score has a section that nothing plays: the game plays `intro`, `verse`, `chorus` \
-     and `bridge`"
-);
-const _: () = assert!(
-    PIECE.rhythms().len() <= 12,
-    "music.score has a pattern that nothing plays: the game plays twelve patterns, by their \
-     names"
-);
 
 /// The roll that announces a fight.
 pub const ROLL: Roll = PIECE.roll;
@@ -432,21 +402,32 @@ pub const fn triad(mode: Mode, chord: u8, lowest: u8) -> [u8; 3] {
     ]
 }
 
-/// The root of a chord for the bass, in the twelve semitones from five below its tonic: in
-/// the key of A, from E2 up to the E flat above it, so that the bass never goes below E2.
-pub const fn bass_root(mode: Mode, chord: u8) -> u8 {
-    let pitch = T2 + mode.semitones(chord);
-    if pitch > T2 + 6 { pitch - 12 } else { pitch }
+/// The root of a chord for the bass, in the twelve semitones from five below a tonic. Around
+/// the A of 110 Hz, where the patterns of the bass have their roots, it goes from E2 up to the
+/// E flat above it, so that the bass never goes below E2.
+pub const fn bass_root(mode: Mode, chord: u8, tonic: u8) -> u8 {
+    let pitch = tonic + mode.semitones(chord);
+    if pitch > tonic + 6 { pitch - 12 } else { pitch }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::notation::line;
+    use crate::notation::{Instrument, Layer, Part, Passage, Rhythm, Scene, Source, THREATS, line};
 
     /// The degrees of the bridge. They are the same notes in both modes, and the third degree
     /// is not among them, so the bridge has no mode: it is neither major nor minor.
     const NEUTRAL: [u8; 5] = [1, 2, 4, 5, 7];
+
+    /// A section of the piece by its name.
+    fn section(name: &str) -> Passage {
+        PIECE.passage(name).unwrap()
+    }
+
+    /// A pattern of the piece by its instrument and its name.
+    fn pattern(instrument: Instrument, name: &str) -> Rhythm {
+        PIECE.rhythm(instrument, name).unwrap()
+    }
 
     /// A bar of melody as its grid, with a dot wherever no note starts.
     fn grid(line: &Line) -> String {
@@ -480,6 +461,45 @@ mod tests {
         digits.map(|digit| digit - b'0').collect()
     }
 
+    /// What an instrument plays, as the file writes it.
+    fn written(layer: Layer) -> String {
+        let source = |source: Source| match source {
+            Source::Tune {
+                form,
+                octave,
+                level: 255,
+            } => format!("{}@{octave}", form.name()),
+            Source::Tune {
+                form,
+                octave,
+                level,
+            } => format!("{}@{octave}:{level}", form.name()),
+            Source::Rhythm { index, octave: 0 } => PIECE.pattern(index).name.as_str().to_string(),
+            Source::Rhythm { index, octave } => {
+                format!("{}@{octave}", PIECE.pattern(index).name.as_str())
+            }
+        };
+        let between = if layer.together { '+' } else { '/' };
+        match layer.second {
+            Some(second) => format!("{}{between}{}", source(layer.first), source(second)),
+            None => source(layer.first),
+        }
+    }
+
+    /// What the instruments play in a line of the arrangement, as the file writes it.
+    fn parts(part: impl Fn(Instrument) -> Part) -> String {
+        let names = ["kick", "hat", "snare", "bass", "pluck", "lead"];
+        let mut line = Vec::new();
+        for (name, instrument) in names.into_iter().zip(Instrument::ALL) {
+            match part(instrument) {
+                Part::Silent => {}
+                Part::ByThreat => line.push(format!("{name}=*")),
+                Part::Plays(layer) => line.push(format!("{name}={}", written(layer))),
+            }
+        }
+        line.join(" ")
+    }
+
     #[test]
     fn steps_have_the_length_of_their_tempo() {
         // Four steps to a beat, and a minute of music in half frames.
@@ -491,7 +511,7 @@ mod tests {
         assert_eq!(STEPS as u32 * step(105) / 2, 100_800);
         // The bridge alone has a tempo of its own.
         assert_eq!(PIECE.tempo, 120);
-        let tempos = [INTRO, VERSE, CHORUS, BRIDGE].map(|passage| passage.tempo);
+        let tempos = ["intro", "verse", "chorus", "bridge"].map(|name| section(name).tempo);
         assert_eq!(tempos, [120, 120, 120, 105]);
         // At another tempo a step is rounded to the nearest half frame: 12,027.27 of them at
         // 110 beats per minute, and 11,707.96 at 113.
@@ -501,7 +521,9 @@ mod tests {
     #[test]
     fn the_modes_are_those_of_the_specification() {
         assert_eq!((HOME, ARENA), (Mode::Dorian, Mode::Aeolian));
-        assert_eq!([T1, T2, T3, T4], [A1, A2, A3, A4]);
+        // The piece is in A: its tonics are the A of 55 Hz and the four above it.
+        let tonics = [1, 2, 3, 4, 5].map(|octave| SCORE.tonic(octave));
+        assert_eq!(tonics, [A1, A2, A3, A4, A4 + 12]);
         let scale = |mode: Mode| (1..=7).map(move |degree| name(A4 + mode.semitones(degree)));
         assert!(scale(Mode::Dorian).eq(["A", "B", "C", "D", "E", "F#", "G"]));
         assert!(scale(Mode::Aeolian).eq(["A", "B", "C", "D", "E", "F", "G"]));
@@ -561,23 +583,38 @@ mod tests {
 
         // The intro and the verse have motif A four times, the last time with its turn, and
         // the chorus has motif B four times.
-        let verse = [first, second, first, second, first, second, first];
-        assert_eq!(VERSE.melody[..7], verse);
-        assert_eq!(VERSE.melody[7], a.turn.unwrap());
-        assert_eq!(INTRO.melody, VERSE.melody);
-        assert_eq!(CHORUS.melody[..2], [b.bars()[0], b.bars()[1]]);
-        assert_eq!(CHORUS.melody[..2], CHORUS.melody[6..]);
-        assert_eq!(VERSE.chords, [1, 1, COLOR, 4, 1, 1, COLOR, 5]);
-        assert_eq!(INTRO.chords, VERSE.chords);
-        assert_eq!(CHORUS.chords, [4, 5, 1, COLOR, 4, 5, 1, 1]);
-        assert_eq!(BRIDGE.chords, [5; BARS]);
+        let [intro, verse, chorus, bridge] = ["intro", "verse", "chorus", "bridge"].map(section);
+        assert_eq!(PIECE.passages().len(), 4);
+        let motif = [first, second, first, second, first, second, first];
+        assert_eq!(verse.melody[..7], motif);
+        assert_eq!(verse.melody[7], a.turn.unwrap());
+        assert_eq!(intro.melody, verse.melody);
+        assert_eq!(chorus.melody[..2], [b.bars()[0], b.bars()[1]]);
+        assert_eq!(chorus.melody[..2], chorus.melody[6..]);
+        assert_eq!(verse.chords, [1, 1, COLOR, 4, 1, 1, COLOR, 5]);
+        assert_eq!(intro.chords, verse.chords);
+        assert_eq!(chorus.chords, [4, 5, 1, COLOR, 4, 5, 1, 1]);
+        assert_eq!(bridge.chords, [5; BARS]);
 
-        assert_eq!(&BASS_LEAPING.grid, b"R..O..R.R..O..V.");
-        assert_eq!(&BASS_PAIR.grid, b"--------5-5.....");
-        assert_eq!(&HAT_ARENA.grid, b"ooxoooxoooxoooxo");
-        assert_eq!((HAT_ARENA.level, HAT_ARENA.soft), (200, 100));
-        assert_eq!((KICK_HEART.level, KICK_HEART.soft), (180, 135));
-        assert_eq!((PLUCK_ARPEGGIO.level, PLUCK_TICK.level), (150, 110));
+        assert_eq!(PIECE.rhythms().len(), 12);
+        assert_eq!(
+            &pattern(Instrument::Bass, "leaping").grid,
+            b"R..O..R.R..O..V."
+        );
+        assert_eq!(&pattern(Instrument::Bass, "pair").grid, b"--------5-5.....");
+        let hat = pattern(Instrument::Hat, "arena");
+        assert_eq!(&hat.grid, b"ooxoooxoooxoooxo");
+        assert_eq!((hat.level, hat.soft), (200, 100));
+        let heart = pattern(Instrument::Kick, "heart");
+        assert_eq!((heart.level, heart.soft), (180, 135));
+        // The arpeggio of the pluck has an echo, at either speed, and nothing else has one.
+        let echoes = PIECE.rhythms().iter().filter(|rhythm| rhythm.echo);
+        let echoes: Vec<&str> = echoes.map(|rhythm| rhythm.name.as_str()).collect();
+        assert_eq!(echoes, ["arpeggio", "fast"]);
+        let levels =
+            ["arpeggio", "fast", "tick"].map(|name| pattern(Instrument::Pluck, name).level);
+        assert_eq!(levels, [150, 150, 110]);
+
         assert_eq!((ROLL.beats, ROLL.from, ROLL.to), (2, 40, 255));
         assert_eq!(
             (ROLL.drum, ROLL.arena),
@@ -587,12 +624,78 @@ mod tests {
     }
 
     #[test]
+    fn the_arrangement_is_that_of_the_specification() {
+        // What each scene plays: its sections in turn, then its instruments.
+        let scene = |scene: Scene| {
+            let play = PIECE.play(scene);
+            let sections = play.sections().iter();
+            let names: Vec<&str> = sections
+                .map(|&index| PIECE.section(index).name.as_str())
+                .collect();
+            format!(
+                "{} {}",
+                names.join(","),
+                parts(|instrument| play.part(instrument))
+            )
+        };
+        assert_eq!(scene(Scene::Menu), "intro bass=long@2 pluck=melody@4");
+        assert_eq!(
+            scene(Scene::Calm),
+            "bridge kick=heart bass=pair@1 pluck=melody@3/tick@2 lead=answer@4:150"
+        );
+        assert_eq!(
+            scene(Scene::Corridor),
+            "verse,chorus kick=fight hat=corridor bass=* pluck=* lead=*"
+        );
+        assert_eq!(
+            scene(Scene::Arena),
+            "verse,chorus kick=fight hat=arena snare=arena bass=* pluck=* lead=*"
+        );
+        // What the threat sets in a fight: the three instruments that have a pitch.
+        let threat = |threat: u8| {
+            parts(|instrument| match PIECE.threat(threat, instrument) {
+                Some(layer) => Part::Plays(layer),
+                None => Part::Silent,
+            })
+        };
+        let threats: Vec<String> = (0..THREATS as u8).map(threat).collect();
+        assert_eq!(
+            threats,
+            [
+                "bass=plain@2 pluck=arpeggio@3",
+                "bass=plain@2 pluck=arpeggio@3 lead=skeleton@4",
+                "bass=leaping@2 pluck=arpeggio@3 lead=melody@4",
+                "bass=leaping@2 pluck=arpeggio@3 lead=ornate@4",
+                "bass=leaping@2 pluck=fast@3 lead=ornate@4+ornate@5:130",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_score_has_every_form_of_every_section() {
+        for (index, passage) in PIECE.passages().iter().enumerate() {
+            let index = index as u8;
+            for (bar, &written) in passage.melody.iter().enumerate() {
+                assert_eq!(*SCORE.line(index, Form::Melody, bar), written);
+                assert_eq!(*SCORE.line(index, Form::Skeleton, bar), skeleton(written));
+                assert_eq!(*SCORE.line(index, Form::Ornate, bar), ornaments(written));
+                assert_eq!(*SCORE.line(index, Form::Answer, bar), answer(written));
+            }
+            assert_eq!(SCORE.pace(index), step(passage.tempo));
+        }
+        // A score that is made while the game runs is the one that was made with it.
+        let read = notation::read(include_str!("../music.score")).unwrap();
+        assert!(Score::new(read) == SCORE);
+    }
+
+    #[test]
     fn the_motifs_share_the_rhythm_of_the_bass() {
         let rhythm = [0, 3, 6, 8, 11, 14];
-        assert_eq!(starts(&VERSE.melody[0]), rhythm);
-        assert_eq!(starts(&CHORUS.melody[1]), rhythm);
+        assert_eq!(starts(&section("verse").melody[0]), rhythm);
+        assert_eq!(starts(&section("chorus").melody[1]), rhythm);
+        let plain = pattern(Instrument::Bass, "plain");
         let bass: Vec<usize> = (0..STEPS)
-            .filter(|&step| BASS_PLAIN.grid[step] != b'.')
+            .filter(|&step| plain.grid[step] != b'.')
             .collect();
         assert_eq!(bass, rhythm);
     }
@@ -628,7 +731,8 @@ mod tests {
         }
         // The chords of the piece are these and no other, in both of its modes.
         for mode in [HOME, ARENA] {
-            let written = [INTRO, VERSE, CHORUS].map(|passage| mode.chords(passage.chords));
+            let sections = ["intro", "verse", "chorus"].map(section);
+            let written = sections.map(|passage| mode.chords(passage.chords));
             for chord in written.into_iter().flatten() {
                 assert!([1, 4, 5, mode.color()].contains(&chord));
             }
@@ -640,16 +744,18 @@ mod tests {
     fn the_bass_has_the_root_of_every_chord_from_e2_up() {
         for mode in Mode::ALL {
             for chord in 1..=7 {
-                let root = bass_root(mode, chord);
-                assert!((T2 - 5..=T2 + 6).contains(&root), "{mode:?}, chord {chord}");
+                let root = bass_root(mode, chord, A2);
+                assert!((A2 - 5..=A2 + 6).contains(&root), "{mode:?}, chord {chord}");
                 // It is the root of the chord, in one octave or another.
-                assert_eq!((root + 12 - T2) % 12, mode.semitones(chord), "{mode:?}");
+                assert_eq!((root + 12 - A2) % 12, mode.semitones(chord), "{mode:?}");
             }
         }
-        assert_eq!(T2 - 5, 40);
+        assert_eq!(A2 - 5, 40);
         // The chord of Locrian on its diminished fifth: E flat 3, not the one below E2.
-        assert_eq!(bass_root(Mode::Locrian, 5), 51);
-        assert_eq!(bass_root(Mode::Dorian, 5), 40);
+        assert_eq!(bass_root(Mode::Locrian, 5, A2), 51);
+        assert_eq!(bass_root(Mode::Dorian, 5, A2), 40);
+        // An octave lower, the roots are an octave lower.
+        assert_eq!(bass_root(Mode::Dorian, 4, A1), 38);
     }
 
     #[test]
@@ -678,20 +784,23 @@ mod tests {
         // The degree that the bridge never leaves is the one a connection leads to: the bass
         // has it, the tick starts on it, and so does every call.
         let pedal = LINK.degree;
-        assert_eq!(degrees(&BASS_PAIR), [pedal; 2]);
-        assert_eq!(
-            degrees(&PLUCK_TICK),
-            [pedal, 9, pedal, 9, pedal, 9, pedal, 9]
+        let (pair, tick) = (
+            pattern(Instrument::Bass, "pair"),
+            pattern(Instrument::Pluck, "tick"),
         );
-        assert!(BRIDGE.melody.iter().all(|line| line[4].degree == pedal));
+        assert_eq!(degrees(&pair), [pedal; 2]);
+        assert_eq!(degrees(&tick), [pedal, 9, pedal, 9, pedal, 9, pedal, 9]);
+        let calls = section("bridge").melody;
+        assert!(calls.iter().all(|line| line[4].degree == pedal));
         // Only the last call falls.
-        let calls: Vec<u8> = BRIDGE.melody.iter().map(|line| line[6].degree).collect();
-        assert_eq!(calls, [8, 7, 8, 9, 8, 7, 8, 4]);
+        let seconds: Vec<u8> = calls.iter().map(|line| line[6].degree).collect();
+        assert_eq!(seconds, [8, 7, 8, 9, 8, 7, 8, 4]);
         // Its notes are five degrees, which are the same notes in both modes. The third degree
         // is not among them, so the bridge has no mode: it is neither major nor minor.
-        let lines = BRIDGE.melody.iter().chain(&BRIDGE_ANSWERS).flatten();
+        let answers = answers(calls);
+        let lines = calls.iter().chain(&answers).flatten();
         let mut heard: Vec<u8> = lines.map(|cell| cell.degree).collect();
-        heard.extend(degrees(&PLUCK_TICK));
+        heard.extend(degrees(&tick));
         heard.retain(|&degree| degree != 0);
         assert_eq!(heard.len(), 4 * BARS + 8);
         assert!(
@@ -704,22 +813,20 @@ mod tests {
     #[test]
     fn the_lead_answers_each_call_backwards() {
         // Two beats after the call, its second note and then its first, one step each.
-        assert_eq!(starts(&BRIDGE_ANSWERS[0]), [12, 14]);
-        for (call, answer) in BRIDGE.melody.iter().zip(&BRIDGE_ANSWERS) {
+        let calls = section("bridge").melody;
+        let answers = answers(calls);
+        assert_eq!(starts(&answers[0]), [12, 14]);
+        for (call, answer) in calls.iter().zip(&answers) {
             assert_eq!(answer[12].degree, call[6].degree);
             assert_eq!(answer[14].degree, call[4].degree);
             assert_eq!((answer[12].steps, answer[14].steps), (1, 1));
         }
         // A call late in its bar is answered early in it, and a call of more than two notes
         // by its first two.
-        assert_eq!(
-            grid(&answer(line("---- ---- 5.8. ----"))),
-            "8.5. .... .... ...."
-        );
-        assert_eq!(
-            grid(&answer(line("5.8. 9... ---- ----"))),
-            ".... .... 8.5. ...."
-        );
+        let late = answer(line("---- ---- 5.8. ----"));
+        assert_eq!(grid(&late), "8.5. .... .... ....");
+        let long = answer(line("5.8. 9... ---- ----"));
+        assert_eq!(grid(&long), ".... .... 8.5. ....");
         // One note is no call.
         assert_eq!(answer(line("---- 5... ---- ----")), [REST; STEPS]);
     }
@@ -766,46 +873,34 @@ mod tests {
 
     #[test]
     fn a_connection_follows_what_the_file_says_of_it() {
-        let way = |lead: Option<u8>, beats: u8, degree: u8, notes: u8| {
-            let link = Link {
-                beats,
-                degree,
-                notes,
-            };
-            grid(&connection(lead, link))
+        let link = |beats: u8, degree: u8, notes: u8| Link {
+            beats,
+            degree,
+            notes,
         };
+        let way = |lead: Option<u8>, link: Link| grid(&connection(lead, link));
         // To the tonic, from the degree the piece now goes to.
-        assert_eq!(way(Some(5), 2, 1, 4), "4.3. 2.1. .... ....");
+        assert_eq!(way(Some(5), link(2, 1, 4)), "4.3. 2.1. .... ....");
         // In one beat, two notes are half a beat apart.
-        assert_eq!(way(Some(8), 1, 5, 2), "6.5. .... .... ....");
+        assert_eq!(way(Some(8), link(1, 5, 2)), "6.5. .... .... ....");
         // Over three beats, with up to six notes.
-        assert_eq!(way(Some(1), 3, 8, 6), "3.4. 5.6. 7.8. ....");
+        assert_eq!(way(Some(1), link(3, 8, 6)), "3.4. 5.6. 7.8. ....");
         // Up to the note above the upper tonic, from silence: a beat each.
-        assert_eq!(way(None, 2, 9, 4), "8... 9... .... ....");
+        assert_eq!(way(None, link(2, 9, 4)), "8... 9... .... ....");
         // With one note, the connection is where it goes at once.
-        assert_eq!(way(Some(2), 4, 5, 1), "5... .... .... ....");
-        assert_eq!(
-            connection(
-                Some(2),
-                Link {
-                    beats: 4,
-                    degree: 5,
-                    notes: 1
-                }
-            )[0]
-            .steps,
-            16
-        );
+        assert_eq!(way(Some(2), link(4, 5, 1)), "5... .... .... ....");
+        assert_eq!(connection(Some(2), link(4, 5, 1))[0].steps, 16);
     }
 
     #[test]
     fn the_turnaround_keeps_the_verse_sound_in_minor() {
         // Without it, the last bar of the verse holds F over E minor.
-        let mut plain = VERSE.melody;
+        let verse = section("verse");
+        let mut plain = verse.melody;
         plain[7] = plain[1];
-        let dorian = Mode::Dorian.chords(VERSE.chords);
+        let dorian = Mode::Dorian.chords(verse.chords);
         assert_eq!(rubs(Mode::Dorian, &plain, &dorian), 0);
-        let aeolian = Mode::Aeolian.chords(VERSE.chords);
+        let aeolian = Mode::Aeolian.chords(verse.chords);
         assert_eq!(rubs(Mode::Aeolian, &plain, &aeolian), 1);
     }
 }

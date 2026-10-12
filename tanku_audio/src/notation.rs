@@ -14,6 +14,11 @@
 //! chord of the bar, whose notes go up in turn, `R` is the root of that chord, `O` that root an
 //! octave higher and `V` its fifth, a digit is a degree of the scale, a dot holds the note and
 //! a dash ends it.
+//!
+//! What plays when is written too: a `play` line for each scene that the arrangement tells
+//! apart, and a `threat` line for each threat. In them an instrument has its line, as in
+//! `bass=long@2` or `lead=answer@4:150`: a pattern, or a form of the melody of the section,
+//! then the octave of its tonic after an `@`, and the level of a melody after a `:`.
 
 use std::fmt;
 
@@ -33,7 +38,11 @@ const MOTIFS: usize = 8;
 const MOTIF_BARS: usize = 4;
 /// Patterns and sections that a piece can have.
 const RHYTHMS: usize = 16;
-const PASSAGES: usize = 8;
+pub(crate) const PASSAGES: usize = 8;
+/// Sections that a scene can play in turn.
+const TURNS: usize = 4;
+/// Threats: the brain tiers of the enemies, from 0 to 4.
+pub const THREATS: usize = 5;
 /// Letters that a name can have.
 const WORD: usize = 12;
 
@@ -133,12 +142,12 @@ impl Word {
         self.letters.split_at(self.len as usize).0
     }
 
-    pub const fn is(&self, name: &str) -> bool {
-        same(self.letters(), name.as_bytes())
+    pub fn as_str(&self) -> &str {
+        std::str::from_utf8(self.letters()).unwrap_or_default()
     }
 
-    const fn equals(&self, other: &Self) -> bool {
-        same(self.letters(), other.letters())
+    pub const fn is(&self, name: &str) -> bool {
+        same(self.letters(), name.as_bytes())
     }
 }
 
@@ -164,8 +173,7 @@ pub(crate) const fn same(text: &[u8], other: &[u8]) -> bool {
     true
 }
 
-/// The instruments that a line of the file can name. The lead has no pattern: it plays the
-/// melodies.
+/// The instruments of the piece. The lead has no pattern: it plays the melodies.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Instrument {
     Kick,
@@ -173,9 +181,20 @@ pub enum Instrument {
     Snare,
     Bass,
     Pluck,
+    Lead,
 }
 
 impl Instrument {
+    /// The six instruments, in the order in which a line of the arrangement keeps them.
+    pub const ALL: [Self; 6] = [
+        Self::Kick,
+        Self::Hat,
+        Self::Snare,
+        Self::Bass,
+        Self::Pluck,
+        Self::Lead,
+    ];
+
     const fn named(name: &[u8]) -> Option<Self> {
         if same(name, b"kick") {
             Some(Self::Kick)
@@ -187,6 +206,8 @@ impl Instrument {
             Some(Self::Bass)
         } else if same(name, b"pluck") {
             Some(Self::Pluck)
+        } else if same(name, b"lead") {
+            Some(Self::Lead)
         } else {
             None
         }
@@ -195,6 +216,144 @@ impl Instrument {
     /// Whether the instrument is a drum, which has no pitch.
     pub const fn is_drum(self) -> bool {
         matches!(self, Self::Kick | Self::Hat | Self::Snare)
+    }
+}
+
+/// What the game is doing, as far as the arrangement tells it apart. Each scene has a `play`
+/// line in the file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Scene {
+    /// No run is on, or the run is in its start bay.
+    Menu,
+    /// Nobody fights, in a corridor or in an arena.
+    Calm,
+    /// A fight in a corridor.
+    Corridor,
+    /// A fight in an arena.
+    Arena,
+}
+
+impl Scene {
+    pub const ALL: [Self; 4] = [Self::Menu, Self::Calm, Self::Corridor, Self::Arena];
+
+    /// The name of the scene in the file.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Menu => "menu",
+            Self::Calm => "calm",
+            Self::Corridor => "corridor",
+            Self::Arena => "arena",
+        }
+    }
+
+    const fn named(name: &[u8]) -> Option<Self> {
+        let mut index = 0;
+        while index < Self::ALL.len() {
+            if same(name, Self::ALL[index].name().as_bytes()) {
+                return Some(Self::ALL[index]);
+            }
+            index += 1;
+        }
+        None
+    }
+
+    /// Whether the scene is a fight.
+    pub const fn is_fight(self) -> bool {
+        matches!(self, Self::Corridor | Self::Arena)
+    }
+}
+
+/// The melody of a section, or a line that the rules derive from it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Form {
+    /// The melody as it is written.
+    Melody,
+    /// Its notes that start on a beat, each held until the next.
+    Skeleton,
+    /// The melody with its ornaments.
+    Ornate,
+    /// The answer to each of its bars, which is a call.
+    Answer,
+}
+
+impl Form {
+    pub const ALL: [Self; 4] = [Self::Melody, Self::Skeleton, Self::Ornate, Self::Answer];
+
+    /// The name of the form in the file.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Melody => "melody",
+            Self::Skeleton => "skeleton",
+            Self::Ornate => "ornate",
+            Self::Answer => "answer",
+        }
+    }
+
+    const fn named(name: &[u8]) -> Option<Self> {
+        let mut index = 0;
+        while index < Self::ALL.len() {
+            if same(name, Self::ALL[index].name().as_bytes()) {
+                return Some(Self::ALL[index]);
+            }
+            index += 1;
+        }
+        None
+    }
+}
+
+/// What a line of an instrument is made from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Source {
+    /// The melody of the section that plays, or a line derived from it. Degree 1 is the tonic
+    /// in an octave, from 1 to 5, and every note has the same level.
+    Tune { form: Form, octave: u8, level: u8 },
+    /// A pattern, by its place among those of the piece. On an instrument that has a pitch,
+    /// it has an octave too.
+    Rhythm { index: u8, octave: u8 },
+}
+
+/// What an instrument plays: one line, or two.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Layer {
+    pub first: Source,
+    /// A second line. It sounds where the first starts nothing, or together with the first,
+    /// which only the lead can do.
+    pub second: Option<Source>,
+    pub together: bool,
+}
+
+/// What an instrument has in a line of the arrangement.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Part {
+    Silent,
+    /// What the line of the threat says.
+    ByThreat,
+    Plays(Layer),
+}
+
+/// A line of the arrangement: the sections that a scene plays in turn, and what each
+/// instrument plays in them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Play {
+    sections: [u8; TURNS],
+    count: u8,
+    parts: [Part; 6],
+}
+
+impl Play {
+    const EMPTY: Self = Self {
+        sections: [0; TURNS],
+        count: 0,
+        parts: [Part::Silent; 6],
+    };
+
+    /// The sections, each by its place among those of the piece.
+    pub const fn sections(&self) -> &[u8] {
+        self.sections.split_at(self.count as usize).0
+    }
+
+    pub const fn part(&self, instrument: Instrument) -> Part {
+        self.parts[instrument as usize]
     }
 }
 
@@ -253,6 +412,8 @@ pub struct Rhythm {
     /// them.
     pub level: u8,
     pub soft: u8,
+    /// Whether its notes have the echo of the pluck.
+    pub echo: bool,
 }
 
 impl Rhythm {
@@ -262,6 +423,7 @@ impl Rhythm {
         grid: [b'.'; STEPS],
         level: 0,
         soft: 0,
+        echo: false,
     };
 }
 
@@ -319,6 +481,12 @@ pub struct Piece {
     rhythm_count: usize,
     passages: [Passage; PASSAGES],
     passage_count: usize,
+    /// The line of the arrangement of each scene.
+    plays: [Play; 4],
+    /// What each instrument plays at each threat, where a scene leaves it to the threat.
+    threats: [[Option<Layer>; 6]; THREATS],
+    /// The line of the file that each threat is on, or 0.
+    threat_lines: [u32; THREATS],
     pub roll: Roll,
     pub link: Link,
 }
@@ -337,6 +505,9 @@ impl Piece {
         rhythm_count: 0,
         passages: [Passage::EMPTY; PASSAGES],
         passage_count: 0,
+        plays: [Play::EMPTY; 4],
+        threats: [[None; 6]; THREATS],
+        threat_lines: [0; THREATS],
         roll: Roll {
             beats: 0,
             drum: Instrument::Hat,
@@ -382,13 +553,38 @@ impl Piece {
         }
     }
 
-    /// The pattern of an instrument by its name.
-    pub const fn rhythm(&self, instrument: Instrument, name: &str) -> Option<Rhythm> {
+    /// Where the pattern of an instrument is among the patterns, by its name.
+    const fn rhythm_at(&self, instrument: Instrument, name: &[u8]) -> Option<usize> {
         let mut index = 0;
         while index < self.rhythm_count {
-            let rhythm = self.rhythms[index];
-            if rhythm.instrument as u8 == instrument as u8 && rhythm.name.is(name) {
-                return Some(rhythm);
+            let rhythm = &self.rhythms[index];
+            if rhythm.instrument as u8 == instrument as u8 && same(rhythm.name.letters(), name) {
+                return Some(index);
+            }
+            index += 1;
+        }
+        None
+    }
+
+    /// The pattern of an instrument by its name.
+    pub const fn rhythm(&self, instrument: Instrument, name: &str) -> Option<Rhythm> {
+        match self.rhythm_at(instrument, name.as_bytes()) {
+            Some(index) => Some(self.rhythms[index]),
+            None => None,
+        }
+    }
+
+    /// The pattern at a place among the patterns.
+    pub const fn pattern(&self, index: u8) -> &Rhythm {
+        &self.rhythms[index as usize]
+    }
+
+    /// Where a section is among the sections, by its name.
+    const fn passage_at(&self, name: &[u8]) -> Option<usize> {
+        let mut index = 0;
+        while index < self.passage_count {
+            if same(self.passages[index].name.letters(), name) {
+                return Some(index);
             }
             index += 1;
         }
@@ -397,14 +593,25 @@ impl Piece {
 
     /// The section of a name.
     pub const fn passage(&self, name: &str) -> Option<Passage> {
-        let mut index = 0;
-        while index < self.passage_count {
-            if self.passages[index].name.is(name) {
-                return Some(self.passages[index]);
-            }
-            index += 1;
+        match self.passage_at(name.as_bytes()) {
+            Some(index) => Some(self.passages[index]),
+            None => None,
         }
-        None
+    }
+
+    /// The section at a place among the sections.
+    pub const fn section(&self, index: u8) -> &Passage {
+        &self.passages[index as usize]
+    }
+
+    /// The line of the arrangement of a scene.
+    pub const fn play(&self, scene: Scene) -> &Play {
+        &self.plays[scene as usize]
+    }
+
+    /// What an instrument plays at a threat, where a scene leaves it to the threat.
+    pub const fn threat(&self, threat: u8, instrument: Instrument) -> Option<Layer> {
+        self.threats[threat as usize][instrument as usize]
     }
 }
 
@@ -499,8 +706,8 @@ struct Found {
 }
 
 const HEADING: &str = "the file starts with the line `tanku-music 1`";
-const KINDS: &str =
-    "a line starts with `tempo`, `key`, `motif`, `turn`, `pat`, `sec`, `roll` or `link`";
+const KINDS: &str = "a line starts with `tempo`, `key`, `motif`, `turn`, `pat`, `sec`, `play`, \
+                     `threat`, `roll` or `link`";
 const TEMPO: &str = "a tempo is a number of beats per minute, from 30 to 300";
 const TONIC: &str = "a key starts with its tonic, such as `A`, `C#` or `Eb`";
 const MODES: &str = "a key has two modes, that of the piece and that of the fights of an arena: \
@@ -512,8 +719,32 @@ const MELODY: &str =
     "in a melody, a step is a degree from 1 to 9, a dot that holds it or a dash for silence";
 const LETTER: &str = "a motif is named by one capital letter";
 const NAME: &str = "a name has twelve letters at most";
-const INSTRUMENT: &str =
-    "a pattern is for the `kick`, the `hat`, the `snare`, the `bass` or the `pluck`";
+const INSTRUMENT: &str = "a pattern is for the `kick`, the `hat`, the `snare`, the `bass` or \
+                          the `pluck`: the lead plays the melodies";
+const TAKEN: &str = "`melody`, `skeleton`, `ornate` and `answer` are the lines of a section: a \
+                     pattern has another name";
+const ENDING: &str = "after its levels, a pattern can only have `echo`, which the pluck has";
+const SCENE: &str = "a `play` line is for the `menu`, the `calm`, a fight in a `corridor` or a \
+                     fight in an `arena`";
+const TURN_BY_TURN: &str = "after its scene, a `play` line has the sections that play in turn, \
+                            which are written above it, with a comma between two: `verse,chorus`";
+const PART: &str = "what an instrument plays is written as in `bass=long@2`: the `kick`, the \
+                    `hat`, the `snare`, the `bass`, the `pluck` or the `lead`, then `=`, then \
+                    its line";
+const BEAT_OF_DRUM: &str = "a drum plays one of its patterns, by its name alone";
+const OCTAVE: &str = "a line that has a pitch has its octave, from 1 to 5, after an `@`, as in \
+                      `melody@4`";
+const LINE: &str = "a line is `melody`, `skeleton`, `ornate` or `answer`, or a pattern of that \
+                    instrument, which is written above";
+const LOUD: &str = "after a `:`, a melody has its level, from 1 to 255, and a pattern has the \
+                    levels of its own line";
+const TOGETHER: &str = "only the lead plays two lines at once, with a `+` between them";
+const THREAT: &str = "a `threat` line has a threat, from 0 to 4, then what the instruments play \
+                      at that threat";
+const STAR: &str = "`*` leaves an instrument to the threat, in a `play` line";
+const LEFT: &str = "an instrument is left to the threat, and a threat from 0 to 4 has no \
+                    `threat` line";
+const NOT_LEFT: &str = "no `play` line leaves this instrument to the threat, with `*`";
 const DRUM: &str = "on a drum, a step is `x` for a hit, `o` for a soft one or a dot";
 const PITCHED: &str = "on the bass and the pluck, a step is `x`, `o`, `R`, `O`, `V`, a degree \
                        from 1 to 9, a dot or a dash";
@@ -556,7 +787,7 @@ pub const fn read(text: &str) -> Result<Piece, Fault> {
         if kind[0] == b'#' {
             continue;
         }
-        if let Err(what) = record(&mut piece, &mut found, kind, &mut words) {
+        if let Err(what) = record(&mut piece, &mut found, kind, &mut words, line) {
             return Err(Fault { line, what });
         }
         if !words.is_over() {
@@ -581,6 +812,9 @@ pub const fn read(text: &str) -> Result<Piece, Fault> {
     if let Some(what) = missing {
         return Err(Fault { line, what });
     }
+    if let Err(fault) = arrangement(&piece, line) {
+        return Err(fault);
+    }
     // A section without a tempo of its own has that of the piece.
     let mut index = 0;
     while index < piece.passage_count {
@@ -592,12 +826,56 @@ pub const fn read(text: &str) -> Result<Piece, Fault> {
     Ok(piece)
 }
 
+/// Checks the arrangement of a piece once its file is read: every scene has its line, and the
+/// threat has what the scenes leave to it. `last` is the last line of the file.
+const fn arrangement(piece: &Piece, last: u32) -> Result<(), Fault> {
+    let mut scene = 0;
+    while scene < Scene::ALL.len() {
+        if piece.plays[scene].count == 0 {
+            let what = match Scene::ALL[scene] {
+                Scene::Menu => "the file has no `play menu` line",
+                Scene::Calm => "the file has no `play calm` line",
+                Scene::Corridor => "the file has no `play corridor` line",
+                Scene::Arena => "the file has no `play arena` line",
+            };
+            return Err(Fault { line: last, what });
+        }
+        scene += 1;
+    }
+    let mut instrument = 0;
+    while instrument < Instrument::ALL.len() {
+        let (mut left, mut scene) = (false, 0);
+        while scene < Scene::ALL.len() {
+            left |= matches!(piece.plays[scene].parts[instrument], Part::ByThreat);
+            scene += 1;
+        }
+        let mut threat = 0;
+        while threat < THREATS {
+            let line = piece.threat_lines[threat];
+            if left && line == 0 {
+                return Err(Fault {
+                    line: last,
+                    what: LEFT,
+                });
+            }
+            if !left && piece.threats[threat][instrument].is_some() {
+                let what = NOT_LEFT;
+                return Err(Fault { line, what });
+            }
+            threat += 1;
+        }
+        instrument += 1;
+    }
+    Ok(())
+}
+
 /// Reads one line into the piece, from the word that says what the line is.
 const fn record(
     piece: &mut Piece,
     found: &mut Found,
     kind: &[u8],
     words: &mut Words,
+    line: u32,
 ) -> Result<(), &'static str> {
     if !found.heading {
         found.heading = true;
@@ -631,6 +909,10 @@ const fn record(
         tri!(rhythm(piece, words));
     } else if same(kind, b"sec") {
         tri!(passage(piece, words));
+    } else if same(kind, b"play") {
+        tri!(play(piece, words));
+    } else if same(kind, b"threat") {
+        tri!(threat(piece, words, line));
     } else if same(kind, b"roll") {
         if found.roll {
             return Err("the roll is written twice");
@@ -813,14 +1095,15 @@ const fn rhythm(piece: &mut Piece, words: &mut Words) -> Result<(), &'static str
         None => None,
     };
     let instrument = need!(instrument, INSTRUMENT);
+    if matches!(instrument, Instrument::Lead) {
+        return Err(INSTRUMENT);
+    }
     let name = need!(name(words), NAME);
-    let mut index = 0;
-    while index < piece.rhythm_count {
-        let other = piece.rhythms[index];
-        if other.instrument as u8 == instrument as u8 && other.name.equals(&name) {
-            return Err("this pattern is written twice");
-        }
-        index += 1;
+    if Form::named(name.letters()).is_some() {
+        return Err(TAKEN);
+    }
+    if piece.rhythm_at(instrument, name.letters()).is_some() {
+        return Err("this pattern is written twice");
     }
     if piece.rhythm_count == RHYTHMS {
         return Err("a piece has sixteen patterns at most");
@@ -845,14 +1128,25 @@ const fn rhythm(piece: &mut Piece, words: &mut Words) -> Result<(), &'static str
         step += 1;
     }
     let level = need!(amount(words, 1, 255), LEVEL);
-    let soft = if words.is_over() {
-        0
-    } else {
-        match amount(words, 1, 255) {
-            Some(soft) => soft,
-            None => return Err(LEVEL),
+    // Then the level of a soft hit, if it has some, and the echo, if it has one.
+    let (mut soft, mut echo) = (0, false);
+    while let Some(word) = words.next() {
+        if echo {
+            return Err(ENDING);
+        } else if same(word, b"echo") {
+            if !matches!(instrument, Instrument::Pluck) {
+                return Err(ENDING);
+            }
+            echo = true;
+        } else if soft == 0 {
+            soft = match number(word) {
+                Some(soft) if soft >= 1 && soft <= 255 => soft,
+                _ => return Err(LEVEL),
+            };
+        } else {
+            return Err(ENDING);
         }
-    };
+    }
     if soft_hits && soft == 0 {
         return Err("a pattern with soft hits says how loud they are, after the level of a hit");
     }
@@ -866,6 +1160,7 @@ const fn rhythm(piece: &mut Piece, words: &mut Words) -> Result<(), &'static str
         grid,
         level: level as u8,
         soft: soft as u8,
+        echo,
     };
     piece.rhythm_count += 1;
     Ok(())
@@ -873,12 +1168,8 @@ const fn rhythm(piece: &mut Piece, words: &mut Words) -> Result<(), &'static str
 
 const fn passage(piece: &mut Piece, words: &mut Words) -> Result<(), &'static str> {
     let name = need!(name(words), NAME);
-    let mut index = 0;
-    while index < piece.passage_count {
-        if piece.passages[index].name.equals(&name) {
-            return Err("this section is written twice");
-        }
-        index += 1;
+    if piece.passage_at(name.letters()).is_some() {
+        return Err("this section is written twice");
     }
     if piece.passage_count == PASSAGES {
         return Err("a piece has eight sections at most");
@@ -977,6 +1268,180 @@ const fn statement(piece: &Piece, token: &[u8]) -> Result<Motif, &'static str> {
     Ok(motif)
 }
 
+/// Where a byte first is in a word.
+const fn find(word: &[u8], byte: u8) -> Option<usize> {
+    let mut index = 0;
+    while index < word.len() {
+        if word[index] == byte {
+            return Some(index);
+        }
+        index += 1;
+    }
+    None
+}
+
+/// A word in two, around the first of a byte that it has.
+const fn halves(word: &[u8], byte: u8) -> Option<(&[u8], &[u8])> {
+    match find(word, byte) {
+        Some(at) => Some((word.split_at(at).0, word.split_at(at + 1).1)),
+        None => None,
+    }
+}
+
+const fn play(piece: &mut Piece, words: &mut Words) -> Result<(), &'static str> {
+    let scene = match words.next() {
+        Some(name) => Scene::named(name),
+        None => None,
+    };
+    let scene = need!(scene, SCENE) as usize;
+    if piece.plays[scene].count > 0 {
+        return Err("this scene is written twice");
+    }
+    let mut play = Play::EMPTY;
+    let mut rest = need!(words.next(), TURN_BY_TURN);
+    loop {
+        let (name, more) = match halves(rest, b',') {
+            Some((name, more)) => (name, Some(more)),
+            None => (rest, None),
+        };
+        if play.count as usize == TURNS {
+            return Err("a scene plays four sections at most");
+        }
+        play.sections[play.count as usize] = need!(piece.passage_at(name), TURN_BY_TURN) as u8;
+        play.count += 1;
+        match more {
+            Some(more) => rest = more,
+            None => break,
+        }
+    }
+    tri!(parts(piece, words, &mut play.parts, true));
+    piece.plays[scene] = play;
+    Ok(())
+}
+
+const fn threat(piece: &mut Piece, words: &mut Words, line: u32) -> Result<(), &'static str> {
+    let threat = need!(amount(words, 0, THREATS as u32 - 1), THREAT) as usize;
+    if piece.threat_lines[threat] != 0 {
+        return Err("this threat is written twice");
+    }
+    let mut played = [Part::Silent; 6];
+    tri!(parts(piece, words, &mut played, false));
+    let mut instrument = 0;
+    while instrument < played.len() {
+        if let Part::Plays(layer) = played[instrument] {
+            piece.threats[threat][instrument] = Some(layer);
+        }
+        instrument += 1;
+    }
+    piece.threat_lines[threat] = line;
+    Ok(())
+}
+
+/// Reads what the instruments play, to the end of a line. Only a scene can leave an
+/// instrument to the threat.
+const fn parts(
+    piece: &Piece,
+    words: &mut Words,
+    parts: &mut [Part; 6],
+    of_a_scene: bool,
+) -> Result<(), &'static str> {
+    while let Some(word) = words.next() {
+        let (name, line) = need!(halves(word, b'='), PART);
+        let instrument = need!(Instrument::named(name), PART);
+        if !matches!(parts[instrument as usize], Part::Silent) {
+            return Err("this instrument is written twice");
+        }
+        parts[instrument as usize] = if same(line, b"*") {
+            if !of_a_scene {
+                return Err(STAR);
+            }
+            Part::ByThreat
+        } else {
+            Part::Plays(tri!(layer(piece, instrument, line)))
+        };
+    }
+    Ok(())
+}
+
+/// What an instrument plays: a line, a line with another where it starts nothing, after a
+/// `/`, or two lines together, around a `+`.
+const fn layer(piece: &Piece, instrument: Instrument, text: &[u8]) -> Result<Layer, &'static str> {
+    let (first, second, together) = match halves(text, b'/') {
+        Some((first, second)) => (first, Some(second), false),
+        None => match halves(text, b'+') {
+            Some((first, second)) => (first, Some(second), true),
+            None => (text, None, false),
+        },
+    };
+    if instrument.is_drum() && second.is_some() {
+        return Err(BEAT_OF_DRUM);
+    }
+    if together && !matches!(instrument, Instrument::Lead) {
+        return Err(TOGETHER);
+    }
+    let first = tri!(source(piece, instrument, first));
+    let second = match second {
+        Some(second) => Some(tri!(source(piece, instrument, second))),
+        None => None,
+    };
+    Ok(Layer {
+        first,
+        second,
+        together,
+    })
+}
+
+/// One line of an instrument: a name, an octave after an `@` if the instrument has a pitch,
+/// and a level after a `:` if the line is a melody.
+const fn source(
+    piece: &Piece,
+    instrument: Instrument,
+    text: &[u8],
+) -> Result<Source, &'static str> {
+    let (text, level) = match halves(text, b':') {
+        Some((text, level)) => (text, Some(level)),
+        None => (text, None),
+    };
+    let (name, octave) = match halves(text, b'@') {
+        Some((name, octave)) => (name, Some(octave)),
+        None => (text, None),
+    };
+    if instrument.is_drum() {
+        if octave.is_some() || level.is_some() {
+            return Err(BEAT_OF_DRUM);
+        }
+        let index = need!(piece.rhythm_at(instrument, name), LINE) as u8;
+        return Ok(Source::Rhythm { index, octave: 0 });
+    }
+    let octave = match need!(octave, OCTAVE) {
+        [digit @ b'1'..=b'5'] => *digit - b'0',
+        _ => return Err(OCTAVE),
+    };
+    match Form::named(name) {
+        Some(form) => {
+            let level = match level {
+                Some(level) => match number(level) {
+                    Some(level) if level >= 1 && level <= 255 => level as u8,
+                    _ => return Err(LOUD),
+                },
+                None => 255,
+            };
+            Ok(Source::Tune {
+                form,
+                octave,
+                level,
+            })
+        }
+        None => {
+            if level.is_some() {
+                return Err(LOUD);
+            }
+            let index = need!(piece.rhythm_at(instrument, name), LINE) as u8;
+            Ok(Source::Rhythm { index, octave })
+        }
+    }
+}
+
 /// The next word as a drum.
 const fn drum(words: &mut Words) -> Option<Instrument> {
     let Some(name) = words.next() else {
@@ -1036,16 +1501,45 @@ pub(crate) const fn line(grid: &str) -> Line {
 mod tests {
     use super::*;
 
-    /// The shortest file that reads: its heading, a tempo, a key, a roll and a connection.
+    /// The lines that a file has once: its heading, a tempo, a key, a roll and a connection.
     const SMALL: &str = "tanku-music 1\n\
                          tempo 96\n\
                          key C# ionian mixolydian\n\
                          roll 1 kick snare 20 200\n\
                          link 3 2 6\n";
+    /// The shortest arrangement: one section of one motif, which every scene plays in
+    /// silence.
+    const SILENCE: &str = "motif Z 1... .... .... ....\n\
+                           sec rest 1111 1111 Z Z Z Z Z Z Z Z\n\
+                           play menu rest\n\
+                           play calm rest\n\
+                           play corridor rest\n\
+                           play arena rest\n";
     /// A motif of one bar and a motif of two, with its turn.
     const MOTIFS: &str = "motif A 1... .... .... ....\n\
                           motif B 1..2 .... 3-.. .... | 5... .... .... 6...\n\
                           turn B 8... .... .... ....\n";
+    /// Some patterns, two sections, and an arrangement of them.
+    const PATTERNS: &str = "pat kick four x... x... x... x... 200\n\
+                            pat hat off ..x. ..x. ..x. ..x. 90\n\
+                            pat snare back .... x... .... x... 150\n\
+                            pat bass roots R... .... R... .... 250\n\
+                            pat bass walk 1.2. 3.5. 8.5. 3.2. 240\n\
+                            pat pluck up x.x. x.x. x.x. x.x. 120 echo\n\
+                            pat pluck drone 5... .... 5... .... 80\n";
+    const SECTIONS: &str = "sec one 1111 1111 A A A A A A A A\n\
+                            sec two 4455 4411 B B B b\n";
+    const ARRANGEMENT: &str = "play menu one bass=roots@2 pluck=melody@4\n\
+                               play calm two,one kick=four pluck=melody@3/drone@2 \
+                               lead=answer@4:150\n\
+                               play corridor one,two kick=four hat=* bass=* lead=*\n\
+                               play arena two snare=back bass=walk@1 pluck=up@3 \
+                               lead=ornate@4+skeleton@5:90\n\
+                               threat 0 bass=roots@2\n\
+                               threat 1 hat=off bass=roots@2 lead=skeleton@4\n\
+                               threat 2 hat=off bass=walk@1 lead=melody@4\n\
+                               threat 3 hat=off bass=walk@1 lead=ornate@4\n\
+                               threat 4 hat=off bass=walk@1 lead=ornate@4:200\n";
 
     /// The line on which a file can't be read, and why.
     fn fault(text: &str) -> (u32, &'static str) {
@@ -1056,6 +1550,17 @@ mod tests {
     /// The same for a file that is the small one and some more lines.
     fn fault_after(lines: &str) -> (u32, &'static str) {
         fault(&format!("{SMALL}{lines}"))
+    }
+
+    /// A file that reads: the small one, some more lines, and the shortest arrangement.
+    fn whole(lines: &str) -> String {
+        format!("{SMALL}{lines}{SILENCE}")
+    }
+
+    /// The same for an arrangement of its own, over the motifs, the patterns and the two
+    /// sections that such a file has.
+    fn arranged(arrangement: &str) -> String {
+        format!("{SMALL}{MOTIFS}{PATTERNS}{SECTIONS}{arrangement}")
     }
 
     #[test]
@@ -1069,7 +1574,7 @@ mod tests {
 
     #[test]
     fn a_small_file_reads() {
-        let piece = read(SMALL).unwrap();
+        let piece = read(&whole("")).unwrap();
         assert_eq!(piece.tempo, 96);
         let key = piece.key;
         assert_eq!(
@@ -1084,21 +1589,43 @@ mod tests {
         );
         let link = piece.link;
         assert_eq!((link.beats, link.degree, link.notes), (3, 2, 6));
-        assert!(piece.motifs().is_empty() && piece.rhythms().is_empty());
-        assert!(piece.passages().is_empty());
+        // One motif and one section, which every scene plays without an instrument.
+        assert_eq!((piece.motifs().len(), piece.passages().len()), (1, 1));
+        assert!(piece.rhythms().is_empty());
+        for scene in Scene::ALL {
+            let play = piece.play(scene);
+            assert_eq!(play.sections(), [0]);
+            for instrument in Instrument::ALL {
+                assert_eq!(play.part(instrument), Part::Silent);
+                assert_eq!(piece.threat(4, instrument), None);
+            }
+        }
+        // Without them, the file has no arrangement.
+        assert_eq!(fault(SMALL), (5, "the file has no `play menu` line"));
+        let calm = "the file has no `play calm` line";
+        assert_eq!(
+            fault(&whole("").replace("play calm rest\n", "")),
+            (10, calm)
+        );
+        let arena = "the file has no `play arena` line";
+        assert_eq!(
+            fault(&whole("").replace("play arena rest\n", "")),
+            (10, arena)
+        );
     }
 
     #[test]
     fn comments_empty_lines_and_line_endings_change_nothing() {
         let dressed = "# A comment.\r\n\r\n  tanku-music   1\r\n#tempo 60\r\ntempo 96\r\n\
                        \tkey C# ionian mixolydian\n\nroll 1 kick snare 20 200\nlink 3 2 6";
-        assert_eq!(read(dressed), read(SMALL));
+        assert_eq!(read(&format!("{dressed}\n{SILENCE}")), read(&whole("")));
+        assert!(read(&whole("")).is_ok());
     }
 
     #[test]
     fn a_key_is_named_by_its_tonic() {
         let offset = |note: &str| {
-            let key = read(&SMALL.replace("C#", note)).unwrap().key;
+            let key = read(&whole("").replace("C#", note)).unwrap().key;
             (key.tonic, key.offset())
         };
         assert_eq!(offset("A"), (0, 0));
@@ -1120,9 +1647,8 @@ mod tests {
         for home in Mode::ALL {
             for arena in Mode::ALL {
                 let modes = format!("{} {}", home.name(), arena.name());
-                let key = read(&SMALL.replace("ionian mixolydian", &modes))
-                    .unwrap()
-                    .key;
+                let text = whole("").replace("ionian mixolydian", &modes);
+                let key = read(&text).unwrap().key;
                 assert_eq!((key.home, key.arena), (home, arena));
             }
         }
@@ -1132,9 +1658,9 @@ mod tests {
     fn motifs_and_patterns_read_bar_by_bar() {
         let lines = "pat kick heart x.o. .... .... .... 180 135\n\
                      pat bass heart R..O ..V. 5-5. x... 255\n";
-        let piece = read(&format!("{SMALL}{MOTIFS}{lines}")).unwrap();
-        let [a, b] = piece.motifs() else {
-            panic!("two motifs");
+        let piece = read(&whole(&format!("{MOTIFS}{lines}"))).unwrap();
+        let [a, b, _] = piece.motifs() else {
+            panic!("two motifs, and the one of the arrangement");
         };
         assert_eq!((a.letter, a.bars().len(), a.turn), (b'A', 1, None));
         assert_eq!(
@@ -1161,8 +1687,9 @@ mod tests {
         assert_eq!((kick.level, kick.soft), (180, 135));
         let bass = piece.rhythm(Instrument::Bass, "heart").unwrap();
         assert_eq!(&bass.grid, b"R..O..V.5-5.x...");
-        assert_eq!((bass.level, bass.soft), (255, 0));
+        assert_eq!((bass.level, bass.soft, bass.echo), (255, 0, false));
         assert!(bass.name.is("heart") && !bass.name.is("hear"));
+        assert_eq!(bass.name.as_str(), "heart");
         assert_eq!(piece.rhythm(Instrument::Hat, "heart"), None);
         assert_eq!(piece.rhythm(Instrument::Kick, "fight"), None);
     }
@@ -1170,7 +1697,7 @@ mod tests {
     #[test]
     fn a_section_states_its_motifs() {
         let lines = "sec verse 14C5 7621 A B b A:9 B:4 100\nsec calm 1111 1111 b b b b\n";
-        let piece = read(&format!("{SMALL}{MOTIFS}{lines}")).unwrap();
+        let piece = read(&whole(&format!("{MOTIFS}{lines}"))).unwrap();
         let verse = piece.passage("verse").unwrap();
         assert_eq!(verse.chords, [1, 4, COLOR, 5, 7, 6, 2, 1]);
         let [a, b] = (*b"AB").map(|letter| piece.motif(letter).unwrap());
@@ -1192,6 +1719,169 @@ mod tests {
             [first, turn, first, turn, first, turn, first, turn]
         );
         assert_eq!(piece.passage("chorus"), None);
+    }
+
+    #[test]
+    fn an_arrangement_reads_scene_by_scene() {
+        let piece = read(&arranged(ARRANGEMENT)).unwrap();
+        // A line is a melody or one of its forms, or a pattern, by its place among the seven.
+        let tune = |form, octave, level| Source::Tune {
+            form,
+            octave,
+            level,
+        };
+        let rhythm = |index, octave| Source::Rhythm { index, octave };
+        let alone = |first| Layer {
+            first,
+            second: None,
+            together: false,
+        };
+        let plays = |first| Part::Plays(alone(first));
+
+        let menu = piece.play(Scene::Menu);
+        assert_eq!(menu.sections(), [0]);
+        assert_eq!(menu.part(Instrument::Bass), plays(rhythm(3, 2)));
+        assert_eq!(
+            menu.part(Instrument::Pluck),
+            plays(tune(Form::Melody, 4, 255))
+        );
+        assert_eq!(menu.part(Instrument::Kick), Part::Silent);
+        assert_eq!(menu.part(Instrument::Lead), Part::Silent);
+
+        // Two sections in turn. A drum has no octave, and a melody can have a level.
+        let calm = piece.play(Scene::Calm);
+        assert_eq!(calm.sections(), [1, 0]);
+        assert_eq!(calm.part(Instrument::Kick), plays(rhythm(0, 0)));
+        assert_eq!(
+            calm.part(Instrument::Lead),
+            plays(tune(Form::Answer, 4, 150))
+        );
+        // A line where another starts nothing.
+        let under = Layer {
+            first: tune(Form::Melody, 3, 255),
+            second: Some(rhythm(6, 2)),
+            together: false,
+        };
+        assert_eq!(calm.part(Instrument::Pluck), Part::Plays(under));
+
+        let corridor = piece.play(Scene::Corridor);
+        assert_eq!(corridor.sections(), [0, 1]);
+        for instrument in [Instrument::Hat, Instrument::Bass, Instrument::Lead] {
+            assert_eq!(corridor.part(instrument), Part::ByThreat);
+        }
+        assert_eq!(corridor.part(Instrument::Pluck), Part::Silent);
+
+        // Two lines of the lead together.
+        let arena = piece.play(Scene::Arena);
+        let both = Layer {
+            first: tune(Form::Ornate, 4, 255),
+            second: Some(tune(Form::Skeleton, 5, 90)),
+            together: true,
+        };
+        assert_eq!(arena.part(Instrument::Lead), Part::Plays(both));
+        assert_eq!(arena.part(Instrument::Snare), plays(rhythm(2, 0)));
+        assert_eq!(arena.part(Instrument::Bass), plays(rhythm(4, 1)));
+        assert_eq!(arena.part(Instrument::Pluck), plays(rhythm(5, 3)));
+
+        // What the threat gives to the instruments that a scene leaves to it.
+        assert_eq!(piece.threat(0, Instrument::Bass), Some(alone(rhythm(3, 2))));
+        assert_eq!(piece.threat(0, Instrument::Hat), None);
+        assert_eq!(piece.threat(0, Instrument::Lead), None);
+        assert_eq!(piece.threat(3, Instrument::Hat), Some(alone(rhythm(1, 0))));
+        let loud = alone(tune(Form::Ornate, 4, 200));
+        assert_eq!(piece.threat(4, Instrument::Lead), Some(loud));
+        assert_eq!(piece.threat(4, Instrument::Pluck), None);
+
+        // A pattern of the pluck has an echo if its line asks for one.
+        let echo = |name: &str| piece.rhythm(Instrument::Pluck, name).unwrap().echo;
+        assert!(echo("up") && !echo("drone"));
+        assert_eq!(piece.pattern(5).name.as_str(), "up");
+        assert_eq!(piece.section(1).name.as_str(), "two");
+    }
+
+    #[test]
+    fn a_fault_in_the_arrangement_says_what_is_wrong() {
+        // The arrangement starts on line 18: its four scenes, then its five threats.
+        let with = |old: &str, new: &str| {
+            let text = arranged(ARRANGEMENT);
+            assert!(text.contains(old), "{old}");
+            fault(&text.replace(old, new))
+        };
+        // A scene and its sections.
+        assert_eq!(with("play menu one", "play bay one"), (18, SCENE));
+        assert_eq!(with("play menu one", "play"), (18, SCENE));
+        let turns = TURN_BY_TURN;
+        assert_eq!(
+            with("play menu one bass=roots@2", "play menu bass=roots@2"),
+            (18, turns)
+        );
+        assert_eq!(with("play menu one", "play menu three"), (18, turns));
+        assert_eq!(with("play calm two,one", "play calm two,"), (19, turns));
+        let twice = "this scene is written twice";
+        assert_eq!(with("play calm two,one", "play menu two,one"), (19, twice));
+        let none = "the file has no `play corridor` line";
+        assert_eq!(
+            with("play corridor one,two kick=four hat=* bass=* lead=*\n", "").1,
+            none
+        );
+
+        // What an instrument plays.
+        assert_eq!(with("bass=roots@2 pluck", "bass:roots@2 pluck"), (18, PART));
+        assert_eq!(
+            with("bass=roots@2 pluck", "organ=roots@2 pluck"),
+            (18, PART)
+        );
+        let twice = "this instrument is written twice";
+        assert_eq!(
+            with("bass=roots@2 pluck", "bass=roots@2 bass=walk@1 pluck"),
+            (18, twice)
+        );
+        for octave in ["", "@", "@0", "@6", "@22", "@x"] {
+            let line = format!("bass=roots{octave} pluck");
+            assert_eq!(with("bass=roots@2 pluck", &line), (18, OCTAVE), "{octave}");
+        }
+        // A pattern of another instrument, a pattern that isn't written, and a level for a
+        // pattern, which has its own.
+        assert_eq!(with("bass=roots@2 pluck", "bass=up@2 pluck"), (18, LINE));
+        assert_eq!(with("bass=roots@2 pluck", "bass=run@2 pluck"), (18, LINE));
+        assert_eq!(
+            with("bass=roots@2 pluck", "bass=roots@2:9 pluck"),
+            (18, LOUD)
+        );
+        for level in [":", ":0", ":256", ":loud"] {
+            let line = format!("pluck=melody@4{level}\n");
+            assert_eq!(with("pluck=melody@4\n", &line), (18, LOUD), "{level}");
+        }
+        // A drum has one pattern of its own, and nothing else.
+        assert_eq!(
+            with("kick=four pluck", "kick=four@1 pluck"),
+            (19, BEAT_OF_DRUM)
+        );
+        assert_eq!(
+            with("kick=four pluck", "kick=four/four pluck"),
+            (19, BEAT_OF_DRUM)
+        );
+        assert_eq!(with("kick=four pluck", "kick=off pluck"), (19, LINE));
+        assert_eq!(with("kick=four pluck", "kick=melody pluck"), (19, LINE));
+        // Only the lead has two lines at once, and it has no pattern.
+        let both = "pluck=melody@3+drone@2";
+        assert_eq!(with("pluck=melody@3/drone@2", both), (19, TOGETHER));
+        assert_eq!(with("lead=answer@4:150", "lead=drone@2"), (19, LINE));
+
+        // The threat.
+        assert_eq!(with("threat 4 hat=off", "threat 5 hat=off"), (26, THREAT));
+        assert_eq!(with("threat 4 hat=off", "threat hat=off"), (26, THREAT));
+        let twice = "this threat is written twice";
+        assert_eq!(with("threat 4 hat=off", "threat 3 hat=off"), (26, twice));
+        assert_eq!(with("threat 2 hat=off", "threat 2 hat=*"), (24, STAR));
+        // A scene leaves instruments to the threat, and one threat has no line.
+        let third = "threat 3 hat=off bass=walk@1 lead=ornate@4\n";
+        assert_eq!(with(third, ""), (25, LEFT));
+        // A threat gives an instrument that no scene leaves to it.
+        assert_eq!(
+            with("threat 1 hat=off", "threat 1 pluck=up@3 hat=off"),
+            (23, NOT_LEFT)
+        );
     }
 
     #[test]
@@ -1282,6 +1972,25 @@ mod tests {
         assert!(soft.starts_with("a pattern with soft hits"), "{soft}");
         let hard = pattern("kick heart x... .... .... .... 100 50").1;
         assert!(hard.starts_with("this pattern has no soft hit"), "{hard}");
+        assert_eq!(pattern("bass melody R... .... .... .... 100"), (6, TAKEN));
+        assert_eq!(pattern("pluck answer x... .... .... .... 100"), (6, TAKEN));
+        // Only the pluck has an echo, which a pattern asks for after its levels.
+        assert_eq!(
+            pattern("kick heart x... .... .... .... 100 echo"),
+            (6, ENDING)
+        );
+        assert_eq!(
+            pattern("pluck up x... .... .... .... 100 echo 50"),
+            (6, ENDING)
+        );
+        assert_eq!(
+            pattern("pluck up x... .... .... .... 100 echo echo"),
+            (6, ENDING)
+        );
+        assert_eq!(
+            pattern("pluck up x.o. .... .... .... 100 50 60"),
+            (6, ENDING)
+        );
         let twice = "kick heart x... .... .... .... 100\npat kick heart x... x... .... .... 9";
         assert_eq!(pattern(twice), (7, "this pattern is written twice"));
 
@@ -1316,24 +2025,29 @@ mod tests {
             let letter = (b'A' + index as u8) as char;
             format!("motif {letter} 1... .... .... ....\n")
         };
-        assert!(read(&format!("{SMALL}{}", lines(8, motif))).is_ok());
+        // With the motif of the shortest arrangement, eight.
+        assert!(read(&whole(&lines(7, motif))).is_ok());
         let full = fault_after(&lines(9, motif));
         assert_eq!(full, (14, "a piece has eight motifs at most"));
         let long = "motif A 1... .... .... ....".to_string() + &" | 1... .... .... ....".repeat(4);
         assert_eq!(fault_after(&long).1, "a motif has four bars at most");
 
         let pattern = |index: usize| format!("pat kick k{index} x... .... .... .... 9\n");
-        assert!(read(&format!("{SMALL}{}", lines(16, pattern))).is_ok());
+        assert!(read(&whole(&lines(16, pattern))).is_ok());
         let full = fault_after(&lines(17, pattern));
         assert_eq!(full, (22, "a piece has sixteen patterns at most"));
 
         let section = |index: usize| format!("sec s{index} 1111 1111 A A A A A A A A\n");
-        let sections = |count: usize| format!("{SMALL}{}{}", motif(0), lines(count, section));
-        assert!(read(&sections(8)).is_ok());
-        assert_eq!(
-            fault(&sections(9)),
-            (15, "a piece has eight sections at most")
-        );
+        let sections = |count: usize| format!("{}{}", motif(0), lines(count, section));
+        assert!(read(&whole(&sections(7))).is_ok());
+        let full = fault_after(&sections(9));
+        assert_eq!(full, (15, "a piece has eight sections at most"));
+
+        // A scene plays four sections in turn at most.
+        let turns = |sections: &str| whole("").replace("play menu rest", sections);
+        assert!(read(&turns("play menu rest,rest,rest,rest")).is_ok());
+        let full = fault(&turns("play menu rest,rest,rest,rest,rest"));
+        assert_eq!(full, (8, "a scene plays four sections at most"));
     }
 
     #[test]

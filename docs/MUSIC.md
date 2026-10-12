@@ -11,8 +11,8 @@ All numbers and all notes in this document are starting values to tune by ear.
 | Topic | Summary |
 |---|---|
 | Piece | One, in A, at 120 beats per minute and at 105 in its bridge, without an end |
-| Written by hand | Three motifs, the chords and the melody of each section, twelve patterns with their levels, the tempos, the key and its two modes, the roll and the connection. They are in one file, [`music.score`](#the-file). |
-| Derived by rule | Everything else: the notes of each mode, every arrangement, every connection, every sound |
+| Written by hand | Three motifs, the chords and the melody of each section, twelve patterns with their levels, the arrangement, the tempos, the key and its two modes, the roll and the connection. They are in one file, [`music.score`](#the-file). |
+| Derived by rule | Everything else: the notes of each mode, the skeleton, the ornaments and the answers of a melody, every connection, every sound |
 | Instruments | Bass, pluck, lead, kick, hi-hat and snare, all synthesized by the game |
 | Follows | The place (bay, corridor, arena), the fight (on or off) and the threat (the highest brain tier awake) |
 | Ignores | The seed, the platform and the clock of the machine |
@@ -95,7 +95,7 @@ The tonic is A because of the cues. Those that play notes already play A and E: 
 
 ## Material
 
-Four things are written by hand: the motifs, the sections with their chords, the patterns, and a few numbers, which are the tempos, the key, the roll and the connection. They are in one file.
+Five things are written by hand: the motifs, the sections with their chords, the patterns, the arrangement, and a few numbers, which are the tempos, the key, the roll and the connection. They are in one file.
 
 ### The file
 
@@ -121,14 +121,25 @@ pat bass  long     R... .... .... .... 255
 pat bass  plain    R..R ..R. R..R ..R. 255
 pat bass  leaping  R..O ..R. R..O ..V. 255
 pat bass  pair     ---- ---- 5-5. .... 255
-pat pluck arpeggio x.x. x.x. x.x. x.x. 150
-pat pluck fast     xxxx xxxx xxxx xxxx 150
+pat pluck arpeggio x.x. x.x. x.x. x.x. 150 echo
+pat pluck fast     xxxx xxxx xxxx xxxx 150 echo
 pat pluck tick     5.9. 5.9. 5.9. 5.9. 110
 
 sec intro  11C4 11C5  A A A a
 sec verse  11C4 11C5  A A A a
 sec chorus 451C 4511  B B B B
 sec bridge 5555 5555  C C:7 C C:9 C C:7 C C:4  105
+
+play menu     intro         bass=long@2 pluck=melody@4
+play calm     bridge        kick=heart bass=pair@1 pluck=melody@3/tick@2 lead=answer@4:150
+play corridor verse,chorus  kick=fight hat=corridor bass=* pluck=* lead=*
+play arena    verse,chorus  kick=fight hat=arena snare=arena bass=* pluck=* lead=*
+
+threat 0  bass=plain@2    pluck=arpeggio@3
+threat 1  bass=plain@2    pluck=arpeggio@3  lead=skeleton@4
+threat 2  bass=leaping@2  pluck=arpeggio@3  lead=melody@4
+threat 3  bass=leaping@2  pluck=arpeggio@3  lead=ornate@4
+threat 4  bass=leaping@2  pluck=fast@3      lead=ornate@4+ornate@5:130
 
 roll 2 hat snare 40 255
 link 2 5 4
@@ -143,8 +154,10 @@ The file is text. It has one record per line, with its words apart by spaces. An
 | `key` | The tonic, then the mode of the piece and the mode of the fights of an arena, each by its name: one of the seven modes below |
 | `motif` | A capital letter, which names the motif, then its bars, one to four of them, with a `\|` between two bars |
 | `turn` | The letter of a motif, then the bar that this motif ends a section with, in place of its last one |
-| `pat` | A pattern: its instrument, its name, one bar, and how loud a hit is, up to 255. A pattern with soft hits also says how loud those are. The instrument is `kick`, `hat`, `snare`, `bass` or `pluck`. |
+| `pat` | A pattern: its instrument, its name, one bar, and how loud a hit is, up to 255. A pattern with soft hits also says how loud those are. The instrument is `kick`, `hat`, `snare`, `bass` or `pluck`: the lead has no pattern. A pattern of the pluck that ends with `echo` has the echo of the pluck on its notes. |
 | `sec` | A section: its name, its chords, its melody, and its tempo if it has one of its own |
+| `play` | A line of the [arrangement](#arrangement): a scene, the sections that it plays in turn, and what each instrument plays in them |
+| `threat` | A threat, from 0 to 4, and what the instruments play at it |
 | `roll` | The roll that announces a fight: its beats, the drum that rolls, the drum that rolls in an arena, and how loud it is at its start and at its end |
 | `link` | The [connection](#connection) out of a fight: its beats, the degree that it goes to, and how many notes it has at most |
 
@@ -175,7 +188,30 @@ A bar has 16 steps in four beats. It is written beat by beat, as four words of f
 | `o` | | The same, softer |
 | `R`, `O`, `V` | | The root of the chord of the bar, that root an octave higher, and its fifth |
 
-The file holds what is written, and not yet what plays when. The [arrangement](#arrangement) of each context and of each threat is in the code, with the levels of the lines that are derived and with the [instruments](#instruments). The code asks for the four sections and for the twelve patterns by their names: the file can change any of them, and can't add one. A section or a pattern that nothing plays stops the build, like a line that can't be read.
+The arrangement has a `play` line for each of the four scenes that it tells apart, and a `threat` line for each threat:
+
+| Scene | When |
+|---|---|
+| `menu` | No run is on, or the run is in its start bay |
+| `calm` | Nobody fights, in a corridor or in an arena |
+| `corridor` | A fight in a corridor |
+| `arena` | A fight in an arena, which is in the second mode of the key |
+
+After its scene, a `play` line has the sections that play in turn, with a comma between two of them, then what the instruments play. An instrument is the `kick`, the `hat`, the `snare`, the `bass`, the `pluck` or the `lead`, and one that the line doesn't name is silent:
+
+| Written | What the instrument plays |
+|---|---|
+| `kick=heart` | A drum plays one of its patterns, by its name |
+| `bass=long@2` | The bass and the pluck play one of their patterns in an octave, from 1 to 5: the octave of the tonic above which the degrees of the pattern are counted. The pluck builds the chord of the bar above that tonic, and the bass takes the root that is nearest to it. In A, octave 1 starts at the A of 55 Hz, and octave 4 at the A of 440 Hz. |
+| `pluck=melody@4` | The bass, the pluck and the lead play the melody of the section, in an octave: `melody` as it is written, `skeleton` for its notes that start on a beat, `ornate` with its ornaments, or `answer` for the answer to each of its bars |
+| `lead=answer@4:150` | A melody has a level after its octave, up to 255, when it isn't as loud as can be |
+| `pluck=melody@3/tick@2` | A line, and another line that sounds where the first one starts nothing |
+| `lead=ornate@4+ornate@5:130` | Two lines together, which only the lead can play. The second one starts a note where the first one does. |
+| `bass=*` | The instrument plays what the line of the threat says. A scene without a fight takes the line of threat 0. |
+
+A `threat` line is written in the same way, without `*`. It only names instruments that a scene leaves to the threat.
+
+The file doesn't hold the [instruments](#instruments) yet. How each one sounds, and how loud it is against the others, is in the code. So are the rules: how a line is derived from a melody, and how the music follows the game from one scene to the next.
 
 After a change of the file, two commands tell what it did:
 
@@ -289,7 +325,7 @@ In multiplayer the context is the team's, so every player hears the same arrange
 
 ## Arrangement
 
-The drums and the mode tell where the players are and whether they fight. The lead tells whom they fight.
+The drums and the mode tell where the players are and whether they fight. The lead tells whom they fight. The two tables below are the `play` lines and the `threat` lines of [the file](#the-file).
 
 | Context | Section | Mode | Kick | Hi-hat | Snare | Bass | Pluck | Lead |
 |---|---|---|---|---|---|---|---|---|
@@ -488,7 +524,7 @@ With `?probe` after its address, the page shows how long its frames are, how far
 Some tests say what the piece is today:
 
 - **Stable.** Thirty-two seconds of each arrangement match a stored value, as the map of a seed does, and so does each cue.
-- **As written.** The file has the motifs, the chords, the patterns and the numbers of this document.
+- **As written.** The file has the motifs, the chords, the patterns, the arrangement and the numbers of this document.
 - **On time.** A fight that is announced on each of the 16 steps of a bar gives a roll at once and the fight two beats later. A fight that ends on each of them plays on to its next beat, and gives a connection there and the bridge two beats later.
 - **Connected.** For every note the lead can be on, the connection goes to degree 5 one step of the scale at a time and never turns back.
 
@@ -502,7 +538,8 @@ Others hold for any piece that the file writes. They are the checks to run after
 
 The rest is about the reader and about the sounds:
 
-- **Read.** The file of the piece reads. A file that doesn't says on which line and why: a bar that is not four beats of four steps, a symbol that an instrument doesn't have, a motif that a section plays and that isn't written above it, a melody that doesn't fill its eight bars.
+- **Read.** The file of the piece reads. A file that doesn't says on which line and why: a bar that is not four beats of four steps, a symbol that an instrument doesn't have, a motif that a section plays and that isn't written above it, a melody that doesn't fill its eight bars, a scene without its line, an instrument that is left to the threat when a threat has no line.
+- **Arranged.** A second piece, which arranges what the piece of the game doesn't, plays as its file says: a lead in the menu, two sections in turn at two tempos, a drum that follows the threat, a line under another, two fights of different lengths.
 - **In tune.** Every instrument plays the lowest and the highest note of its range within 3 hundredths of a semitone. The cues that play notes play A and E and nothing else, and the warning of a mine is between two notes.
 - **Whole.** Each cue lasts as long as it says, never goes past full scale and ends without a click.
 - **Ducked.** A ducked music is half as loud within 0.02 s, wherever the step is, and comes back to what it was, to the bit.
@@ -540,4 +577,3 @@ The switch of step 2 was an experiment, to settle by ear whether the music needs
 - Two machines in one room play the same piece out of step, because each has its own clock. Does co-op in one room need them in step?
 - In hard mode every tier is available from sector 1, so the lead is at its fullest almost at once. Is that the right sound for hard mode, or does it waste the build-up?
 - The file can give the piece another key, and the cues still play A and E. Should the cues follow the key of the file?
-- The arrangement and the instruments are still in the code. Before the file can hold them, its notation needs a way to say three things that the code now decides for each line: the octave in which a melody or a pattern is played, whether a note of the pluck has an echo, and how loud a line is when it is derived, such as the answer of the lead or the octave that the lead adds.

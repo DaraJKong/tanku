@@ -18,14 +18,25 @@ pat bass  long     R... .... .... .... 255
 pat bass  plain    R..R ..R. R..R ..R. 255
 pat bass  leaping  R..O ..R. R..O ..V. 255
 pat bass  pair     ---- ---- 5-5. .... 255
-pat pluck arpeggio x.x. x.x. x.x. x.x. 150
-pat pluck fast     xxxx xxxx xxxx xxxx 150
+pat pluck arpeggio x.x. x.x. x.x. x.x. 150 echo
+pat pluck fast     xxxx xxxx xxxx xxxx 150 echo
 pat pluck tick     5.9. 5.9. 5.9. 5.9. 110
 
 sec intro  11C4 11C5  A A A a
 sec verse  11C4 11C5  A A A a
 sec chorus 451C 4511  B B B B
 sec bridge 5555 5555  C C:7 C C:9 C C:7 C C:4  105
+
+play menu     intro         bass=long@2 pluck=melody@4
+play calm     bridge        kick=heart bass=pair@1 pluck=melody@3/tick@2 lead=answer@4:150
+play corridor verse,chorus  kick=fight hat=corridor bass=* pluck=* lead=*
+play arena    verse,chorus  kick=fight hat=arena snare=arena bass=* pluck=* lead=*
+
+threat 0  bass=plain@2    pluck=arpeggio@3
+threat 1  bass=plain@2    pluck=arpeggio@3  lead=skeleton@4
+threat 2  bass=leaping@2  pluck=arpeggio@3  lead=melody@4
+threat 3  bass=leaping@2  pluck=arpeggio@3  lead=ornate@4
+threat 4  bass=leaping@2  pluck=fast@3      lead=ornate@4+ornate@5:130
 
 roll 2 hat snare 40 255
 link 2 5 4

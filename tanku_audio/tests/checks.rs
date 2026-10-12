@@ -8,25 +8,59 @@
 
 mod common;
 
-use common::{arrangements, at, bar, fight, loudness, play, restless};
+use common::{arrangements, at, bar, fight, loudness, play, restless, sections};
 use tanku_audio::{
     CHANNELS, Context, Place,
     director::{Director, Step},
     music, music_from,
-    notation::Rhythm,
+    notation::{Form, Instrument, Layer, Part, Scene, Source, THREATS},
     score::{
-        ARENA, BARS, BASS_PAIR, BRIDGE, BRIDGE_ANSWERS, CHORUS, CONNECTION_STEPS, FIVE, HOME,
-        INTRO, LINK, Mode, PLUCK_TICK, STEPS, VERSE, ornamented, rubs, skeletons, triad,
+        ARENA, BARS, CONNECTION_STEPS, FIVE, HOME, LINK, Line, Mode, SCORE, STEPS, rubs, triad,
     },
 };
 
-/// The mode of the piece and the mode of the fights of an arena.
-const MODES: [Mode; 2] = [HOME, ARENA];
+/// The mode that a scene is heard in: that of the piece, or that of the fights of an arena.
+fn mode(scene: Scene) -> Mode {
+    if scene == Scene::Arena { ARENA } else { HOME }
+}
 
-/// The degrees that a pattern writes.
-fn degrees(rhythm: &Rhythm) -> Vec<u8> {
-    let digits = rhythm.grid.iter().filter(|symbol| symbol.is_ascii_digit());
-    digits.map(|digit| digit - b'0').collect()
+/// The lines that the instruments play in a scene, at any threat.
+fn lines(scene: Scene) -> Vec<Source> {
+    let piece = &SCORE.piece;
+    let mut lines = Vec::new();
+    for instrument in Instrument::ALL {
+        let layers: Vec<Layer> = match piece.play(scene).part(instrument) {
+            Part::Silent => Vec::new(),
+            Part::Plays(layer) => vec![layer],
+            Part::ByThreat => {
+                let threats = 0..THREATS as u8;
+                threats
+                    .filter_map(|threat| piece.threat(threat, instrument))
+                    .collect()
+            }
+        };
+        for layer in layers {
+            lines.push(layer.first);
+            lines.extend(layer.second);
+        }
+    }
+    lines
+}
+
+/// The forms of the melody that a scene plays.
+fn forms(scene: Scene) -> Vec<Form> {
+    let played = |form: &Form| {
+        let lines = lines(scene);
+        lines
+            .iter()
+            .any(|line| matches!(line, Source::Tune { form: other, .. } if other == form))
+    };
+    Form::ALL.into_iter().filter(played).collect()
+}
+
+/// The melody of a section in a form, by the place of the section among those of the piece.
+fn melody(section: u8, form: Form) -> [Line; BARS] {
+    std::array::from_fn(|bar| *SCORE.line(section, form, bar))
 }
 
 /// A pitch as the name of its note, such as E2 for pitch 40.
@@ -38,26 +72,30 @@ fn note(pitch: u8) -> String {
 }
 
 #[test]
-fn the_melodies_use_five_degrees() {
-    // Degrees 1, 2, 3, 5 and 6, in any octave: a tune of these holds in both modes.
-    for passage in [INTRO, VERSE, CHORUS] {
-        let cells = passage.melody.iter().flatten();
-        for cell in cells.filter(|cell| cell.degree != 0) {
-            let within = (cell.degree - 1) % 7 + 1;
-            assert!(
-                FIVE.contains(&within),
-                "degree {} in the {:?}",
-                cell.degree,
-                passage.name
-            );
+fn the_melodies_of_the_fights_use_five_degrees() {
+    // Degrees 1, 2, 3, 5 and 6, in any octave: a tune of these holds in both modes, and its
+    // ornaments stay among them.
+    for scene in [Scene::Corridor, Scene::Arena] {
+        for (_, passage) in sections(scene) {
+            let cells = passage.melody.iter().flatten();
+            for cell in cells.filter(|cell| cell.degree != 0) {
+                let within = (cell.degree - 1) % 7 + 1;
+                assert!(
+                    FIVE.contains(&within),
+                    "degree {} in the {:?}",
+                    cell.degree,
+                    passage.name
+                );
+            }
         }
     }
 }
 
 #[test]
 fn every_chord_is_major_or_minor() {
-    for mode in MODES {
-        for passage in [INTRO, VERSE, CHORUS] {
+    for scene in Scene::ALL {
+        let mode = mode(scene);
+        for (_, passage) in sections(scene) {
             for chord in mode.chords(passage.chords) {
                 let [root, third, fifth] = triad(mode, chord, 0);
                 assert!(
@@ -72,29 +110,19 @@ fn every_chord_is_major_or_minor() {
 
 #[test]
 fn no_note_rubs_against_the_root_of_its_chord() {
-    // The intro is only heard in the mode of the piece.
-    let intro = rubs(HOME, &INTRO.melody, &HOME.chords(INTRO.chords));
-    assert!(
-        intro == 0,
-        "notes of the intro that stay a semitone above the root of their chord in {HOME:?}: \
-         {intro}"
-    );
-    // The verse and the chorus are heard in both, as they are written, as their skeleton and
-    // with their ornaments.
-    for mode in MODES {
-        for passage in [VERSE, CHORUS] {
+    // Every section in the mode of each scene that plays it, in every form of its melody
+    // that the scene plays: as it is written, as its skeleton, with its ornaments.
+    for scene in Scene::ALL {
+        let mode = mode(scene);
+        for (index, passage) in sections(scene) {
             let chords = mode.chords(passage.chords);
-            let lines = [
-                ("melody", passage.melody),
-                ("skeleton", skeletons(passage.melody)),
-                ("ornaments", ornamented(passage.melody)),
-            ];
-            for (what, lines) in lines {
-                let count = rubs(mode, &lines, &chords);
+            for form in forms(scene) {
+                let count = rubs(mode, &melody(index, form), &chords);
                 assert!(
                     count == 0,
-                    "notes of the {what} of the {:?} that stay a semitone above the root of \
-                     their chord in {mode:?}: {count}",
+                    "notes of the {} of the {:?} that stay a semitone above the root of their \
+                     chord in {mode:?}: {count}",
+                    form.name(),
                     passage.name
                 );
             }
@@ -103,28 +131,39 @@ fn no_note_rubs_against_the_root_of_its_chord() {
 }
 
 #[test]
-fn the_bridge_has_no_mode() {
-    let lines = BRIDGE.melody.iter().chain(&BRIDGE_ANSWERS).flatten();
-    let mut heard: Vec<u8> = lines.map(|cell| cell.degree).collect();
-    heard.extend(degrees(&PLUCK_TICK));
-    heard.extend(degrees(&BASS_PAIR));
+fn the_calm_has_no_mode() {
+    // What is heard when nobody fights, between two fights of either kind: the melody of its
+    // sections in the forms that are played, and the degrees that its patterns write.
+    let mut heard = Vec::new();
+    for (index, _) in sections(Scene::Calm) {
+        for form in forms(Scene::Calm) {
+            let cells = melody(index, form).into_iter().flatten();
+            heard.extend(cells.map(|cell| cell.degree));
+        }
+    }
+    for line in lines(Scene::Calm) {
+        if let Source::Rhythm { index, .. } = line {
+            let digits = SCORE.piece.pattern(index).grid.into_iter();
+            heard.extend(digits.filter(u8::is_ascii_digit).map(|digit| digit - b'0'));
+        }
+    }
     heard.retain(|&degree| degree != 0);
     assert!(!heard.is_empty());
     for degree in heard {
         // The same note in both modes, and not the third degree, which tells major from
         // minor.
-        let [home, arena] = MODES.map(|mode| mode.semitones(degree));
+        let [home, arena] = [HOME, ARENA].map(|mode| mode.semitones(degree));
         assert!(
             home == arena,
-            "degree {degree} of the bridge is another note in {HOME:?} than in {ARENA:?}"
+            "degree {degree} of the calm is another note in {HOME:?} than in {ARENA:?}"
         );
         let within = (degree - 1) % 7 + 1;
-        assert!(within != 3, "the bridge has the third degree");
-        // Never a semitone above the degree that the bridge stays on.
+        assert!(within != 3, "the calm has the third degree");
+        // Never a semitone above the degree that a connection leads to, on which it stays.
         let above = (home + 12 - HOME.semitones(LINK.degree)) % 12;
         assert!(
             above != 1,
-            "degree {degree} of the bridge is a semitone above the degree it stays on"
+            "degree {degree} of the calm is a semitone above the degree it stays on"
         );
     }
 }
@@ -201,7 +240,8 @@ fn every_bar_makes_sound() {
     // The music never stops, whatever happens.
     let (mut music, conductor) = music();
     let frames = restless(&mut music, &conductor, 120);
-    let bars = frames.chunks(bar(&VERSE) * CHANNELS as usize);
+    let fight = bar(sections(Scene::Corridor)[0].1);
+    let bars = frames.chunks(fight * CHANNELS as usize);
     for (bar, frames) in bars.enumerate() {
         assert!(loudness(frames) > 0.002, "bar {bar}");
     }

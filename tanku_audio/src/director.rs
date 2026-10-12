@@ -1,6 +1,10 @@
 //! Chooses what plays. The game gives a context, and on every step the director says what each
 //! instrument starts.
 //!
+//! What plays is the arrangement that the file of the piece writes: a line for each scene,
+//! with the sections that play in turn and what each instrument plays in them, and a line for
+//! each threat. The director reads the context as a scene and plays its line.
+//!
 //! Three rules make the music answer fast and stay in time. A change within a fight, such as
 //! a new threat, waits for the bar line. A fight has a way in and a way out, which last two
 //! beats each: a roll announces it at once, and a connection leads its tune, from the next
@@ -11,13 +15,8 @@
 //! All of it is integer logic, so it gives the same answer on every platform.
 
 use crate::{
-    notation::{Instrument, Passage, Rhythm},
-    score::{
-        self, ARENA, BARS, BASS_LEAPING, BASS_LONG, BASS_PAIR, BASS_PLAIN, BEAT, BRIDGE,
-        BRIDGE_ANSWERS, CHORUS, CONNECTION_STEPS, HAT_ARENA, HAT_CORRIDOR, HOME, INTRO, KICK_FIGHT,
-        KICK_HEART, LINK, Line, Mode, PLUCK_ARPEGGIO, PLUCK_FAST, PLUCK_TICK, ROLL, SNARE_ARENA,
-        STEPS, T1, T2, T3, T4, VERSE,
-    },
+    notation::{Instrument, Layer, Part, Passage, Play, Rhythm, Scene, Source, THREATS},
+    score::{self, BARS, BEAT, Line, Mode, SCORE, STEPS, Score},
 };
 
 /// Where the run has got to.
@@ -48,16 +47,7 @@ pub struct Context {
     pub ducked: bool,
 }
 
-const HIGHEST_THREAT: u8 = 4;
-
-/// Eight bars with their chords and their melody.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Section {
-    Intro,
-    Verse,
-    Chorus,
-    Bridge,
-}
+const HIGHEST_THREAT: u8 = THREATS as u8 - 1;
 
 /// A note to start: its pitch in semitones, where 69 is the A of 440 Hz, its length, and how
 /// loud it is, up to 255.
@@ -92,71 +82,13 @@ pub struct Step {
     pub muffled: bool,
 }
 
-/// What the lead plays in the verse and in the chorus, for each threat from 1 to 4. At threat
-/// 4 it also plays the same line an octave higher.
-static LEAD: [[[Line; BARS]; 2]; 4] = [
-    [
-        score::skeletons(VERSE.melody),
-        score::skeletons(CHORUS.melody),
-    ],
-    [VERSE.melody, CHORUS.melody],
-    [
-        score::ornamented(VERSE.melody),
-        score::ornamented(CHORUS.melody),
-    ],
-    [
-        score::ornamented(VERSE.melody),
-        score::ornamented(CHORUS.melody),
-    ],
-];
-
-/// How loud a note of a melody or of a connection is. The patterns have their own levels,
-/// which the file gives.
+/// How loud a note is that no line of the file gives a level: the note that the bass holds
+/// while a tank is destroyed, and the notes of a connection.
 const HIT: u8 = 255;
-/// The octave that the lead adds at the highest threat is quieter than the line itself.
-const OCTAVE: u8 = 130;
-/// The answer of the lead in the bridge stays under the call, and under the lines that the
-/// lead has in a fight.
-const ANSWER: u8 = 150;
 /// A roll lasts a few beats, at the tempo of the fight it announces.
-pub const ROLL_HITS: u8 = ROLL.beats * BEAT as u8;
-/// Phrases that the fights walk through: two for the verse and two for the chorus.
-const PHRASES: u8 = 4;
+pub const ROLL_HITS: u8 = score::ROLL.beats * BEAT as u8;
+/// Bars in a phrase. A fight opens on the phrase after the one where the last fight ended.
 const BARS_IN_PHRASE: u8 = 4;
-
-/// How long a step of each section lasts, in half frames, in the order of [`Section`].
-const PACE: [u32; 4] = [
-    score::step(INTRO.tempo),
-    score::step(VERSE.tempo),
-    score::step(CHORUS.tempo),
-    score::step(BRIDGE.tempo),
-];
-
-/// What loops: the intro, the bridge, or the verse followed by the chorus.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Part {
-    Intro,
-    Bridge,
-    Fight,
-}
-
-impl Part {
-    fn bars(self) -> u8 {
-        match self {
-            Part::Intro | Part::Bridge => BARS as u8,
-            Part::Fight => 2 * BARS as u8,
-        }
-    }
-
-    /// The section that the part starts with.
-    fn first(self) -> Section {
-        match self {
-            Part::Intro => Section::Intro,
-            Part::Bridge => Section::Bridge,
-            Part::Fight => Section::Verse,
-        }
-    }
-}
 
 /// The roll that announces a fight.
 #[derive(Clone, Copy, Debug)]
@@ -175,20 +107,25 @@ struct Connection {
     lead: bool,
     /// How long a step of the fight lasted, in half frames.
     from: u32,
+    /// How hard the kick of the fight was hit, or 0 if the fight had none.
+    kick: u8,
     done: u8,
 }
 
+/// A note that a line starts: whether it has an echo, and its degree if the line is a melody.
+type Start = (Tone, bool, Option<u8>);
+
 #[derive(Clone, Debug)]
 pub struct Director {
-    part: Part,
-    /// The bar of the part that plays. A fight counts the 8 bars of the verse, then the 8 of
-    /// the chorus.
+    score: &'static Score,
+    /// The scene whose line of the arrangement plays.
+    scene: Scene,
+    /// The bar of that line that plays, counted through all its sections.
     bar: u8,
     /// The step of the bar that comes next.
     step: u8,
     mode: Mode,
-    /// What the bar that plays was arranged for.
-    arena: bool,
+    /// The threat that the bar that plays was arranged for.
     threat: u8,
     /// The phrase that the next fight opens on.
     next_phrase: u8,
@@ -202,15 +139,22 @@ pub struct Director {
     in_menu: bool,
 }
 
-/// A director at the start of the piece, in the main menu.
+/// A director at the start of the piece of the game, in the main menu.
 impl Default for Director {
     fn default() -> Self {
+        Self::of(&SCORE)
+    }
+}
+
+impl Director {
+    /// A director at the start of a piece, in the main menu.
+    pub fn of(score: &'static Score) -> Self {
         Self {
-            part: Part::Intro,
+            score,
+            scene: Scene::Menu,
             bar: 0,
             step: 0,
-            mode: HOME,
-            arena: false,
+            mode: score.piece.key.home,
             threat: 0,
             next_phrase: 0,
             roll: None,
@@ -220,31 +164,30 @@ impl Default for Director {
             in_menu: true,
         }
     }
-}
 
-impl Director {
     /// A director for a game that has been in this context for a long time: it is in the
     /// section of the context, and nothing announces it.
     pub fn settled(context: Context) -> Self {
+        Self::settled_in(&SCORE, context)
+    }
+
+    /// The same, for any piece.
+    pub fn settled_in(score: &'static Score, context: Context) -> Self {
         let mut director = Self {
             in_menu: context.place == Place::Menu,
-            ..Self::default()
+            ..Self::of(score)
         };
         if is_fight(context) {
             director.enter_fight(context);
         } else {
-            director.enter(calm_part(context));
+            director.enter(calm(context));
         }
         director
     }
 
-    pub fn section(&self) -> Section {
-        match self.part {
-            Part::Intro => Section::Intro,
-            Part::Bridge => Section::Bridge,
-            Part::Fight if self.bar < BARS as u8 => Section::Verse,
-            Part::Fight => Section::Chorus,
-        }
+    /// The name of the section that plays.
+    pub fn section(&self) -> &'static str {
+        self.passage().name.as_str()
     }
 
     /// The bar of the section that plays, from 0 to 7.
@@ -269,22 +212,20 @@ impl Director {
         }
         self.in_menu = !playing;
         let fight = is_fight(context);
+        let (roll_hits, link_steps) = (self.roll_hits(), self.link_steps());
 
         // A roll that is over gives way to the fight, and a connection to what follows the
         // fight, wherever the bar was.
-        if self.roll.is_some_and(|roll| roll.done == ROLL_HITS) {
+        if self.roll.is_some_and(|roll| roll.done == roll_hits) {
             self.roll = None;
             if fight {
                 self.enter_fight(context);
                 out.fresh = true;
             }
         }
-        if self
-            .connection
-            .is_some_and(|link| link.done == CONNECTION_STEPS)
-        {
+        if self.connection.is_some_and(|link| link.done == link_steps) {
             self.connection = None;
-            self.enter(calm_part(context));
+            self.enter(calm(context));
             out.fresh = true;
         }
         let between = self.roll.is_some() || self.connection.is_some();
@@ -293,8 +234,8 @@ impl Director {
         // still destroyed keeps everything waiting, and so do a roll and a connection: the
         // section under them stands still.
         if self.step == 0 && !context.down && !between {
-            let calm = calm_part(context);
-            let elsewhere = self.part != Part::Fight && self.part != calm && !fight;
+            let calm = calm(context);
+            let elsewhere = !self.scene.is_fight() && self.scene != calm && !fight;
             if self.hush || elsewhere {
                 self.hush = false;
                 self.enter(calm);
@@ -302,16 +243,16 @@ impl Director {
             }
             // A fight that goes on takes the threat of the moment. One that has just ended
             // keeps its own for its connection.
-            if self.part == Part::Fight && fight {
+            if self.scene.is_fight() && fight {
                 self.arrange(context);
             }
         }
 
         // What can't wait for the bar line.
-        let run_left = !playing && self.part != Part::Intro;
+        let run_left = !playing && self.scene != Scene::Menu;
         if context.down || run_left {
             if !self.hush {
-                if self.part == Part::Fight && self.connection.is_none() {
+                if self.scene.is_fight() && self.connection.is_none() {
                     self.end_fight();
                 }
                 self.hush = true;
@@ -319,25 +260,28 @@ impl Director {
                 self.connection = None;
                 out.bass = Some(self.root());
             }
-        } else if self.part == Part::Fight && !fight {
+        } else if self.scene.is_fight() && !fight {
             // The fight plays on to its next beat, so that the kick never stumbles. The
             // connection starts there, from the note the lead is on.
             let on_a_beat = self.step.is_multiple_of(BEAT as u8);
             if !self.hush && self.connection.is_none() && on_a_beat {
                 self.end_fight();
-                let lead = self.lead_on.filter(|_| self.threat > 0);
+                let playing = self.layer(Instrument::Lead).is_some();
+                let lead = self.lead_on.filter(|_| playing);
                 self.connection = Some(Connection {
-                    line: score::connection(lead, LINK),
+                    line: score::connection(lead, self.score.piece.link),
                     lead: lead.is_some(),
                     from: self.pace(),
+                    kick: self.kick(),
                     done: 0,
                 });
             }
-        } else if self.part != Part::Fight && fight && !self.hush {
+        } else if !self.scene.is_fight() && fight && !self.hush {
             if self.roll.is_none() {
+                let roll = self.score.piece.roll;
                 let arena = context.place == Place::Arena;
                 self.roll = Some(Rolling {
-                    drum: if arena { ROLL.arena } else { ROLL.drum },
+                    drum: if arena { roll.arena } else { roll.drum },
                     done: 0,
                 });
             }
@@ -348,43 +292,36 @@ impl Director {
         }
         out.hush = self.hush;
 
-        if let Some(roll) = &mut self.roll {
+        // A roll is at the tempo of the section that its fight opens on.
+        let opening = self.opening(context);
+        if let Some(rolling) = &mut self.roll {
             // Nothing else starts under the roll, which goes from one level to another.
-            let (from, to) = (ROLL.from as i32, ROLL.to as i32);
-            let level = (from + (to - from) * (roll.done as i32 + 1) / ROLL_HITS as i32) as u8;
-            match roll.drum {
+            let roll = self.score.piece.roll;
+            let (from, to) = (roll.from as i32, roll.to as i32);
+            let level = (from + (to - from) * (rolling.done as i32 + 1) / roll_hits as i32) as u8;
+            match rolling.drum {
                 Instrument::Kick => out.kick = level,
                 Instrument::Snare => out.snare = level,
                 _ => out.hat = level,
             }
-            roll.done += 1;
-            // It is at the tempo of the section that the fight opens on.
-            let opening = if self.next_phrase * BARS_IN_PHRASE < BARS as u8 {
-                Section::Verse
-            } else {
-                Section::Chorus
-            };
-            out.length = PACE[opening as usize];
+            rolling.done += 1;
+            out.length = opening;
             return out;
         }
         if let Some(link) = self.connection {
-            self.connect(link, calm_part(context), &mut out);
+            self.connect(link, calm(context), &mut out);
             return out;
         }
 
         if !self.hush {
-            match self.part {
-                Part::Intro => self.intro(&mut out),
-                Part::Bridge => self.bridge(&mut out),
-                Part::Fight => self.fight(&mut out),
-            }
+            self.play(&mut out);
         }
         out.length = self.pace();
 
         self.step += 1;
         if self.step == STEPS as u8 {
             self.step = 0;
-            self.bar = (self.bar + 1) % self.part.bars();
+            self.bar = (self.bar + 1) % self.bars();
         }
         out
     }
@@ -392,31 +329,34 @@ impl Director {
     /// One step of a connection. The kick keeps the beat while it slows down, and the bass,
     /// the pluck and the lead go together, each in its own octave, to the degree on which the
     /// bridge stays.
-    fn connect(&mut self, link: Connection, next: Part, out: &mut Step) {
+    fn connect(&mut self, link: Connection, next: Scene, out: &mut Step) {
+        let score = self.score;
         if link.done.is_multiple_of(BEAT as u8) {
-            out.kick = KICK_FIGHT.level;
+            out.kick = link.kick;
         }
         let cell = link.line[link.done as usize];
         if cell.degree != 0 {
-            let tone = |tonic: u8| {
+            let home = score.piece.key.home;
+            let tone = |octave: u8| {
                 Some(Tone {
-                    pitch: tonic + HOME.semitones(cell.degree),
+                    pitch: score.tonic(octave) + home.semitones(cell.degree),
                     steps: cell.steps,
                     level: HIT,
                 })
             };
             // A line that rises starts low in the scale, where the bass is an octave higher
             // so as not to go below its range.
-            let rising = link.line[0].degree < LINK.degree;
-            out.bass = tone(if rising { T2 } else { T1 });
-            out.pluck = tone(T3);
+            let rising = link.line[0].degree < score.piece.link.degree;
+            out.bass = tone(if rising { 2 } else { 1 });
+            out.pluck = tone(3);
             if link.lead {
-                out.lead[0] = tone(T4);
+                out.lead[0] = tone(4);
             }
         }
         // Each step is a little nearer the tempo of what follows than the one before.
-        let (from, to) = (link.from as i64, PACE[next.first() as usize] as i64);
-        let length = from + (to - from) * (link.done as i64 + 1) / CONNECTION_STEPS as i64;
+        let first = score.piece.play(next).sections()[0];
+        let (from, to) = (link.from as i64, score.pace(first) as i64);
+        let length = from + (to - from) * (link.done as i64 + 1) / self.link_steps() as i64;
         out.length = length as u32;
         self.connection = Some(Connection {
             done: link.done + 1,
@@ -424,18 +364,20 @@ impl Director {
         });
     }
 
-    /// Starts the intro or the bridge from its first bar.
-    fn enter(&mut self, part: Part) {
-        self.part = part;
+    /// Starts the line of a scene without a fight from its first bar.
+    fn enter(&mut self, scene: Scene) {
+        self.scene = scene;
         self.bar = 0;
         self.step = 0;
-        self.mode = HOME;
+        self.mode = self.score.piece.key.home;
+        // Nobody fights: what such a scene leaves to the threat is what the lowest one has.
+        self.threat = 0;
     }
 
     /// Starts the fight on the phrase after the one where the last fight ended.
     fn enter_fight(&mut self, context: Context) {
-        self.part = Part::Fight;
-        self.bar = self.next_phrase * BARS_IN_PHRASE;
+        self.scene = fight_scene(context);
+        self.bar = self.next_phrase * BARS_IN_PHRASE % self.bars();
         self.step = 0;
         self.lead_on = None;
         self.arrange(context);
@@ -443,125 +385,193 @@ impl Director {
 
     /// Notes where the fight ended, for the next one to go on from there.
     fn end_fight(&mut self) {
+        let bars = self.bars();
         // On a bar line, the bar that the count shows has not played.
         let last = if self.step == 0 {
-            (self.bar + Part::Fight.bars() - 1) % Part::Fight.bars()
+            (self.bar + bars - 1) % bars
         } else {
             self.bar
         };
-        self.next_phrase = (last / BARS_IN_PHRASE + 1) % PHRASES;
+        self.next_phrase = (last / BARS_IN_PHRASE + 1) % (bars / BARS_IN_PHRASE);
     }
 
     /// Sets what a bar of a fight is arranged for.
     fn arrange(&mut self, context: Context) {
-        self.arena = context.place == Place::Arena;
+        self.scene = fight_scene(context);
+        // The two fights may not have as many sections.
+        self.bar %= self.bars();
         self.threat = context.threat.min(HIGHEST_THREAT);
-        if self.threat == 0 {
+        if self.layer(Instrument::Lead).is_none() {
             // The lead is silent.
             self.lead_on = None;
         }
-        self.mode = if self.arena { ARENA } else { HOME };
+        let key = self.score.piece.key;
+        self.mode = if self.scene == Scene::Arena {
+            key.arena
+        } else {
+            key.home
+        };
+    }
+
+    /// The line of the arrangement that plays.
+    fn line(&self) -> &'static Play {
+        self.score.piece.play(self.scene)
+    }
+
+    /// Bars in that line: eight for each of its sections.
+    fn bars(&self) -> u8 {
+        (self.line().sections().len() * BARS) as u8
+    }
+
+    /// The section that plays, by its place among those of the piece.
+    fn index(&self) -> u8 {
+        let sections = self.line().sections();
+        sections[self.bar as usize / BARS % sections.len()]
+    }
+
+    fn passage(&self) -> &'static Passage {
+        self.score.piece.section(self.index())
+    }
+
+    /// How long a step of the section that plays lasts, in half frames.
+    fn pace(&self) -> u32 {
+        self.score.pace(self.index())
+    }
+
+    /// How long a step lasts in the section that a fight would open on in this context.
+    fn opening(&self, context: Context) -> u32 {
+        let sections = self.score.piece.play(fight_scene(context)).sections();
+        let bar = (self.next_phrase * BARS_IN_PHRASE) as usize;
+        self.score.pace(sections[bar / BARS % sections.len()])
+    }
+
+    /// Steps that a roll and a connection last.
+    fn roll_hits(&self) -> u8 {
+        self.score.piece.roll.beats * BEAT as u8
+    }
+
+    fn link_steps(&self) -> u8 {
+        self.score.piece.link.beats * BEAT as u8
     }
 
     /// The degree that the chord of the bar is built on. The bridge has no chords: it stays
     /// on one degree.
     fn chord(&self) -> u8 {
-        let written = passage(self.section()).chords[self.bar() as usize];
+        let written = self.passage().chords[self.bar() as usize];
         self.mode.chord(written)
-    }
-
-    /// How long a step of the section that plays lasts, in half frames.
-    fn pace(&self) -> u32 {
-        PACE[self.section() as usize]
     }
 
     /// The root of the chord of the bar on the bass, for a whole bar.
     fn root(&self) -> Tone {
         Tone {
-            pitch: score::bass_root(self.mode, self.chord()),
+            pitch: score::bass_root(self.mode, self.chord(), self.score.tonic(2)),
             steps: STEPS as u8,
             level: HIT,
         }
     }
 
-    fn intro(&self, out: &mut Step) {
-        out.bass = self.bass(&BASS_LONG);
-        out.pluck = self.note(&INTRO.melody[self.bar as usize], T4);
-    }
-
-    /// A bar of the bridge is four pairs of hits, one per beat: the two beats of a heart on the
-    /// kick, the call of the pluck, two notes of the bass and the answer of the lead. Under
-    /// them the pluck ticks, an octave below its call.
-    fn bridge(&self, out: &mut Step) {
-        let bar = self.bar as usize;
-        out.kick = hit(&KICK_HEART, self.step);
-        let tick = self.voice(&PLUCK_TICK, score::triad(self.mode, self.chord(), T2), T2);
-        out.pluck = self.note(&BRIDGE.melody[bar], T3).or(tick);
-        out.bass = self.bass(&BASS_PAIR);
-        out.lead[0] = self.note(&BRIDGE_ANSWERS[bar], T4).map(|tone| Tone {
-            level: ANSWER,
-            ..tone
-        });
-    }
-
-    fn fight(&mut self, out: &mut Step) {
-        out.kick = hit(&KICK_FIGHT, self.step);
-        if self.arena {
-            out.hat = hit(&HAT_ARENA, self.step);
-            out.snare = hit(&SNARE_ARENA, self.step);
-        } else {
-            out.hat = hit(&HAT_CORRIDOR, self.step);
+    /// What an instrument plays in the scene, at the threat of the bar.
+    fn layer(&self, instrument: Instrument) -> Option<Layer> {
+        match self.line().part(instrument) {
+            Part::Silent => None,
+            Part::ByThreat => self.score.piece.threat(self.threat, instrument),
+            Part::Plays(layer) => Some(layer),
         }
-        out.bass = self.bass(if self.threat >= 2 {
-            &BASS_LEAPING
-        } else {
-            &BASS_PLAIN
-        });
+    }
 
-        // The pluck goes up the chord, twice as fast at the highest threat.
-        let arpeggio = if self.threat == HIGHEST_THREAT {
-            &PLUCK_FAST
-        } else {
-            &PLUCK_ARPEGGIO
+    /// The pattern that a drum plays in the scene.
+    fn drum(&self, instrument: Instrument) -> Option<&'static Rhythm> {
+        match self.layer(instrument)?.first {
+            Source::Rhythm { index, .. } => Some(self.score.piece.pattern(index)),
+            Source::Tune { .. } => None,
+        }
+    }
+
+    /// How hard the kick of the scene is hit, or 0 if it has none.
+    fn kick(&self) -> u8 {
+        self.drum(Instrument::Kick).map_or(0, |rhythm| rhythm.level)
+    }
+
+    /// Starts what each instrument has on this step in the line of the arrangement.
+    fn play(&mut self, out: &mut Step) {
+        let level = |drum: Instrument| {
+            let pattern = self.drum(drum);
+            pattern.map_or(0, |rhythm| hit(rhythm, self.step))
         };
-        out.pluck = self.voice(arpeggio, score::triad(self.mode, self.chord(), T3), T3);
-        out.echo = out.pluck.is_some();
+        out.kick = level(Instrument::Kick);
+        out.hat = level(Instrument::Hat);
+        out.snare = level(Instrument::Snare);
 
-        if self.threat > 0 {
-            let chorus = self.section() == Section::Chorus;
-            let lines = &LEAD[self.threat as usize - 1][chorus as usize];
-            let line = &lines[self.bar() as usize];
-            if let Some(tone) = self.note(line, T4) {
-                self.lead_on = Some(line[self.step as usize].degree);
-                out.lead[0] = Some(tone);
-                if self.threat == HIGHEST_THREAT {
-                    out.lead[1] = Some(Tone {
-                        pitch: tone.pitch + 12,
-                        level: OCTAVE,
-                        ..tone
-                    });
-                }
+        if let Some(layer) = self.layer(Instrument::Bass) {
+            out.bass = self.first(layer, Instrument::Bass).map(|(tone, ..)| tone);
+        }
+        if let Some(layer) = self.layer(Instrument::Pluck)
+            && let Some((tone, echo, _)) = self.first(layer, Instrument::Pluck)
+        {
+            out.pluck = Some(tone);
+            out.echo = echo;
+        }
+        if let Some(layer) = self.layer(Instrument::Lead)
+            && let Some((tone, _, degree)) = self.first(layer, Instrument::Lead)
+        {
+            out.lead[0] = Some(tone);
+            // The second line of the lead follows the first: it starts a note where the
+            // first does.
+            if let (true, Some(second)) = (layer.together, layer.second) {
+                let second = self.start(second, Instrument::Lead);
+                out.lead[1] = second.map(|(tone, ..)| tone);
+            }
+            if self.scene.is_fight() {
+                self.lead_on = degree;
             }
         }
     }
 
-    /// The note of a bar of melody that starts on this step, if one does, with degree 1 at
-    /// `tonic`.
-    fn note(&self, line: &Line, tonic: u8) -> Option<Tone> {
-        let cell = line[self.step as usize];
-        (cell.degree != 0).then(|| Tone {
-            pitch: tonic + self.mode.semitones(cell.degree),
-            steps: cell.steps,
-            level: HIT,
-        })
+    /// The note that a layer starts on this step, if it starts one: that of its first line,
+    /// or that of a second line that sounds where the first starts nothing.
+    fn first(&self, layer: Layer, instrument: Instrument) -> Option<Start> {
+        let first = self.start(layer.first, instrument);
+        match layer.second {
+            Some(second) if !layer.together => first.or_else(|| self.start(second, instrument)),
+            _ => first,
+        }
     }
 
-    /// The note of a pattern of the bass that starts on this step, if one does. The chord of
-    /// the bar is built on the root that the bass has for it.
-    fn bass(&self, rhythm: &Rhythm) -> Option<Tone> {
-        let root = score::bass_root(self.mode, self.chord());
-        let [low, third, fifth] = score::triad(self.mode, self.chord(), 0);
-        self.voice(rhythm, [root, root + third - low, root + fifth - low], T1)
+    /// The note that a line starts on this step, if it starts one.
+    fn start(&self, source: Source, instrument: Instrument) -> Option<Start> {
+        let score = self.score;
+        match source {
+            Source::Tune {
+                form,
+                octave,
+                level,
+            } => {
+                let line = score.line(self.index(), form, self.bar() as usize);
+                let cell = line[self.step as usize];
+                (cell.degree != 0).then(|| {
+                    let tone = Tone {
+                        pitch: score.tonic(octave) + self.mode.semitones(cell.degree),
+                        steps: cell.steps,
+                        level,
+                    };
+                    (tone, false, Some(cell.degree))
+                })
+            }
+            Source::Rhythm { index, octave } => {
+                let rhythm = score.piece.pattern(index);
+                let tonic = score.tonic(octave);
+                let chord = if instrument == Instrument::Bass {
+                    // The chord of the bar, built on the root that the bass has for it.
+                    let root = score::bass_root(self.mode, self.chord(), tonic);
+                    let [low, third, fifth] = score::triad(self.mode, self.chord(), 0);
+                    [root, root + third - low, root + fifth - low]
+                } else {
+                    score::triad(self.mode, self.chord(), tonic)
+                };
+                let tone = self.voice(rhythm, chord, tonic)?;
+                Some((tone, rhythm.echo, None))
+            }
+        }
     }
 
     /// The note of a pattern that starts on this step, if one does. A hit is the next note of
@@ -605,21 +615,19 @@ fn is_fight(context: Context) -> bool {
     context.fight && !context.down && context.place != Place::Menu
 }
 
-/// The part that plays when nobody fights.
-fn calm_part(context: Context) -> Part {
+/// The scene of a context when nobody fights.
+fn calm(context: Context) -> Scene {
     match context.place {
-        Place::Menu | Place::Bay => Part::Intro,
-        Place::Corridor | Place::Arena => Part::Bridge,
+        Place::Menu | Place::Bay => Scene::Menu,
+        Place::Corridor | Place::Arena => Scene::Calm,
     }
 }
 
-/// The section of the file that a section of the piece is.
-fn passage(section: Section) -> &'static Passage {
-    match section {
-        Section::Intro => &INTRO,
-        Section::Verse => &VERSE,
-        Section::Chorus => &CHORUS,
-        Section::Bridge => &BRIDGE,
+/// The scene of a context in which a fight is on.
+fn fight_scene(context: Context) -> Scene {
+    match context.place {
+        Place::Arena => Scene::Arena,
+        _ => Scene::Corridor,
     }
 }
 
@@ -635,17 +643,39 @@ fn hit(rhythm: &Rhythm, step: u8) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        notation::read,
+        score::{CONNECTION_STEPS, HOME, PIECE},
+    };
 
     const BAR: usize = STEPS;
     /// Steps that a roll and a connection last.
     const ROLL: usize = ROLL_HITS as usize;
     const LINK: usize = CONNECTION_STEPS as usize;
     /// How long a step lasts in a fight and in the bridge, in half frames.
-    const STEP: u32 = PACE[Section::Verse as usize];
-    const BRIDGE_STEP: u32 = PACE[Section::Bridge as usize];
-    /// How hard the kick of a fight and the hi-hat of a corridor are hit.
-    const KICK: u8 = KICK_FIGHT.level;
-    const HAT: u8 = HAT_CORRIDOR.level;
+    const STEP: u32 = pace("verse");
+    const BRIDGE_STEP: u32 = pace("bridge");
+    /// How hard the kick of a fight and the hi-hat of a corridor are hit, and how loud the
+    /// tick of the bridge is.
+    const KICK: u8 = pattern(Instrument::Kick, "fight").level;
+    const HAT: u8 = pattern(Instrument::Hat, "corridor").level;
+    const TICK: u8 = pattern(Instrument::Pluck, "tick").level;
+
+    /// How long a step of a section of the piece lasts, in half frames.
+    const fn pace(section: &str) -> u32 {
+        match PIECE.passage(section) {
+            Some(passage) => score::step(passage.tempo),
+            None => panic!("the piece has no such section"),
+        }
+    }
+
+    /// A pattern of the piece.
+    const fn pattern(instrument: Instrument, name: &str) -> Rhythm {
+        match PIECE.rhythm(instrument, name) {
+            Some(rhythm) => rhythm,
+            None => panic!("the piece has no such pattern"),
+        }
+    }
 
     fn at(place: Place) -> Context {
         Context {
@@ -690,7 +720,7 @@ mod tests {
         for place in [Place::Menu, Place::Bay] {
             let mut director = Director::default();
             let steps = play(&mut director, at(place), 2 * BARS * BAR);
-            assert_eq!(director.section(), Section::Intro);
+            assert_eq!(director.section(), "intro");
             assert!(steps.iter().all(|step| !drums(step)));
             assert!(steps.iter().all(|step| step.lead == [None; 2]));
             // Its melody has no echo, and it is at the tempo of a fight.
@@ -749,7 +779,7 @@ mod tests {
         let first = director.step(fight(Place::Corridor, 0));
         assert!(first.fresh);
         assert_eq!(first.kick, KICK);
-        assert_eq!(director.section(), Section::Verse);
+        assert_eq!(director.section(), "verse");
     }
 
     #[test]
@@ -763,7 +793,7 @@ mod tests {
 
         let bars = play(&mut director, fight(Place::Arena, 2), 2 * BAR);
         assert_eq!(director.mode(), Mode::Aeolian);
-        assert_eq!(director.section(), Section::Verse);
+        assert_eq!(director.section(), "verse");
         // The second bar of motif A, with the F of Aeolian where Dorian has F sharp.
         assert_eq!(pitches(&bars[BAR..], |step| step.lead[0]), [72, 76, 77, 76]);
         // The snare is on beats 2 and 4 and the hi-hat on every step.
@@ -803,7 +833,10 @@ mod tests {
             // The fight plays on to its next beat, with its drums.
             for (index, step) in steps[..wait].iter().enumerate() {
                 let at = (offset + index) as u8;
-                assert_eq!((step.kick, step.hat), (0, hit(&HAT_CORRIDOR, at)));
+                assert_eq!(
+                    (step.kick, step.hat),
+                    (0, hit(&pattern(Instrument::Hat, "corridor"), at))
+                );
                 assert!(!step.fresh && step.length == STEP, "offset {offset}");
             }
             // The connection starts on that beat: its kick is where the kick of the fight
@@ -829,9 +862,9 @@ mod tests {
             // Then the bridge starts on its first beat.
             let bridge = &steps[wait + LINK..];
             assert!(bridge[0].fresh, "offset {offset}");
-            assert_eq!(bridge[0].kick, KICK_HEART.level);
+            assert_eq!(bridge[0].kick, pattern(Instrument::Kick, "heart").level);
             assert!(bridge.iter().all(|step| step.length == BRIDGE_STEP));
-            assert_eq!(director.section(), Section::Bridge);
+            assert_eq!(director.section(), "bridge");
             assert_eq!(director.mode(), HOME);
         }
     }
@@ -911,7 +944,7 @@ mod tests {
     fn a_bar_of_the_bridge_is_four_pairs_over_a_tick() {
         let mut director = Director::settled(at(Place::Corridor));
         let steps = play(&mut director, at(Place::Corridor), 2 * BARS * BAR);
-        assert_eq!(director.section(), Section::Bridge);
+        assert_eq!(director.section(), "bridge");
         // It is slower than the rest, and nothing has an echo.
         assert!(
             steps
@@ -933,7 +966,7 @@ mod tests {
             // Under them the pluck ticks on every half beat, between E and the B above it.
             let ticks: Vec<(usize, u8)> = (0..BAR)
                 .filter_map(|step| Some((step, bar[step].pluck?)))
-                .filter(|(_, tone)| tone.level == PLUCK_TICK.level)
+                .filter(|(_, tone)| tone.level == TICK)
                 .map(|(step, tone)| (step, tone.pitch))
                 .collect();
             assert_eq!(
@@ -953,7 +986,7 @@ mod tests {
         );
         let answers = pitches(&steps[..2 * BAR], |step| step.lead[0]);
         assert_eq!(answers, [81, 76, 79, 76]);
-        assert_eq!(steps[12].lead[0].map(|tone| tone.level), Some(ANSWER));
+        assert_eq!(steps[12].lead[0].map(|tone| tone.level), Some(150));
         assert_eq!(steps[..BARS * BAR], steps[BARS * BAR..]);
     }
 
@@ -1004,7 +1037,7 @@ mod tests {
         }
         // Each fight plays the first two bars of the next phrase, so the bar that comes after
         // them is the third of that phrase.
-        let (verse, chorus) = (Section::Verse, Section::Chorus);
+        let (verse, chorus) = ("verse", "chorus");
         assert_eq!(
             opened,
             [
@@ -1034,12 +1067,12 @@ mod tests {
         play(&mut director, fight(Place::Corridor, 1), ROLL + 2 * BAR);
         // The run ends and another starts: the intro goes on, and nothing marks it.
         play(&mut director, at(Place::Menu), 2 * BAR);
-        assert_eq!(director.section(), Section::Intro);
+        assert_eq!(director.section(), "intro");
         let steps = play(&mut director, at(Place::Bay), BAR);
         assert!(steps.iter().all(|step| !step.fresh && !step.hush));
         play(&mut director, fight(Place::Corridor, 1), ROLL);
         director.step(fight(Place::Corridor, 1));
-        assert_eq!((director.section(), director.bar()), (Section::Verse, 0));
+        assert_eq!((director.section(), director.bar()), ("verse", 0));
     }
 
     #[test]
@@ -1065,7 +1098,7 @@ mod tests {
                 .iter()
                 .all(|step| !drums(step) && !pitched(step))
         );
-        assert_eq!(director.section(), Section::Bridge);
+        assert_eq!(director.section(), "bridge");
     }
 
     #[test]
@@ -1075,7 +1108,7 @@ mod tests {
         let steps = play(&mut director, at(Place::Menu), BAR);
         assert!(steps[0].hush);
         assert!(steps[10].fresh);
-        assert_eq!(director.section(), Section::Intro);
+        assert_eq!(director.section(), "intro");
         assert_eq!(director.mode(), HOME);
     }
 
@@ -1088,8 +1121,8 @@ mod tests {
         // The bridge goes on from where it stood: the second beat of its heart comes next.
         let steps = play(&mut director, at(Place::Corridor), 2 * BAR);
         assert!(steps.iter().all(|step| step.hat == 0 && !step.fresh));
-        assert_eq!(steps[0].kick, KICK_HEART.soft);
-        assert_eq!(director.section(), Section::Bridge);
+        assert_eq!(steps[0].kick, pattern(Instrument::Kick, "heart").soft);
+        assert_eq!(director.section(), "bridge");
     }
 
     #[test]
@@ -1101,5 +1134,200 @@ mod tests {
         };
         assert!(!director.step(fight(Place::Corridor, 1)).muffled);
         assert!(director.step(paused).muffled);
+    }
+
+    /// A piece of its own, which arranges what the piece of the game doesn't: a lead in the
+    /// menu, two sections in turn when nobody fights, a drum that follows the threat, a line of
+    /// the bass under another, two fights of different lengths, and a roll that dies away.
+    const OTHER: &str = "tanku-music 1\n\
+                         tempo 120\n\
+                         key A dorian aeolian\n\
+                         motif A 1... .... .... ....\n\
+                         motif B 1..2 .... 3-.. .... | 5... .... .... 6...\n\
+                         pat kick four x... x... x... x... 200\n\
+                         pat hat off ..x. ..x. ..x. ..x. 90\n\
+                         pat snare back .... x... .... x... 150\n\
+                         pat bass roots R... .... R... .... 250\n\
+                         pat bass walk 1.2. 3.5. 8.5. 3.2. 240\n\
+                         pat pluck up x.x. x.x. x.x. x.x. 120 echo\n\
+                         pat pluck drone 5... .... 5... .... 80\n\
+                         sec one 1111 1111 A A A A A A A A\n\
+                         sec two 4455 4411 B B B B 90\n\
+                         play menu one bass=roots@2 lead=melody@4\n\
+                         play calm two,one kick=four hat=* pluck=melody@3/drone@2\n\
+                         play corridor one,two snare=back hat=* bass=roots@2/walk@1 lead=*\n\
+                         play arena two bass=roots@2 pluck=up@3 lead=melody@4+skeleton@5:90\n\
+                         threat 0 hat=off\n\
+                         threat 1 lead=skeleton@4\n\
+                         threat 2 hat=off lead=melody@4\n\
+                         threat 3 lead=ornate@4\n\
+                         threat 4 hat=off lead=ornate@4:200\n\
+                         roll 1 kick kick 255 51\n\
+                         link 2 5 4\n";
+
+    /// That piece, as a director plays it.
+    fn other() -> &'static Score {
+        Box::leak(Box::new(Score::new(read(OTHER).unwrap())))
+    }
+
+    /// What an instrument starts on each step where it starts a note: the step, the pitch,
+    /// the length and the level.
+    fn notes(steps: &[Step], tone: fn(&Step) -> Option<Tone>) -> Vec<(usize, u8, u8, u8)> {
+        let starts = steps.iter().enumerate();
+        let note = |(step, tone): (usize, Tone)| (step, tone.pitch, tone.steps, tone.level);
+        starts
+            .filter_map(|(at, step)| Some((at, tone(step)?)))
+            .map(note)
+            .collect()
+    }
+
+    #[test]
+    fn a_scene_plays_what_its_line_says() {
+        // The menu has a lead, which the menu of the game doesn't, and no pluck.
+        let mut director = Director::of(other());
+        let bar = play(&mut director, at(Place::Menu), BAR);
+        assert_eq!(director.section(), "one");
+        assert_eq!(notes(&bar, |step| step.lead[0]), [(0, 69, 16, 255)]);
+        assert_eq!(
+            notes(&bar, |step| step.bass),
+            [(0, 45, 8, 250), (8, 45, 8, 250)]
+        );
+        assert!(bar.iter().all(|step| !drums(step) && step.pluck.is_none()));
+
+        // A fight in a corridor has a snare and no kick. Its bass has its roots, and walks
+        // where they start nothing: a tone above the tonic, then up the scale and back.
+        let fight = |threat: u8| fight(Place::Corridor, threat);
+        let mut director = Director::settled_in(other(), fight(0));
+        let bar = play(&mut director, fight(0), BAR);
+        assert_eq!(on(&bar, |step| step.snare == 150), [4, 12]);
+        assert!(bar.iter().all(|step| step.kick == 0));
+        let bass = notes(&bar, |step| step.bass);
+        let pitches: Vec<u8> = bass.iter().map(|note| note.1).collect();
+        assert_eq!(pitches, [45, 35, 36, 40, 45, 40, 36, 35]);
+        assert_eq!((bass[0], bass[1]), ((0, 45, 8, 250), (2, 35, 2, 240)));
+    }
+
+    #[test]
+    fn the_threat_sets_what_a_scene_leaves_to_it() {
+        // The hi-hat of a fight in a corridor plays at every other threat, and the lead of
+        // the highest threat has a level of its own.
+        let heard = |threat: u8| {
+            let fight = fight(Place::Corridor, threat);
+            let mut director = Director::settled_in(other(), fight);
+            let bar = play(&mut director, fight, BAR);
+            let lead = notes(&bar, |step| step.lead[0]);
+            (on(&bar, |step| step.hat == 90), lead)
+        };
+        let off = vec![2, 6, 10, 14];
+        assert_eq!(heard(0), (off.clone(), vec![]));
+        assert_eq!(heard(1), (vec![], vec![(0, 69, 16, 255)]));
+        assert_eq!(heard(2), (off.clone(), vec![(0, 69, 16, 255)]));
+        // The ornament of a long note: the degree above it, then the note again.
+        let ornate = |level| vec![(0, 69, 14, level), (14, 71, 1, level), (15, 69, 1, level)];
+        assert_eq!(heard(3), (vec![], ornate(255)));
+        assert_eq!(heard(4), (off.clone(), ornate(200)));
+
+        // When nobody fights, the threat is the lowest one, whatever the last fight was.
+        let mut director = Director::settled_in(other(), fight(Place::Corridor, 3));
+        play(&mut director, fight(Place::Corridor, 3), BAR);
+        let calm = play(&mut director, at(Place::Corridor), LINK + 2 * BAR);
+        let bar = &calm[LINK + BAR..];
+        assert_eq!(on(bar, |step| step.hat == 90), off);
+    }
+
+    #[test]
+    fn a_scene_plays_its_sections_in_turn_each_at_its_tempo() {
+        let mut director = Director::settled_in(other(), at(Place::Corridor));
+        let mut heard = Vec::new();
+        for _ in 0..4 {
+            let section = director.section();
+            let bars = play(&mut director, at(Place::Corridor), BARS * BAR);
+            heard.push((section, bars[0].length, bars[BARS * BAR - 1].length));
+        }
+        // Eight bars of one section at 90 beats per minute, then eight of the other at 120.
+        let (slow, fast) = (score::step(90), score::step(120));
+        let turn = [("two", slow, slow), ("one", fast, fast)];
+        assert_eq!(heard, [turn[0], turn[1], turn[0], turn[1]]);
+
+        // The pluck has the melody, and its other line where the melody starts nothing: in
+        // the second bar of the motif, on the third beat.
+        let mut director = Director::settled_in(other(), at(Place::Corridor));
+        let bars = play(&mut director, at(Place::Corridor), 2 * BAR);
+        let melody = [(0, 57, 3, 255), (3, 59, 5, 255), (8, 60, 1, 255)];
+        assert_eq!(notes(&bars[..BAR], |step| step.pluck), melody);
+        let under = [(0, 64, 12, 255), (8, 52, 8, 80), (12, 66, 4, 255)];
+        assert_eq!(notes(&bars[BAR..], |step| step.pluck), under);
+        // Neither is a pattern with an echo.
+        assert!(bars.iter().all(|step| !step.echo));
+    }
+
+    #[test]
+    fn the_second_line_of_the_lead_follows_the_first() {
+        // In the arena, the lead has the melody and its skeleton an octave higher: the
+        // skeleton starts a note where it has one and the melody starts one too.
+        let arena = fight(Place::Arena, 2);
+        let mut director = Director::settled_in(other(), arena);
+        let bar = play(&mut director, arena, BAR);
+        assert_eq!(on(&bar, |step| step.lead[0].is_some()), [0, 3, 8]);
+        let second = notes(&bar, |step| step.lead[1]);
+        assert_eq!(second, [(0, 81, 8, 90), (8, 84, 8, 90)]);
+        // The arpeggio of the pluck has its echo.
+        assert_eq!(on(&bar, |step| step.echo), [0, 2, 4, 6, 8, 10, 12, 14]);
+        assert_eq!(director.mode(), Mode::Aeolian);
+    }
+
+    #[test]
+    fn a_roll_and_a_connection_follow_what_the_file_says_of_them() {
+        // A roll of one beat on the kick, which dies away, at the tempo of the fight.
+        let mut director = Director::settled_in(other(), at(Place::Corridor));
+        play(&mut director, at(Place::Corridor), 3);
+        let roll = play(&mut director, fight(Place::Corridor, 2), 4);
+        let levels: Vec<u8> = roll.iter().map(|step| step.kick).collect();
+        assert_eq!(levels, [204, 153, 102, 51]);
+        assert!(roll.iter().all(|step| step.hat == 0 && step.snare == 0));
+        assert!(roll.iter().all(|step| step.length == score::step(120)));
+        let first = director.step(fight(Place::Corridor, 2));
+        assert!(first.fresh);
+        assert_eq!(director.section(), "one");
+
+        // The fight has no kick, so its connection has none either. It slows down to the
+        // tempo of the first section of the calm, which is the slow one.
+        play(&mut director, fight(Place::Corridor, 2), 3);
+        let link = play(&mut director, at(Place::Corridor), LINK);
+        assert!(link.iter().all(|step| !drums(step)));
+        // The lead was on the tonic: the connection rises to degree 5 from the note above.
+        assert_eq!(pitches(&link, |step| step.lead[0]), [71, 72, 74, 76]);
+        let lengths: Vec<u32> = link.iter().map(|step| step.length).collect();
+        assert!(lengths.windows(2).all(|pair| pair[0] < pair[1]));
+        assert_eq!(lengths[LINK - 1], score::step(90));
+        let next = director.step(at(Place::Corridor));
+        assert!(next.fresh);
+        assert_eq!((director.section(), next.length), ("two", score::step(90)));
+    }
+
+    #[test]
+    fn two_fights_can_have_different_lengths() {
+        // A fight in a corridor has sixteen bars, and one in an arena has eight.
+        let mut director = Director::settled_in(other(), fight(Place::Corridor, 0));
+        // It ends in its fourth phrase, so the next fight opens on the first one.
+        play(&mut director, fight(Place::Corridor, 0), 13 * BAR);
+        assert_eq!(director.section(), "two");
+        play(&mut director, at(Place::Corridor), LINK + BAR);
+        play(&mut director, fight(Place::Arena, 0), 4);
+        director.step(fight(Place::Arena, 0));
+        assert_eq!((director.section(), director.bar()), ("two", 0));
+
+        // A fight in an arena that ends in its second phrase leaves the count on a phrase
+        // that the corridor has too.
+        play(&mut director, fight(Place::Arena, 0), 5 * BAR);
+        play(&mut director, at(Place::Arena), LINK + BAR);
+        play(&mut director, fight(Place::Corridor, 0), 4);
+        director.step(fight(Place::Corridor, 0));
+        assert_eq!((director.section(), director.bar()), ("one", 0));
+        // Whatever the game does, nothing fails: the two fights in turn, bar by bar.
+        for bar in 0..40 {
+            let place = [Place::Corridor, Place::Arena][bar % 2];
+            play(&mut director, fight(place, (bar % 5) as u8), BAR);
+        }
     }
 }

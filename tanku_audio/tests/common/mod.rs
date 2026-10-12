@@ -4,13 +4,21 @@
 
 use tanku_audio::{
     CHANNELS, Conductor, Context, Music, Place, SAMPLE_RATE,
-    notation::Passage,
-    score::{BARS, BRIDGE, CHORUS, INTRO, STEPS, VERSE, step},
+    notation::{Passage, Scene},
+    score::{BARS, SCORE, STEPS, step},
 };
 
 /// Frames in a bar of a section. A step is counted in half frames.
 pub fn bar(passage: &Passage) -> usize {
     STEPS * step(passage.tempo) as usize / 2
+}
+
+/// The sections that a scene plays in turn, each with its place among those of the piece.
+pub fn sections(scene: Scene) -> Vec<(u8, &'static Passage)> {
+    let places = SCORE.piece.play(scene).sections().iter();
+    places
+        .map(|&index| (index, SCORE.piece.section(index)))
+        .collect()
 }
 
 pub fn at(place: Place) -> Context {
@@ -38,48 +46,32 @@ pub struct Arrangement {
     pub turn: usize,
 }
 
-/// Every arrangement of the piece: the intro, the fights of a corridor at each threat, the
-/// bridge, and the fights of an arena at each threat.
+/// Every arrangement of the piece: the menu, the fights of a corridor at each threat, the
+/// calm, and the fights of an arena at each threat.
 pub fn arrangements() -> Vec<Arrangement> {
-    let arrangement = |name: String, context: Context, bar: usize, turn: usize| Arrangement {
-        name,
-        context,
-        bar,
-        turn,
+    let arrangement = |name: String, scene: Scene, context: Context| {
+        let bars = sections(scene).into_iter().map(|(_, passage)| bar(passage));
+        let bars: Vec<usize> = bars.collect();
+        Arrangement {
+            name,
+            context,
+            bar: bars[0],
+            turn: BARS * bars.iter().sum::<usize>(),
+        }
     };
-    let intro = BARS * bar(&INTRO);
-    let mut all = vec![arrangement(
-        "intro".into(),
-        at(Place::Bay),
-        bar(&INTRO),
-        intro,
-    )];
-    // A fight has the verse, then the chorus.
-    let turn = BARS * (bar(&VERSE) + bar(&CHORUS));
+    let mut all = vec![arrangement("menu".into(), Scene::Menu, at(Place::Bay))];
     for threat in 0..=4 {
         let name = format!("corridor at threat {threat}");
         all.push(arrangement(
             name,
+            Scene::Corridor,
             fight(Place::Corridor, threat),
-            bar(&VERSE),
-            turn,
         ));
     }
-    let bridge = BARS * bar(&BRIDGE);
-    all.push(arrangement(
-        "bridge".into(),
-        at(Place::Corridor),
-        bar(&BRIDGE),
-        bridge,
-    ));
+    all.push(arrangement("calm".into(), Scene::Calm, at(Place::Corridor)));
     for threat in 0..=4 {
         let name = format!("arena at threat {threat}");
-        all.push(arrangement(
-            name,
-            fight(Place::Arena, threat),
-            bar(&VERSE),
-            turn,
-        ));
+        all.push(arrangement(name, Scene::Arena, fight(Place::Arena, threat)));
     }
     all
 }
