@@ -223,6 +223,12 @@ After a change to what a mode makes of its enemies, two more tests send the same
 cargo test -p tanku_server trials::modes -- --ignored --nocapture
 ```
 
+Before a change to what a player's tank may be, one more test puts the same crude player in the four tanks of [the garage check](#the-garage-check), against the groups of sectors 6 to 15. That player raises its shield just before a bullet reaches its tank and lays no mine. The test prints the same figures for each tank, and how many shots landed for each enemy that fell. It takes four minutes:
+
+```bash
+cargo test -p tanku_server trials::garage -- --ignored --nocapture
+```
+
 This prints what the groups of each mode are made of, by stretch of sectors: which brains they have, and how many points they can't spend:
 
 ```bash
