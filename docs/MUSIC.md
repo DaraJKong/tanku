@@ -1,8 +1,8 @@
 # Tanku: music specification
 
-Status: the five [steps](#steps) are built. The sketch of step 1 was listened to four times, and its notes are accepted. With step 2 the game plays the music on the desktop, where it follows the place and the fight and has a volume of its own. A playtest answered its questions: the music that follows the fight too was kept over music that follows the place only, and a shot sounds different from the beat, so one is told from the other. Steps 3 to 5 have not been judged by ear yet. With step 3 the lead, the bass and the pluck follow the brains of the enemies that are awake. With step 4 the waveforms of the cues are in the crate, two cues are tuned to the music, and the warning of a mine ducks it. A playtest never heard that warning, which only a tank next to a mine could set off: the last 0.6 s of a fuse now sound it too. With step 5 the web build has its sound, which a browser had never let it start, and the music with it, handed over ahead of time so that a long frame leaves no hole in it.
+Status: the six [steps](#steps) are built. The sketch of step 1 was listened to four times, and its notes are accepted. With step 2 the game plays the music on the desktop, where it follows the place and the fight and has a volume of its own. A playtest answered its questions: the music that follows the fight too was kept over music that follows the place only, and a shot sounds different from the beat, so one is told from the other. Steps 3 to 5 have not been judged by ear yet. With step 3 the lead, the bass and the pluck follow the brains of the enemies that are awake. With step 4 the waveforms of the cues are in the crate, two cues are tuned to the music, and the warning of a mine ducks it. A playtest never heard that warning, which only a tank next to a mine could set off: the last 0.6 s of a fuse now sound it too. With step 5 the web build has its sound, which a browser had never let it start, and the music with it, handed over ahead of time so that a long frame leaves no hole in it. With step 6 the piece is written in a file, [`music.score`](#the-file), and plays as it did, to the sample. Whether its notation is enough to change the piece by hand has not been tried yet.
 
-The music of Tanku is one piece that never stops. The game makes it while it plays, from two short motifs and six instruments that it computes itself, so no sound file ships. The piece is the same for every seed and on every platform. What changes is its arrangement, which follows the run: where the players are, whether they are fighting, and how smart the enemies in front of them are.
+The music of Tanku is one piece that never stops. The game makes it while it plays, from three short motifs and six instruments that it computes itself, so no sound file ships. The piece is the same for every seed and on every platform. What changes is its arrangement, which follows the run: where the players are, whether they are fighting, and how smart the enemies in front of them are.
 
 All numbers and all notes in this document are starting values to tune by ear.
 
@@ -11,8 +11,8 @@ All numbers and all notes in this document are starting values to tune by ear.
 | Topic | Summary |
 |---|---|
 | Piece | One, in A, at 120 beats per minute and at 105 in its bridge, without an end |
-| Written by hand | Three motifs, the chords of the verse and of the chorus, nine rhythm patterns |
-| Derived by rule | Everything else: both modes, every section, every arrangement, every connection, every sound |
+| Written by hand | Three motifs, the chords and the melody of each section, twelve patterns with their levels, the tempos, the key and its two modes, the roll and the connection. They are in one file, [`music.score`](#the-file). |
+| Derived by rule | Everything else: the notes of each mode, every arrangement, every connection, every sound |
 | Instruments | Bass, pluck, lead, kick, hi-hat and snare, all synthesized by the game |
 | Follows | The place (bay, corridor, arena), the fight (on or off) and the threat (the highest brain tier awake) |
 | Ignores | The seed, the platform and the clock of the machine |
@@ -95,9 +95,82 @@ The tonic is A because of the cues. Those that play notes already play A and E: 
 
 ## Material
 
-Three things are written by hand: the motifs, the chords and the patterns.
+Four things are written by hand: the motifs, the sections with their chords, the patterns, and a few numbers, which are the tempos, the key, the roll and the connection. They are in one file.
 
-A grid shows bars of 16 steps, in four beats. In a melody, a digit starts a note on that degree, a dot holds it and a dash is silence. In a pattern, `x` is a hit, `o` is a softer one, `R` is the root of the chord of the bar, `O` is that root an octave higher, `5` is its fifth, and a dot starts nothing.
+### The file
+
+The piece is written in `tanku_audio/music.score`. The crate reads the file while it is compiled, so the game carries the piece in itself and opens no file when it starts. A file that can't be read stops the build, and the error says on which line and why.
+
+```
+tanku-music 1
+
+tempo 120
+key A dorian aeolian
+
+motif A 1..2 ..3. 5..3 ..2. | 3..5 ..6. .... 5...
+motif B 8... ..9. 8... 6... | 5..6 ..5. 3..2 ..1.
+motif C ---- 5.8. ---- ----
+turn  A 3..5 ..2. .... 5...
+
+pat kick  heart    x.o. .... .... .... 180 135
+pat kick  fight    x... x... x... x... 255
+pat hat   corridor ..x. ..x. ..x. ..x. 190
+pat hat   arena    ooxo ooxo ooxo ooxo 200 100
+pat snare arena    .... x... .... x... 230
+pat bass  long     R... .... .... .... 255
+pat bass  plain    R..R ..R. R..R ..R. 255
+pat bass  leaping  R..O ..R. R..O ..V. 255
+pat bass  pair     ---- ---- 5-5. .... 255
+pat pluck arpeggio x.x. x.x. x.x. x.x. 150
+pat pluck fast     xxxx xxxx xxxx xxxx 150
+pat pluck tick     5.9. 5.9. 5.9. 5.9. 110
+
+sec intro  11C4 11C5  A A A a
+sec verse  11C4 11C5  A A A a
+sec chorus 451C 4511  B B B B
+sec bridge 5555 5555  C C:7 C C:9 C C:7 C C:4  105
+
+roll 2 hat snare 40 255
+link 2 5 4
+```
+
+The file is text. It has one record per line, with its words apart by spaces. An empty line is ignored, and so is a line that starts with `#`.
+
+| Line | What it says |
+|---|---|
+| `tanku-music 1` | The format of the file and its version. It comes before every other record. |
+| `tempo` | The tempo of the piece in beats per minute, from 30 to 300 |
+| `key` | The tonic, then the mode of the piece and the mode of the fights of an arena. A mode is `ionian`, `dorian`, `mixolydian` or `aeolian`. |
+| `motif` | A capital letter, which names the motif, then its bars, one to four of them, with a `\|` between two bars |
+| `turn` | The letter of a motif, then the bar that this motif ends a section with, in place of its last one |
+| `pat` | A pattern: its instrument, its name, one bar, and how loud a hit is, up to 255. A pattern with soft hits also says how loud those are. The instrument is `kick`, `hat`, `snare`, `bass` or `pluck`. |
+| `sec` | A section: its name, its chords, its melody, and its tempo if it has one of its own |
+| `roll` | The roll that announces a fight: its beats, the drum that rolls, the drum that rolls in an arena, and how loud it is at its start and at its end |
+| `link` | The [connection](#connection) out of a fight: its beats, the degree that it goes to, and how many notes it has at most |
+
+The chords of a section are two words of four, one chord per bar. A chord is the degree that it is built on, or `C` for the chord that gives the mode its color. The melody of a section is eight bars of motifs, one word for each: `A` is motif A as it is written, `a` is motif A with its turn, and `C:7` is motif C with its last note on degree 7.
+
+A bar has 16 steps in four beats. It is written beat by beat, as four words of four steps:
+
+| Symbol | In a melody | In a pattern |
+|---|---|---|
+| A digit | Starts a note on that degree | The same, on the bass and the pluck |
+| `.` | Holds the note | Starts nothing, and holds a note that has a pitch |
+| `-` | Silence | Ends a note that has a pitch |
+| `x` | | A hit. On the bass and the pluck, it is the next note of the chord of the bar: its root, its third and its fifth in turn, rising. |
+| `o` | | The same, softer |
+| `R`, `O`, `V` | | The root of the chord of the bar, that root an octave higher, and its fifth |
+
+The file holds what is written, and not yet what plays when. The [arrangement](#arrangement) of each context and of each threat is in the code, with the levels of the lines that are derived and with the [instruments](#instruments). The code asks for the four sections and for the twelve patterns by their names: the file can change any of them, and can't add one. A section or a pattern that nothing plays stops the build, like a line that can't be read.
+
+After a change of the file, two commands tell what it did:
+
+```bash
+cargo run -p tanku_audio --example render
+cargo test -p tanku_audio --test checks
+```
+
+The first writes the piece to sound files, which [Engine](#engine) lists. The second runs the checks that hold for any piece: the rules of this document that a change of a note, of a pattern or of a level could break. The other tests say what the piece is today, to the note and to the sample, so a change that is heard fails them until they are brought up to date.
 
 ### Motifs
 
@@ -135,28 +208,26 @@ One chord per bar. C stands for the chord that gives the mode its color: the one
 | Intro and verse | 1, 1, C, 4 | 1, 1, C, 5 |
 | Chorus | 4, 5, 1, C | 4, 5, 1, 1 |
 
-The bridge has no chords. Its bass stays on degree 5, the one from which the tonic of a fight is best heard coming.
+The bridge has no chords. Its bass stays on degree 5, the one from which the tonic of a fight is best heard coming. The file writes that degree where the other sections have their chords.
 
 ### Patterns
 
 ```
-Kick, bridge         x.o. .... .... ....    the two beats of a heart
+Kick, heart          x.o. .... .... ....    the two beats of a heart, in the bridge
 Kick, fight          x... x... x... x...
 Hi-hat, corridor     ..x. ..x. ..x. ..x.
-Hi-hat, arena        xxxx xxxx xxxx xxxx    louder on the steps of the corridor pattern
+Hi-hat, arena        ooxo ooxo ooxo ooxo    every step, and louder on the steps of the corridor pattern
 Snare, arena         .... x... .... x...
 Bass, long           R... .... .... ....
 Bass, plain          R..R ..R. R..R ..R.
-Bass, leaping        R..O ..R. R..O ..5.
+Bass, leaping        R..O ..R. R..O ..V.
+Bass, pair           ---- ---- 5-5. ....    two notes in a row, in the bridge
 Pluck, arpeggio      x.x. x.x. x.x. x.x.    root, third and fifth of the chord in turn, rising
-```
-
-Two lines of the bridge are written in degrees, like a melody:
-
-```
-Bass, bridge         ---- ---- 5-5. ....
+Pluck, fast          xxxx xxxx xxxx xxxx    the same, twice as fast
 Pluck, tick          5.9. 5.9. 5.9. 5.9.    quiet, an octave below the call, which takes its place on the second beat
 ```
+
+Two patterns of the bridge are written in degrees, like a melody: the pair of the bass and the tick of the pluck.
 
 Syncopation lives in the bass, the pluck and the lead. The drums stay on a plain grid on purpose: a regular pulse is easy to stop hearing, and a shot, which is irregular, stands out against it.
 
@@ -209,7 +280,7 @@ The drums and the mode tell where the players are and whether they fight. The le
 | Context | Section | Mode | Kick | Hi-hat | Snare | Bass | Pluck | Lead |
 |---|---|---|---|---|---|---|---|---|
 | Menu or bay | Intro | Dorian | Silent | Silent | Silent | Long | Motif A | Silent |
-| No fight, in a corridor or an arena | Bridge | None | Heart | Silent | Silent | Two notes | Motif C over its tick | Answer |
+| No fight, in a corridor or an arena | Bridge | None | Heart | Silent | Silent | Pair | Motif C over its tick | Answer |
 | Fight in a corridor | Verse and chorus in turn | Dorian | Fight | Corridor | Silent | By threat | By threat | By threat |
 | Fight in an arena | Verse and chorus in turn | Aeolian | Fight | Arena | Arena | By threat | By threat | By threat |
 
@@ -223,7 +294,7 @@ During a fight, the threat sets the three instruments that have a pitch:
 | 1 | Grunt | Skeleton of the motif | Plain | Arpeggio |
 | 2 | Soldier | The motif | Leaping | Arpeggio |
 | 3 | Veteran | The motif with ornaments | Leaping | Arpeggio |
-| 4 | Ace | The motif with ornaments, in octaves | Leaping | Arpeggio, twice as fast |
+| 4 | Ace | The motif with ornaments, in octaves | Leaping | Fast: the arpeggio, twice as fast |
 
 The threat falls during a fight when the smartest enemies are destroyed first, and the lead then thins out. At the start of a fight it is the highest tier the sector allows about three times out of four, and half the time in the first two sectors, which have one enemy each. Over a run it therefore mostly rises with the sector number: the lead comes in during the first sectors, plays the whole motif from sector 6 and reaches its fullest form from sector 16.
 
@@ -307,20 +378,24 @@ The four cues that played A and E already had their E a pure fifth above A, at 6
 | What reaches the ears | The above and the sound device | Not guaranteed: devices differ in rate and delay |
 
 - **Nothing is random.** The noise of the hi-hat, the snare and the pluck comes from a generator of its own that always starts from the same state, and so does the noise of the cues.
-- **The score is integers.** What each instrument plays on a step is a function of the step number and of the context. Steps are counted in half frames, at 44,100 frames per second: one lasts 11,025 half frames at 120 beats per minute and 12,600 in the bridge. Nothing is rounded along the way, so nothing drifts.
+- **The score is integers.** What each instrument plays on a step is a function of the step number and of the context. Steps are counted in half frames, at 44,100 frames per second: one lasts 11,025 half frames at 120 beats per minute and 12,600 in the bridge. Nothing is rounded along the way, so nothing drifts. At a tempo whose step is not a whole number of half frames, the step is rounded to the nearest one, once.
 - **The crate does its own math.** The synthesizer and the cues add, subtract, multiply and divide 32-bit floats, and take sines and decays from a few lines of their own. They never call a library function such as `sin` or `exp`, whose last bit differs between platforms. Their output is therefore the same bit for bit on every platform, which lets a test compare it with a stored value. The web build gives the same stored values, and the first piece of music that its page hands to the browser is the native one to the bit.
 
 ## Engine
 
 ```
 tanku_audio
-├── score       the motifs, the chords, the patterns and the rules of derivation
+├── music.score the piece as it is written by hand
+├── notation    what a line of that file means, and the reader of the file
+├── score       the piece that the game plays, from that file, and the rules of derivation
 ├── director    from the context to what each instrument plays on each step
 ├── synth       the six instruments, the echo and the mix
 ├── cues        the waveforms of the sound cues
 ├── math        the sines, the decays and the noise that every sound is made with
 └── wav         writes a sound file, for the game, the listening tool and the tests
 ```
+
+[The file](#the-file) is read while the crate is compiled, by a reader that is a plain function: a program can call it too, to read a piece while it runs.
 
 The crate has two ends. The game holds a `Conductor` and writes the context into it. The sound thread holds the `Music` and asks it for frames:
 
@@ -341,7 +416,7 @@ music.render(&mut frames);
 | Real time | `render` never allocates, locks or waits. The context crosses between the threads as one atomic number, read at the start of every step, and about 700 times a second for the ducking, which can't wait for a step. |
 | Cost | Under 10 ms of one core for one second of the fullest arrangement. It takes 1.3 ms on the development machine. |
 | Development builds | The crate is compiled with full optimization, like the dependencies, because it runs in real time |
-| Start | Nothing is computed ahead, so the music adds nothing to the time the game takes to start or to restart |
+| Start | Nothing is computed ahead and no file is opened, so the music adds nothing to the time the game takes to start or to restart |
 
 On a desktop, the music is an asset that implements Bevy's `Decodable`, which Bevy mixes with the cues. It is played once and has no end. A system writes the context every frame from `Screen`, `Overlay`, `Run`, the `Sector` the run has reached and the genomes of the enemies that are awake. Another keeps the music as loud as the settings say, because Bevy counts the volume of the game into a sound only when the sound starts. Nothing changes in the server or in the simulation, and the headless server has no music.
 
@@ -396,14 +471,25 @@ With `?probe` after its address, the page shows how long its frames are, how far
 
 ## Tests and benchmarks
 
-- **Stable.** Sixteen bars of each arrangement match a stored value, as the map of a seed does, and so does each cue.
-- **In tune.** Every instrument plays the lowest and the highest note of its range within 3 hundredths of a semitone. The cues that play notes play A and E and nothing else, and the warning of a mine is between two notes.
+Some tests say what the piece is today:
+
+- **Stable.** Thirty-two seconds of each arrangement match a stored value, as the map of a seed does, and so does each cue.
+- **As written.** The file has the motifs, the chords, the patterns and the numbers of this document.
+- **On time.** A fight that is announced on each of the 16 steps of a bar gives a roll at once and the fight two beats later. A fight that ends on each of them plays on to its next beat, and gives a connection there and the bridge two beats later.
+- **Connected.** For every note the lead can be on, the connection goes to degree 5 one step of the scale at a time and never turns back.
+
+Others hold for any piece that the file writes. They are the checks to run after a change of the file, with `cargo test -p tanku_audio --test checks`:
+
+- **Sound in both modes.** The melodies use the five degrees, the chords are major or minor, and every melody, with its skeleton and its ornaments, passes the check on semitones above the root. The notes of the bridge are the same in both modes, and its third degree is never heard.
+- **In range.** Whatever happens, every instrument stays in its range: in every arrangement, on every way out of a fight, and while a tank is destroyed.
 - **Never silent.** Every bar of every arrangement makes sound.
 - **Never too loud.** No frame of any arrangement or of any change goes past full scale, and none is NaN.
 - **Seamless.** The third pass of a loop is identical to the second.
-- **On time.** A fight that is announced on each of the 16 steps of a bar gives a roll at once and the fight two beats later. A fight that ends on each of them plays on to its next beat, and gives a connection there and the bridge two beats later.
-- **Connected.** For every note the lead can be on, the connection goes to degree 5 one step of the scale at a time and never turns back.
-- **Sound in both modes.** The motifs use the five degrees, the chords are major or minor, and every melody, with its skeleton and its ornaments, passes the check on semitones above the root.
+
+The rest is about the reader and about the sounds:
+
+- **Read.** The file of the piece reads. A file that doesn't says on which line and why: a bar that is not four beats of four steps, a symbol that an instrument doesn't have, a motif that a section plays and that isn't written above it, a melody that doesn't fill its eight bars.
+- **In tune.** Every instrument plays the lowest and the highest note of its range within 3 hundredths of a semitone. The cues that play notes play A and E and nothing else, and the warning of a mine is between two notes.
 - **Whole.** Each cue lasts as long as it says, never goes past full scale and ends without a click.
 - **Ducked.** A ducked music is half as loud within 0.02 s, wherever the step is, and comes back to what it was, to the bit.
 - **Cost.** A benchmark renders ten seconds of a fight in an arena at threat 4.
@@ -427,6 +513,7 @@ Each step answers a question, and the first one changes nothing in the game.
 | 3, Threat | Lead, bass and pluck follow the brain tier | Can a player tell the smarter of two groups by ear? |
 | 4, Cues | The waveforms of the cues move to the crate, two cues are retuned, and the warning of a mine ducks the music | Is any cue lost under the music? |
 | 5, Web | The web build with music | Does the music play without gaps in a browser? |
+| 6, File | The piece moves from the code to a file, which the crate reads while it is compiled, and plays as before | Is the notation of the file enough to change the piece by hand? What does an editor of the piece need beyond it? |
 
 The switch of step 2 was an experiment, to settle by ear whether the music needs to know of the fights, and it is gone. On its other side the place alone set the arrangement, as in the first proposal for this music: the verse and the chorus played wherever the players were outside the bay, with the kick alone in a corridor and all three drums in an arena, and nothing called for the bridge. After a playtest, the music that follows the fight too was kept. [IDEAS.md](IDEAS.md) keeps the other one.
 
@@ -438,3 +525,5 @@ The switch of step 2 was an experiment, to settle by ear whether the music needs
 - The first time a run starts, the web build takes one frame of 50 ms on the development machine, and longer on a slower one, where it leaves a hole in the music once before the music reaches further. What takes that long?
 - Two machines in one room play the same piece out of step, because each has its own clock. Does co-op in one room need them in step?
 - In hard mode every tier is available from sector 1, so the lead is at its fullest almost at once. Is that the right sound for hard mode, or does it waste the build-up?
+- The file can give the piece another key, and the cues still play A and E. Should the cues follow the key of the file?
+- The arrangement and the instruments are still in the code. Before the file can hold them, its notation needs a way to say three things that the code now decides for each line: the octave in which a melody or a pattern is played, whether a note of the pluck has an echo, and how loud a line is when it is derived, such as the answer of the lead or the octave that the lead adds.

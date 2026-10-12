@@ -10,10 +10,14 @@
 //!
 //! All of it is integer logic, so it gives the same answer on every platform.
 
-use crate::score::{
-    self, A1, A2, A3, A4, BARS, BASS_LEAPING, BASS_LONG, BASS_PLAIN, BRIDGE, BRIDGE_ANSWERS,
-    BRIDGE_BASS, BRIDGE_STEP, CHORUS, CONNECTION_STEPS, HAT_ARENA, HAT_CORRIDOR, KICK_FIGHT,
-    KICK_HEART, Line, Mode, PEDAL, PLUCK_ARPEGGIO, Pattern, SNARE_ARENA, STEP, STEPS, TICK, VERSE,
+use crate::{
+    notation::{Instrument, Passage, Rhythm},
+    score::{
+        self, ARENA, BARS, BASS_LEAPING, BASS_LONG, BASS_PAIR, BASS_PLAIN, BEAT, BRIDGE,
+        BRIDGE_ANSWERS, CHORUS, CONNECTION_STEPS, HAT_ARENA, HAT_CORRIDOR, HOME, INTRO, KICK_FIGHT,
+        KICK_HEART, LINK, Line, Mode, PLUCK_ARPEGGIO, PLUCK_FAST, PLUCK_TICK, ROLL, SNARE_ARENA,
+        STEPS, T1, T2, T3, T4, VERSE,
+    },
 };
 
 /// Where the run has got to.
@@ -45,9 +49,6 @@ pub struct Context {
 }
 
 const HIGHEST_THREAT: u8 = 4;
-
-/// The mode of the piece, which every section is in but the fights of an arena.
-const HOME: Mode = Mode::Dorian;
 
 /// Eight bars with their chords and their melody.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -94,35 +95,42 @@ pub struct Step {
 /// What the lead plays in the verse and in the chorus, for each threat from 1 to 4. At threat
 /// 4 it also plays the same line an octave higher.
 static LEAD: [[[Line; BARS]; 2]; 4] = [
-    [score::skeletons(VERSE), score::skeletons(CHORUS)],
-    [VERSE, CHORUS],
-    [score::ornamented(VERSE), score::ornamented(CHORUS)],
-    [score::ornamented(VERSE), score::ornamented(CHORUS)],
+    [
+        score::skeletons(VERSE.melody),
+        score::skeletons(CHORUS.melody),
+    ],
+    [VERSE.melody, CHORUS.melody],
+    [
+        score::ornamented(VERSE.melody),
+        score::ornamented(CHORUS.melody),
+    ],
+    [
+        score::ornamented(VERSE.melody),
+        score::ornamented(CHORUS.melody),
+    ],
 ];
 
+/// How loud a note of a melody or of a connection is. The patterns have their own levels,
+/// which the file gives.
 const HIT: u8 = 255;
-/// The arpeggio of the pluck stays under the melody.
-const ARPEGGIO: u8 = 150;
 /// The octave that the lead adds at the highest threat is quieter than the line itself.
 const OCTAVE: u8 = 130;
-/// The two beats of the heart in the bridge: the kick is softer there than in a fight, and
-/// its second beat is softer than its first.
-const HEART: (u8, u8) = (180, 135);
-/// The tick of the bridge stays far under its call, and the answer of the lead under both
-/// the call and the lines that the lead has in a fight.
-const TICK_LEVEL: u8 = 110;
+/// The answer of the lead in the bridge stays under the call, and under the lines that the
+/// lead has in a fight.
 const ANSWER: u8 = 150;
-const HAT: u8 = 190;
-/// The hi-hat of an arena plays every step, and louder where the corridor's plays.
-const ARENA_HATS: (u8, u8) = (100, 200);
-const SNARE: u8 = 230;
-/// A roll starts this loud and ends at full strength.
-const ROLL_START: u16 = 40;
-/// A roll lasts two beats, at the tempo of the fight it announces.
-pub const ROLL_HITS: u8 = 8;
+/// A roll lasts a few beats, at the tempo of the fight it announces.
+pub const ROLL_HITS: u8 = ROLL.beats * BEAT as u8;
 /// Phrases that the fights walk through: two for the verse and two for the chorus.
 const PHRASES: u8 = 4;
 const BARS_IN_PHRASE: u8 = 4;
+
+/// How long a step of each section lasts, in half frames, in the order of [`Section`].
+const PACE: [u32; 4] = [
+    score::step(INTRO.tempo),
+    score::step(VERSE.tempo),
+    score::step(CHORUS.tempo),
+    score::step(BRIDGE.tempo),
+];
 
 /// What loops: the intro, the bridge, or the verse followed by the chorus.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -140,20 +148,21 @@ impl Part {
         }
     }
 
-    /// How long a step of the part lasts, in half frames.
-    fn step(self) -> u32 {
+    /// The section that the part starts with.
+    fn first(self) -> Section {
         match self {
-            Part::Intro | Part::Fight => STEP,
-            Part::Bridge => BRIDGE_STEP,
+            Part::Intro => Section::Intro,
+            Part::Bridge => Section::Bridge,
+            Part::Fight => Section::Verse,
         }
     }
 }
 
 /// The roll that announces a fight.
 #[derive(Clone, Copy, Debug)]
-struct Roll {
-    /// On the snare in an arena, on the hi-hat elsewhere.
-    snare: bool,
+struct Rolling {
+    /// The drum that rolls: one for an arena, another elsewhere.
+    drum: Instrument,
     done: u8,
 }
 
@@ -164,6 +173,8 @@ struct Connection {
     line: Line,
     /// Whether the lead goes that way with the pluck and the bass: it does if it was playing.
     lead: bool,
+    /// How long a step of the fight lasted, in half frames.
+    from: u32,
     done: u8,
 }
 
@@ -181,7 +192,7 @@ pub struct Director {
     threat: u8,
     /// The phrase that the next fight opens on.
     next_phrase: u8,
-    roll: Option<Roll>,
+    roll: Option<Rolling>,
     connection: Option<Connection>,
     /// The degree of the last note that the lead started in the fight, if the lead is playing.
     lead_on: Option<u8>,
@@ -311,20 +322,22 @@ impl Director {
         } else if self.part == Part::Fight && !fight {
             // The fight plays on to its next beat, so that the kick never stumbles. The
             // connection starts there, from the note the lead is on.
-            let on_a_beat = self.step.is_multiple_of(4);
+            let on_a_beat = self.step.is_multiple_of(BEAT as u8);
             if !self.hush && self.connection.is_none() && on_a_beat {
                 self.end_fight();
                 let lead = self.lead_on.filter(|_| self.threat > 0);
                 self.connection = Some(Connection {
-                    line: score::connection(lead),
+                    line: score::connection(lead, LINK),
                     lead: lead.is_some(),
+                    from: self.pace(),
                     done: 0,
                 });
             }
         } else if self.part != Part::Fight && fight && !self.hush {
             if self.roll.is_none() {
-                self.roll = Some(Roll {
-                    snare: context.place == Place::Arena,
+                let arena = context.place == Place::Arena;
+                self.roll = Some(Rolling {
+                    drum: if arena { ROLL.arena } else { ROLL.drum },
                     done: 0,
                 });
             }
@@ -336,16 +349,22 @@ impl Director {
         out.hush = self.hush;
 
         if let Some(roll) = &mut self.roll {
-            // Nothing else starts under the roll, which is at the tempo of the fight.
-            let rise = (HIT as u16 - ROLL_START) * (roll.done as u16 + 1) / ROLL_HITS as u16;
-            let level = (ROLL_START + rise) as u8;
-            if roll.snare {
-                out.snare = level;
-            } else {
-                out.hat = level;
+            // Nothing else starts under the roll, which goes from one level to another.
+            let (from, to) = (ROLL.from as i32, ROLL.to as i32);
+            let level = (from + (to - from) * (roll.done as i32 + 1) / ROLL_HITS as i32) as u8;
+            match roll.drum {
+                Instrument::Kick => out.kick = level,
+                Instrument::Snare => out.snare = level,
+                _ => out.hat = level,
             }
             roll.done += 1;
-            out.length = STEP;
+            // It is at the tempo of the section that the fight opens on.
+            let opening = if self.next_phrase * BARS_IN_PHRASE < BARS as u8 {
+                Section::Verse
+            } else {
+                Section::Chorus
+            };
+            out.length = PACE[opening as usize];
             return out;
         }
         if let Some(link) = self.connection {
@@ -360,7 +379,7 @@ impl Director {
                 Part::Fight => self.fight(&mut out),
             }
         }
-        out.length = self.part.step();
+        out.length = self.pace();
 
         self.step += 1;
         if self.step == STEPS as u8 {
@@ -374,8 +393,8 @@ impl Director {
     /// the pluck and the lead go together, each in its own octave, to the degree on which the
     /// bridge stays.
     fn connect(&mut self, link: Connection, next: Part, out: &mut Step) {
-        if link.done.is_multiple_of(4) {
-            out.kick = HIT;
+        if link.done.is_multiple_of(BEAT as u8) {
+            out.kick = KICK_FIGHT.level;
         }
         let cell = link.line[link.done as usize];
         if cell.degree != 0 {
@@ -388,16 +407,17 @@ impl Director {
             };
             // A line that rises starts low in the scale, where the bass is an octave higher
             // so as not to go below its range.
-            let rising = link.line[0].degree < PEDAL;
-            out.bass = tone(if rising { A2 } else { A1 });
-            out.pluck = tone(A3);
+            let rising = link.line[0].degree < LINK.degree;
+            out.bass = tone(if rising { T2 } else { T1 });
+            out.pluck = tone(T3);
             if link.lead {
-                out.lead[0] = tone(A4);
+                out.lead[0] = tone(T4);
             }
         }
-        // Each step is a little longer than the one before, up to the tempo of what follows.
-        let slower = next.step() - STEP;
-        out.length = STEP + slower * (link.done as u32 + 1) / CONNECTION_STEPS as u32;
+        // Each step is a little nearer the tempo of what follows than the one before.
+        let (from, to) = (link.from as i64, PACE[next.first() as usize] as i64);
+        let length = from + (to - from) * (link.done as i64 + 1) / CONNECTION_STEPS as i64;
+        out.length = length as u32;
         self.connection = Some(Connection {
             done: link.done + 1,
             ..link
@@ -440,18 +460,19 @@ impl Director {
             // The lead is silent.
             self.lead_on = None;
         }
-        self.mode = if self.arena { Mode::Aeolian } else { HOME };
+        self.mode = if self.arena { ARENA } else { HOME };
     }
 
     /// The degree that the chord of the bar is built on. The bridge has no chords: it stays
     /// on one degree.
     fn chord(&self) -> u8 {
-        let bar = self.bar() as usize;
-        match self.section() {
-            Section::Intro | Section::Verse => self.mode.verse_chords()[bar],
-            Section::Chorus => self.mode.chorus_chords()[bar],
-            Section::Bridge => PEDAL,
-        }
+        let written = passage(self.section()).chords[self.bar() as usize];
+        self.mode.chord(written)
+    }
+
+    /// How long a step of the section that plays lasts, in half frames.
+    fn pace(&self) -> u32 {
+        PACE[self.section() as usize]
     }
 
     /// The root of the chord of the bar on the bass, for a whole bar.
@@ -465,7 +486,7 @@ impl Director {
 
     fn intro(&self, out: &mut Step) {
         out.bass = self.bass(&BASS_LONG);
-        out.pluck = self.note(&VERSE[self.bar as usize], A4);
+        out.pluck = self.note(&INTRO.melody[self.bar as usize], T4);
     }
 
     /// A bar of the bridge is four pairs of hits, one per beat: the two beats of a heart on the
@@ -473,31 +494,23 @@ impl Director {
     /// them the pluck ticks, an octave below its call.
     fn bridge(&self, out: &mut Step) {
         let bar = self.bar as usize;
-        out.kick = match KICK_HEART[self.step as usize] {
-            b'x' => HEART.0,
-            b'o' => HEART.1,
-            _ => 0,
-        };
-        let tick = self.note(&TICK, A2).map(|tone| Tone {
-            level: TICK_LEVEL,
-            ..tone
-        });
-        out.pluck = self.note(&BRIDGE[bar], A3).or(tick);
-        out.bass = self.note(&BRIDGE_BASS, A1);
-        out.lead[0] = self.note(&BRIDGE_ANSWERS[bar], A4).map(|tone| Tone {
+        out.kick = hit(&KICK_HEART, self.step);
+        let tick = self.voice(&PLUCK_TICK, score::triad(self.mode, self.chord(), T2), T2);
+        out.pluck = self.note(&BRIDGE.melody[bar], T3).or(tick);
+        out.bass = self.bass(&BASS_PAIR);
+        out.lead[0] = self.note(&BRIDGE_ANSWERS[bar], T4).map(|tone| Tone {
             level: ANSWER,
             ..tone
         });
     }
 
     fn fight(&mut self, out: &mut Step) {
-        out.kick = hit(&KICK_FIGHT, self.step, HIT);
+        out.kick = hit(&KICK_FIGHT, self.step);
         if self.arena {
-            let (soft, loud) = ARENA_HATS;
-            out.hat = hit(&HAT_ARENA, self.step, soft).max(hit(&HAT_CORRIDOR, self.step, loud));
-            out.snare = hit(&SNARE_ARENA, self.step, SNARE);
+            out.hat = hit(&HAT_ARENA, self.step);
+            out.snare = hit(&SNARE_ARENA, self.step);
         } else {
-            out.hat = hit(&HAT_CORRIDOR, self.step, HAT);
+            out.hat = hit(&HAT_CORRIDOR, self.step);
         }
         out.bass = self.bass(if self.threat >= 2 {
             &BASS_LEAPING
@@ -506,28 +519,19 @@ impl Director {
         });
 
         // The pluck goes up the chord, twice as fast at the highest threat.
-        let chord = score::triad(self.mode, self.chord(), A3);
-        let step = self.step as usize;
-        if self.threat == HIGHEST_THREAT {
-            out.pluck = Some(Tone {
-                pitch: chord[step % 3],
-                steps: 1,
-                level: ARPEGGIO,
-            });
-        } else if PLUCK_ARPEGGIO[step] != b'.' {
-            out.pluck = Some(Tone {
-                pitch: chord[step / 2 % 3],
-                steps: 2,
-                level: ARPEGGIO,
-            });
-        }
+        let arpeggio = if self.threat == HIGHEST_THREAT {
+            &PLUCK_FAST
+        } else {
+            &PLUCK_ARPEGGIO
+        };
+        out.pluck = self.voice(arpeggio, score::triad(self.mode, self.chord(), T3), T3);
         out.echo = out.pluck.is_some();
 
         if self.threat > 0 {
             let chorus = self.section() == Section::Chorus;
             let lines = &LEAD[self.threat as usize - 1][chorus as usize];
             let line = &lines[self.bar() as usize];
-            if let Some(tone) = self.note(line, A4) {
+            if let Some(tone) = self.note(line, T4) {
                 self.lead_on = Some(line[self.step as usize].degree);
                 out.lead[0] = Some(tone);
                 if self.threat == HIGHEST_THREAT {
@@ -552,23 +556,46 @@ impl Director {
         })
     }
 
-    /// The note of a bass pattern that starts on this step, if one does. It lasts until the
-    /// next note of the pattern.
-    fn bass(&self, pattern: &Pattern) -> Option<Tone> {
-        let step = self.step as usize;
+    /// The note of a pattern of the bass that starts on this step, if one does. The chord of
+    /// the bar is built on the root that the bass has for it.
+    fn bass(&self, rhythm: &Rhythm) -> Option<Tone> {
         let root = score::bass_root(self.mode, self.chord());
-        let pitch = match pattern[step] {
-            b'R' => root,
-            b'O' => root + 12,
-            b'5' => root + 7,
+        let [low, third, fifth] = score::triad(self.mode, self.chord(), 0);
+        self.voice(rhythm, [root, root + third - low, root + fifth - low], T1)
+    }
+
+    /// The note of a pattern that starts on this step, if one does. A hit is the next note of
+    /// `chord`, whose notes go up in turn. `R`, `O` and `V` are the root of that chord, that
+    /// root an octave higher and its fifth, and a digit is a degree of the scale above
+    /// `tonic`. The note lasts until the next one, or until a dash.
+    fn voice(&self, rhythm: &Rhythm, chord: [u8; 3], tonic: u8) -> Option<Tone> {
+        let step = self.step as usize;
+        let symbol = rhythm.grid[step];
+        let pitch = match symbol {
+            b'x' | b'o' => {
+                let before = rhythm.grid[..step].iter();
+                chord[before
+                    .filter(|symbol| matches!(symbol, b'x' | b'o'))
+                    .count()
+                    % 3]
+            }
+            b'R' => chord[0],
+            b'O' => chord[0] + 12,
+            b'V' => chord[2],
+            b'1'..=b'9' => tonic + self.mode.semitones(symbol - b'0'),
             _ => return None,
         };
-        let rest = pattern[step + 1..].iter();
+        let rest = rhythm.grid[step + 1..].iter();
         let steps = 1 + rest.take_while(|&&symbol| symbol == b'.').count() as u8;
+        let level = if symbol == b'o' {
+            rhythm.soft
+        } else {
+            rhythm.level
+        };
         Some(Tone {
             pitch,
             steps,
-            level: HIT,
+            level,
         })
     }
 }
@@ -586,12 +613,22 @@ fn calm_part(context: Context) -> Part {
     }
 }
 
+/// The section of the file that a section of the piece is.
+fn passage(section: Section) -> &'static Passage {
+    match section {
+        Section::Intro => &INTRO,
+        Section::Verse => &VERSE,
+        Section::Chorus => &CHORUS,
+        Section::Bridge => &BRIDGE,
+    }
+}
+
 /// How hard a drum is hit on a step of its pattern.
-fn hit(pattern: &Pattern, step: u8, level: u8) -> u8 {
-    if pattern[step as usize] == b'x' {
-        level
-    } else {
-        0
+fn hit(rhythm: &Rhythm, step: u8) -> u8 {
+    match rhythm.grid[step as usize] {
+        b'x' => rhythm.level,
+        b'o' => rhythm.soft,
+        _ => 0,
     }
 }
 
@@ -600,8 +637,15 @@ mod tests {
     use super::*;
 
     const BAR: usize = STEPS;
+    /// Steps that a roll and a connection last.
     const ROLL: usize = ROLL_HITS as usize;
     const LINK: usize = CONNECTION_STEPS as usize;
+    /// How long a step lasts in a fight and in the bridge, in half frames.
+    const STEP: u32 = PACE[Section::Verse as usize];
+    const BRIDGE_STEP: u32 = PACE[Section::Bridge as usize];
+    /// How hard the kick of a fight and the hi-hat of a corridor are hit.
+    const KICK: u8 = KICK_FIGHT.level;
+    const HAT: u8 = HAT_CORRIDOR.level;
 
     fn at(place: Place) -> Context {
         Context {
@@ -678,7 +722,7 @@ mod tests {
             let roll: Vec<u8> = steps[..ROLL].iter().map(|step| step.hat).collect();
             assert!(roll[0] > 0, "offset {offset}");
             assert!(roll.windows(2).all(|pair| pair[0] < pair[1]), "{roll:?}");
-            assert_eq!(roll[ROLL - 1], HIT);
+            assert_eq!(roll[ROLL - 1], score::ROLL.to);
             for step in &steps[..ROLL] {
                 assert!(step.kick == 0 && step.snare == 0 && !pitched(step) && !step.fresh);
                 assert_eq!(step.length, STEP);
@@ -686,7 +730,7 @@ mod tests {
             // Then the verse starts on its first beat, wherever the bar of the bridge was.
             let verse = &steps[ROLL..];
             assert!(verse[0].fresh, "offset {offset}");
-            assert_eq!(on(verse, |step| step.kick == HIT), [0, 4, 8, 12]);
+            assert_eq!(on(verse, |step| step.kick == KICK), [0, 4, 8, 12]);
             assert_eq!(on(verse, |step| step.hat == HAT), [2, 6, 10, 14]);
             assert!(verse.iter().all(|step| step.length == STEP));
             assert_eq!(
@@ -704,7 +748,7 @@ mod tests {
         assert!(roll.iter().all(|step| step.hat > 0 && !pitched(step)));
         let first = director.step(fight(Place::Corridor, 0));
         assert!(first.fresh);
-        assert_eq!(first.kick, HIT);
+        assert_eq!(first.kick, KICK);
         assert_eq!(director.section(), Section::Verse);
     }
 
@@ -759,13 +803,17 @@ mod tests {
             // The fight plays on to its next beat, with its drums.
             for (index, step) in steps[..wait].iter().enumerate() {
                 let at = (offset + index) as u8;
-                assert_eq!((step.kick, step.hat), (0, hit(&HAT_CORRIDOR, at, HAT)));
+                assert_eq!((step.kick, step.hat), (0, hit(&HAT_CORRIDOR, at)));
                 assert!(!step.fresh && step.length == STEP, "offset {offset}");
             }
             // The connection starts on that beat: its kick is where the kick of the fight
             // would be, and nothing else drums.
             let link = &steps[wait..wait + LINK];
-            assert_eq!(on(link, |step| step.kick == HIT), [0, 4], "offset {offset}");
+            assert_eq!(
+                on(link, |step| step.kick == KICK),
+                [0, 4],
+                "offset {offset}"
+            );
             assert!(link.iter().all(|step| step.hat == 0 && step.snare == 0));
             assert!(link.iter().all(|step| !step.fresh && !step.hush));
             assert_eq!(pitches(link, |step| step.pluck), [69, 67, 66, 64]);
@@ -781,7 +829,7 @@ mod tests {
             // Then the bridge starts on its first beat.
             let bridge = &steps[wait + LINK..];
             assert!(bridge[0].fresh, "offset {offset}");
-            assert_eq!(bridge[0].kick, HEART.0);
+            assert_eq!(bridge[0].kick, KICK_HEART.level);
             assert!(bridge.iter().all(|step| step.length == BRIDGE_STEP));
             assert_eq!(director.section(), Section::Bridge);
             assert_eq!(director.mode(), HOME);
@@ -885,7 +933,7 @@ mod tests {
             // Under them the pluck ticks on every half beat, between E and the B above it.
             let ticks: Vec<(usize, u8)> = (0..BAR)
                 .filter_map(|step| Some((step, bar[step].pluck?)))
-                .filter(|(_, tone)| tone.level == TICK_LEVEL)
+                .filter(|(_, tone)| tone.level == PLUCK_TICK.level)
                 .map(|(step, tone)| (step, tone.pitch))
                 .collect();
             assert_eq!(
@@ -1040,7 +1088,7 @@ mod tests {
         // The bridge goes on from where it stood: the second beat of its heart comes next.
         let steps = play(&mut director, at(Place::Corridor), 2 * BAR);
         assert!(steps.iter().all(|step| step.hat == 0 && !step.fresh));
-        assert_eq!(steps[0].kick, HEART.1);
+        assert_eq!(steps[0].kick, KICK_HEART.soft);
         assert_eq!(director.section(), Section::Bridge);
     }
 

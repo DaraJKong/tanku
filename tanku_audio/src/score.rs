@@ -1,44 +1,89 @@
-//! The piece as it is written by hand: three motifs, the chords of each section and the rhythm
-//! patterns, with the rules that derive every other line from them.
+//! The piece that the game plays, as `music.score` writes it, and the rules that derive every
+//! other line from what is written there.
 //!
 //! Melodies are written in degrees of the scale and not in notes, so each of them exists in
-//! every mode. A grid is one bar of 16 steps in four beats. In a melody, a digit starts a note
-//! on that degree, a dot holds it and a dash is silence. In a pattern, `x` is a hit, `o` is a
-//! softer one, `R` is the root of the chord of the bar, `O` is that root an octave higher, `5`
-//! is its fifth, and a dot starts nothing.
+//! every mode. [`notation`] says how the file writes a bar.
 
-/// Steps in a bar. A step is a quarter of a beat.
-pub const STEPS: usize = 16;
-/// Bars in a section.
-pub const BARS: usize = 8;
+use crate::notation::{self, COLOR, Instrument, Link, Passage, Piece, REST, Rhythm, Roll, same};
+pub use crate::notation::{BARS, BEAT, Cell, Line, Pattern, STEPS};
 
-/// How long a step lasts, in half frames of the music. At 120 beats per minute a step is 5512
-/// frames and a half.
-pub const STEP: u32 = 11_025;
-/// The bridge is slower, at 105 beats per minute: its steps are 6300 frames long.
-pub const BRIDGE_STEP: u32 = 12_600;
+/// The piece as its file writes it. The file is read while the crate is compiled: one that
+/// can't be read stops the build, and the error says on which line.
+pub const PIECE: Piece = match notation::read(include_str!("../music.score")) {
+    Ok(piece) => piece,
+    Err(fault) => fault.stop(),
+};
 
-/// The A of 440 Hz. Pitches count semitones, and this one is the tonic of the lead.
+/// Half frames in a minute of music.
+const MINUTE: u32 = 60 * 2 * crate::SAMPLE_RATE;
+
+/// How long a step lasts at a tempo in beats per minute, in half frames, to the nearest one.
+/// At the 120 beats per minute of the piece a step is 5512 frames and a half, and at the 105
+/// of its bridge it is 6300 frames: both are whole numbers of half frames.
+pub const fn step(tempo: u16) -> u32 {
+    let steps = BEAT as u32 * tempo as u32;
+    (MINUTE + steps / 2) / steps
+}
+
+/// The A of 440 Hz. Pitches count semitones. The cues play this A, the A below it and their
+/// fifths.
 pub const A4: u8 = 69;
 pub const A3: u8 = A4 - 12;
 pub const A2: u8 = A3 - 12;
 pub const A1: u8 = A2 - 12;
 
-/// The scale in use. Both have A as their tonic.
+/// The tonic of the piece in the octaves of those four, from the bass up to the lead. In the
+/// key of A they are those four, and another key is at most six semitones away.
+pub const T4: u8 = tonic(A4);
+pub const T3: u8 = tonic(A3);
+pub const T2: u8 = tonic(A2);
+pub const T1: u8 = tonic(A1);
+
+const fn tonic(a: u8) -> u8 {
+    (a as i8 + PIECE.key.offset()) as u8
+}
+
+/// The mode of the piece, which every section is in but the fights of an arena.
+pub const HOME: Mode = PIECE.key.home;
+/// The mode of the fights of an arena.
+pub const ARENA: Mode = PIECE.key.arena;
+
+/// The scale in use.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
+    /// Major.
+    Ionian,
     /// Minor, with a major sixth. It is the mode of the piece.
     Dorian,
+    /// Major, with a minor seventh.
+    Mixolydian,
     /// Minor. It is the mode of the fights in an arena.
     Aeolian,
 }
 
 impl Mode {
+    /// The mode of a name of the file.
+    pub(crate) const fn named(name: &[u8]) -> Option<Self> {
+        if same(name, b"ionian") {
+            Some(Mode::Ionian)
+        } else if same(name, b"dorian") {
+            Some(Mode::Dorian)
+        } else if same(name, b"mixolydian") {
+            Some(Mode::Mixolydian)
+        } else if same(name, b"aeolian") {
+            Some(Mode::Aeolian)
+        } else {
+            None
+        }
+    }
+
     /// Semitones from the tonic up to a degree. Degree 1 is the tonic, and degree 8 is the
     /// tonic an octave higher.
     pub const fn semitones(self, degree: u8) -> u8 {
         let scale = match self {
+            Mode::Ionian => [0, 2, 4, 5, 7, 9, 11],
             Mode::Dorian => [0, 2, 3, 5, 7, 9, 10],
+            Mode::Mixolydian => [0, 2, 4, 5, 7, 9, 10],
             Mode::Aeolian => [0, 2, 3, 5, 7, 8, 10],
         };
         let index = degree as usize - 1;
@@ -46,189 +91,175 @@ impl Mode {
     }
 
     /// The degree of the chord that gives the mode its color, next to the chords on 1, 4 and
-    /// 5: the major chord a tone below the tonic in Dorian, and the major chord on the sixth
-    /// degree in Aeolian.
+    /// 5: the major chord a tone below the tonic in Dorian and in Mixolydian, the major chord
+    /// on the sixth degree in Aeolian, and the minor chord on that degree in Ionian.
     pub const fn color(self) -> u8 {
         match self {
-            Mode::Dorian => 7,
-            Mode::Aeolian => 6,
+            Mode::Dorian | Mode::Mixolydian => 7,
+            Mode::Ionian | Mode::Aeolian => 6,
         }
     }
 
-    /// The chords of the intro and of the verse, one per bar, each named by the degree it is
-    /// built on.
-    pub const fn verse_chords(self) -> [u8; BARS] {
-        let color = self.color();
-        [1, 1, color, 4, 1, 1, color, 5]
-    }
-
-    /// The chords of the chorus.
-    pub const fn chorus_chords(self) -> [u8; BARS] {
-        [4, 5, 1, self.color(), 4, 5, 1, 1]
-    }
-}
-
-/// What starts on one step of a melody: a note on a degree that lasts a number of steps, or
-/// nothing when the degree is 0.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Cell {
-    pub degree: u8,
-    pub steps: u8,
-}
-
-const REST: Cell = Cell {
-    degree: 0,
-    steps: 0,
-};
-
-/// One bar of a melody.
-pub type Line = [Cell; STEPS];
-
-/// One bar of a rhythm: the symbols of its grid.
-pub type Pattern = [u8; STEPS];
-
-/// Reads one bar of a melody from its grid.
-pub const fn line(grid: &str) -> Line {
-    let symbols = pattern(grid);
-    let mut line = [REST; STEPS];
-    let mut last = STEPS;
-    let mut step = 0;
-    while step < STEPS {
-        let symbol = symbols[step];
-        if symbol == b'.' {
-            if last < STEPS {
-                line[last].steps += 1;
-            }
-        } else if symbol == b'-' {
-            last = STEPS;
+    /// The degree that a chord of a section is built on in this mode: the one the file
+    /// writes, or the one that gives the mode its color.
+    pub const fn chord(self, written: u8) -> u8 {
+        if written == COLOR {
+            self.color()
         } else {
-            assert!(symbol.is_ascii_digit() && symbol != b'0');
-            line[step] = Cell {
-                degree: symbol - b'0',
-                steps: 1,
-            };
-            last = step;
+            written
         }
-        step += 1;
     }
-    line
+
+    /// The same for the chords of a section, one per bar.
+    pub fn chords(self, written: [u8; BARS]) -> [u8; BARS] {
+        written.map(|chord| self.chord(chord))
+    }
 }
 
-/// Reads one bar of a rhythm from its grid.
-pub const fn pattern(grid: &str) -> Pattern {
-    let bytes = grid.as_bytes();
-    let mut pattern = [b'.'; STEPS];
-    let mut step = 0;
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] != b' ' {
-            assert!(step < STEPS, "a bar has 16 steps");
-            pattern[step] = bytes[index];
-            step += 1;
+/// A section of the file by its name.
+macro_rules! passage {
+    ($name:literal) => {
+        match PIECE.passage($name) {
+            Some(passage) => passage,
+            None => panic!(concat!("music.score has no line `sec ", $name, "`")),
         }
-        index += 1;
-    }
-    assert!(step == STEPS, "a bar has 16 steps");
-    pattern
+    };
 }
 
-/// Motif A, the question: it climbs and stops on degree 5.
-pub const MOTIF_A: [Line; 2] = [line("1..2 ..3. 5..3 ..2."), line("3..5 ..6. .... 5...")];
-/// Motif B, the answer: it comes down from the high tonic to the tonic.
-pub const MOTIF_B: [Line; 2] = [line("8... ..9. 8... 6..."), line("5..6 ..5. 3..2 ..1.")];
-/// The second bar of motif A with degree 2, a note of chord 5, in place of its long degree 6.
-pub const TURNAROUND: Line = line("3..5 ..2. .... 5...");
-
-/// The melody of the intro and of the verse: motif A four times, the last time with the
-/// turnaround.
-pub const VERSE: [Line; BARS] = {
-    let [first, second] = MOTIF_A;
-    [
-        first, second, first, second, first, second, first, TURNAROUND,
-    ]
-};
-/// The melody of the chorus: motif B four times.
-pub const CHORUS: [Line; BARS] = {
-    let [first, second] = MOTIF_B;
-    [first, second, first, second, first, second, first, second]
-};
-
-/// Motif C, the call of the bridge: two notes in a row, the second a fourth above the first
-/// and left to ring.
-pub const MOTIF_C: Line = line("---- 5.8. ---- ----");
-/// The melody of the bridge: the call in every bar. Its second note changes from one bar to
-/// the next, and the last call of the eight falls where the others rise.
-pub const BRIDGE: [Line; BARS] = [
-    MOTIF_C,
-    line("---- 5.7. ---- ----"),
-    MOTIF_C,
-    line("---- 5.9. ---- ----"),
-    MOTIF_C,
-    line("---- 5.7. ---- ----"),
-    MOTIF_C,
-    line("---- 5.4. ---- ----"),
-];
+/// The four sections: eight bars each, with their chords, their melody and their tempo. The
+/// intro and the verse have the same melody, on the pluck for one and on the lead for the
+/// other.
+pub const INTRO: Passage = passage!("intro");
+pub const VERSE: Passage = passage!("verse");
+pub const CHORUS: Passage = passage!("chorus");
+/// The bridge has no chords: its bass stays on one degree. Its melody is a call in every bar.
+pub const BRIDGE: Passage = passage!("bridge");
 /// What the lead answers to each call of the bridge.
-pub const BRIDGE_ANSWERS: [Line; BARS] = answers(BRIDGE);
-/// The tick of the bridge: under its call, the pluck rocks on every half beat between the
-/// degree that the bridge never leaves and the fifth above it.
-pub const TICK: Line = line("5.9. 5.9. 5.9. 5.9.");
-/// What the bass plays in every bar of the bridge: two notes in a row on the degree that the
-/// bridge never leaves, the second held under the answer of the lead.
-pub const BRIDGE_BASS: Line = line("---- ---- 5-5. ....");
-pub const PEDAL: u8 = 5;
+pub const BRIDGE_ANSWERS: [Line; BARS] = answers(BRIDGE.melody);
+
+/// A pattern of the file by its instrument and its name.
+macro_rules! rhythm {
+    ($instrument:ident, $written:literal, $name:literal) => {
+        match PIECE.rhythm(Instrument::$instrument, $name) {
+            Some(rhythm) => rhythm,
+            None => panic!(concat!(
+                "music.score has no line `pat ",
+                $written,
+                " ",
+                $name,
+                "`"
+            )),
+        }
+    };
+}
+
 /// The kick of the bridge: the two beats of a heart. A bar of the bridge is these two hits,
 /// the call of the pluck, the two notes of the bass and the answer of the lead, one beat each,
 /// over the tick.
-pub const KICK_HEART: Pattern = pattern("x.o. .... .... ....");
-/// The degrees of the bridge. They are the same notes in both modes, and the third degree is
-/// not among them, so the bridge has no mode: it is neither major nor minor.
-pub const NEUTRAL: [u8; 5] = [1, 2, 4, 5, 7];
+pub const KICK_HEART: Rhythm = rhythm!(Kick, "kick", "heart");
+pub const KICK_FIGHT: Rhythm = rhythm!(Kick, "kick", "fight");
+pub const HAT_CORRIDOR: Rhythm = rhythm!(Hat, "hat", "corridor");
+/// Every step, and louder on the steps of the corridor.
+pub const HAT_ARENA: Rhythm = rhythm!(Hat, "hat", "arena");
+pub const SNARE_ARENA: Rhythm = rhythm!(Snare, "snare", "arena");
+pub const BASS_LONG: Rhythm = rhythm!(Bass, "bass", "long");
+pub const BASS_PLAIN: Rhythm = rhythm!(Bass, "bass", "plain");
+pub const BASS_LEAPING: Rhythm = rhythm!(Bass, "bass", "leaping");
+/// What the bass plays in every bar of the bridge: two notes in a row on the degree that the
+/// bridge never leaves, the second held under the answer of the lead.
+pub const BASS_PAIR: Rhythm = rhythm!(Bass, "bass", "pair");
+/// The root, the third and the fifth of the chord in turn, rising.
+pub const PLUCK_ARPEGGIO: Rhythm = rhythm!(Pluck, "pluck", "arpeggio");
+/// The same, twice as fast.
+pub const PLUCK_FAST: Rhythm = rhythm!(Pluck, "pluck", "fast");
+/// The tick of the bridge: under its call, the pluck rocks on every half beat between the
+/// degree that the bridge never leaves and the fifth above it.
+pub const PLUCK_TICK: Rhythm = rhythm!(Pluck, "pluck", "tick");
 
-/// Steps that a connection lasts: two beats. They get longer one after the other, from the
-/// tempo of the fight to the tempo of what follows.
-pub const CONNECTION_STEPS: u8 = 8;
-/// Notes that a connection has at most.
-const CONNECTION_NOTES: usize = 4;
+/// Notes of a melody that lie a semitone above the root of their chord and don't pass
+/// quickly enough: in one step if they start on a beat, in three at most otherwise. `chords`
+/// has the degree that the chord of each bar is built on. This is the check that guards every
+/// change of a note.
+pub fn rubs(mode: Mode, lines: &[Line; BARS], chords: &[u8; BARS]) -> usize {
+    let mut count = 0;
+    for (line, &chord) in lines.iter().zip(chords) {
+        for (step, cell) in line.iter().enumerate() {
+            if cell.degree == 0 {
+                continue;
+            }
+            let note = mode.semitones(cell.degree) as i32;
+            let above_root = (note - mode.semitones(chord) as i32).rem_euclid(12) == 1;
+            let allowed = if step % BEAT == 0 { 1 } else { 3 };
+            count += (above_root && cell.steps > allowed) as usize;
+        }
+    }
+    count
+}
+
+// What plays when is in the code, which asks for each section and each pattern by its name: a
+// file can change them, and can't add one.
+const _: () = assert!(
+    PIECE.passages().len() <= 4,
+    "music.score has a section that nothing plays: the game plays `intro`, `verse`, `chorus` \
+     and `bridge`"
+);
+const _: () = assert!(
+    PIECE.rhythms().len() <= 12,
+    "music.score has a pattern that nothing plays: the game plays twelve patterns, by their \
+     names"
+);
+
+/// The roll that announces a fight.
+pub const ROLL: Roll = PIECE.roll;
+/// The connection that leads from a fight into what follows.
+pub const LINK: Link = PIECE.link;
+/// Steps that a connection lasts. They get longer one after the other, from the tempo of the
+/// fight to the tempo of what follows.
+pub const CONNECTION_STEPS: u8 = LINK.beats * BEAT as u8;
 
 /// The connection, which leads from a fight into the bridge: the tune goes by steps of the
-/// scale from the note the lead is on to the degree on which the bridge stays, and never
-/// turns back on the way. From the upper tonic that is the four notes of a fall, and from
-/// lower down it is a rise. `lead` is the degree the lead is on, or `None` if it is silent:
-/// the connection is then the fall.
+/// scale from the note the lead is on to the degree of the connection, on which the bridge
+/// stays, and never turns back on the way. From the upper tonic down to degree 5 that is the
+/// four notes of a fall, and from lower down it is a rise. `lead` is the degree the lead is
+/// on, or `None` if it is silent: the connection then starts from the upper tonic.
 ///
-/// The notes are spread over the two beats: one to a beat when there are two of them, two to
-/// a beat when there are more, and the last one takes what is left. A walk of more than four
-/// notes starts further on, where four are left.
-pub const fn connection(lead: Option<u8>) -> Line {
+/// The notes are half a beat apart, or a beat apart when there are two of them and room for
+/// it, and the last one takes what is left. A walk of more notes than the connection has
+/// starts further on, where that many are left.
+pub const fn connection(lead: Option<u8>, link: Link) -> Line {
     let from = match lead {
         Some(degree) => degree,
         None => 8,
     };
-    let rising = from < PEDAL;
+    let rising = from < link.degree;
     let mut count = if rising {
-        (PEDAL - from) as usize + 1
+        (link.degree - from) as usize + 1
     } else {
-        (from - PEDAL) as usize + 1
+        (from - link.degree) as usize + 1
     };
-    if count > CONNECTION_NOTES {
-        count = CONNECTION_NOTES;
+    if count > link.notes as usize {
+        count = link.notes as usize;
     }
-    let apart = if count == 2 { 4 } else { 2 };
+    let steps = link.beats as usize * BEAT;
+    let apart = if count == 2 && steps > BEAT {
+        BEAT
+    } else {
+        BEAT / 2
+    };
     let mut out = [REST; STEPS];
     let mut note = 0;
     while note < count {
-        // The notes are counted back from the last one, which is the degree of the bridge.
+        // The notes are counted back from the last one, which is the degree of the connection.
         let before = (count - 1 - note) as u8;
         let start = apart * note;
         out[start] = Cell {
             degree: if rising {
-                PEDAL - before
+                link.degree - before
             } else {
-                PEDAL + before
+                link.degree + before
             },
             steps: if note + 1 == count {
-                CONNECTION_STEPS - start as u8
+                (steps - start) as u8
             } else {
                 apart as u8
             },
@@ -238,35 +269,23 @@ pub const fn connection(lead: Option<u8>) -> Line {
     out
 }
 
-pub const KICK_FIGHT: Pattern = pattern("x... x... x... x...");
-pub const HAT_CORRIDOR: Pattern = pattern("..x. ..x. ..x. ..x.");
-/// Louder on the steps of the corridor pattern.
-pub const HAT_ARENA: Pattern = pattern("xxxx xxxx xxxx xxxx");
-pub const SNARE_ARENA: Pattern = pattern(".... x... .... x...");
-pub const BASS_LONG: Pattern = pattern("R... .... .... ....");
-pub const BASS_PLAIN: Pattern = pattern("R..R ..R. R..R ..R.");
-pub const BASS_LEAPING: Pattern = pattern("R..O ..R. R..O ..5.");
-/// The root, the third and the fifth of the chord in turn, rising.
-pub const PLUCK_ARPEGGIO: Pattern = pattern("x.x. x.x. x.x. x.x.");
-
-/// The degrees that the motifs use, within one octave. They make a scale of five notes in each
-/// mode: in Aeolian the scale known as hirajoshi, and in Dorian the same with its sixth degree
-/// a semitone higher.
+/// The degrees that the motifs of the piece use, within one octave. They make a scale of five
+/// notes in each mode: in Aeolian the scale known as hirajoshi, and in Dorian the same with
+/// its sixth degree a semitone higher.
 pub const FIVE: [u8; 5] = [1, 2, 3, 5, 6];
 
-/// The next of the five degrees above one of them.
+/// The next of the five degrees above a degree.
 const fn above(degree: u8) -> u8 {
     let octave = (degree - 1) / 7;
     let within = (degree - 1) % 7 + 1;
     let mut index = 0;
-    while FIVE[index] != within {
+    while index < FIVE.len() {
+        if FIVE[index] > within {
+            return 7 * octave + FIVE[index];
+        }
         index += 1;
     }
-    if index + 1 < FIVE.len() {
-        7 * octave + FIVE[index + 1]
-    } else {
-        7 * (octave + 1) + 1
-    }
+    7 * (octave + 1) + 1
 }
 
 /// Keeps the notes that start on a beat and holds each until the next.
@@ -275,7 +294,7 @@ pub const fn skeleton(line: Line) -> Line {
     let mut last = STEPS;
     let mut step = 0;
     while step < STEPS {
-        if step % 4 == 0 && line[step].degree != 0 {
+        if step % BEAT == 0 && line[step].degree != 0 {
             if last < STEPS {
                 out[last].steps = (step - last) as u8;
             }
@@ -311,13 +330,14 @@ pub const fn ornaments(line: Line) -> Line {
     out
 }
 
-/// The answer to a call: its two notes in the other order, two beats later, and short.
+/// The answer to a call: its first two notes in the other order, two beats later, and short.
+/// A call of one note gets no answer.
 pub const fn answer(call: Line) -> Line {
     let mut notes = [REST; 2];
     let mut steps = [0; 2];
     let mut found = 0;
     let mut step = 0;
-    while step < STEPS {
+    while step < STEPS && found < 2 {
         if call[step].degree != 0 {
             notes[found] = call[step];
             steps[found] = step;
@@ -325,20 +345,21 @@ pub const fn answer(call: Line) -> Line {
         }
         step += 1;
     }
-    assert!(found == 2, "a call has two notes");
     let mut out = [REST; STEPS];
-    out[steps[0] + STEPS / 2] = Cell {
-        degree: notes[1].degree,
-        steps: 1,
-    };
-    out[steps[1] + STEPS / 2] = Cell {
-        degree: notes[0].degree,
-        steps: 1,
-    };
+    if found == 2 {
+        out[(steps[0] + STEPS / 2) % STEPS] = Cell {
+            degree: notes[1].degree,
+            steps: 1,
+        };
+        out[(steps[1] + STEPS / 2) % STEPS] = Cell {
+            degree: notes[0].degree,
+            steps: 1,
+        };
+    }
     out
 }
 
-/// The answer to every call of the bridge.
+/// The answer to every call of a section.
 pub const fn answers(mut calls: [Line; BARS]) -> [Line; BARS] {
     let mut bar = 0;
     while bar < BARS {
@@ -378,23 +399,27 @@ pub const fn triad(mode: Mode, chord: u8, lowest: u8) -> [u8; 3] {
     ]
 }
 
-/// The root of a chord for the bass, between E2 and D3.
+/// The root of a chord for the bass: in the key of A, between E2 and D3.
 pub const fn bass_root(mode: Mode, chord: u8) -> u8 {
-    let pitch = A2 + mode.semitones(chord);
-    if pitch > A2 + 5 { pitch - 12 } else { pitch }
+    let pitch = T2 + mode.semitones(chord);
+    if pitch > T2 + 5 { pitch - 12 } else { pitch }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::notation::line;
 
-    const MODES: [Mode; 2] = [Mode::Dorian, Mode::Aeolian];
+    const EVERY_MODE: [Mode; 4] = [Mode::Ionian, Mode::Dorian, Mode::Mixolydian, Mode::Aeolian];
+    /// The degrees of the bridge. They are the same notes in both modes, and the third degree
+    /// is not among them, so the bridge has no mode: it is neither major nor minor.
+    const NEUTRAL: [u8; 5] = [1, 2, 4, 5, 7];
 
-    /// A bar of melody as its grid.
+    /// A bar of melody as its grid, with a dot wherever no note starts.
     fn grid(line: &Line) -> String {
         let mut grid = String::new();
         for (step, cell) in line.iter().enumerate() {
-            if step > 0 && step % 4 == 0 {
+            if step > 0 && step % BEAT == 0 {
                 grid.push(' ');
             }
             match cell.degree {
@@ -416,83 +441,107 @@ mod tests {
         (0..STEPS).filter(|&step| line[step].degree != 0).collect()
     }
 
-    /// Notes that lie a semitone above the root of their chord and don't pass quickly enough:
-    /// in one step if they start on a beat, in three at most otherwise.
-    fn rubs(mode: Mode, lines: &[Line; BARS], chords: &[u8; BARS]) -> usize {
-        let mut count = 0;
-        for (line, &chord) in lines.iter().zip(chords) {
-            for (step, cell) in line.iter().enumerate() {
-                if cell.degree == 0 {
-                    continue;
-                }
-                let note = mode.semitones(cell.degree) as i32;
-                let above_root = (note - mode.semitones(chord) as i32).rem_euclid(12) == 1;
-                let allowed = if step % 4 == 0 { 1 } else { 3 };
-                count += (above_root && cell.steps > allowed) as usize;
-            }
-        }
-        count
+    /// The degrees that a pattern writes.
+    fn degrees(rhythm: &Rhythm) -> Vec<u8> {
+        let digits = rhythm.grid.iter().filter(|symbol| symbol.is_ascii_digit());
+        digits.map(|digit| digit - b'0').collect()
     }
 
     #[test]
     fn steps_have_the_length_of_their_tempo() {
         // Four steps to a beat, and a minute of music in half frames.
         let minute = 60 * 2 * crate::SAMPLE_RATE;
-        assert_eq!(4 * 120 * STEP, minute);
-        assert_eq!(4 * 105 * BRIDGE_STEP, minute);
+        assert_eq!(4 * 120 * step(120), minute);
+        assert_eq!(4 * 105 * step(105), minute);
         // A bar lasts two seconds, and 2.29 s in the bridge.
-        assert_eq!(STEPS as u32 * STEP / 2, 88_200);
-        assert_eq!(STEPS as u32 * BRIDGE_STEP / 2, 100_800);
+        assert_eq!(STEPS as u32 * step(120) / 2, 88_200);
+        assert_eq!(STEPS as u32 * step(105) / 2, 100_800);
+        // The bridge alone has a tempo of its own.
+        assert_eq!(PIECE.tempo, 120);
+        let tempos = [INTRO, VERSE, CHORUS, BRIDGE].map(|passage| passage.tempo);
+        assert_eq!(tempos, [120, 120, 120, 105]);
+        // At another tempo a step is rounded to the nearest half frame: 12,027.27 of them at
+        // 110 beats per minute, and 11,707.96 at 113.
+        assert_eq!((step(110), step(113)), (12_027, 11_708));
     }
 
     #[test]
     fn the_modes_are_those_of_the_specification() {
+        assert_eq!((HOME, ARENA), (Mode::Dorian, Mode::Aeolian));
+        assert_eq!([T1, T2, T3, T4], [A1, A2, A3, A4]);
         let scale = |mode: Mode| (1..=7).map(move |degree| name(A4 + mode.semitones(degree)));
         assert!(scale(Mode::Dorian).eq(["A", "B", "C", "D", "E", "F#", "G"]));
         assert!(scale(Mode::Aeolian).eq(["A", "B", "C", "D", "E", "F", "G"]));
-        for mode in MODES {
+        // The two that were tried for the piece and set aside.
+        assert!(scale(Mode::Ionian).eq(["A", "B", "C#", "D", "E", "F#", "G#"]));
+        assert!(scale(Mode::Mixolydian).eq(["A", "B", "C#", "D", "E", "F#", "G"]));
+        for mode in EVERY_MODE {
             assert_eq!(mode.semitones(8), 12);
             assert_eq!(mode.semitones(9), 14);
         }
-    }
-
-    #[test]
-    fn grids_read_as_they_are_written() {
-        let [first, second] = MOTIF_A;
-        assert_eq!(grid(&first), "1..2 ..3. 5..3 ..2.");
-        assert_eq!(grid(&second), "3..5 ..6. .... 5...");
-        let cell = |degree, steps| Cell { degree, steps };
-        assert_eq!(first[0], cell(1, 3));
-        assert_eq!(first[14], cell(2, 2));
-        assert_eq!(second[6], cell(6, 6));
-        assert_eq!(first[1], cell(0, 0));
-        assert_eq!(&BASS_LEAPING, b"R..O..R.R..O..5.");
-        // A dash ends the note before it.
-        assert_eq!(starts(&MOTIF_C), [4, 6]);
-        assert_eq!(MOTIF_C[6], cell(8, 2));
-        assert_eq!(BRIDGE_BASS[10], cell(5, 6));
-    }
-
-    #[test]
-    fn the_motifs_use_five_degrees() {
-        for line in VERSE.iter().chain(&CHORUS) {
-            for cell in line.iter().filter(|cell| cell.degree != 0) {
-                assert!(FIVE.contains(&((cell.degree - 1) % 7 + 1)), "{cell:?}");
-            }
-        }
-        // Hirajoshi in Aeolian, and the same with a higher sixth degree in Dorian.
+        // The five degrees of the motifs are hirajoshi in Aeolian, and the same with a higher
+        // sixth degree in Dorian.
         let five = |mode: Mode| FIVE.map(|degree| name(A4 + mode.semitones(degree)));
         assert_eq!(five(Mode::Dorian), ["A", "B", "C", "E", "F#"]);
         assert_eq!(five(Mode::Aeolian), ["A", "B", "C", "E", "F"]);
     }
 
     #[test]
+    fn the_piece_is_written_as_the_specification_has_it() {
+        let [a, b, c] = (*b"ABC").map(|letter| PIECE.motif(letter).unwrap());
+        assert_eq!(PIECE.motifs().len(), 3);
+        let [first, second] = [a.bars()[0], a.bars()[1]];
+        assert_eq!(grid(&first), "1..2 ..3. 5..3 ..2.");
+        assert_eq!(grid(&second), "3..5 ..6. .... 5...");
+        assert_eq!(grid(&a.turn.unwrap()), "3..5 ..2. .... 5...");
+        assert_eq!(grid(&b.bars()[0]), "8... ..9. 8... 6...");
+        assert_eq!(grid(&b.bars()[1]), "5..6 ..5. 3..2 ..1.");
+        let cell = |degree, steps| Cell { degree, steps };
+        assert_eq!(first[0], cell(1, 3));
+        assert_eq!(first[14], cell(2, 2));
+        assert_eq!(second[6], cell(6, 6));
+        assert_eq!(first[1], cell(0, 0));
+        // A dash ends the note before it.
+        let [call] = c.bars() else {
+            panic!("the call is one bar long");
+        };
+        assert_eq!(starts(call), [4, 6]);
+        assert_eq!(call[6], cell(8, 2));
+
+        // The intro and the verse have motif A four times, the last time with its turn, and
+        // the chorus has motif B four times.
+        let verse = [first, second, first, second, first, second, first];
+        assert_eq!(VERSE.melody[..7], verse);
+        assert_eq!(VERSE.melody[7], a.turn.unwrap());
+        assert_eq!(INTRO.melody, VERSE.melody);
+        assert_eq!(CHORUS.melody[..2], [b.bars()[0], b.bars()[1]]);
+        assert_eq!(CHORUS.melody[..2], CHORUS.melody[6..]);
+        assert_eq!(VERSE.chords, [1, 1, COLOR, 4, 1, 1, COLOR, 5]);
+        assert_eq!(INTRO.chords, VERSE.chords);
+        assert_eq!(CHORUS.chords, [4, 5, 1, COLOR, 4, 5, 1, 1]);
+        assert_eq!(BRIDGE.chords, [5; BARS]);
+
+        assert_eq!(&BASS_LEAPING.grid, b"R..O..R.R..O..V.");
+        assert_eq!(&BASS_PAIR.grid, b"--------5-5.....");
+        assert_eq!(&HAT_ARENA.grid, b"ooxoooxoooxoooxo");
+        assert_eq!((HAT_ARENA.level, HAT_ARENA.soft), (200, 100));
+        assert_eq!((KICK_HEART.level, KICK_HEART.soft), (180, 135));
+        assert_eq!((PLUCK_ARPEGGIO.level, PLUCK_TICK.level), (150, 110));
+        assert_eq!((ROLL.beats, ROLL.from, ROLL.to), (2, 40, 255));
+        assert_eq!(
+            (ROLL.drum, ROLL.arena),
+            (Instrument::Hat, Instrument::Snare)
+        );
+        assert_eq!((LINK.beats, LINK.degree, LINK.notes), (2, 5, 4));
+    }
+
+    #[test]
     fn the_motifs_share_the_rhythm_of_the_bass() {
         let rhythm = [0, 3, 6, 8, 11, 14];
-        assert_eq!(starts(&MOTIF_A[0]), rhythm);
-        assert_eq!(starts(&MOTIF_B[1]), rhythm);
+        assert_eq!(starts(&VERSE.melody[0]), rhythm);
+        assert_eq!(starts(&CHORUS.melody[1]), rhythm);
         let bass: Vec<usize> = (0..STEPS)
-            .filter(|&step| BASS_PLAIN[step] != b'.')
+            .filter(|&step| BASS_PLAIN.grid[step] != b'.')
             .collect();
         assert_eq!(bass, rhythm);
     }
@@ -500,7 +549,7 @@ mod tests {
     #[test]
     fn chords_are_major_or_minor_in_every_mode() {
         // The chords on 1, 4 and 5, then the one that gives the mode its color.
-        let chords = |mode: Mode| {
+        let named = |mode: Mode| {
             [1, 4, 5, mode.color()].map(|chord| {
                 let [root, third, fifth] = triad(mode, chord, A4);
                 assert_eq!(fifth - root, 7);
@@ -512,11 +561,14 @@ mod tests {
                 format!("{}{minor}", name(root))
             })
         };
-        assert_eq!(chords(Mode::Dorian), ["Am", "D", "Em", "G"]);
-        assert_eq!(chords(Mode::Aeolian), ["Am", "Dm", "Em", "F"]);
-        for mode in MODES {
-            let chords = mode.verse_chords().into_iter().chain(mode.chorus_chords());
-            for chord in chords {
+        assert_eq!(named(Mode::Dorian), ["Am", "D", "Em", "G"]);
+        assert_eq!(named(Mode::Aeolian), ["Am", "Dm", "Em", "F"]);
+        assert_eq!(named(Mode::Ionian), ["A", "D", "E", "F#m"]);
+        assert_eq!(named(Mode::Mixolydian), ["A", "D", "Em", "G"]);
+        // The chords of the piece are these and no other.
+        for mode in [HOME, ARENA] {
+            let written = [INTRO, VERSE, CHORUS].map(|passage| mode.chords(passage.chords));
+            for chord in written.into_iter().flatten() {
                 assert!([1, 4, 5, mode.color()].contains(&chord));
             }
         }
@@ -524,69 +576,80 @@ mod tests {
 
     #[test]
     fn derived_lines_read_as_expected() {
-        let [a, b] = MOTIF_A;
+        let (a, b) = (line("1..2 ..3. 5..3 ..2."), line("3..5 ..6. .... 5..."));
         assert_eq!(grid(&skeleton(a)), "1... .... 5... ....");
         assert_eq!(grid(&skeleton(b)), "3... .... .... 5...");
         assert_eq!(skeleton(a)[0].steps, 8);
         assert_eq!(skeleton(b)[0].steps, 12);
         assert_eq!(skeleton(b)[12].steps, 4);
         assert_eq!(grid(&ornaments(a)), "1212 323. 5653 532.");
-        assert_eq!(grid(&ornaments(MOTIF_B[0])), "8... 989. 8.98 6.86");
+        let high = line("8... ..9. 8... 6...");
+        assert_eq!(grid(&ornaments(high)), "8... 989. 8.98 6.86");
         // A note keeps its length less the two steps of its ornament.
         assert_eq!(ornaments(b)[6].steps, 4);
         assert_eq!(grid(&ornaments(b)), "3535 656. ..86 5.65");
-
-        assert_eq!(grid(&VERSE[7]), "3..5 ..2. .... 5...");
+        // A degree that is not among the five takes the next of the five above it.
+        let others = line("4... 7... .... ....");
+        assert_eq!(grid(&ornaments(others)), "4.54 7... .... ..87");
+        // A melody without a note on a beat has no skeleton.
+        assert_eq!(skeleton(line("-1.. -2.. -3.. -5..")), [REST; STEPS]);
     }
 
     #[test]
-    fn no_note_rubs_against_the_root_of_its_chord() {
-        for mode in MODES {
-            let sections = [(VERSE, mode.verse_chords()), (CHORUS, mode.chorus_chords())];
-            for (lines, chords) in sections {
-                assert_eq!(rubs(mode, &lines, &chords), 0, "{mode:?}");
-                assert_eq!(rubs(mode, &skeletons(lines), &chords), 0, "{mode:?}");
-                assert_eq!(rubs(mode, &ornamented(lines), &chords), 0, "{mode:?}");
-            }
-        }
-    }
-
-    #[test]
-    fn the_bridge_has_no_mode() {
-        let notes = || {
-            let lines = BRIDGE.iter().chain(&BRIDGE_ANSWERS);
-            let cells = lines.chain([&TICK, &BRIDGE_BASS]).flatten();
-            cells.map(|cell| cell.degree).filter(|&degree| degree != 0)
-        };
-        assert_eq!(notes().count(), 4 * BARS + 8 + 2);
-        for degree in notes() {
-            assert!(NEUTRAL.contains(&((degree - 1) % 7 + 1)), "degree {degree}");
-            // The same note in both modes, and never a semitone above the pedal.
-            let [dorian, aeolian] = MODES.map(|mode| mode.semitones(degree));
-            assert_eq!(dorian, aeolian, "degree {degree}");
-            assert_ne!((dorian + 12 - Mode::Dorian.semitones(PEDAL)) % 12, 1);
-        }
-        // Every call starts on the pedal, and only the last one falls.
-        let calls: Vec<u8> = BRIDGE.iter().map(|line| line[6].degree).collect();
-        assert!(BRIDGE.iter().all(|line| line[4].degree == PEDAL));
+    fn the_bridge_stays_on_one_degree() {
+        // The degree that the bridge never leaves is the one a connection leads to: the bass
+        // has it, the tick starts on it, and so does every call.
+        let pedal = LINK.degree;
+        assert_eq!(degrees(&BASS_PAIR), [pedal; 2]);
+        assert_eq!(
+            degrees(&PLUCK_TICK),
+            [pedal, 9, pedal, 9, pedal, 9, pedal, 9]
+        );
+        assert!(BRIDGE.melody.iter().all(|line| line[4].degree == pedal));
+        // Only the last call falls.
+        let calls: Vec<u8> = BRIDGE.melody.iter().map(|line| line[6].degree).collect();
         assert_eq!(calls, [8, 7, 8, 9, 8, 7, 8, 4]);
+        // Its notes are five degrees, which are the same notes in both modes. The third degree
+        // is not among them, so the bridge has no mode: it is neither major nor minor.
+        let lines = BRIDGE.melody.iter().chain(&BRIDGE_ANSWERS).flatten();
+        let mut heard: Vec<u8> = lines.map(|cell| cell.degree).collect();
+        heard.extend(degrees(&PLUCK_TICK));
+        heard.retain(|&degree| degree != 0);
+        assert_eq!(heard.len(), 4 * BARS + 8);
+        assert!(
+            heard
+                .iter()
+                .all(|degree| NEUTRAL.contains(&((degree - 1) % 7 + 1)))
+        );
     }
 
     #[test]
     fn the_lead_answers_each_call_backwards() {
         // Two beats after the call, its second note and then its first, one step each.
         assert_eq!(starts(&BRIDGE_ANSWERS[0]), [12, 14]);
-        for (call, answer) in BRIDGE.iter().zip(&BRIDGE_ANSWERS) {
+        for (call, answer) in BRIDGE.melody.iter().zip(&BRIDGE_ANSWERS) {
             assert_eq!(answer[12].degree, call[6].degree);
             assert_eq!(answer[14].degree, call[4].degree);
             assert_eq!((answer[12].steps, answer[14].steps), (1, 1));
         }
+        // A call late in its bar is answered early in it, and a call of more than two notes
+        // by its first two.
+        assert_eq!(
+            grid(&answer(line("---- ---- 5.8. ----"))),
+            "8.5. .... .... ...."
+        );
+        assert_eq!(
+            grid(&answer(line("5.8. 9... ---- ----"))),
+            ".... .... 8.5. ...."
+        );
+        // One note is no call.
+        assert_eq!(answer(line("---- 5... ---- ----")), [REST; STEPS]);
     }
 
     #[test]
     fn a_connection_goes_to_the_degree_of_the_bridge_without_turning_back() {
         // What the connection plays in its two beats, for each note the lead can be on.
-        let walk = |lead: Option<u8>| grid(&connection(lead))[..9].to_string();
+        let walk = |lead: Option<u8>| grid(&connection(lead, LINK))[..9].to_string();
         // From the upper tonic, and from the note above it, the four notes of a fall.
         assert_eq!(walk(Some(8)), "8.7. 6.5.");
         assert_eq!(walk(Some(9)), "8.7. 6.5.");
@@ -600,8 +663,9 @@ mod tests {
         // A lead that is silent has nothing to connect from: the fall.
         assert_eq!(walk(None), "8.7. 6.5.");
 
+        let steps = CONNECTION_STEPS;
         for lead in (1..=10).map(Some).chain([None]) {
-            let line = connection(lead);
+            let line = connection(lead, LINK);
             let notes: Vec<Cell> = line
                 .iter()
                 .copied()
@@ -609,14 +673,9 @@ mod tests {
                 .collect();
             // It fills the two beats and nothing after them, and ends on the degree of the
             // bridge.
-            let steps: u8 = notes.iter().map(|cell| cell.steps).sum();
-            assert_eq!(steps, CONNECTION_STEPS, "{lead:?}");
-            assert!(
-                starts(&line)
-                    .iter()
-                    .all(|&step| step < CONNECTION_STEPS as usize)
-            );
-            assert_eq!(notes.last().unwrap().degree, PEDAL, "{lead:?}");
+            assert_eq!(notes.iter().map(|cell| cell.steps).sum::<u8>(), steps);
+            assert!(starts(&line).iter().all(|&step| step < steps as usize));
+            assert_eq!(notes.last().unwrap().degree, LINK.degree, "{lead:?}");
             // One step of the scale at a time, always the same way.
             let degrees: Vec<i32> = notes.iter().map(|cell| cell.degree as i32).collect();
             let moves: Vec<i32> = degrees.windows(2).map(|pair| pair[1] - pair[0]).collect();
@@ -628,49 +687,47 @@ mod tests {
     }
 
     #[test]
-    fn the_turnaround_keeps_the_verse_sound_in_minor() {
-        // Without it, the last bar of the verse holds F over E minor.
-        let mut plain = VERSE;
-        plain[7] = MOTIF_A[1];
-        assert_eq!(rubs(Mode::Dorian, &plain, &Mode::Dorian.verse_chords()), 0);
+    fn a_connection_follows_what_the_file_says_of_it() {
+        let way = |lead: Option<u8>, beats: u8, degree: u8, notes: u8| {
+            let link = Link {
+                beats,
+                degree,
+                notes,
+            };
+            grid(&connection(lead, link))
+        };
+        // To the tonic, from the degree the piece now goes to.
+        assert_eq!(way(Some(5), 2, 1, 4), "4.3. 2.1. .... ....");
+        // In one beat, two notes are half a beat apart.
+        assert_eq!(way(Some(8), 1, 5, 2), "6.5. .... .... ....");
+        // Over three beats, with up to six notes.
+        assert_eq!(way(Some(1), 3, 8, 6), "3.4. 5.6. 7.8. ....");
+        // Up to the note above the upper tonic, from silence: a beat each.
+        assert_eq!(way(None, 2, 9, 4), "8... 9... .... ....");
+        // With one note, the connection is where it goes at once.
+        assert_eq!(way(Some(2), 4, 5, 1), "5... .... .... ....");
         assert_eq!(
-            rubs(Mode::Aeolian, &plain, &Mode::Aeolian.verse_chords()),
-            1
+            connection(
+                Some(2),
+                Link {
+                    beats: 4,
+                    degree: 5,
+                    notes: 1
+                }
+            )[0]
+            .steps,
+            16
         );
     }
 
     #[test]
-    fn every_instrument_stays_in_its_range() {
-        let (e2, d3, d4, a5, b6) = (40, 50, 62, 81, 95);
-        for mode in MODES {
-            for chord in [1, 4, 5, mode.color()] {
-                let root = bass_root(mode, chord);
-                assert!((e2..=d3).contains(&root), "bass on {chord}");
-                // The leaping bass goes an octave above its root.
-                assert!(root + 12 <= d4);
-                assert!(
-                    triad(mode, chord, A3)
-                        .iter()
-                        .all(|pitch| (A3..=a5).contains(pitch))
-                );
-            }
-            // The lead, with its ornaments and an octave higher.
-            for line in ornamented(VERSE).iter().chain(&ornamented(CHORUS)) {
-                for cell in line.iter().filter(|cell| cell.degree != 0) {
-                    assert!(A4 + mode.semitones(cell.degree) + 12 <= b6);
-                }
-            }
-        }
-        // The pluck has the melody of the intro from A4 and that of the bridge from A3, and
-        // the bass has its notes of the bridge from A1.
-        let highest = |lines: &[Line; BARS]| {
-            let cells = lines.iter().flatten();
-            cells.map(|cell| cell.degree).max().unwrap()
-        };
-        assert!(A4 + Mode::Dorian.semitones(highest(&VERSE)) <= a5);
-        assert!(A3 + Mode::Dorian.semitones(highest(&BRIDGE)) <= a5);
-        assert_eq!(A1 + Mode::Dorian.semitones(PEDAL), e2);
-        // The tick of the bridge is the lowest thing the pluck plays: E3.
-        assert_eq!(A2 + Mode::Dorian.semitones(TICK[0].degree), 52);
+    fn the_turnaround_keeps_the_verse_sound_in_minor() {
+        // Without it, the last bar of the verse holds F over E minor.
+        let mut plain = VERSE.melody;
+        plain[7] = plain[1];
+        let dorian = Mode::Dorian.chords(VERSE.chords);
+        assert_eq!(rubs(Mode::Dorian, &plain, &dorian), 0);
+        let aeolian = Mode::Aeolian.chords(VERSE.chords);
+        assert_eq!(rubs(Mode::Aeolian, &plain, &aeolian), 1);
     }
 }

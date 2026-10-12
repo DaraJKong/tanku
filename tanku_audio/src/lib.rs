@@ -10,6 +10,7 @@
 pub mod cues;
 pub mod director;
 mod math;
+pub mod notation;
 pub mod score;
 pub mod synth;
 pub mod wav;

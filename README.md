@@ -326,6 +326,12 @@ The files go to `target/music`, or to the directory given after `--`:
 | `connections.wav`, `connections.txt` | Eight short fights that each end with the lead on another note, to hear every way from a fight into the bridge, and which is which |
 | `cues.wav`, `cues.txt` | Every sound cue alone, then over the fullest music as loud as the game plays both with the settings it starts with: next to the player, then as far away as a cue gets. The list tells which is which. |
 
+The piece is written in `tanku_audio/music.score`: its tempo, its key, its motifs, its patterns and its sections, in a notation that [docs/MUSIC.md](docs/MUSIC.md#the-file) describes. The game is compiled with it, so the tool above renders a change of the file the next time it runs. A file that can't be read stops the build and says on which line. These are the checks that hold for any piece, to run after a change:
+
+```bash
+cargo test -p tanku_audio --test checks
+```
+
 In the game, the lead tells how smart the enemies are. To know which sectors of a seed to compare by ear, list the brains of its first thirty groups and what the lead plays for each:
 
 ```bash

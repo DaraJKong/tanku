@@ -38,8 +38,9 @@ const BASS_CLOSE: f32 = fall(0.05);
 
 /// Plucked strings that can ring at once.
 const PLUCKS: usize = 4;
-/// Longest string, in frames. The lowest note of the pluck, E3, needs 266.
-const STRING: usize = 300;
+/// Longest string, in frames. The lowest note of the pluck in the piece, E3, needs 266, and
+/// this is enough for the E an octave below it. A lower note is played an octave higher.
+const STRING: usize = 540;
 /// Seconds a string takes to fall by 60 dB.
 const RING: f32 = 1.0;
 /// What a string that is stopped keeps at each turn.
@@ -326,7 +327,10 @@ impl Pluck {
 
     fn strike(&mut self, tone: Tone, echo: bool) {
         self.echo = echo;
-        let hz = frequency(tone.pitch);
+        let mut hz = frequency(tone.pitch);
+        while RATE / hz > STRING as f32 {
+            hz *= 2.0;
+        }
         // One turn takes the length of the string, half a frame for the average and the
         // delay of the tuning filter, which is kept between 0.2 and 1.2 frames.
         let period = RATE / hz;
@@ -728,7 +732,9 @@ impl Synth {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::score::STEP;
+
+    /// How long a step lasts at 120 beats per minute, in half frames.
+    const STEP: u32 = crate::score::step(120);
 
     /// A step that starts one note on one instrument.
     fn note(instrument: &str, pitch: u8, steps: u8) -> Step {
