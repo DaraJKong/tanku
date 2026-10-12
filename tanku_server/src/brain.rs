@@ -53,6 +53,19 @@ const MINING_RANGE: f32 = 20.0;
 const MINE_SPACING: f32 = 5.0;
 /// A player who comes at a tank this fast charges it.
 const CHARGE_SPEED: f32 = 3.0;
+/// The distances that an ace keeps from a player who has rounds: far enough to see their
+/// shots coming and get out of the way.
+const BAIT: (f32, f32) = (11.0, 14.0);
+/// The distances that it keeps from a player who has none: close enough for its own shots
+/// to be hard to dodge.
+const PRESS: (f32, f32) = (5.0, 8.0);
+/// It presses a player until the player has this many rounds again.
+const PRESS_UNTIL: u8 = 3;
+/// The distances that it keeps when it is the last of its group.
+const RETREAT: (f32, f32) = (16.0, 22.0);
+/// An ace wants at least this much of a turn around the player between itself and the
+/// nearest ally, so that their fire crosses.
+const CROSSFIRE: f32 = PI / 2.0;
 
 #[derive(Component)]
 pub struct Brain {
@@ -78,6 +91,8 @@ pub struct Brain {
     /// The bullets that a veteran watches: all those that come near its tank, where a
     /// soldier watches the one that is about to hit.
     watched: Vec<Watch>,
+    /// Whether an ace presses the player it fights, who has run out of rounds.
+    pressing: bool,
 }
 
 /// A bullet that a veteran watches.
@@ -107,6 +122,7 @@ impl Brain {
             threat: None,
             target: None,
             watched: Vec::new(),
+            pressing: false,
         }
     }
 
@@ -522,7 +538,7 @@ fn narrow(field: &Field, at: Vec2) -> bool {
 
 pub fn think(
     field: Res<Field>,
-    players: Query<(Entity, &Player, &Tank, &Position, &Motion), Without<Wreck>>,
+    players: Query<(Entity, &Player, &Tank, &Position, &Motion, &Gun), Without<Wreck>>,
     mut enemies: Query<
         (
             Entity,
@@ -541,17 +557,21 @@ pub fn think(
     mines: Query<&Position, With<Mine>>,
     crates: Query<&Position, With<ExplosiveCrate>>,
 ) {
-    let allies: Vec<(Entity, Vec2)> = enemies
+    // Every enemy: where it is, and the sector that it fights in if it is awake.
+    let allies: Vec<(Entity, Vec2, Option<u32>)> = enemies
         .iter()
-        .map(|(entity, _, position, ..)| (entity, position.0))
+        .map(|(entity, tank, position, .., enemy, _, _)| {
+            (entity, position.0, enemy.awake.then_some(tank.sector))
+        })
         .collect();
-    // The tanks of the players that still run: where each one is, in its sector, and how it
-    // moves. They are in the order of their seats, so that the same fight goes the same way.
-    let mut rivals: Vec<(u8, Entity, u32, Vec2, Vec2)> = players
+    // The tanks of the players that still run: where each one is, in its sector, how it
+    // moves and how many rounds it has. They are in the order of their seats, so that the
+    // same fight goes the same way.
+    let mut rivals: Vec<(u8, Entity, u32, Vec2, Vec2, u8)> = players
         .iter()
-        .map(|(entity, player, tank, position, motion)| {
+        .map(|(entity, player, tank, position, motion, gun)| {
             let (at, velocity) = (position.0, motion.velocity);
-            (player.seat, entity, tank.sector, at, velocity)
+            (player.seat, entity, tank.sector, at, velocity, gun.rounds)
         })
         .collect();
     rivals.sort_by_key(|rival| rival.0);
@@ -588,7 +608,7 @@ pub fn think(
         let kept = here()
             .find(|rival| Some(rival.1) == brain.target)
             .filter(|kept| me.distance(kept.3) <= me.distance(nearest.3) * TARGET_HOLD);
-        let &(_, target, _, player_at, player_velocity) = kept.unwrap_or(nearest);
+        let &(_, target, _, player_at, player_velocity, player_rounds) = kept.unwrap_or(nearest);
         brain.target = Some(target);
         let genome = &tank.genome;
         if brain.awake_for == 0.0 {
@@ -689,9 +709,43 @@ pub fn think(
             if brain.rng.chance(1) {
                 brain.strafe = -brain.strafe;
             }
-            drive = if !sees_player || distance > FAR {
+            let mut band = (NEAR, FAR);
+            if tier >= 4 {
+                // An ace looks at who fights beside it, and counts the rounds of the player.
+                let beside = |&&(ally, _, fights): &&(Entity, Vec2, Option<u32>)| {
+                    ally != entity && fights == Some(tank.sector)
+                };
+                let fellows: Vec<Vec2> = allies.iter().filter(beside).map(|ally| ally.1).collect();
+                if player_rounds == 0 {
+                    brain.pressing = true;
+                } else if player_rounds >= PRESS_UNTIL {
+                    brain.pressing = false;
+                }
+                // The last of its group retreats. Otherwise it baits the shots of a player
+                // who has rounds from where it sees them coming, and presses a player who
+                // has none.
+                band = if fellows.is_empty() {
+                    RETREAT
+                } else if brain.pressing {
+                    PRESS
+                } else {
+                    BAIT
+                };
+                // It drives around the player, away from the nearest ally, until their fire
+                // crosses.
+                let bearing = |at: Vec2| (at - player_at).to_angle();
+                let turn = |at: &Vec2| geom::angle_difference(bearing(*at), bearing(me));
+                let nearest = fellows
+                    .iter()
+                    .map(turn)
+                    .min_by(|a, b| a.abs().total_cmp(&b.abs()));
+                if let Some(turn) = nearest.filter(|turn| turn.abs() < CROSSFIRE) {
+                    brain.strafe = if turn > 0.0 { -1.0 } else { 1.0 };
+                }
+            }
+            drive = if !sees_player || distance > band.1 {
                 toward
-            } else if distance < NEAR {
+            } else if distance < band.0 {
                 -toward
             } else {
                 toward.perp() * brain.strafe
@@ -705,7 +759,7 @@ pub fn think(
             }
             if tier >= 2 {
                 // Spread out from allies.
-                for &(ally, at) in &allies {
+                for &(ally, at, _) in &allies {
                     let away = me - at;
                     if ally != entity && away.length() < 6.0 {
                         drive += away.normalize_or_zero() * 0.6;
@@ -727,9 +781,16 @@ pub fn think(
             if tier >= 3 {
                 // A veteran follows the bullets off the walls, and watches every one that is a
                 // second or less from passing over its tank: one that flies straight at it,
-                // and one that will come at it off a wall. It minds each of them once it has
-                // watched it for long enough.
-                let passes = |path: &&Path| path.nears(me).is_some_and(|near| near < ON_COURSE);
+                // and one that will come at it off a wall. An ace watches as far around its
+                // tank as it drives in that time, so it also sees a shot that is aimed ahead
+                // of it. Either minds each of them once it has watched it for long enough.
+                let ahead = if tier >= 4 {
+                    genome.top_speed() * FORESIGHT
+                } else {
+                    0.0
+                };
+                let passes =
+                    |path: &&Path| path.nears(me).is_some_and(|near| near < ahead + ON_COURSE);
                 let near: Vec<&Path> = paths.iter().filter(passes).collect();
                 let bullets: Vec<Entity> = near.iter().map(|path| path.bullet).collect();
                 brain.watch(&bullets);
@@ -804,7 +865,7 @@ pub fn think(
             let apart = mines.iter().all(|mine| mine.0.distance(me) > MINE_SPACING);
             let alone = allies
                 .iter()
-                .all(|&(ally, at)| ally == entity || at.distance(me) > BLAST_RADIUS + 1.0);
+                .all(|&(ally, at, _)| ally == entity || at.distance(me) > BLAST_RADIUS + 1.0);
             lay = apart && alone && (charged || narrow(&field, me));
         }
 

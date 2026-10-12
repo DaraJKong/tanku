@@ -1961,6 +1961,145 @@ fn a_veteran_shoots_down_a_bullet_that_it_can_not_dodge() {
     assert_eq!(fares(3, 60, &[off_the_wall]), (true, 1, 2));
 }
 
+/// A fast tank wakes up in the start bay, alone, with a brain of a tier that has the
+/// experience of a sector, while bullets of a player are fired: each from a place and at a
+/// velocity. Tells where the tank is after some time, if it is still there, and whether it is
+/// there a moment later.
+fn drives_among(brain: u8, sector: u32, time: f32, shots: &[(Vec2, Vec2)]) -> (Option<Vec2>, bool) {
+    let mut app = start("TEST");
+    let entity = player(&mut app).unwrap();
+    teleport(&mut app, entity, Vec2::new(-5.0, 2.0));
+    let levels = [(Stat::Engine, 5), (Stat::Tracks, 6), (Stat::Brain, brain)];
+    let enemy = spawn_thinker(&mut app, Vec2::new(2.0, 8.0), &levels, sector);
+    for &(from, velocity) in shots {
+        spawn_bullet(&mut app, Team::Players, from, velocity, 0);
+    }
+    tick(&mut app, seconds(time));
+    let there = alive(&app, enemy).then(|| position(&mut app, enemy));
+    tick(&mut app, seconds(0.3));
+    (there, alive(&app, enemy))
+}
+
+/// A bullet that is fired along the bay so that it is at a place after some time: from the
+/// north of the place, or from the south where the north wall is too close.
+fn shot_to(at: Vec2, time: f32) -> (Vec2, Vec2) {
+    let reach = 10.0 * time;
+    let way = if at.y + reach < 15.5 {
+        Vec2::NEG_Y
+    } else {
+        Vec2::Y
+    };
+    (at - way * reach, way * 10.0)
+}
+
+#[test]
+fn an_ace_dodges_a_bullet_that_is_aimed_ahead_of_it() {
+    // A bullet is fired so that it is where the tank meant to be 0.7 s later.
+    let survives = |brain: u8, sector: u32| {
+        let there = drives_among(brain, sector, 0.7, &[]).0.unwrap();
+        drives_among(brain, sector, 0.7, &[shot_to(there, 0.7)]).1
+    };
+    // A soldier and a veteran only see a bullet that flies at where their tank is, and drive
+    // into this one.
+    assert!(!survives(2, 60));
+    assert!(!survives(3, 60));
+    // An ace looks as far around its tank as it drives in a second. One of a late sector acts
+    // on the bullet after 0.14 s, and is missed.
+    assert!(survives(4, 60));
+    // One of the first sector takes 0.5 s, which leaves it too little time.
+    assert!(!survives(4, 1));
+}
+
+/// What a tank with a brain of a tier means to do about a player, two ticks after it woke up
+/// at a place in the start bay: its drive. The player stands at a place with so many rounds,
+/// and an ally without an engine may be at another, awake or not.
+fn means(brain: u8, at: Vec2, player_at: Vec2, rounds: u8, ally: Option<(Vec2, bool)>) -> Vec2 {
+    let mut app = start("TEST");
+    let entity = player(&mut app).unwrap();
+    teleport(&mut app, entity, player_at);
+    app.world_mut().get_mut::<Gun>(entity).unwrap().rounds = rounds;
+    if let Some((ally, awake)) = ally {
+        let ally = spawn_awake(&mut app, ally, &[]);
+        app.world_mut().get_mut::<Enemy>(ally).unwrap().awake = awake;
+    }
+    let levels = [(Stat::Engine, 3), (Stat::Tracks, 4), (Stat::Brain, brain)];
+    let enemy = spawn_awake(&mut app, at, &levels);
+    tick(&mut app, 2);
+    app.world().get::<TankCommand>(enemy).unwrap().drive
+}
+
+#[test]
+fn an_ace_drives_around_the_player_away_from_its_ally() {
+    // The player stands in the south of the bay and an ally 12 m north of it. A tank wakes up
+    // as far from the player, 15 degrees to one side of the ally. Tells which way around the
+    // player it drives: counterclockwise when the number is positive.
+    let player_at = Vec2::new(0.0, 1.5);
+    let around = |brain: u8, side: f32| {
+        let out = Vec2::from_angle((90.0 + 15.0 * side).to_radians());
+        let ally = Some((player_at + Vec2::Y * 12.0, true));
+        out.perp_dot(means(brain, player_at + out * 12.0, player_at, 5, ally))
+    };
+    // A veteran drives the same way around on either side of its ally.
+    assert!(around(3, 1.0) * around(3, -1.0) > 0.0);
+    // An ace drives away from its ally on either side, so that their fire crosses.
+    assert!(around(4, 1.0) > 0.5, "{}", around(4, 1.0));
+    assert!(around(4, -1.0) < -0.5, "{}", around(4, -1.0));
+}
+
+#[test]
+fn an_ace_baits_a_player_who_has_rounds_and_presses_one_who_has_none() {
+    // A tank wakes up 9.5 m north of the player, with an ally elsewhere. Tells how much of
+    // its drive is toward the player.
+    let (player_at, at) = (Vec2::new(0.0, 1.5), Vec2::new(0.0, 11.0));
+    let ally = Vec2::new(-5.0, 13.0);
+    let toward = |brain: u8, rounds: u8| {
+        means(brain, at, player_at, rounds, Some((ally, true))).dot(Vec2::NEG_Y)
+    };
+    // A veteran drives around the player at that distance, whatever rounds they have.
+    assert!(toward(3, 5).abs() < 0.3 && toward(3, 0).abs() < 0.3);
+    // An ace backs away from a player who has rounds, to where it sees their shots coming,
+    // and comes at a player who has none.
+    assert!(toward(4, 5) < -0.7);
+    assert!(toward(4, 0) > 0.7);
+
+    // It presses until the player has three rounds again.
+    let mut app = start("TEST");
+    let entity = player(&mut app).unwrap();
+    teleport(&mut app, entity, player_at);
+    spawn_awake(&mut app, ally, &[]);
+    let levels = [(Stat::Engine, 3), (Stat::Tracks, 4), (Stat::Brain, 4)];
+    let enemy = spawn_awake(&mut app, at, &levels);
+    let mut comes = |rounds: u8| {
+        app.world_mut().get_mut::<Gun>(entity).unwrap().rounds = rounds;
+        tick(&mut app, 2);
+        let drive = app.world().get::<TankCommand>(enemy).unwrap().drive;
+        drive.dot((player_at - position(&mut app, enemy)).normalize()) > 0.7
+    };
+    assert!(!comes(5));
+    assert!(comes(0));
+    assert!(comes(2));
+    assert!(!comes(3));
+}
+
+#[test]
+fn an_ace_retreats_when_it_is_the_last_of_its_group() {
+    // A tank wakes up 12 m from the player, with room behind it. Tells how much of its drive
+    // is toward the player.
+    let player_at = Vec2::new(-5.5, 14.5);
+    let out = Vec2::new(11.0, -13.0).normalize();
+    let toward = |brain: u8, ally: Option<(Vec2, bool)>| {
+        means(brain, player_at + out * 12.0, player_at, 5, ally).dot(-out)
+    };
+    // A veteran drives around the player at that distance, alone or not, and so does an ace
+    // that has an ally.
+    let ally = Vec2::new(5.0, 14.0);
+    assert!(toward(3, None).abs() < 0.3 && toward(3, Some((ally, true))).abs() < 0.3);
+    assert!(toward(4, Some((ally, true))).abs() < 0.3);
+    // An ace that is alone backs away. An ally that is not awake is no company.
+    assert!(toward(4, None) < -0.7);
+    assert!(toward(4, Some((ally, false))) < -0.7);
+}
+
 #[test]
 fn a_veteran_keeps_its_shield_for_the_bullet_that_it_can_not_dodge() {
     // A slow tank with a shield, and a bullet that flies straight at it from the north. Its
