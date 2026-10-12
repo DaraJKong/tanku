@@ -32,10 +32,13 @@ impl Unlocks {
     }
 
     /// Whether a mode or an option is open to the player. A difficulty that is unlocked
-    /// unlocks the ones below it.
+    /// unlocks the ones below it. And arena mode, which the first sectors unlock, came to
+    /// the game after the others: whoever has earned any of them had cleared those sectors
+    /// already, and has it.
     pub fn has(&self, unlock: Unlock) -> bool {
         let above = unlock == Unlock::HardMode && self.earned.contains(&Unlock::ImpossibleMode);
-        self.earned.contains(&unlock) || above
+        let before = unlock == Unlock::ArenaMode && !self.earned.is_empty();
+        self.earned.contains(&unlock) || above || before
     }
 
     /// Whether something is left for a run to earn.
@@ -43,11 +46,16 @@ impl Unlocks {
         Unlock::ALL.iter().any(|&unlock| !self.has(unlock))
     }
 
-    /// Adds what a run has earned so far. Returns what is new in it.
+    /// Adds what a run has earned so far. Returns what is new in it: what the player
+    /// didn't have yet.
     fn take(&mut self, earned: impl Iterator<Item = Unlock>) -> Vec<Unlock> {
+        let earned: Vec<Unlock> = earned.collect();
         let new: Vec<Unlock> = earned
-            .filter(|&unlock| self.earned.insert(unlock))
+            .iter()
+            .copied()
+            .filter(|&unlock| !self.has(unlock))
             .collect();
+        self.earned.extend(earned);
         self.new.extend(&new);
         new
     }
@@ -168,18 +176,41 @@ mod tests {
     }
 
     #[test]
+    fn whoever_earned_anything_before_arena_mode_existed_has_arena_mode() {
+        // A player who could type a seed had cleared sector 10, and so sector 5. They aren't
+        // told of arena mode as of something new when a run earns it again.
+        let mut unlocks = Unlocks::of(&[Unlock::ChosenSeed]);
+        assert!(unlocks.has(Unlock::ArenaMode));
+        assert!(!unlocks.has(Unlock::FreeMode) && !unlocks.has(Unlock::HardMode));
+        let earned = [Unlock::ArenaMode, Unlock::ChosenSeed, Unlock::FreeMode];
+        assert_eq!(unlocks.take(earned.into_iter()), [Unlock::FreeMode]);
+        assert_eq!(unlocks.take(earned.into_iter()), []);
+        // What is kept is all that was earned.
+        assert_eq!(unlocks.to_pairs().len(), 3);
+        for earlier in [Unlock::FreeMode, Unlock::HardMode, Unlock::ImpossibleMode] {
+            assert!(Unlocks::of(&[earlier]).has(Unlock::ArenaMode));
+        }
+        // Whoever has earned nothing has nothing, and arena mode brings nothing else.
+        assert!(!Unlocks::default().has(Unlock::ArenaMode));
+        let first = Unlocks::of(&[Unlock::ArenaMode]);
+        assert!(!first.has(Unlock::ChosenSeed) && first.wanting());
+        let mut fresh = Unlocks::default();
+        assert_eq!(
+            fresh.take([Unlock::ArenaMode].into_iter()),
+            [Unlock::ArenaMode]
+        );
+    }
+
+    #[test]
     fn a_difficulty_that_is_unlocked_unlocks_the_ones_below_it() {
         let unlocks = Unlocks::of(&[Unlock::ImpossibleMode]);
         assert!(unlocks.has(Unlock::HardMode));
         assert!(!unlocks.has(Unlock::ChosenSeed));
         assert!(unlocks.wanting());
         assert!(!Unlocks::of(&Unlock::ALL).wanting());
-        // With the impossible mode, only the options are left to earn.
-        let options = [Unlock::ArenaMode, Unlock::ChosenSeed, Unlock::FreeMode];
-        assert!(Unlocks::of(&[Unlock::ImpossibleMode]).wanting());
-        let mut every = options.to_vec();
-        every.push(Unlock::ImpossibleMode);
-        assert!(!Unlocks::of(&every).wanting());
-        assert!(Unlocks::of(&every[1..]).wanting());
+        // With the impossible mode, only the two options that later sectors unlock are left
+        // to earn.
+        let unlocks = Unlocks::of(&[Unlock::ChosenSeed, Unlock::FreeMode, Unlock::ImpossibleMode]);
+        assert!(!unlocks.wanting());
     }
 }

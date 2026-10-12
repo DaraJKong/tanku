@@ -76,7 +76,7 @@ A browser only joins from a page that it loaded over HTTPS or from its own machi
 
 ### Arena mode
 
-Arena mode is an option of a run, as free mode is. A single player unlocks it by clearing sector 5 and turns it on on the solo screen, and the host of a game sets it in the lobby.
+Arena mode is an option of a run, as free mode is. A single player unlocks it by clearing sector 5 and turns it on on the solo screen, and the host of a game sets it in the lobby. A player who had earned an achievement before arena mode existed had cleared that sector already, and has it.
 
 A run in arena mode has no corridor. It is fought in one room, which the seed draws, against one group after another:
 
