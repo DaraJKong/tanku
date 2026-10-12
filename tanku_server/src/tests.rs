@@ -48,6 +48,11 @@ fn begin_with(seed: &str, players: u32) -> App {
 
 /// Starts a run of this many players and of this difficulty.
 fn begin_in(seed: &str, players: u32, difficulty: Difficulty) -> App {
+    begin_as(seed, players, difficulty, Vec::new())
+}
+
+/// Starts a run in which the first seats have tanks of their own.
+fn begin_as(seed: &str, players: u32, difficulty: Difficulty, tanks: Vec<Genome>) -> App {
     let mut app = App::new();
     app.add_plugins((MinimalPlugins, CorePlugin, ServerPlugin));
     app.world_mut().write_message(RunRequest::Start {
@@ -55,6 +60,7 @@ fn begin_in(seed: &str, players: u32, difficulty: Difficulty) -> App {
         players,
         drawn: true,
         difficulty,
+        tanks,
     });
     tick(&mut app, 1);
     events(&mut app);
@@ -1727,6 +1733,7 @@ fn a_skip_asked_with_the_start_of_a_run_applies_to_that_run() {
         players: 1,
         drawn: true,
         difficulty: Difficulty::Normal,
+        tanks: Vec::new(),
     });
     skip_to(&mut app, 5);
     assert_eq!((run(&app).sector, loaded(&app)), (4, vec![4, 5]));
@@ -2245,6 +2252,7 @@ fn a_run_earns_achievements_on_a_seed_that_was_drawn_for_it_unless_it_is_a_playt
             players: 1,
             drawn,
             difficulty: Difficulty::Normal,
+            tanks: Vec::new(),
         });
         tick(&mut app, 1);
         run(&app).earns
@@ -2253,6 +2261,99 @@ fn a_run_earns_achievements_on_a_seed_that_was_drawn_for_it_unless_it_is_a_playt
     // A seed that a player chose, or plays again, can be practiced.
     assert!(!earns(false, false));
     assert!(!earns(true, true));
+}
+
+/// A tank that a player may build: a fast gun whose bullets pierce and bounce three times,
+/// and neither mines nor a shield.
+fn gun_tank() -> Genome {
+    let parts = [
+        (Stat::Engine, 4),
+        (Stat::Tracks, 4),
+        (Stat::Muzzle, 7),
+        (Stat::Ricochet, 3),
+        (Stat::Piercing, 1),
+        (Stat::Magazine, 1),
+    ];
+    Genome::of_the_garage(&parts).unwrap()
+}
+
+/// The tank of the player in a seat.
+fn tank_of(app: &mut App, seat: u8) -> Genome {
+    let world = app.world_mut();
+    let mut players = world.query::<(&Player, &Tank)>();
+    let found = players.iter(world).find(|(player, _)| player.seat == seat);
+    found.unwrap().1.genome
+}
+
+#[test]
+fn a_player_fights_in_the_tank_that_the_run_was_started_with() {
+    let tank = gun_tank();
+    assert_ne!(tank, Genome::PLAYER);
+    // The first seat has a tank of its own, and the second one the standard tank.
+    let mut team = begin_as("TEST", 2, Difficulty::Normal, vec![tank]);
+    assert_eq!(tank_of(&mut team, 0), tank);
+    assert_eq!(tank_of(&mut team, 1), Genome::PLAYER);
+
+    let mut app = begin_as("TEST", 1, Difficulty::Normal, vec![tank]);
+    tick(&mut app, seconds(SPAWN_FIRE_DELAY));
+    let entity = player(&mut app).unwrap();
+    assert_eq!(tank_of(&mut app, 0), tank);
+    let rounds = |app: &App, entity: Entity| app.world().get::<Gun>(entity).unwrap().rounds;
+    assert_eq!(rounds(&app, entity), 2);
+    // It fires what its gun makes: a bullet at 19 m/s that pierces and bounces three times.
+    shoot_at(&mut app, START + Vec2::Y * 8.0);
+    let world = app.world_mut();
+    let bullets: Vec<Bullet> = world.query::<&Bullet>().iter(world).copied().collect();
+    let [bullet] = bullets.as_slice() else {
+        panic!("{} bullets", bullets.len());
+    };
+    assert!((bullet.velocity.length() - 19.0).abs() < 1e-3);
+    assert_eq!((bullet.bounces_left, bullet.pierces_left), (3, 1));
+    assert_eq!(rounds(&app, entity), 1);
+    // It has neither mines nor a shield, whatever its player asks.
+    command(
+        &mut app,
+        TankCommand {
+            aim: START + Vec2::Y * 8.0,
+            mine: true,
+            shield: true,
+            ..default()
+        },
+    );
+    tick(&mut app, 2);
+    let world = app.world_mut();
+    assert_eq!(world.query::<&Mine>().iter(world).count(), 0);
+    assert!(!app.world().get::<Shield>(entity).unwrap().is_active());
+
+    // The player comes back in the same tank, with its magazine full.
+    destroy_player(&mut app);
+    tick(&mut app, seconds(RESPAWN_DELAY) + 1);
+    let entity = player(&mut app).unwrap();
+    assert_eq!(tank_of(&mut app, 0), tank);
+    assert_eq!(rounds(&app, entity), 2);
+}
+
+#[test]
+fn a_seat_keeps_the_standard_tank_unless_it_is_given_one_that_a_player_may_build() {
+    // A tank that costs more than a player has, one of an enemy, and one that can't drive.
+    let mut dear = Genome::PLAYER;
+    dear.set(Stat::Muzzle, 7);
+    let mut enemy = Genome::empty(150);
+    enemy.set(Stat::Engine, 7);
+    enemy.set(Stat::Brain, 4);
+    let mut post = Genome::PLAYER;
+    post.set(Stat::Engine, 0);
+    assert!(dear.flaw().is_some() && enemy.flaw().is_some() && post.flaw().is_some());
+    let given = vec![dear, gun_tank(), enemy, post];
+    let mut app = begin_as("TEST", 4, Difficulty::Normal, given);
+    let tanks = [0, 1, 2, 3].map(|seat| tank_of(&mut app, seat));
+    assert_eq!(
+        tanks,
+        [Genome::PLAYER, gun_tank(), Genome::PLAYER, Genome::PLAYER]
+    );
+    // More tanks than there are seats do no harm.
+    let mut app = begin_as("TEST", 1, Difficulty::Normal, vec![gun_tank(); 9]);
+    assert_eq!(tank_of(&mut app, 0), gun_tank());
 }
 
 #[test]

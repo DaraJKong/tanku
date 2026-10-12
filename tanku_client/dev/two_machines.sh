@@ -9,7 +9,7 @@
 # Nothing leaves this machine and nothing here needs privileges. It takes Linux with user
 # namespaces, and the tools `unshare`, `nsenter`, `ip` and `tc`.
 #
-# Usage: [WALL=mdns|shut] two_machines.sh HOST_SCRIPT GUEST_SCRIPT [LINE]
+# Usage: [WALL=mdns|shut] [HOST_OPTIONS=...] two_machines.sh HOST_SCRIPT GUEST_SCRIPT [LINE]
 #
 # The scripts are development scripts, as `TANKU_DEV_SCRIPT` takes them. LINE worsens the cable
 # in both directions, in the words of `tc netem`: "delay 50ms 10ms loss 2%" makes a round trip
@@ -25,6 +25,9 @@
 # With `mdns`, multicast DNS comes in too, as it does through the firewalls that systems ship
 # with: a guest must still find the game. With `shut`, it is kept out: the address must still
 # join.
+#
+# HOST_OPTIONS is what the command line of the host's game holds, such as
+# "--playtest --tank engine=7,muzzle=7". The guest's game has none.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
@@ -34,6 +37,7 @@ mkdir -p "$logs"
 cargo build -q -p tanku_client
 
 export HOST_SCRIPT="$1" GUEST_SCRIPT="$2" LINE="${3:-}" LOGS="$logs" WALL="${WALL:-}"
+export HOST_OPTIONS="${HOST_OPTIONS:-}"
 unshare --user --map-root-user --net bash -euo pipefail -c '
     ip link set lo up
     ip link add host type veth peer name guest
@@ -76,7 +80,10 @@ unshare --user --map-root-user --net bash -euo pipefail -c '
     fi
 
     # A scripted game opens no window. It is kept from the desktop all the same.
-    game() { env -u WAYLAND_DISPLAY -u DISPLAY TANKU_DEV_SCRIPT="$1" timeout 600 cargo run -q -p tanku_client; }
+    game() {
+        env -u WAYLAND_DISPLAY -u DISPLAY TANKU_DEV_SCRIPT="$1" \
+            timeout 600 cargo run -q -p tanku_client -- $HOST_OPTIONS
+    }
     game "$HOST_SCRIPT" > "$LOGS/host.log" 2>&1 &
     first=$!
     there env -u WAYLAND_DISPLAY -u DISPLAY TANKU_DEV_SCRIPT="$GUEST_SCRIPT" \

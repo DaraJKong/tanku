@@ -10,7 +10,7 @@ use tanku_core::{
     modes::Difficulty,
     progression,
     rng::{Purpose, Stream},
-    rules::{BLOCK_SIZE, TANK_RADIUS},
+    rules::{BLOCK_SIZE, MAX_PLAYERS, TANK_RADIUS},
     sim::{
         Barrier, Block, Enemy, ExplosiveCrate, Gun, Motion, Position, PreviousPosition, Sector,
         SectorIndex, Tank, Team,
@@ -123,6 +123,8 @@ pub struct Field {
     /// The seats of the players in the run. Sectors are loaded for as many: enemy groups grow
     /// with their number.
     pub seats: Vec<u8>,
+    /// The tank of each seat: the standard one, unless the run was started with another.
+    pub tanks: [Genome; MAX_PLAYERS as usize],
     /// Whether the run started with a single player, who has lives.
     pub solo: bool,
     pub corridor: Corridor,
@@ -142,6 +144,7 @@ impl Field {
             seed,
             difficulty,
             seats: (0..players as u8).collect(),
+            tanks: [Genome::PLAYER; MAX_PLAYERS as usize],
             solo: players == 1,
             corridor: Corridor::new(seed),
             colliders: Vec::new(),

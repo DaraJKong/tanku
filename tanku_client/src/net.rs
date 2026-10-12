@@ -656,6 +656,7 @@ pub(crate) mod tests {
     use tanku_core::{
         CorePlugin,
         sim::{Position, Tank, Wreck},
+        stats::{Genome, Stat},
     };
     use tanku_core::{discovery::Reach, sim::RunRequest};
     use tanku_server::{
@@ -665,6 +666,7 @@ pub(crate) mod tests {
 
     use super::*;
     use crate::{
+        cli::Options,
         crew,
         host::{HostPort, WebPort},
         session,
@@ -920,6 +922,39 @@ pub(crate) mod tests {
         assert!(guest.world().get_resource::<Run>().is_none());
         let world = guest.world_mut();
         assert_eq!(world.query::<&Sector>().iter(world).count(), 0);
+    }
+
+    #[test]
+    fn the_tank_that_a_playtest_brought_is_its_host_s_alone() {
+        let parts = [(Stat::Engine, 7), (Stat::Muzzle, 7), (Stat::Piercing, 1)];
+        let tank = Genome::of_the_garage(&parts).unwrap();
+        let port = free_port();
+        let mut host = host(port);
+        host.insert_resource(Options {
+            playtest: true,
+            tank: Some(tank),
+            ..default()
+        });
+        let mut guest = guest(port);
+        run_until("the lobby", &mut [&mut host, &mut guest], |games| {
+            screen(games[1]) == Screen::Lobby
+        });
+        ask(&mut host, SessionRequest::Start);
+        run_until("the run", &mut [&mut host, &mut guest], |games| {
+            screen(games[1]) == Screen::Playing && seats(games[1]) == [0, 1]
+        });
+        // Both games hold the tank of the host as it was built, and the standard tank for
+        // the guest.
+        for game in [&mut host, &mut guest] {
+            let world = game.world_mut();
+            let mut tanks = world.query::<(&Player, &Tank)>();
+            let mut held: Vec<(u8, Genome)> = tanks
+                .iter(world)
+                .map(|(player, tank)| (player.seat, tank.genome))
+                .collect();
+            held.sort_by_key(|(seat, _)| *seat);
+            assert_eq!(held, [(0, tank), (1, Genome::PLAYER)]);
+        }
     }
 
     /// Destroys the tanks of all the players of a run, which ends it.

@@ -18,6 +18,7 @@ fn fight(sector: u32) -> App {
         players: 1,
         drawn: true,
         difficulty: Difficulty::Normal,
+        tanks: Vec::new(),
     });
     app.world_mut().run_schedule(FixedUpdate);
 

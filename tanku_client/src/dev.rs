@@ -3,7 +3,7 @@
 //!
 //! `TANKU_DEV_SCRIPT` holds commands separated by semicolons, run one after the other:
 //! `start SEED PLAYERS DIFFICULTY`, which starts a run in normal mode unless `hard` is asked
-//! for, `seat NUMBER`, `repair SECONDS` and `shield SECONDS`, which hold the
+//! for, in the tank of the command line if `--tank` gave one, `seat NUMBER`, `repair SECONDS` and `shield SECONDS`, which hold the
 //! key of that name for so long, `wait SECONDS`, `warp SECTOR`, `unlock`, which unlocks every
 //! mode and option,
 //! `host PORT`, which opens a game for others to join, and takes browsers on the port after
@@ -71,6 +71,7 @@ use crate::{
     Overlay, Screen,
     audio::Muted,
     camera::{MainCamera, View},
+    cli::Options,
     crew::{LocalSeat, Own},
     host::{HostPort, WebPort},
     input,
@@ -380,11 +381,12 @@ fn run_script(
         ResMut<Assets<Image>>,
         Single<(Entity, &RenderTarget, &mut Projection), With<MainCamera>>,
     ),
-    (baton, tape, mut seat, mut unlocks): (
+    (baton, tape, mut seat, mut unlocks, options): (
         Res<Baton>,
         Option<Res<Tape>>,
         ResMut<LocalSeat>,
         ResMut<Unlocks>,
+        Res<Options>,
     ),
     (mut session_requests, mut keys, mut port, mut web): (
         MessageWriter<SessionRequest>,
@@ -412,6 +414,7 @@ fn run_script(
                 players: (number(2) as u32).max(1),
                 drawn: true,
                 difficulty: Difficulty::of_key(word(3)).unwrap_or_default(),
+                tanks: options.tanks(),
             });
             screen.set(Screen::Playing);
         }

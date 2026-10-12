@@ -11,7 +11,6 @@ use tanku_core::{
         Bullet, Enemy, Gun, Mine, Motion, Player, Playtest, Position, PreviousPosition, Protected,
         Run, RunPhase, RunRequest, Shield, SimEvent, Tank, TankCommand, Team, Wreck,
     },
-    stats::Genome,
 };
 
 use crate::{
@@ -69,9 +68,10 @@ fn place_players(commands: &mut Commands, field: &mut Field, sector: u32) -> Vec
     let facing = forward.to_angle();
     for &seat in &field.seats {
         let position = formation(middle, forward, seat, field.solo);
+        let genome = field.tanks[seat as usize];
         commands.spawn((
             Tank {
-                genome: Genome::PLAYER,
+                genome,
                 team: Team::Players,
                 sector,
             },
@@ -86,7 +86,7 @@ fn place_players(commands: &mut Commands, field: &mut Field, sector: u32) -> Vec
             // The click or the key that started the run must not fire a shot.
             Gun {
                 cooldown: SPAWN_FIRE_DELAY,
-                ..Gun::loaded(&Genome::PLAYER)
+                ..Gun::loaded(&genome)
             },
         ));
     }
@@ -128,11 +128,19 @@ pub fn handle_requests(
                 players,
                 drawn,
                 difficulty,
+                tanks,
             } => {
                 clear(&mut commands, &entities, &mut casualties);
                 let seed = seed::seed_value(seed_text);
                 let players = (*players).clamp(1, MAX_PLAYERS);
                 let mut field = Field::new(seed, players, *difficulty);
+                // A seat keeps the standard tank unless it was given one that a player may
+                // have built: whoever asks may be wrong about what a tank is.
+                for (seat, tank) in field.tanks.iter_mut().zip(tanks) {
+                    if tank.is_a_players() {
+                        *seat = *tank;
+                    }
+                }
                 enter(&mut commands, &mut field, 0);
                 commands.insert_resource(field);
                 commands.insert_resource(Run {

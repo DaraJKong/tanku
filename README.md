@@ -81,14 +81,34 @@ cargo run -p tanku_client -- --playtest
 | Skip to a sector | The pause menu picks any sector up to 999. The tank comes back at the end of the sector before it, in front of its barrier, as it does after clearing that sector. |
 | Choose the seed | `--seed TEXT` after `--playtest` starts every run on that seed instead of a random one. |
 | Nothing locked | The solo screen takes a typed seed and offers hard mode, whatever the player has unlocked. |
+| Bring a tank | `--tank TANK` after `--playtest` starts every run in a tank of the player's own instead of the standard one: see [The garage check](#the-garage-check). |
 
-With both, a seed and a sector from a report are a few clicks away:
+With a seed and a skip, a seed and a sector from a report are a few clicks away:
 
 ```bash
 cargo run -p tanku_client -- --playtest --seed 85GVTHQA
 ```
 
 A playtest sets no record and earns no achievement. The web build has none, because a page has no command line.
+
+#### The garage check
+
+Free mode will let each player spend the 59 points of their tank as they like. Before its garage is built, a playtest takes such a tank from the command line, to find out whether one of them makes the game too easy: the same seed is played in the standard tank and in a few extreme ones.
+
+A tank is written as its stats with their levels, with commas between them. A stat that isn't named is at level 0. The tank needs an engine, costs 59 points at most and may leave points over: the game says why it refuses a tank. `--help` lists the stats and what their levels cost, and [the specification](docs/PROJECT.md#hardware-stats) says what each level gives.
+
+| Tank | What it spends its points on | Written as |
+|---|---|---|
+| Standard | A bit of everything | `engine=4,tracks=5,muzzle=2,magazine=4,loader=6,ricochet=1,mines=2,shield=2` |
+| Gun | Bullets at 19 m/s, and neither a bounce, mines nor a shield | `engine=4,tracks=5,muzzle=7,magazine=4,loader=6` |
+| Bouncer | Piercing bullets that bounce three times | `engine=4,tracks=4,muzzle=3,magazine=3,loader=5,ricochet=3,piercing=1` |
+| Runner | 8 m/s, and a shield every 6 s | `engine=7,tracks=6,muzzle=2,magazine=2,loader=5,shield=5` |
+
+```bash
+cargo run -p tanku_client -- --playtest --seed GARAGE --tank engine=4,tracks=5,muzzle=7,magazine=4,loader=6
+```
+
+The main menu draws the tank and says how many of its points it spends. In a game of several players, the tank is the host's alone, and the others keep the standard one.
 
 ## Building
 

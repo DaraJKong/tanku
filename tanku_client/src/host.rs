@@ -13,6 +13,7 @@ use tanku_server::net::{self as server, Credentials, Hosting, Ports, Seat};
 
 use crate::{
     Overlay, Screen,
+    cli::Options,
     crew::LocalSeat,
     net::{web_code, written},
     session::{Drawn, Invitation, Notice, Session, SessionRequest},
@@ -29,6 +30,8 @@ pub struct WebPort(pub Option<u16>);
 /// Comes after the plugins of the network library and the protocol.
 pub fn plugin(app: &mut App) {
     app.add_plugins(server::NetPlugin)
+        // A game that was given no command line brings nothing of its own to a run.
+        .init_resource::<Options>()
         .insert_resource(HostPort(PORT))
         .insert_resource(WebPort(Some(WEB_PORT)))
         .add_systems(Update, direct)
@@ -54,7 +57,7 @@ fn direct(
         Res<Reach>,
         ResMut<Credentials>,
     ),
-    (hosting, run): (Option<Res<Hosting>>, Option<Res<Run>>),
+    (hosting, run, options): (Option<Res<Hosting>>, Option<Res<Run>>, Res<Options>),
     mut seats: Query<&mut Seat>,
     lobbies: Query<&Lobby>,
     mut run_requests: MessageWriter<RunRequest>,
@@ -121,6 +124,8 @@ fn direct(
                         players,
                         drawn,
                         difficulty: Difficulty::Normal,
+                        // The host has the first seat, and the tank of a playtest is theirs.
+                        tanks: options.tanks(),
                     });
                     next_screen.set(Screen::Playing);
                     next_overlay.set(Overlay::None);

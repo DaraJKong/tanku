@@ -1,5 +1,7 @@
 //! Tank stats: their levels, what each level is worth and what it costs.
 
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
 
 /// Total budget of the player tank.
@@ -102,6 +104,38 @@ impl Stat {
         Stat::Piercing,
     ];
 
+    /// The stats of a tank that a player builds: every piece of hardware but the turret,
+    /// which follows the cursor on a player's tank.
+    pub const GARAGE: [Stat; 9] = [
+        Stat::Engine,
+        Stat::Tracks,
+        Stat::Muzzle,
+        Stat::Magazine,
+        Stat::Loader,
+        Stat::Ricochet,
+        Stat::Mines,
+        Stat::Shield,
+        Stat::Piercing,
+    ];
+
+    /// The name that a stat goes by where a tank is written down.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Stat::Engine => "engine",
+            Stat::Tracks => "tracks",
+            Stat::Turret => "turret",
+            Stat::Muzzle => "muzzle",
+            Stat::Magazine => "magazine",
+            Stat::Loader => "loader",
+            Stat::Ricochet => "ricochet",
+            Stat::Mines => "mines",
+            Stat::Shield => "shield",
+            Stat::Piercing => "piercing",
+            Stat::Brain => "brain",
+            Stat::Ballistics => "ballistics",
+        }
+    }
+
     /// Cumulative price of each hardware level. Software is priced by [`Stat::share`].
     const fn prices(self) -> &'static [u8] {
         match self {
@@ -152,6 +186,43 @@ impl Stat {
     }
 }
 
+/// Why a tank is none that a player may build.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Flaw {
+    /// It has a stat that a player's tank doesn't have: its turret follows the cursor, and
+    /// its player is its brain.
+    NotAPlayers(Stat),
+    /// A stat is above its highest level, which is this one.
+    TooHigh(Stat, u8),
+    /// It can't drive, so it would never come within reach of a barrier.
+    NoEngine,
+    /// It costs this many points, which is more than a player has.
+    TooDear(u32),
+}
+
+impl fmt::Display for Flaw {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            Flaw::NotAPlayers(stat) => {
+                write!(formatter, "the tank of a player has no {}", stat.name())
+            }
+            Flaw::TooHigh(stat, highest) => {
+                write!(formatter, "{} goes up to {highest}", stat.name())
+            }
+            Flaw::NoEngine => {
+                write!(
+                    formatter,
+                    "it needs engine 1 at least, to reach the barriers"
+                )
+            }
+            Flaw::TooDear(cost) => write!(
+                formatter,
+                "it costs {cost} points, and a player has {PLAYER_BUDGET}"
+            ),
+        }
+    }
+}
+
 /// A tank's full list of stat levels, with the budget that paid for them and the class that
 /// chose them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -177,6 +248,52 @@ impl Genome {
             budget,
             class: Class::None,
         }
+    }
+
+    /// The tank that a player builds with the points of the standard tank: the levels that
+    /// they chose, and nothing of the rest. What holds an enemy back doesn't hold it: it
+    /// has any piece of hardware at any level, and needs no brain for mines or a shield.
+    /// Points may be left over.
+    pub fn of_the_garage(levels: &[(Stat, u8)]) -> Result<Self, Flaw> {
+        let mut genome = Self::empty(PLAYER_BUDGET);
+        for &(stat, level) in levels {
+            if level > stat.max_level() {
+                return Err(Flaw::TooHigh(stat, stat.max_level()));
+            }
+            genome.set(stat, level);
+        }
+        match genome.flaw() {
+            Some(flaw) => Err(flaw),
+            None => Ok(genome),
+        }
+    }
+
+    /// What keeps this tank from being one that a player built, if anything does. It says
+    /// nothing of where the tank comes from: one that another machine sent is checked
+    /// with it too.
+    pub fn flaw(&self) -> Option<Flaw> {
+        let above = |&stat: &Stat| self.level(stat) > stat.max_level();
+        let every = Stat::HARDWARE
+            .iter()
+            .chain(&[Stat::Brain, Stat::Ballistics]);
+        if let Some(&stat) = every.clone().find(|stat| above(stat)) {
+            return Some(Flaw::TooHigh(stat, stat.max_level()));
+        }
+        let own = |stat: &&Stat| !Stat::GARAGE.contains(stat) && self.level(**stat) > 0;
+        if let Some(&stat) = every.clone().find(own) {
+            return Some(Flaw::NotAPlayers(stat));
+        }
+        if self.level(Stat::Engine) == 0 {
+            return Some(Flaw::NoEngine);
+        }
+        let cost = self.cost();
+        (cost > PLAYER_BUDGET as u32).then_some(Flaw::TooDear(cost))
+    }
+
+    /// Whether a player may have built this tank: it has the budget of a player's tank, no
+    /// class and no flaw.
+    pub fn is_a_players(&self) -> bool {
+        self.budget == PLAYER_BUDGET && self.class == Class::None && self.flaw().is_none()
     }
 
     pub const fn level(&self, stat: Stat) -> u8 {
@@ -294,6 +411,123 @@ mod tests {
         assert_eq!(player.mines(), 2);
         assert_eq!(player.shield_cooldown(), Some(9.0));
         assert_eq!(player.piercing(), 0);
+    }
+
+    #[test]
+    fn a_player_builds_a_tank_within_the_rules_of_the_garage() {
+        use Stat::*;
+        // The standard tank is one that a player may build.
+        let standard = [
+            (Engine, 4),
+            (Tracks, 5),
+            (Muzzle, 2),
+            (Magazine, 4),
+            (Loader, 6),
+            (Ricochet, 1),
+            (Mines, 2),
+            (Shield, 2),
+        ];
+        assert_eq!(Genome::of_the_garage(&standard), Ok(Genome::PLAYER));
+        assert!(Genome::PLAYER.is_a_players());
+        // What holds an enemy back doesn't hold a player: the fastest gun, piercing bullets
+        // and three bounces, mines and a shield without a brain, at their price. Points
+        // may be left over.
+        let parts = [
+            (Engine, 1),
+            (Muzzle, 7),
+            (Ricochet, 3),
+            (Piercing, 1),
+            (Mines, 1),
+            (Shield, 1),
+        ];
+        let gun = Genome::of_the_garage(&parts).unwrap();
+        assert_eq!(
+            (gun.bullet_speed(), gun.bounces(), gun.piercing()),
+            (19.0, 3, 1)
+        );
+        assert_eq!((gun.mines(), gun.shield_cooldown()), (1, Some(10.0)));
+        assert_eq!((gun.cost(), gun.budget), (55, PLAYER_BUDGET));
+        assert_eq!((gun.class, gun.brain()), (Class::None, 0));
+        assert!(gun.is_a_players());
+        // A tank that can't drive would never come within reach of a barrier.
+        assert_eq!(Genome::of_the_garage(&[(Muzzle, 7)]), Err(Flaw::NoEngine));
+        // No tank costs more than the standard one.
+        let dear = [(Engine, 7), (Muzzle, 7), (Loader, 7), (Magazine, 2)];
+        assert_eq!(Genome::of_the_garage(&dear), Err(Flaw::TooDear(60)));
+        let fits = [
+            (Engine, 7),
+            (Muzzle, 7),
+            (Loader, 7),
+            (Magazine, 1),
+            (Tracks, 2),
+        ];
+        assert_eq!(Genome::of_the_garage(&fits).map(|tank| tank.cost()), Ok(59));
+        // The turret of a player's tank follows the cursor, and its player is its brain.
+        for stat in [Turret, Brain, Ballistics] {
+            let tank = Genome::of_the_garage(&[(Engine, 1), (stat, 1)]);
+            assert_eq!(tank, Err(Flaw::NotAPlayers(stat)));
+        }
+        // No stat goes above its highest level.
+        let fast = Genome::of_the_garage(&[(Engine, 8)]);
+        assert_eq!(fast, Err(Flaw::TooHigh(Engine, 7)));
+        let sharp = Genome::of_the_garage(&[(Engine, 1), (Piercing, 2)]);
+        assert_eq!(sharp, Err(Flaw::TooHigh(Piercing, 1)));
+    }
+
+    #[test]
+    fn a_tank_from_elsewhere_is_checked_as_one_from_the_garage() {
+        // A tank that another machine sent may hold anything. Its levels are checked before
+        // anything is made of them.
+        let mut levels = [0; Stat::COUNT];
+        levels[Stat::Engine as usize] = 200;
+        let broken = Genome {
+            levels,
+            budget: PLAYER_BUDGET,
+            class: Class::None,
+        };
+        assert_eq!(broken.flaw(), Some(Flaw::TooHigh(Stat::Engine, 7)));
+        assert!(!broken.is_a_players());
+        // The tank of an enemy is none of a player's, whatever it is made of.
+        let mut enemy = Genome::PLAYER;
+        enemy.class = Class::Scout;
+        assert!(enemy.flaw().is_none() && !enemy.is_a_players());
+        let mut rich = Genome::PLAYER;
+        rich.budget = PLAYER_BUDGET + 1;
+        assert!(!rich.is_a_players());
+        let mut smart = Genome::PLAYER;
+        smart.set(Stat::Brain, 1);
+        assert_eq!(smart.flaw(), Some(Flaw::NotAPlayers(Stat::Brain)));
+    }
+
+    #[test]
+    fn a_flaw_says_what_is_wrong_with_a_tank() {
+        let said = |flaw: Flaw| flaw.to_string();
+        assert_eq!(
+            said(Flaw::NotAPlayers(Stat::Turret)),
+            "the tank of a player has no turret"
+        );
+        assert_eq!(said(Flaw::TooHigh(Stat::Muzzle, 7)), "muzzle goes up to 7");
+        assert_eq!(
+            said(Flaw::NoEngine),
+            "it needs engine 1 at least, to reach the barriers"
+        );
+        assert_eq!(
+            said(Flaw::TooDear(63)),
+            "it costs 63 points, and a player has 59"
+        );
+        // A stat goes by one name, and no two by the same.
+        let every = Stat::HARDWARE
+            .iter()
+            .chain(&[Stat::Brain, Stat::Ballistics]);
+        let mut names: Vec<&str> = every.map(|stat| stat.name()).collect();
+        names.sort();
+        names.dedup();
+        assert_eq!(names.len(), Stat::COUNT);
+        // The garage has every piece of hardware but the turret.
+        let hardware = Stat::HARDWARE
+            .into_iter()
+            .filter(|stat| *stat != Stat::Turret);
+        assert!(hardware.eq(Stat::GARAGE));
     }
 
     #[test]

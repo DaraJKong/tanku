@@ -621,6 +621,15 @@ fn list_records(
 }
 
 fn main_menu(mut commands: Commands, playtest: Option<Res<Playtest>>, options: Res<Options>) {
+    // What the drawing shows: the standard tank, or the one that a playtest brought, which
+    // may have points left over.
+    let (drawn, budget) = match options.tank {
+        Some(tank) => (
+            "PLAYTEST TANK",
+            format!("{} OF {} POINTS", tank.cost(), tank.budget),
+        ),
+        None => ("PLAYER TANK", format!("{} POINTS", Genome::PLAYER.budget)),
+    };
     commands
         .spawn((
             DespawnOnExit(Screen::Menu),
@@ -707,7 +716,7 @@ fn main_menu(mut commands: Commands, playtest: Option<Res<Playtest>>, options: R
                         BorderColor::all(theme::RULE),
                         children![
                             theme::label("DRAWING", 12.0, theme::TEXT_DIM),
-                            theme::title("PLAYER TANK", 18.0, theme::TEXT),
+                            theme::title(drawn, 18.0, theme::TEXT),
                         ],
                     ),
                     (
@@ -719,11 +728,7 @@ fn main_menu(mut commands: Commands, playtest: Option<Res<Playtest>>, options: R
                         },
                         children![
                             theme::label("BUDGET", 12.0, theme::TEXT_DIM),
-                            theme::figure(
-                                format!("{} POINTS", Genome::PLAYER.budget),
-                                18.0,
-                                theme::TEXT
-                            ),
+                            theme::figure(budget, 18.0, theme::TEXT),
                         ],
                     ),
                 ],
@@ -742,6 +747,7 @@ fn exhibit(
     mut meshes: ResMut<Assets<Mesh>>,
     mut view: ResMut<View>,
     screen: Res<State<Screen>>,
+    options: Res<Options>,
     mut shown: Local<Option<Screen>>,
 ) {
     let wanted = *screen.get();
@@ -752,14 +758,16 @@ fn exhibit(
         commands.entity(stale).despawn();
     }
     *shown = Some(wanted);
+    // A playtest that brought a tank of its own plays in it, and shows it.
+    let genome = options.tank.unwrap_or(Genome::PLAYER);
     let show = Show {
-        genome: Genome::PLAYER,
+        genome,
         color: theme::PLAYER,
         span: EXHIBIT_SPAN,
         place: EXHIBIT_PLACE,
         turret: 0.35,
         sways: true,
-        shield: true,
+        shield: genome.shield_cooldown().is_some(),
     };
     exhibit::put(
         &mut commands,
@@ -917,17 +925,30 @@ fn typed_seed(seed: &mut String, key: &Key, text: Option<&str>) {
     }
 }
 
+/// What starts the run of a single player: on a seed that the game drew for it or not, and
+/// in the tank of the command line if a playtest brought one.
+fn solo_run(seed: String, drawn: bool, difficulty: Difficulty, options: &Options) -> RunRequest {
+    RunRequest::Start {
+        seed,
+        players: 1,
+        drawn,
+        difficulty,
+        tanks: options.tanks(),
+    }
+}
+
 /// Starts the run that a single player set up. A run needs a seed.
-fn begin(setup: &Setup, requests: &mut MessageWriter<RunRequest>, screen: &mut NextState<Screen>) {
+fn begin(
+    setup: &Setup,
+    options: &Options,
+    requests: &mut MessageWriter<RunRequest>,
+    screen: &mut NextState<Screen>,
+) {
     if setup.seed.is_empty() {
         return;
     }
-    requests.write(RunRequest::Start {
-        seed: setup.seed.clone(),
-        players: 1,
-        drawn: !setup.typed,
-        difficulty: setup.difficulty,
-    });
+    let seed = setup.seed.clone();
+    requests.write(solo_run(seed, !setup.typed, setup.difficulty, options));
     screen.set(Screen::Playing);
 }
 
@@ -949,7 +970,7 @@ fn type_seed(
             continue;
         }
         if key.logical_key == Key::Enter {
-            begin(&setup, &mut requests, &mut next_screen);
+            begin(&setup, &options, &mut requests, &mut next_screen);
         } else if typing {
             // The first key takes the place of a seed that the game drew.
             let mut seed = String::new();
@@ -1979,7 +2000,7 @@ fn press(
                 notice.0 = None;
                 next_screen.set(Screen::Solo);
             }
-            Press::Begin => begin(&setup, &mut requests, &mut next_screen),
+            Press::Begin => begin(&setup, &options, &mut requests, &mut next_screen),
             Press::Redraw => (setup.seed, setup.typed) = (fresh_seed(), false),
             // The choice is kept for the next time.
             Press::Difficulty(difficulty) => {
@@ -2001,12 +2022,8 @@ fn press(
                     Session::Solo => {
                         // The next run is as hard as the one that is over.
                         let difficulty = run.as_ref().map(|run| run.difficulty);
-                        requests.write(RunRequest::Start {
-                            seed,
-                            players: 1,
-                            drawn: fresh,
-                            difficulty: difficulty.unwrap_or(setup.difficulty),
-                        });
+                        let difficulty = difficulty.unwrap_or(setup.difficulty);
+                        requests.write(solo_run(seed, fresh, difficulty, &options));
                         next_screen.set(Screen::Playing);
                         next_overlay.set(Overlay::None);
                     }
@@ -2312,6 +2329,18 @@ mod tests {
         }
     }
 
+    /// A tank that a playtest brings: the fastest engine, the fastest gun and the fastest
+    /// loader, with two points left over.
+    fn racer() -> Genome {
+        let parts = [
+            (Stat::Engine, 7),
+            (Stat::Muzzle, 7),
+            (Stat::Loader, 7),
+            (Stat::Magazine, 1),
+        ];
+        Genome::of_the_garage(&parts).unwrap()
+    }
+
     /// Sits this many players in the lobby of a game, the host first.
     fn gather(app: &mut App, players: usize) {
         let mut lobby = Lobby {
@@ -2371,6 +2400,20 @@ mod tests {
                     .insert_resource(Options {
                         playtest: true,
                         seed: Some("85GVTHQA".into()),
+                        tank: None,
+                    });
+                build(app, main_menu);
+            }),
+            // The corner of the sheet then says the most about the tank that is drawn.
+            ("the main menu of a playtest in a tank of its own", |app| {
+                app.insert_resource(Records::of_every_team(128, "85GVTHQA"))
+                    .insert_resource(Playtest {
+                        infinite_lives: true,
+                    })
+                    .insert_resource(Options {
+                        playtest: true,
+                        seed: Some("85GVTHQA".into()),
+                        tank: Some(racer()),
                     });
                 build(app, main_menu);
             }),
@@ -2761,6 +2804,7 @@ mod tests {
         let chosen = Options {
             playtest: true,
             seed: Some("85GVTHQA".into()),
+            tank: None,
         };
         assert_eq!(new_seed(&chosen, 1), "85GVTHQA");
         assert_eq!(new_seed(&chosen, 2), "85GVTHQA");
@@ -2930,6 +2974,7 @@ mod tests {
             app.insert_resource(Options {
                 playtest: true,
                 seed: None,
+                tank: None,
             });
             build(app, solo_screen);
         };
@@ -2941,7 +2986,7 @@ mod tests {
         let mut world = World::new();
         world.insert_resource(Options {
             playtest,
-            seed: None,
+            ..default()
         });
         world.insert_resource(Time::<Real>::default());
         let mut settings = Settings::default();
@@ -2971,14 +3016,16 @@ mod tests {
     fn the_solo_screen_starts_a_run_of_the_difficulty_and_on_the_seed_that_it_shows() {
         fn start(
             setup: Res<Setup>,
+            options: Res<Options>,
             mut requests: MessageWriter<RunRequest>,
             mut screen: ResMut<NextState<Screen>>,
         ) {
-            begin(&setup, &mut requests, &mut screen);
+            begin(&setup, &options, &mut requests, &mut screen);
         }
-        let asked = |setup: Setup| {
+        let asked_with = |setup: Setup, options: Options| {
             let mut world = World::new();
             world.insert_resource(setup);
+            world.insert_resource(options);
             world.init_resource::<Messages<RunRequest>>();
             world.init_resource::<NextState<Screen>>();
             world.run_system_once(start).unwrap();
@@ -2986,6 +3033,7 @@ mod tests {
             let asked: Vec<RunRequest> = requests.drain().collect();
             asked
         };
+        let asked = |setup: Setup| asked_with(setup, Options::default());
         let started = asked(Setup {
             seed: "TANKU".into(),
             typed: true,
@@ -2997,6 +3045,7 @@ mod tests {
                 players,
                 drawn,
                 difficulty,
+                tanks,
             },
         ] = started.as_slice()
         else {
@@ -3005,8 +3054,49 @@ mod tests {
         // A seed that was typed is not one that the game drew.
         assert_eq!((seed.as_str(), *players, *drawn), ("TANKU", 1, false));
         assert_eq!(*difficulty, Difficulty::Hard);
+        // The player has the standard tank.
+        assert!(tanks.is_empty());
         // A run needs a seed.
         assert!(asked(Setup::default()).is_empty());
+        // A playtest that brought a tank of its own starts its runs in it.
+        let options = Options {
+            playtest: true,
+            tank: Some(racer()),
+            ..default()
+        };
+        let setup = Setup {
+            seed: "TANKU".into(),
+            ..default()
+        };
+        let started = asked_with(setup, options);
+        let [RunRequest::Start { tanks, .. }] = started.as_slice() else {
+            panic!("{started:?}");
+        };
+        assert_eq!(*tanks, [racer()]);
+    }
+
+    #[test]
+    fn the_main_menu_names_the_tank_that_a_playtest_brought() {
+        let texts = |screen: fn(&mut App)| -> Vec<String> {
+            let mut app = stage(screen, WINDOWS[0]);
+            let world = app.world_mut();
+            let mut texts = world.query::<&Text>();
+            texts.iter(world).map(|text| text.0.clone()).collect()
+        };
+        let says = |texts: &[String], wanted: &str| texts.iter().any(|text| text == wanted);
+        let standard = texts(|app| build(app, main_menu));
+        assert!(says(&standard, "PLAYER TANK") && says(&standard, "59 POINTS"));
+        // The tank of a playtest may have points left over, and the menu says so.
+        let brought = texts(|app| {
+            app.insert_resource(Options {
+                playtest: true,
+                tank: Some(racer()),
+                ..default()
+            });
+            build(app, main_menu);
+        });
+        assert!(says(&brought, "PLAYTEST TANK") && says(&brought, "57 OF 59 POINTS"));
+        assert!(!says(&brought, "PLAYER TANK"));
     }
 
     /// The difficulties whose best runs the main menu offers to list instead.
