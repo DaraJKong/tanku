@@ -4,7 +4,9 @@
 //! `x`-`z` plane of the 3D world, with north along `-z`.
 //!
 //! The corridor is drawn as a plan: a dark sheet with a grid, walls as bands between two lines,
-//! hatched blocks and crossed crates. Nothing is lit.
+//! hatched blocks and crossed crates. Nothing is lit. In a sector that no player has entered
+//! yet, the blocks and the crates are plans, flat on the floor: they stand up when the first
+//! player comes in.
 
 use bevy::{
     asset::RenderAssetUsages,
@@ -149,12 +151,20 @@ pub struct Paints {
     blast_fill: Handle<StandardMaterial>,
 }
 
-/// What a part of the corridor is drawn with, which is dull until a player enters its sector:
+/// What a part of the corridor is drawn with, which changes when a player enters its sector:
 /// its floor, its walls and its obstacles.
 #[derive(Component, Clone, Copy)]
 struct Ground {
     sector: u32,
     floor: bool,
+}
+
+/// The two drawings of a block or of a crate: as it stands, and as the plan of it that lies
+/// flat on the floor until a player enters its sector.
+#[derive(Component, Clone, PartialEq)]
+struct Stands {
+    built: Handle<Mesh>,
+    plan: Handle<Mesh>,
 }
 
 /// The drawing of the walls of a sector, which is done again when its neighbors change.
@@ -1121,20 +1131,27 @@ fn dress_obstacles(
     shapes: Res<Shapes>,
     paints: Res<Paints>,
 ) {
-    let blocks = blocks
-        .iter()
-        .map(|(entity, block, position)| (entity, block.sector, position, &shapes.block));
-    let crates = crates.iter().map(|(entity, explosive, position)| {
-        (entity, explosive.sector, position, &shapes.explosive)
+    let stands = |built: &Handle<Mesh>, explosive: bool| Stands {
+        built: built.clone(),
+        plan: shapes.planned[explosive as usize].clone(),
+    };
+    let blocks = blocks.iter().map(|(entity, block, position)| {
+        (entity, block.sector, position, stands(&shapes.block, false))
     });
-    for (entity, sector, position, shape) in blocks.chain(crates) {
+    let crates = crates.iter().map(|(entity, explosive, position)| {
+        let stands = stands(&shapes.explosive, true);
+        (entity, explosive.sector, position, stands)
+    });
+    // Which of its two drawings each one shows is for `wake_sectors` to say.
+    for (entity, sector, position, stands) in blocks.chain(crates) {
         commands.entity(entity).insert((
             Ground {
                 sector,
                 floor: false,
             },
-            Mesh3d(shape.clone()),
-            MeshMaterial3d(paints.ink_dormant.clone()),
+            Mesh3d(stands.plan.clone()),
+            stands,
+            MeshMaterial3d(paints.ink.clone()),
             Transform::from_translation(to_world(position.0, 0.0)),
         ));
     }
@@ -1162,21 +1179,35 @@ pub fn is_dormant(sector: u32, run: Option<&Run>) -> bool {
     run.is_some_and(|run| sector > run.sector)
 }
 
-/// A sector is drawn dull until a player enters it. Then the drawing comes to life.
+/// A sector is drawn dull until a player enters it, and its blocks and its crates are plans,
+/// flat on its floor and in full ink. Then the drawing comes to life, and they stand up. A
+/// sector that a single player comes back in front of is as it was before they entered it.
 fn wake_sectors(
     run: Option<Res<Run>>,
     paints: Res<Paints>,
-    mut grounds: Query<(&Ground, &mut MeshMaterial3d<StandardMaterial>)>,
+    mut grounds: Query<(
+        &Ground,
+        &mut MeshMaterial3d<StandardMaterial>,
+        Option<(&Stands, &mut Mesh3d)>,
+    )>,
 ) {
-    for (ground, mut material) in &mut grounds {
-        let wanted = match (ground.floor, is_dormant(ground.sector, run.as_deref())) {
+    for (ground, mut material, stands) in &mut grounds {
+        let dormant = is_dormant(ground.sector, run.as_deref());
+        let wanted = match (ground.floor, dormant) {
             (true, false) => &paints.floor,
             (true, true) => &paints.floor_dormant,
-            (false, false) => &paints.ink,
-            (false, true) => &paints.ink_dormant,
+            // A plan is drawn as sharply as what stands.
+            (false, true) if stands.is_none() => &paints.ink_dormant,
+            (false, _) => &paints.ink,
         };
         if material.0 != *wanted {
             material.0 = wanted.clone();
+        }
+        if let Some((stands, mut mesh)) = stands {
+            let wanted = if dormant { &stands.plan } else { &stands.built };
+            if mesh.0 != *wanted {
+                mesh.0 = wanted.clone();
+            }
         }
     }
 }
@@ -1633,7 +1664,10 @@ mod tests {
             .init_resource::<Assets<StandardMaterial>>()
             .init_resource::<Assets<Image>>()
             .add_systems(PreStartup, setup)
-            .add_systems(Update, (dress_sectors, dress_obstacles));
+            .add_systems(
+                Update,
+                (dress_sectors, dress_obstacles, wake_sectors).chain(),
+            );
         app
     }
 
@@ -1761,9 +1795,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_sector_is_dormant_until_the_players_reach_it() {
-        let run = |sector| Run {
+    /// A run of a single player that has reached a sector.
+    fn run_in(sector: u32) -> Run {
+        Run {
             seed_text: "TEST".into(),
             seed: 1,
             difficulty: default(),
@@ -1783,13 +1817,138 @@ mod tests {
             free: false,
             arena: false,
             lull: None,
-        };
+        }
+    }
+
+    #[test]
+    fn a_sector_is_dormant_until_the_players_reach_it() {
+        let run = run_in;
         assert!(is_dormant(5, Some(&run(4))));
         assert!(!is_dormant(5, Some(&run(5))));
         // The sectors behind the players stay lit until they are unloaded.
         assert!(!is_dormant(4, Some(&run(5))));
         // Without a run, nothing waits for anybody.
         assert!(!is_dormant(5, None));
+    }
+
+    /// How a sector is drawn: whether each of its blocks and crates is its plan, and
+    /// whether its walls and its floor are dull.
+    struct Drawn {
+        plans: Vec<bool>,
+        dull_walls: bool,
+        dull_floor: bool,
+    }
+
+    fn look_of(app: &mut App, sector: u32) -> Drawn {
+        let paints = app.world().resource::<Paints>();
+        let (ink, ink_dormant) = (paints.ink.clone(), paints.ink_dormant.clone());
+        let (floor, floor_dormant) = (paints.floor.clone(), paints.floor_dormant.clone());
+        let world = app.world_mut();
+        let mut obstacles =
+            world.query::<(&Ground, &Stands, &Mesh3d, &MeshMaterial3d<StandardMaterial>)>();
+        let plans = obstacles
+            .iter(world)
+            .filter(|(ground, ..)| ground.sector == sector)
+            .map(|(_, stands, mesh, material)| {
+                // A plan is in full ink, as what stands is.
+                assert!(material.0 == ink);
+                assert!(mesh.0 == stands.plan || mesh.0 == stands.built);
+                mesh.0 == stands.plan
+            })
+            .collect();
+        let mut grounds = world.query::<(&Ground, &MeshMaterial3d<StandardMaterial>, Has<Walls>)>();
+        let of_sector = |(ground, ..): &(&Ground, _, bool)| ground.sector == sector;
+        let grounds: Vec<_> = grounds.iter(world).filter(of_sector).collect();
+        let walls = grounds.iter().find(|(.., walls)| *walls);
+        let walls = &walls.expect("a sector with walls").1.0;
+        assert!(*walls == ink || *walls == ink_dormant);
+        let ground = grounds.iter().find(|(ground, ..)| ground.floor);
+        let ground = &ground.expect("a sector with a floor").1.0;
+        assert!(*ground == floor || *ground == floor_dormant);
+        Drawn {
+            plans,
+            dull_walls: *walls == ink_dormant,
+            dull_floor: *ground == floor_dormant,
+        }
+    }
+
+    #[test]
+    fn the_blocks_and_the_crates_of_a_sector_are_plans_until_a_player_enters_it() {
+        // The first sectors of this seed hold blocks.
+        let mut corridor = Corridor::new(seed_value("3ZXHW3M8"));
+        let mut app = dressing_world();
+        app.insert_resource(run_in(0));
+        let sectors: Vec<Entity> = (0..2)
+            .map(|index| load(&mut app, &mut corridor, index))
+            .collect();
+        let explosive = (ExplosiveCrate { sector: 1 }, Position(Vec2::new(1.0, 40.0)));
+        let explosive = app.world_mut().spawn(explosive).id();
+        let behind = (Block { sector: 0 }, Position(Vec2::new(1.0, 4.0)));
+        let behind = app.world_mut().spawn(behind).id();
+        app.update();
+
+        // What stands in the bay stands, on its lit floor.
+        let bay = look_of(&mut app, 0);
+        assert!(!bay.dull_walls && !bay.dull_floor);
+        assert_eq!(bay.plans, [false]);
+        // The sector behind its barrier is dull, and its blocks and its crate are plans.
+        let ahead = look_of(&mut app, 1);
+        assert!(ahead.dull_walls && ahead.dull_floor);
+        assert!(ahead.plans.len() >= 2 && ahead.plans.iter().all(|plan| *plan));
+        let shapes = app.world().resource::<Shapes>();
+        let (crate_plan, crate_built) = (shapes.planned[1].clone(), shapes.explosive.clone());
+        let (block_plan, block_built) = (shapes.planned[0].clone(), shapes.block.clone());
+        let shown =
+            |app: &App, entity: Entity| app.world().get::<Mesh3d>(entity).unwrap().0.clone();
+        assert!(shown(&app, explosive) == crate_plan && shown(&app, behind) == block_built);
+        let world = app.world_mut();
+        let mut blocks = world.query::<(Entity, &Block)>();
+        let block = blocks.iter(world).find(|(_, block)| block.sector == 1);
+        let block = block.expect("a block in the first sector").0;
+        assert!(shown(&app, block) == block_plan);
+        // A plan lies flat on the floor, and what stands doesn't.
+        let height = |app: &App, mesh: &Handle<Mesh>| {
+            let mesh = app.world().resource::<Assets<Mesh>>().get(mesh).unwrap();
+            let heights = corners_of(mesh).into_iter().map(|corner| corner[1]);
+            heights.fold(0.0, f32::max)
+        };
+        assert!(height(&app, &block_plan) < 0.05 && height(&app, &crate_plan) < 0.05);
+        assert!(height(&app, &block_built) > 1.0 && height(&app, &crate_built) > 0.8);
+        // The walls of a sector stand whether a player has entered it or not: each sector
+        // has one drawing of them, which is no plan.
+        let walls_of = |app: &App, sector: Entity| -> Handle<Mesh> {
+            let world = app.world();
+            let children = world.entity(sector).get::<Children>().unwrap();
+            let mut walls = children
+                .iter()
+                .filter(|&child| world.get::<Walls>(child).is_some());
+            let drawn = walls.next().expect("a sector with walls");
+            assert!(world.get::<Stands>(drawn).is_none() && walls.next().is_none());
+            world.get::<Mesh3d>(drawn).unwrap().0.clone()
+        };
+        let walls: Vec<Handle<Mesh>> = sectors.iter().map(|&s| walls_of(&app, s)).collect();
+        assert!(walls.iter().all(|mesh| height(&app, mesh) > 1.0));
+
+        // The first player crosses: the sector comes to life, and its blocks and its crate
+        // stand up. Its walls are the ones that stood there.
+        app.world_mut().resource_mut::<Run>().sector = 1;
+        app.update();
+        let entered = look_of(&mut app, 1);
+        assert!(!entered.dull_walls && !entered.dull_floor);
+        assert!(entered.plans.iter().all(|plan| !*plan));
+        assert!(shown(&app, explosive) == crate_built && shown(&app, block) == block_built);
+        assert_eq!(look_of(&mut app, 0).plans, [false]);
+        let after: Vec<Handle<Mesh>> = sectors.iter().map(|&s| walls_of(&app, s)).collect();
+        assert!(after == walls);
+
+        // A single player who fell comes back in front of the barrier, and the sector is as
+        // it was before they entered it.
+        app.world_mut().resource_mut::<Run>().sector = 0;
+        app.update();
+        let again = look_of(&mut app, 1);
+        assert!(again.dull_walls && again.dull_floor);
+        assert!(again.plans.iter().all(|plan| *plan));
+        assert!(shown(&app, explosive) == crate_plan && shown(&app, block) == block_plan);
     }
 
     #[test]
