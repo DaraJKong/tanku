@@ -68,6 +68,21 @@ pub const APPEAR_TIME: f32 = 1.0;
 /// The mark of a tank of an arena waits while the tank of a player is this close to its place.
 pub const APPEAR_ROOM: f32 = 4.0;
 
+/// In arena mode, a group comes in this many waves at most.
+pub const ROOM_WAVES: u32 = 2;
+/// In arena mode, the time between the end of a group and the warning of the first wave of
+/// the next one, and the time before the first group of a run.
+pub const LULL: f32 = 5.0;
+/// In arena mode, a single player who is short of a life gets one back for every this many
+/// groups that are cleared.
+pub const LIFE_GROUPS: u32 = 5;
+/// In arena mode, how long the place of a block or of a crate is inked in before it stands
+/// there. It waits for as long as something is in its place.
+pub const RISE_TIME: f32 = 2.0;
+/// In a playtest of arena mode that brings them back: how long after it was destroyed a
+/// block or a crate stands again, if nothing is in its place.
+pub const RETURN_TIME: f32 = 10.0;
+
 /// The lives of a single player, which are also the most they can have.
 pub const SOLO_LIVES: u32 = 3;
 /// Delay between the destruction of the solo player and the respawn.

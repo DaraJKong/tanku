@@ -26,6 +26,7 @@ use crate::{
     field::{Field, Fuse, Home, InSector},
 };
 
+mod room;
 mod trials;
 
 /// Where a run starts: the start bay spans x from -7 to 7 and y from 0 to 16.
@@ -62,6 +63,7 @@ fn begin_as(seed: &str, players: u32, difficulty: Difficulty, tanks: Vec<Genome>
         drawn: true,
         difficulty,
         free: !tanks.is_empty(),
+        arena: false,
         tanks,
     });
     tick(&mut app, 1);
@@ -1396,6 +1398,7 @@ fn a_life_that_is_left_on_the_floor_is_lost_when_the_player_moves_on() {
     // A player who is destroyed in the next sector comes back in the arena, and finds nothing.
     app.insert_resource(Playtest {
         infinite_lives: false,
+        ..default()
     });
     destroy_player(&mut app);
     tick(&mut app, seconds(RESPAWN_DELAY) + 1);
@@ -1408,6 +1411,7 @@ fn several_players_are_left_no_life() {
     let mut app = team("TEST", 2);
     app.insert_resource(Playtest {
         infinite_lives: true,
+        ..default()
     });
     let arena = first_arena(&mut app);
     skip_to(&mut app, arena);
@@ -1438,6 +1442,7 @@ fn enter_arena(seed: &str) -> (App, u32, Vec<u32>) {
     let mut app = start(seed);
     app.insert_resource(Playtest {
         infinite_lives: true,
+        ..default()
     });
     let arena = first_arena(&mut app);
     skip_to(&mut app, arena);
@@ -1445,7 +1450,8 @@ fn enter_arena(seed: &str) -> (App, u32, Vec<u32>) {
     assert!(enemies(&mut app, arena).is_empty());
     cross_barrier(&mut app);
     assert_eq!(run(&app).sector, arena);
-    let sizes = progression::wave_sizes(progression::enemy_count(arena, 1, true));
+    let count = progression::enemy_count(arena, 1, true);
+    let sizes = progression::wave_sizes(count, ARENA_WAVES);
     (app, arena, sizes)
 }
 
@@ -1608,6 +1614,7 @@ fn an_arena_holds_the_group_that_its_players_call_for() {
     let mut app = team("TEST", 4);
     app.insert_resource(Playtest {
         infinite_lives: true,
+        ..default()
     });
     let arena = first_arena(&mut app);
     skip_to(&mut app, arena);
@@ -1622,7 +1629,7 @@ fn an_arena_holds_the_group_that_its_players_call_for() {
         .iter()
         .map(|wave| wave.len() as u32)
         .collect();
-    assert_eq!(held, progression::wave_sizes(expected));
+    assert_eq!(held, progression::wave_sizes(expected, ARENA_WAVES));
     assert!(enemies(&mut app, arena).is_empty());
 }
 
@@ -1650,6 +1657,7 @@ fn a_playtest_skips_to_a_sector_and_comes_back() {
     let mut app = start("TEST");
     app.insert_resource(Playtest {
         infinite_lives: false,
+        ..default()
     });
     skip_to(&mut app, 7);
     let state = run(&app);
@@ -1703,6 +1711,7 @@ fn a_skip_goes_no_further_than_the_last_sector_and_the_last_one_asked_wins() {
     let mut app = start("TEST");
     app.insert_resource(Playtest {
         infinite_lives: true,
+        ..default()
     });
     skip_to(&mut app, u32::MAX);
     assert_eq!(run(&app).sector, PLAYTEST_LAST_SECTOR - 1);
@@ -1729,6 +1738,7 @@ fn a_skip_asked_with_the_start_of_a_run_applies_to_that_run() {
     app.add_plugins((MinimalPlugins, CorePlugin, ServerPlugin))
         .insert_resource(Playtest {
             infinite_lives: true,
+            ..default()
         });
     app.world_mut().write_message(RunRequest::Start {
         seed: "TEST".into(),
@@ -1736,6 +1746,7 @@ fn a_skip_asked_with_the_start_of_a_run_applies_to_that_run() {
         drawn: true,
         difficulty: Difficulty::Normal,
         free: false,
+        arena: false,
         tanks: Vec::new(),
     });
     skip_to(&mut app, 5);
@@ -1759,6 +1770,7 @@ fn infinite_lives_keep_a_playtest_going() {
     let mut app = start("TEST");
     app.insert_resource(Playtest {
         infinite_lives: true,
+        ..default()
     });
     for _ in 0..5 {
         destroy_player(&mut app);
@@ -1781,6 +1793,7 @@ fn infinite_lives_keep_a_playtest_going() {
     // Turned off, the lives count again.
     app.insert_resource(Playtest {
         infinite_lives: false,
+        ..default()
     });
     destroy_player(&mut app);
     assert_eq!(run(&app).lives, 2);
@@ -2248,6 +2261,7 @@ fn a_run_earns_achievements_on_a_seed_that_was_drawn_for_it_unless_it_is_a_playt
         if playtest {
             app.insert_resource(Playtest {
                 infinite_lives: true,
+                ..default()
             });
         }
         app.world_mut().write_message(RunRequest::Start {
@@ -2256,6 +2270,7 @@ fn a_run_earns_achievements_on_a_seed_that_was_drawn_for_it_unless_it_is_a_playt
             drawn,
             difficulty: Difficulty::Normal,
             free,
+            arena: false,
             tanks: Vec::new(),
         });
         tick(&mut app, 1);
@@ -3171,6 +3186,7 @@ fn a_playtest_brings_several_players_back_together() {
     let mut app = team("TEST", 3);
     app.insert_resource(Playtest {
         infinite_lives: true,
+        ..default()
     });
     let wrecked = seat(&mut app, 2);
     destroy(&mut app, wrecked);

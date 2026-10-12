@@ -17,6 +17,7 @@ use crate::{
     Casualties,
     brain::Brain,
     field::{self, Field, Fuse, Home, InSector, Recruit},
+    room,
 };
 
 /// How far apart the tanks of several players stand, side by side and row behind row.
@@ -45,26 +46,42 @@ fn clear(
     *casualties = Casualties::default();
 }
 
-/// Loads the corridor around a sector and puts the players in it. Returns where they stand.
-fn enter(commands: &mut Commands, field: &mut Field, sector: u32) -> Vec2 {
+/// Loads the corridor around a sector and puts the players in it. In arena mode, opens the
+/// room for a run that has cleared this many groups. Returns where the players stand.
+fn enter(
+    commands: &mut Commands,
+    field: &mut Field,
+    sector: u32,
+    playtest: Option<&Playtest>,
+) -> Vec2 {
     field.loaded.clear();
     field.arenas.clear();
-    field.load_entry_barrier(commands, sector);
-    field.load(commands, sector);
-    field.load(commands, sector + 1);
+    if field.room.is_some() {
+        room::open(commands, field, sector, playtest);
+    } else {
+        field.load_entry_barrier(commands, sector);
+        field.load(commands, sector);
+        field.load(commands, sector + 1);
+    }
     place_players(commands, field, sector)
 }
 
 /// Puts the tanks of the players in a sector that is loaded: in front of its barrier, or
-/// where a run starts in the start bay. Returns where they stand.
+/// where a run starts in the start bay. In arena mode, they stand in the middle of the room,
+/// and the sector is the number of the group that is on. Returns where they stand.
 fn place_players(commands: &mut Commands, field: &mut Field, sector: u32) -> Vec2 {
-    let plan = field.corridor.plan(sector);
-    let middle = if sector == 0 {
-        field::entry_position(plan)
-    } else {
-        plan.gate_point.as_vec2()
+    let (middle, forward) = match &field.room {
+        Some(state) => (state.room.start().as_vec2(), Vec2::Y),
+        None => {
+            let plan = field.corridor.plan(sector);
+            let middle = if sector == 0 {
+                field::entry_position(plan)
+            } else {
+                plan.gate_point.as_vec2()
+            };
+            (middle, plan.heading.forward().as_vec2())
+        }
     };
-    let forward = plan.heading.forward().as_vec2();
     let facing = forward.to_angle();
     for &seat in &field.seats {
         let position = formation(middle, forward, seat, field.solo);
@@ -98,7 +115,7 @@ fn place_players(commands: &mut Commands, field: &mut Field, sector: u32) -> Vec
 /// how a playtest skips to a sector.
 fn restart(
     commands: &mut Commands,
-    run: &mut Run,
+    (run, playtest): (&mut Run, Option<&Playtest>),
     field: &mut Field,
     entities: &Query<Entity, Or<(With<InSector>, With<Player>)>>,
     casualties: &mut Casualties,
@@ -107,7 +124,7 @@ fn restart(
     clear(commands, entities, casualties);
     let checkpoint = run.checkpoint;
     field.cleared.retain(|&sector| sector <= checkpoint);
-    let at = enter(commands, field, checkpoint);
+    let at = enter(commands, field, checkpoint, playtest);
     run.sector = checkpoint;
     run.phase = RunPhase::Playing;
     events.write(SimEvent::PlayerRespawned { at });
@@ -129,12 +146,17 @@ pub fn handle_requests(
                 drawn,
                 difficulty,
                 free,
+                arena,
                 tanks,
             } => {
                 clear(&mut commands, &entities, &mut casualties);
                 let seed = seed::seed_value(seed_text);
                 let players = (*players).clamp(1, MAX_PLAYERS);
-                let mut field = Field::new(seed, players, *difficulty);
+                let mut field = if *arena {
+                    Field::in_a_room(seed, players, *difficulty)
+                } else {
+                    Field::new(seed, players, *difficulty)
+                };
                 // A seat keeps the standard tank unless it was given one that a player may
                 // have built: whoever asks may be wrong about what a tank is.
                 for (seat, tank) in field.tanks.iter_mut().zip(tanks) {
@@ -142,7 +164,7 @@ pub fn handle_requests(
                         *seat = *tank;
                     }
                 }
-                enter(&mut commands, &mut field, 0);
+                enter(&mut commands, &mut field, 0, playtest.as_deref());
                 commands.insert_resource(field);
                 commands.insert_resource(Run {
                     seed_text: seed_text.trim().to_uppercase(),
@@ -161,9 +183,11 @@ pub fn handle_requests(
                     lost_to: None,
                     playtest: playtest.is_some(),
                     // A seed can't be practiced to unlock anything, and no tank can be
-                    // built for it.
-                    earns: *drawn && !*free && playtest.is_none(),
+                    // built for it. What a run unlocks is earned in the corridor.
+                    earns: *drawn && !*free && !*arena && playtest.is_none(),
                     free: *free,
+                    arena: *arena,
+                    lull: None,
                 });
                 events.write(SimEvent::RunStarted);
             }
@@ -178,12 +202,14 @@ pub fn handle_requests(
     }
 }
 
-/// In a playtest, puts the players in front of the sector that was asked for.
+/// In a playtest, puts the players in front of the sector that was asked for. In arena mode,
+/// that is the lull before the group of that number.
 pub fn skip(
     mut commands: Commands,
     mut requests: MessageReader<RunRequest>,
     mut run: ResMut<Run>,
     mut field: ResMut<Field>,
+    playtest: Option<Res<Playtest>>,
     entities: Query<Entity, Or<(With<InSector>, With<Player>)>>,
     mut casualties: ResMut<Casualties>,
     mut events: MessageWriter<SimEvent>,
@@ -203,7 +229,7 @@ pub fn skip(
     field.cleared.extend(0..=checkpoint);
     restart(
         &mut commands,
-        &mut run,
+        (&mut run, playtest.as_deref()),
         &mut field,
         &entities,
         &mut casualties,
@@ -350,6 +376,7 @@ pub fn clock(
     mut commands: Commands,
     mut run: ResMut<Run>,
     mut field: ResMut<Field>,
+    playtest: Option<Res<Playtest>>,
     entities: Query<Entity, Or<(With<InSector>, With<Player>)>>,
     (players, weapons, mut enemies): (
         Query<(), With<Player>>,
@@ -373,7 +400,7 @@ pub fn clock(
     if !players.is_empty() || !field.loaded.contains(&checkpoint) {
         restart(
             &mut commands,
-            &mut run,
+            (&mut run, playtest.as_deref()),
             &mut field,
             &entities,
             &mut casualties,
@@ -421,8 +448,15 @@ pub fn clock(
         }
         arena.fuse = Fuse::Unlit;
     }
-    let at = place_players(&mut commands, &mut field, checkpoint);
-    run.sector = checkpoint;
+    // In arena mode, the player comes back in the middle of the room, to the group that
+    // is on: what is left of it went back into reserve.
+    let back = if field.room.is_some() {
+        run.sector
+    } else {
+        checkpoint
+    };
+    let at = place_players(&mut commands, &mut field, back);
+    run.sector = back;
     run.phase = RunPhase::Playing;
     events.write(SimEvent::PlayerRespawned { at });
 }

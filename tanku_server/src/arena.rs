@@ -4,6 +4,8 @@
 //! range. So an arena is empty when the players come in, and its enemies appear in waves: the
 //! first a moment after the players, each of the others when the one before it is destroyed.
 //! The place of each tank is marked for a moment before the tank is there.
+//!
+//! The groups of arena mode come the same way, one after another in the same room.
 
 use bevy::prelude::*;
 use tanku_core::{
@@ -45,7 +47,7 @@ pub fn waves(
             });
             arena.incoming = wave.into_iter().map(|recruit| (recruit, None)).collect();
         }
-        let plan = field.corridor.plan(front).clone();
+        let toward = field.way_in(front);
         arena.incoming.retain_mut(|(recruit, left)| {
             match *left {
                 // The place of a tank is marked once the players leave it room.
@@ -62,7 +64,7 @@ pub fn waves(
                     true
                 }
                 Some(_) => {
-                    field.enlist(&mut commands, &plan, *recruit, true);
+                    field.enlist(&mut commands, (front, toward), *recruit, true);
                     events.write(SimEvent::TankAppeared { at: recruit.at });
                     false
                 }

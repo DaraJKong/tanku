@@ -125,6 +125,8 @@ mod tests {
             playtest: false,
             earns,
             free: false,
+            arena: false,
+            lull: None,
         }
     }
 

@@ -1195,6 +1195,7 @@ fn solo_run(
         drawn,
         difficulty: league.difficulty,
         free: league.free,
+        arena: false,
         tanks,
     }
 }
@@ -3472,6 +3473,8 @@ mod tests {
             playtest: false,
             earns: true,
             free: false,
+            arena: false,
+            lull: None,
         }
     }
 
@@ -3556,6 +3559,7 @@ mod tests {
                 app.insert_resource(Records::of_every_team(128, "85GVTHQA"))
                     .insert_resource(Playtest {
                         infinite_lives: true,
+                        ..default()
                     })
                     .insert_resource(Options {
                         playtest: true,
@@ -3569,6 +3573,7 @@ mod tests {
                 app.insert_resource(Records::of_every_team(128, "85GVTHQA"))
                     .insert_resource(Playtest {
                         infinite_lives: true,
+                        ..default()
                     })
                     .insert_resource(Options {
                         playtest: true,
@@ -3837,6 +3842,7 @@ mod tests {
                     .insert_resource(Session::Host)
                     .insert_resource(Playtest {
                         infinite_lives: true,
+                        ..default()
                     });
                 build(app, pause_menu);
             }),
@@ -4591,6 +4597,7 @@ mod tests {
                     difficulty,
                     free,
                     tanks,
+                    ..
                 } => (seed, drawn, difficulty, free, tanks),
                 other => panic!("{other:?}"),
             };
@@ -5471,6 +5478,8 @@ mod tests {
             playtest: true,
             earns: false,
             free: false,
+            arena: false,
+            lull: None,
         };
         let mut records = Records::default();
         assert!(!keep_record(&mut records, &run));

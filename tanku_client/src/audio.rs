@@ -160,6 +160,8 @@ mod tests {
                 playtest: false,
                 earns: true,
                 free: false,
+                arena: false,
+                lull: None,
             })
             .add_message::<SimEvent>()
             .add_systems(Startup, setup)

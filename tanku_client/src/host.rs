@@ -266,6 +266,7 @@ fn direct(
                         drawn: fresh && !lobby.typed,
                         difficulty: lobby.difficulty,
                         free: lobby.free || options.tank.is_some(),
+                        arena: false,
                         tanks,
                     });
                     next_screen.set(Screen::Playing);

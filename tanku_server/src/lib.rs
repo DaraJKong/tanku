@@ -11,6 +11,7 @@ mod mines;
 #[cfg(feature = "net")]
 pub mod net;
 mod repair;
+pub mod room;
 mod run;
 mod sectors;
 pub mod tanks;
@@ -53,6 +54,8 @@ impl Plugin for ServerPlugin {
     fn build(&self, app: &mut App) {
         let in_progress =
             |run: Option<Res<Run>>| run.is_some_and(|run| run.phase != RunPhase::Over);
+        // A run in arena mode never leaves its room: it has no sector to cross into.
+        let in_a_room = |run: Option<Res<Run>>| run.is_some_and(|run| run.arena);
         app.init_resource::<Casualties>().add_systems(
             FixedUpdate,
             (
@@ -73,8 +76,13 @@ impl Plugin for ServerPlugin {
                     mines::tick,
                     mines::blast,
                     run::casualties,
-                    sectors::advance,
-                    arena::waves,
+                    (
+                        sectors::advance.run_if(not(in_a_room)),
+                        room::advance.run_if(in_a_room),
+                        arena::waves,
+                        (room::raise, room::reserve).chain().run_if(in_a_room),
+                    )
+                        .chain(),
                     field::unload,
                     run::clock,
                 )

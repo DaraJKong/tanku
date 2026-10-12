@@ -203,6 +203,29 @@ pub struct Barrier {
     pub unlocked: bool,
 }
 
+/// A tank of arena mode that has not come yet. It waits in reserve outside the room, where the
+/// players read it, until its place in the room is marked.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[require(Position)]
+pub struct Reserve {
+    pub genome: Genome,
+    /// The group that it is part of, and which tank of that group it is.
+    pub group: u32,
+    pub number: u32,
+}
+
+/// A block or a crate of arena mode that is on its way. Its place is drawn on the floor, and
+/// it stands there once its time has come and nothing is in its place. Its position is its
+/// center.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[require(Position)]
+pub struct Planned {
+    /// Whether it is a crate. It is a block otherwise.
+    pub explosive: bool,
+    /// Whether it is about to stand: its place is inked in, as a warning.
+    pub due: bool,
+}
+
 /// A life that an arena left on its floor when it was cleared. A single player who is short
 /// of one takes it by driving over it, and it is lost once the player has left the arena.
 #[derive(Component, Clone, Copy, Debug, Serialize, Deserialize)]
@@ -276,15 +299,27 @@ pub struct Run {
     /// Whether the run is in free mode, in which the players build their own tanks. Its
     /// record is one of free mode.
     pub free: bool,
+    /// Whether the run is in arena mode: it is fought in one room, against one group after
+    /// another without end. Its sector is then the number of the group that is on, and its
+    /// score the number of groups cleared. Its record is one of arena mode.
+    pub arena: bool,
+    /// In arena mode, between two groups: the seconds until the next one is announced, in
+    /// whole seconds.
+    pub lull: Option<u8>,
 }
 
 /// Present when the game was started as a playtest, which lets the player cheat. The runs of
 /// a playtest set no record. Whoever starts the game inserts it and sets its options, and the
 /// server follows them.
-#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Playtest {
     /// A destroyed player comes back without losing a life.
     pub infinite_lives: bool,
+    /// In arena mode: a group comes all at once, and not in waves.
+    pub whole_groups: bool,
+    /// In arena mode: a block or a crate comes back a while after it was destroyed, and the
+    /// room is not laid out anew between two groups.
+    pub blocks_return: bool,
 }
 
 /// What the client asks of the server.
@@ -300,6 +335,8 @@ pub enum RunRequest {
         difficulty: Difficulty,
         /// Whether the run is in free mode, in which the players build their own tanks.
         free: bool,
+        /// Whether the run is in arena mode, in one room and without a corridor.
+        arena: bool,
         /// The tank of each seat, from the first one. A seat that has none here has the
         /// standard tank, and so has one whose tank no player may have built.
         tanks: Vec<Genome>,

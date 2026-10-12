@@ -148,6 +148,8 @@ mod tests {
             playtest: false,
             earns: true,
             free: false,
+            arena: false,
+            lull: None,
         }
     }
 

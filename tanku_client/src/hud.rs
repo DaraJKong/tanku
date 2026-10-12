@@ -1496,6 +1496,8 @@ mod tests {
             playtest,
             earns: !free && !playtest,
             free,
+            arena: false,
+            lull: None,
         };
         assert_eq!(mode(&run(true, false, false)), "SOLO");
         assert_eq!(mode(&run(false, false, false)), "CO-OP");

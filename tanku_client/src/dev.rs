@@ -429,6 +429,7 @@ fn run_script(
                 difficulty: Difficulty::of_key(word(3)).unwrap_or_default(),
                 // A tank from the command line makes it a run of free mode.
                 free: options.tank.is_some(),
+                arena: false,
                 tanks: options.tanks(),
             });
             screen.set(Screen::Playing);

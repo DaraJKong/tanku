@@ -1382,6 +1382,8 @@ mod tests {
             playtest: false,
             earns: true,
             free: false,
+            arena: false,
+            lull: None,
         };
         assert!(is_dormant(5, Some(&run(4))));
         assert!(!is_dormant(5, Some(&run(5))));
