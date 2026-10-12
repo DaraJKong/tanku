@@ -25,6 +25,8 @@ use crate::{
     field::{Field, Fuse, Home, InSector},
 };
 
+mod trials;
+
 /// Where a run starts: the start bay spans x from -7 to 7 and y from 0 to 16.
 const START: Vec2 = Vec2::new(0.0, 5.0);
 

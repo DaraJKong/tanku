@@ -190,6 +190,12 @@ The tests also lay every menu out, without a screen, in windows from 1280 by 720
 cargo test -p tanku_client room_the_menus_take -- --ignored --nocapture
 ```
 
+After a change to a brain, this compares a soldier and a veteran in the same five tanks. Each fights a crude player that nothing destroys, in about twenty sectors of six seeds, once against bursts and once against single shots. It prints how long the enemy lasted and how many of its shots landed, and takes three minutes:
+
+```bash
+cargo test -p tanku_server trials -- --ignored --nocapture
+```
+
 Benchmarks measure generation, the simulation and the music, and take under a minute:
 
 ```bash
