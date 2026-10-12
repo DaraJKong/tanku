@@ -282,6 +282,7 @@ pub fn skirmish(asked: &Asked) -> Report {
             seed_text(asked.seeds - 1),
             asked.limit,
         ),
+        balance: Some(tanku_core::balance::FINGERPRINT),
         tables,
     }
 }

@@ -565,6 +565,7 @@ pub fn census(asked: &Asked) -> Report {
     Report {
         title: "Census".to_string(),
         asked: told,
+        balance: Some(tanku_core::balance::FINGERPRINT),
         tables,
     }
 }

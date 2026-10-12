@@ -515,6 +515,7 @@ pub fn runs(asked: &Asked) -> Report {
             asked.last,
             asked.patience,
         ),
+        balance: Some(tanku_core::balance::FINGERPRINT),
         tables: vec![scores, reached, places, kinds, weapons, classes],
     }
 }

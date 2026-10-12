@@ -13,7 +13,7 @@ Co-op has been played by two players. With three or four, it is checked by tests
 
 | Crate | Role |
 |---|---|
-| `tanku_core` | The rules both sides share: stats, progression, map and enemy generation, simulation types, and what goes over the network |
+| `tanku_core` | The rules both sides share: stats, progression, map and enemy generation, simulation types, and what goes over the network. It is compiled with `tanku_core/game.balance`, the file that holds the numbers of the balance. |
 | `tanku_server` | The authoritative simulation: a library that the client embeds for solo and hosted games, and a headless binary |
 | `tanku_client` | The game: rendering, input, interface and sound |
 | `tanku_audio` | The sound that the game computes: the music and the waveforms of the sound cues, which the client plays |
@@ -366,7 +366,7 @@ TANKU_DEV_SCRIPT="tape run.wav; wait 4; start TANKU; wait 4; play 0 1 0 0 4; wai
 
 ## Trials of the balance
 
-The trials measure what the rules of the game make, without anyone at the keyboard, and tell it in reports that can be compared from one change to the next. They are a tool of their own, `tanku_trials`, with a command for each kind of trial. The census counts what the seeds generate, the comparison of the reference players says what the yardstick of every fight is worth, the skirmishes say what each stretch of sectors costs and which tanks the cost comes from, the duels say what each level of a stat adds to the danger of a tank next to what it adds to its price, and the trial of the classes draws the curve of the danger of each class over its points, and the runs say how far a player gets with three lives. A comparison tells what a change to the game moved between two reports.
+The trials measure what the rules of the game make, without anyone at the keyboard, and tell it in reports that can be compared from one change to the next. They are a tool of their own, `tanku_trials`, with a command for each kind of trial. The census counts what the seeds generate, the comparison of the reference players says what the yardstick of every fight is worth, the skirmishes say what each stretch of sectors costs and which tanks the cost comes from, the duels say what each level of a stat adds to the danger of a tank next to what it adds to its price, and the trial of the classes draws the curve of the danger of each class over its points, and the runs say how far a player gets with three lives. A comparison tells what a change to the game moved between two reports. The numbers that the trials are there to judge are in one file: see [Changing the balance](#changing-the-balance).
 
 ### Census
 
@@ -556,11 +556,30 @@ cargo run --release -p tanku_trials -- compare target/trials/before/skirmish.csv
 
 The comparison lists every cell that changed by 10% or more, table by table, with its value before and after, and the rows that came or went. It says so when the two reports were not asked for the same thing. It knows nothing of noise: a cell that rests on few losses moves by itself from one set of seeds to another, so the same seeds are compared, and a small change of a small number is no finding.
 
+Every report says which balance it was made with, on a line under what it was asked for: a number that tells the words of `tanku_core/game.balance` from those of another. A comparison says whether the balance changed between its two reports.
+
 | Option | Effect |
 |---|---|
 | `--least 10` | The least change that is told, in percent of the value before |
 | `--table NAME` | A table to compare. It can be given several times, and every table is compared without it. |
 | `--out DIRECTORY` | Writes the comparison there as `compare.md` and `compare.csv` |
+
+### Changing the balance
+
+The numbers that decide how hard the game is are written by hand in `tanku_core/game.balance`: what the levels of the stats give and cost, the standard tank, the weapons, how the sectors get harder, how a group shares its points, the classes, the terrain, the arenas, arena mode, how the brains fight, and what unlocks the modes. [docs/BALANCE.md](docs/BALANCE.md) describes each line. The game is compiled with the file, so a change shows the next time anything is built, and a file that can't be read stops the build and says on which line:
+
+```
+error[E0080]: evaluation panicked: game.balance, line 11: a stat has a number for each of its levels, level 0 included
+```
+
+A change of the balance is tried in four steps:
+
+1. Write the report of a trial as the game is: `cargo run --release -p tanku_trials -- skirmish --out target/trials/before`.
+2. Change a line of the file. A group that gets its sixth tank at sector 20 and not at 15 is `step tanks  1  4 8 12 16 20`.
+3. Write the report again, to `target/trials/after`. The tool is compiled again first, which takes a quarter of a minute.
+4. Compare the two: `cargo run --release -p tanku_trials -- compare target/trials/before/skirmish.csv target/trials/after/skirmish.csv`.
+
+The file holds numbers and no rules. What a number can't say stays in the code: which stats and classes there are, what each tier of a brain does, how the walls of the corridor are shaped.
 
 ## Listening to the music
 

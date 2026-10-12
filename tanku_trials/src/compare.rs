@@ -3,7 +3,7 @@
 
 use std::{collections::BTreeMap, fs, path::Path};
 
-use crate::report::{Report, Table};
+use crate::report::{BALANCE_LINE, Report, Table};
 
 /// What a comparison is asked for.
 #[derive(Clone, Debug, PartialEq)]
@@ -61,6 +61,19 @@ fn asked_for(path: &Path) -> Option<String> {
     let text = fs::read_to_string(path.with_extension("md")).ok()?;
     let mut lines = text.lines().filter(|line| !line.trim().is_empty());
     lines.nth(1).map(str::to_string)
+}
+
+/// The balance that the report beside a CSV file says it was made with, if it says so.
+fn balance_of(path: &Path) -> Option<String> {
+    let text = fs::read_to_string(path.with_extension("md")).ok()?;
+    balance_in(&text)
+}
+
+/// The balance that the text of a report names.
+fn balance_in(text: &str) -> Option<String> {
+    let line = text.lines().find(|line| line.starts_with(BALANCE_LINE))?;
+    let named = line.strip_prefix(BALANCE_LINE)?.trim_end_matches('.');
+    Some(named.trim_matches('`').to_string())
 }
 
 fn read(path: &Path) -> Result<Vec<(Place, String)>, String> {
@@ -161,6 +174,16 @@ pub fn compare(before: &Path, after: &Path, asked: &Asked) -> Result<Report, Str
         }
         _ => {}
     }
+    // A change of the balance is what a comparison is mostly made for.
+    match (balance_of(before), balance_of(after)) {
+        (Some(one), Some(other)) if one != other => {
+            told += &format!("\n\nThe balance changed between the two: `{one}`, then `{other}`.");
+        }
+        (Some(one), Some(_)) => {
+            told += &format!("\n\nBoth were made with the balance `{one}`.");
+        }
+        _ => {}
+    }
     if tables.is_empty() {
         tables.push(Table::new(
             "Nothing changed",
@@ -171,6 +194,7 @@ pub fn compare(before: &Path, after: &Path, asked: &Asked) -> Result<Report, Str
     Ok(Report {
         title: "Comparison".to_string(),
         asked: told,
+        balance: None,
         tables,
     })
 }
@@ -196,6 +220,7 @@ mod tests {
         let report = Report {
             title: String::new(),
             asked: String::new(),
+            balance: None,
             tables: vec![table],
         };
         report.csv()
@@ -254,5 +279,23 @@ mod tests {
         assert!(gone[0].rows.iter().all(|row| row[2] == "gone"));
         let come = changes(&after, &before, &asked(10.0));
         assert!(come[0].rows.iter().all(|row| row[1] == "none"));
+    }
+
+    #[test]
+    fn a_comparison_finds_the_balance_that_each_report_names() {
+        let report = |balance: Option<u64>| Report {
+            title: "Census".to_string(),
+            asked: "Two seeds.".to_string(),
+            balance,
+            tables: Vec::new(),
+        };
+        let made = report(Some(0x1234_5678_9ABC_DEF0)).markdown();
+        assert_eq!(balance_in(&made), Some("123456789abcdef0".to_string()));
+        // A report from before the balance had a file names none, and neither does a
+        // comparison.
+        assert_eq!(balance_in(&report(None).markdown()), None);
+        // What was asked for is still the first line under the title.
+        let mut lines = made.lines().filter(|line| !line.trim().is_empty());
+        assert_eq!(lines.nth(1), Some("Two seeds."));
     }
 }

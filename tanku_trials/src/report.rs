@@ -33,12 +33,21 @@ pub struct Report {
     pub title: String,
     /// What was asked for, so that the same report can be made again.
     pub asked: String,
+    /// The balance that the trial was made with: the fingerprint of `game.balance` as the
+    /// tool was compiled with it. A comparison of two reports is made with none.
+    pub balance: Option<u64>,
     pub tables: Vec<Table>,
 }
+
+/// What a report says of its balance, in front of the fingerprint.
+pub const BALANCE_LINE: &str = "Made with the balance ";
 
 impl Report {
     pub fn markdown(&self) -> String {
         let mut text = format!("# {}\n\n{}\n", self.title, self.asked);
+        if let Some(balance) = self.balance {
+            let _ = writeln!(text, "\n{BALANCE_LINE}`{balance:016x}`.");
+        }
         for table in &self.tables {
             let _ = write!(text, "\n## {}\n\n{}\n\n", table.title, table.note);
             let _ = writeln!(text, "| {} |", table.columns.join(" | "));
@@ -100,6 +109,25 @@ pub fn mean(values: impl Iterator<Item = f64>) -> String {
 mod tests {
     use super::*;
 
+    fn csv_of(report: &Report) -> String {
+        let plain = Report {
+            title: report.title.clone(),
+            asked: report.asked.clone(),
+            balance: None,
+            tables: report
+                .tables
+                .iter()
+                .map(|table| Table {
+                    title: table.title.clone(),
+                    note: table.note.clone(),
+                    columns: table.columns.clone(),
+                    rows: table.rows.clone(),
+                })
+                .collect(),
+        };
+        plain.csv()
+    }
+
     #[test]
     fn a_report_is_told_as_markdown_and_as_csv() {
         let mut table = Table::new(
@@ -108,13 +136,22 @@ mod tests {
             &["sectors", "tanks", "a \"b\""],
         );
         table.row(vec!["1-2".into(), "1.0".into(), "50%".into()]);
-        let report = Report {
+        let mut report = Report {
             title: "Census".into(),
             asked: "Two seeds.".into(),
+            balance: None,
             tables: vec![table],
         };
         let markdown = report.markdown();
         assert!(markdown.starts_with("# Census\n\nTwo seeds.\n\n## Groups\n\nHow many tanks.\n\n"));
+        // A report of a trial says which balance it was made with, under what was asked.
+        report.balance = Some(0x00AB_CDEF_0123_4567);
+        let made =
+            "# Census\n\nTwo seeds.\n\nMade with the balance `00abcdef01234567`.\n\n## Groups";
+        assert!(report.markdown().starts_with(made), "{}", report.markdown());
+        // Its cells are the same either way.
+        assert_eq!(report.csv(), csv_of(&report));
+        report.balance = None;
         assert!(
             markdown
                 .contains("| sectors | tanks | a \"b\" |\n|---|---:|---:|\n| 1-2 | 1.0 | 50% |\n")

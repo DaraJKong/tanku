@@ -365,6 +365,7 @@ pub fn duels(asked: &Asked) -> Report {
             asked.limit,
             written(&base),
         ),
+        balance: Some(tanku_core::balance::FINGERPRINT),
         tables: report,
     }
 }
