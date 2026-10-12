@@ -46,7 +46,7 @@ const OBSTACLE_CLEARANCE_2: i64 = 25;
 const GATE_CLEARANCE_2: i64 = 196;
 
 /// Narrowest and widest the room of arena mode gets, and how deep it gets from south to
-/// north. With the tanks that wait in reserve north of it, it fits on one screen.
+/// north. With the tanks that wait in reserve south of it, it fits on one screen.
 const ROOM_WIDTH: (i32, i32) = (36, 42);
 const ROOM_DEPTH: (i32, i32) = (22, 24);
 /// How far a corner of the room is cut: along the wall that runs east, and along the one
@@ -67,12 +67,30 @@ const START_CLEARANCE_2: i64 = 100;
 /// The room has more floor than a sector of the corridor: it takes this many groups of cover
 /// for two of a sector.
 const ROOM_COVER: u32 = 3;
-/// How far outside the north wall of the room the tanks that wait in reserve stand, and how
-/// far apart at most.
-const RESERVE_ROW: f32 = 2.5;
+/// How far outside the south wall of the room the first row of the tanks that wait in
+/// reserve stands, how far behind it the next row does, and how far apart the tanks of a row
+/// are.
+const RESERVE_ROW: f32 = 2.2;
+const RESERVE_ROWS_APART: f32 = 2.6;
 const RESERVE_SPACING: f32 = 3.0;
-/// How far north of the room the ground that the reserve takes reaches.
-pub const RESERVE_DEPTH: f32 = 4.5;
+/// The most tanks that a row of the reserve holds, and how far apart its two ends are at
+/// most: it stands between the two panels at the bottom of the display.
+const RESERVE_ROW_MOST: u32 = 8;
+const RESERVE_SPAN: f32 = 20.0;
+/// How far south of the room the ground that one row of the reserve takes reaches, and the
+/// ground that two rows take.
+const RESERVE_DEPTH: (f32, f32) = (4.2, 6.5);
+
+/// How far south of the room of arena mode the ground that the tanks in reserve take
+/// reaches. The largest group of a single player stands in one row. Several players call
+/// for groups that take two.
+pub const fn reserve_depth(solo: bool) -> f32 {
+    if solo {
+        RESERVE_DEPTH.0
+    } else {
+        RESERVE_DEPTH.1
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Heading {
@@ -1127,13 +1145,42 @@ impl Room {
         spaced(&mut rng, &candidates)
     }
 
-    /// Where a tank waits in reserve, in a row of this many places outside the north wall:
-    /// the tanks that have not come yet stand there, where the players read them.
-    pub fn reserve(&self, slot: u32, slots: u32) -> Vec2 {
+    /// Where each tank of a group waits in reserve, by its number, for a group whose waves
+    /// have this many tanks: outside the south wall, where the players read the tanks that
+    /// have not come yet. A small group stands in one row, in the order it comes, with a gap
+    /// between two waves. A larger one stands a wave to a row, the first wave nearest the
+    /// wall, and a wave that is too large for a row takes the next one too.
+    pub fn reserve(&self, waves: &[u32]) -> Vec<Vec2> {
         let (min, max) = (self.plan.min.as_vec2(), self.plan.max.as_vec2());
-        let spacing = RESERVE_SPACING.min((max.x - min.x - 2.0) / slots.max(1) as f32);
-        let along = slot as f32 - (slots.max(1) - 1) as f32 / 2.0;
-        Vec2::new((min.x + max.x) / 2.0 + along * spacing, max.y + RESERVE_ROW)
+        // The place of a tank in a row of this many places.
+        let place = |row: u32, place: u32, places: u32| {
+            let along = place as f32 - (places - 1) as f32 / 2.0;
+            let spacing = RESERVE_SPACING.min(RESERVE_SPAN / (places.max(2) - 1) as f32);
+            let behind = RESERVE_ROW + row as f32 * RESERVE_ROWS_APART;
+            Vec2::new((min.x + max.x) / 2.0 + along * spacing, min.y - behind)
+        };
+        let tanks: u32 = waves.iter().sum();
+        let gaps = waves.len().saturating_sub(1) as u32;
+        let mut places = Vec::new();
+        if tanks + gaps <= RESERVE_ROW_MOST {
+            let mut next = 0;
+            for &wave in waves {
+                places.extend((next..next + wave).map(|at| place(0, at, tanks + gaps)));
+                next += wave + 1;
+            }
+            return places;
+        }
+        let mut row = 0;
+        for &wave in waves {
+            let mut left = wave;
+            while left > 0 {
+                let here = left.min(RESERVE_ROW_MOST);
+                places.extend((0..here).map(|at| place(row, at, here)));
+                left -= here;
+                row += 1;
+            }
+        }
+        places
     }
 }
 
@@ -1699,26 +1746,61 @@ mod room_tests {
     }
 
     #[test]
-    fn the_reserve_stands_in_a_row_outside_the_north_wall() {
+    fn the_reserve_stands_in_rows_outside_the_south_wall() {
         for seed in SEEDS {
             let room = Room::new(seed);
             let (min, max) = (room.plan().min.as_vec2(), room.plan().max.as_vec2());
-            for slots in [1, 2, 6, 7, MOST_TANKS as u32 + 1] {
-                let row: Vec<Vec2> = (0..slots).map(|slot| room.reserve(slot, slots)).collect();
-                for (number, place) in row.iter().enumerate() {
-                    // Outside the room, and within the ground that the reserve takes.
-                    assert!(place.y >= max.y + 2.0 && place.y <= max.y + RESERVE_DEPTH - 1.0);
-                    assert!(place.x > min.x && place.x < max.x, "seed {seed}");
+            let middle = (min.x + max.x) / 2.0;
+            let rows = |waves: &[u32]| -> Vec<f32> {
+                let mut rows: Vec<f32> = room.reserve(waves).iter().map(|at| at.y).collect();
+                rows.dedup();
+                rows
+            };
+            for waves in [
+                vec![1],
+                vec![1, 1],
+                vec![3, 3],
+                vec![8, 7],
+                vec![6],
+                vec![15],
+            ] {
+                let places = room.reserve(&waves);
+                assert_eq!(places.len() as u32, waves.iter().sum::<u32>());
+                // The ground that the reserve takes: a single player never calls for more
+                // than one row.
+                let depth = reserve_depth(rows(&waves).len() == 1);
+                for (number, place) in places.iter().enumerate() {
+                    // Outside the room, and a tank is 2 m long.
+                    assert!(place.y <= min.y - 2.0 && place.y >= min.y - depth + 1.5);
+                    assert!((place.x - middle).abs() <= 10.0, "seed {seed}: {waves:?}");
                     // A tank is 1.6 m wide.
-                    for other in &row[..number] {
-                        assert!(place.distance(*other) >= 2.0, "seed {seed}, {slots} slots");
+                    for other in &places[..number] {
+                        assert!(place.distance(*other) >= 2.5, "seed {seed}: {waves:?}");
                     }
                 }
-                // The row is centered on the room.
-                let middle = (row[0].x + row[row.len() - 1].x) / 2.0;
-                assert!((middle - (min.x + max.x) / 2.0).abs() < 1e-3);
+                // A row is centered on the room.
+                let first_row: Vec<f32> = places
+                    .iter()
+                    .filter(|place| place.y == places[0].y)
+                    .map(|place| place.x)
+                    .collect();
+                let center = (first_row[0] + first_row[first_row.len() - 1]) / 2.0;
+                assert!((center - middle).abs() < 1e-3);
             }
+            // A small group stands in one row, with a gap between its two waves.
+            let small = room.reserve(&[3, 3]);
+            assert_eq!(rows(&[3, 3]).len(), 1);
+            let step = small[1].x - small[0].x;
+            assert!((small[3].x - small[2].x - 2.0 * step).abs() < 1e-3);
+            // A larger one stands a wave to a row, the second wave behind the first, and a
+            // wave that is too large for a row takes two.
+            let two = rows(&[5, 4]);
+            assert_eq!(two.len(), 2);
+            assert!(two[1] < two[0]);
+            assert_eq!(rows(&[15]), rows(&[8, 7]));
         }
+        // The largest group of a single player has six tanks, in two waves or all at once.
+        assert!(reserve_depth(true) < reserve_depth(false));
     }
 }
 

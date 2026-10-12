@@ -3,7 +3,8 @@
 //!
 //! `TANKU_DEV_SCRIPT` holds commands separated by semicolons, run one after the other:
 //! `start SEED PLAYERS DIFFICULTY`, which starts a run in normal mode unless `hard` is asked
-//! for, in the tank of the command line if `--tank` gave one, `seat NUMBER`, `repair SECONDS` and `shield SECONDS`, which hold the
+//! for, in arena mode if `arena` comes after it, in the tank of the command line if `--tank`
+//! gave one, `seat NUMBER`, `repair SECONDS` and `shield SECONDS`, which hold the
 //! key of that name for so long, `wait SECONDS`, `warp SECTOR`, `unlock`, which unlocks every
 //! mode and option, or those that it names, as `unlock seed free`, `tank TANK`, which builds the tank of the garage as the command line
 //! writes one,
@@ -429,7 +430,7 @@ fn run_script(
                 difficulty: Difficulty::of_key(word(3)).unwrap_or_default(),
                 // A tank from the command line makes it a run of free mode.
                 free: options.tank.is_some(),
-                arena: false,
+                arena: words[1..].contains(&"arena"),
                 tanks: options.tanks(),
             });
             screen.set(Screen::Playing);

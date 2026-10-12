@@ -3,7 +3,7 @@
 //! The run never leaves the room, so nothing unlocks and nothing is crossed. A group is the
 //! group of the sector of its number, and it comes in waves as the group of an arena does.
 //! Between two groups there is a lull: the room is laid out anew, and the next group stands in
-//! reserve outside the north wall, where the players read it as they read a group through a
+//! reserve outside the south wall, where the players read it as they read a group through a
 //! barrier.
 
 use std::collections::VecDeque;
@@ -62,17 +62,12 @@ impl RoomState {
         }
     }
 
-    /// The place in the reserve of a tank of the group that is on or next, and how many
-    /// places the row has: the tanks stand in the order they come, a gap between two waves.
-    fn slot(&self, number: u32) -> (u32, u32) {
-        let mut before = 0;
-        let wave = self.split.iter().position(|&size| {
-            before += size;
-            number < before
-        });
-        let waves = self.split.len().max(1) as u32;
-        let tanks: u32 = self.split.iter().sum();
-        (number + wave.unwrap_or(0) as u32, tanks + waves - 1)
+    /// Where a tank of the group that is on, or of the next one during a lull, waits in
+    /// reserve: with its wave, the first wave nearest the room.
+    fn reserve(&self, number: u32) -> Vec2 {
+        let places = self.room.reserve(&self.split);
+        let fallback = self.room.start().as_vec2();
+        places.get(number as usize).copied().unwrap_or(fallback)
     }
 
     /// Lays the room out for a level of its terrain. What it holds is there at once when a
@@ -298,14 +293,13 @@ pub fn reserve(
         if reserves.iter().any(there) {
             continue;
         }
-        let (slot, slots) = state.slot(recruit.number);
         commands.spawn((
             Reserve {
                 genome: recruit.genome,
                 group,
                 number: recruit.number,
             },
-            Position(state.room.reserve(slot, slots)),
+            Position(state.reserve(recruit.number)),
             InSector(0),
         ));
     }

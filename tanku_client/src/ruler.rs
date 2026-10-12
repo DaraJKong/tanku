@@ -8,7 +8,7 @@
 
 use bevy::prelude::*;
 use tanku_core::{
-    map::SectorPlan,
+    map::{SectorKind, SectorPlan},
     sim::{Barrier, Run, Sector},
 };
 
@@ -269,6 +269,16 @@ fn lay(mark: Mark, reading: &Reading) -> Option<(Vec2, Option<Vec2>)> {
     }
 }
 
+/// The sector that the ruler measures, among those that are loaded: the one that the run has
+/// reached. The room of arena mode has no barrier to measure a distance to.
+fn measured<'a>(
+    mut plans: impl Iterator<Item = &'a SectorPlan>,
+    sector: u32,
+) -> Option<&'a SectorPlan> {
+    let plan = plans.find(|plan| plan.index == sector);
+    plan.filter(|plan| plan.kind != SectorKind::Room)
+}
+
 /// Lays the ruler along the edge of the sheet.
 fn measure(
     screen: OnScreen,
@@ -287,8 +297,8 @@ fn measure(
     mut numbers: Query<(&mut Text, &mut UiTransform), Without<Mark>>,
 ) {
     let sector = run.as_ref().map(|run| run.sector);
-    let mut plans = sectors.iter().map(|sector| &sector.layout.plan);
-    let plan = plans.find(|plan| Some(plan.index) == sector);
+    let plans = sectors.iter().map(|sector| &sector.layout.plan);
+    let plan = sector.and_then(|sector| measured(plans, sector));
     let reading = plan.and_then(|plan| read(plan, view.focus(), &screen));
     let mut closing = barriers
         .iter()
@@ -358,6 +368,20 @@ mod tests {
     use tanku_core::map::Corridor;
 
     use super::*;
+
+    #[test]
+    fn the_ruler_measures_the_sector_that_the_run_has_reached_and_no_room() {
+        let mut corridor = Corridor::new(7);
+        let loaded: Vec<SectorPlan> = (2..5).map(|index| corridor.plan(index).clone()).collect();
+        let found = |sector: u32| measured(loaded.iter(), sector).map(|plan| plan.index);
+        assert_eq!(found(3), Some(3));
+        assert_eq!(found(7), None);
+        // The room of arena mode goes by the number 0, which is the sector of a run before
+        // its first group. Nothing is measured there.
+        let room = tanku_core::map::Room::new(7);
+        assert!(measured([room.plan()].into_iter(), 0).is_none());
+        assert!(measured([corridor.plan(0)].into_iter(), 0).is_some());
+    }
 
     #[test]
     fn the_distance_is_measured_along_the_sector() {

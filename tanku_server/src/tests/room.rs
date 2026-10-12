@@ -174,7 +174,7 @@ fn a_run_in_arena_mode_starts_in_its_room_with_the_first_group_in_reserve() {
     assert_eq!(standing(&mut app), (centers(&blocks), centers(&crates)));
     assert!(planned(&mut app).is_empty());
 
-    // The first group is the group of sector 1. It waits outside the north wall, and nothing
+    // The first group is the group of sector 1. It waits outside the south wall, and nothing
     // of it is in the room.
     let genomes = enemy::group(seed_value("TEST"), Difficulty::Normal, 1, 1);
     let waiting = reserves(&mut app);
@@ -184,7 +184,7 @@ fn a_run_in_arena_mode_starts_in_its_room_with_the_first_group_in_reserve() {
         (reserve.genome, reserve.group, reserve.number),
         (genomes[0], 1, 0)
     );
-    assert!(at.y > room.plan().max.y as f32);
+    assert!(at.y < room.plan().min.y as f32);
     assert!(enemies(&mut app, 0).is_empty() && enemies(&mut app, 1).is_empty());
 }
 
@@ -199,7 +199,7 @@ fn a_group_of_arena_mode_comes_in_two_waves_after_a_lull() {
     // During the lull, the whole group is in reserve, in a row, and the room is empty.
     assert_eq!(numbers(&mut app), [0, 1, 2, 3]);
     let row: Vec<f32> = reserves(&mut app).iter().map(|(_, at)| at.x).collect();
-    assert!(row.windows(2).all(|pair| pair[1] - pair[0] >= 2.0));
+    assert!(row.windows(2).all(|pair| pair[1] - pair[0] >= 2.5));
     // A gap parts the two waves.
     assert!(row[2] - row[1] > 1.5 * (row[1] - row[0]));
     assert!(enemies(&mut app, 9).is_empty());

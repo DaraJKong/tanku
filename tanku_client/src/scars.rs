@@ -3,14 +3,14 @@
 //! Where a blast went off, a scalloped outline stays around a darker patch, the way a change
 //! is circled on a plan. A block that the blast took away stays as a square in dashes, and a
 //! cross marks every place where a tank was destroyed. The marks belong to their sector and
-//! go when it does.
+//! go when it does. In arena mode, where the room never goes, they go with each group.
 
 use std::f32::consts::TAU;
 
 use bevy::prelude::*;
 use tanku_core::{
     rules::{BLAST_RADIUS, BLOCK_SIZE},
-    sim::{Sector, SimEvent},
+    sim::{Run, Sector, SimEvent},
 };
 
 use crate::{
@@ -191,6 +191,7 @@ fn lines(event: &SimEvent, outline: &[Vec2], turn: f32) -> Draft {
 fn mark(
     mut commands: Commands,
     mut events: MessageReader<SimEvent>,
+    run: Option<Res<Run>>,
     sectors: Query<(Entity, &Sector)>,
     scars: Query<(Entity, &Scar, &ChildOf)>,
     paints: Res<Paints>,
@@ -198,8 +199,19 @@ fn mark(
     mut meshes: ResMut<Assets<Mesh>>,
     mut blasts: Local<u32>,
 ) {
+    let events: Vec<SimEvent> = events.read().copied().collect();
+    // In arena mode, the floor is wiped when a group is cleared: the room is laid out anew,
+    // and the marks of a run without end would cover it.
+    let in_a_room = run.is_some_and(|run| run.arena);
+    let cleared = |event: &SimEvent| matches!(event, SimEvent::SectorCleared { .. });
+    if in_a_room && events.iter().any(cleared) {
+        for (entity, ..) in &scars {
+            commands.entity(entity).despawn();
+        }
+        return;
+    }
     let mut blasted = false;
-    for event in events.read() {
+    for event in &events {
         let at = match *event {
             SimEvent::Blast { at }
             | SimEvent::BlockDestroyed { at }
@@ -405,6 +417,70 @@ mod tests {
         app.world_mut().entity_mut(bay).despawn();
         let world = app.world_mut();
         assert_eq!(world.query::<&Scar>().iter(world).count(), 0);
+    }
+
+    /// A run that is at this sector, in arena mode or in the corridor.
+    fn run_at(sector: u32, arena: bool) -> Run {
+        Run {
+            seed_text: "TEST".into(),
+            seed: 1,
+            difficulty: default(),
+            players: 1,
+            team: 1,
+            solo: true,
+            sector,
+            cleared: 0,
+            checkpoint: 0,
+            lives: 3,
+            kills: 0,
+            ticks: 0,
+            phase: tanku_core::sim::RunPhase::Playing,
+            lost_to: None,
+            playtest: false,
+            earns: !arena,
+            free: false,
+            arena,
+            lull: None,
+        }
+    }
+
+    #[test]
+    fn the_floor_of_arena_mode_is_wiped_when_a_group_is_cleared() {
+        let at = Vec2::new(0.0, 8.0);
+        let fight = |app: &mut App| {
+            app.world_mut().write_message(SimEvent::Blast { at });
+            let team = Team::Enemies;
+            app.world_mut()
+                .write_message(SimEvent::TankDestroyed { at, team });
+            app.world_mut()
+                .write_message(SimEvent::BlockDestroyed { at });
+        };
+        let (mut app, room) = world_with_a_bay();
+        app.insert_resource(run_at(3, true));
+        fight(&mut app);
+        app.update();
+        assert_eq!(scars_of(&mut app, room), 3);
+        // The last tank of the group leaves no mark either: the floor is wiped with it.
+        fight(&mut app);
+        app.world_mut()
+            .write_message(SimEvent::SectorCleared { sector: 3 });
+        app.update();
+        app.update();
+        assert_eq!(scars_of(&mut app, room), 0);
+        // The next fight marks it again.
+        fight(&mut app);
+        app.update();
+        assert_eq!(scars_of(&mut app, room), 3);
+
+        // In the corridor, the marks of a sector stay when it is cleared.
+        let (mut app, bay) = world_with_a_bay();
+        app.insert_resource(run_at(3, false));
+        fight(&mut app);
+        app.world_mut()
+            .write_message(SimEvent::SectorCleared { sector: 3 });
+        app.update();
+        app.update();
+        assert_eq!(scars_of(&mut app, bay), 3);
     }
 
     #[test]

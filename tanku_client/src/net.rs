@@ -31,7 +31,7 @@ use lightyear::{
 };
 use tanku_core::{
     lock::{prove, worded},
-    map::Corridor,
+    map::{Corridor, Room},
     protocol::{
         Door, Lobby, Member, PORT, ProtocolPlugin, Reliable, RunState, WEB_PORT, Word, protocol_id,
     },
@@ -749,7 +749,8 @@ fn follow_run(mut commands: Commands, told: Query<&RunState>, run: Option<ResMut
 }
 
 /// The host only tells which sectors are loaded. Their walls and all they hold come from the
-/// seed, which gives the same on every machine.
+/// seed, which gives the same on every machine. A run in arena mode has the room of its seed
+/// and nothing else.
 fn lay_out_sectors(
     mut commands: Commands,
     run: Option<Res<Run>>,
@@ -760,6 +761,11 @@ fn lay_out_sectors(
         return;
     };
     for (entity, index) in &bare {
+        if run.arena {
+            let layout = Room::new(run.seed).shell();
+            commands.entity(entity).insert(Sector { layout });
+            continue;
+        }
         let known = corridor.take().filter(|(seed, _)| *seed == run.seed);
         let (seed, mut planned) = known.unwrap_or_else(|| (run.seed, Corridor::new(run.seed)));
         let layout = planned.layout(index.0);
