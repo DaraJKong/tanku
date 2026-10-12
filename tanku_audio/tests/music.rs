@@ -13,17 +13,17 @@ fn the_music_is_stable() {
     // five threats of an arena.
     let golden: [u64; 12] = [
         0x0F8E_4AE9_5C2E_C9EB,
-        0xB707_E705_EDA8_4A93,
-        0x5AD8_C9AE_6783_73FA,
-        0x8B59_7837_D1A8_D34B,
-        0xDB76_65F3_DD0C_8733,
-        0x2BA7_3B84_D898_B3BD,
-        0xF687_5E7B_4823_6191,
-        0x62F5_550B_A741_2DB3,
-        0xF424_7194_4520_A5D2,
-        0xF29D_D23F_4D42_2478,
-        0xE78D_6423_02D7_1900,
-        0x5936_2A65_08B9_2618,
+        0xC9A3_AA76_F6C2_6242,
+        0x6906_5710_EAFB_C2C1,
+        0xA735_CF6C_69F9_569D,
+        0x2896_188F_1387_63D6,
+        0xCA00_951D_7AE8_9D5B,
+        0x9938_7853_498F_12D4,
+        0x97F8_882E_8183_384D,
+        0x117D_1DA4_D89F_5B2E,
+        0xACC9_1BD1_0426_4271,
+        0x4576_D8D5_25E1_09DE,
+        0xB658_F269_1A91_3B3D,
     ];
     // The first 32 seconds of each.
     let heard: Vec<u64> = arrangements()

@@ -8,6 +8,9 @@
 //! A sound is also a function of what was played and of nothing else. A note of a given pitch
 //! is the same every time and so is every hit of a drum, which makes a loop of the piece
 //! repeat exactly.
+//!
+//! How an instrument is made is here, and it is the same for every piece. The settings of it
+//! are in the file of the piece, in ms, in Hz and in percent.
 
 use std::f32::consts::TAU;
 
@@ -15,8 +18,8 @@ use crate::{
     DUCKED, SAMPLE_RATE,
     director::{Step, Tone},
     math::{Noise, frequency, sine},
-    notation::Instrument,
-    score::{SCORE, Score},
+    notation::{Instrument, Sounds},
+    score::{SCORE, Score, step},
 };
 
 const RATE: f32 = SAMPLE_RATE as f32;
@@ -29,63 +32,19 @@ const GAP: u32 = 220;
 /// Frames a note takes to fall when another one waits for its place: 3 ms.
 const CUT: u32 = 132;
 
-/// Frames the bass takes to rise: 3 ms.
-const BASS_RISE: u32 = 132;
-/// The filter of the bass lets through what is below a frequency that starts at the sum of
-/// these two and comes down to the first, in Hz.
-const BASS_FLOOR: f32 = 300.0;
-const BASS_SWEEP: f32 = 1100.0;
-/// The filter is closed 0.15 s after the attack.
-const BASS_CLOSE: f32 = fall(0.05);
-
 /// Plucked strings that can ring at once.
 const PLUCKS: usize = 4;
 /// Longest string, in frames. The lowest note of the pluck in the piece, E3, needs 266, and
 /// this is enough for the E an octave below it. A lower note is played an octave higher.
 const STRING: usize = 540;
-/// Seconds a string takes to fall by 60 dB.
-const RING: f32 = 1.0;
 /// What a string that is stopped keeps at each turn.
 const STOPPED: f32 = 0.9;
 const PLUCK_SEED: u32 = 0x5EED_0001;
-/// Times the burst of noise that plucks a string is smoothed.
-const SMOOTHING: u32 = 3;
-/// The echo of the pluck's arpeggio comes three steps later and a third as loud.
-const ECHO_FRAMES: usize = 16_537;
-const ECHO_LEVEL: f32 = 1.0 / 3.0;
 
 /// Notes the lead can play at once: its line, and the same an octave higher.
 const LEADS: usize = 2;
-/// The part of its period that the pulse of the lead spends up.
-const LEAD_WIDTH: f32 = 0.3;
-/// Frames the lead takes to rise: 4 ms.
-const LEAD_RISE: u32 = 176;
-/// The lead lets through what is below this frequency, in Hz.
-const LEAD_POLE: f32 = pole(3000.0);
-/// The vibrato comes in after this many frames, and is whole after as many again.
-const VIBRATO_AFTER: f32 = 6000.0;
-/// How far the vibrato bends the pitch, and how many times per second.
-const VIBRATO_DEPTH: f32 = 0.004;
-const VIBRATO_RATE: f32 = 5.5;
 
-/// The kick falls from the sum of these two to the first, in Hz, in 0.12 s.
-const KICK_FLOOR: f32 = 55.0;
-const KICK_DROP: f32 = 55.0;
-const KICK_SWEEP: f32 = fall(0.03);
-const KICK_FALL: f32 = fall(0.045);
-
-/// The hi-hat is noise above 7 kHz that lasts 0.03 s.
-const HAT_POLE: f32 = pole(7000.0);
-const HAT_FALL: f32 = fall(0.008);
 const HAT_SEED: u32 = 0x5EED_0002;
-
-/// The snare is noise around 2 kHz with a tone at 220 Hz, and lasts 0.12 s.
-const SNARE_TUNE: f32 = 2.0 * sine(2000.0 / RATE / 2.0);
-const SNARE_DAMP: f32 = 0.8;
-const SNARE_FALL: f32 = fall(0.035);
-const SNARE_TONE: f32 = 220.0;
-const SNARE_TONE_FALL: f32 = fall(0.03);
-const SNARE_TONE_LEVEL: f32 = 0.7;
 const SNARE_SEED: u32 = 0x5EED_0003;
 
 /// A muffled music loses what is above this frequency, in Hz, and half its loudness.
@@ -112,6 +71,114 @@ const fn fall(seconds: f32) -> f32 {
 const fn pole(hz: f32) -> f32 {
     let turn = TAU * hz / RATE;
     turn / (1.0 + turn)
+}
+
+/// The settings of the instruments, which the file of a piece writes in ms, in Hz and in
+/// percent, as the frames use them.
+struct Settings {
+    /// Frames the bass takes to rise.
+    bass_rise: u32,
+    /// The filter of the bass lets through what is below a frequency that starts at the sum of
+    /// these two and goes to the first, in Hz.
+    bass_floor: f32,
+    bass_sweep: f32,
+    /// What the filter keeps of its way from one frame to the next.
+    bass_close: f32,
+
+    /// Seconds a string takes to fall by 60 dB.
+    pluck_ring: f32,
+    /// Times the burst of noise that plucks a string is smoothed.
+    pluck_smoothing: u32,
+    /// How loud the echo of the pluck is against its note.
+    echo_level: f32,
+
+    /// The part of its period that the pulse of the lead spends up, and the mean of that
+    /// pulse.
+    lead_width: f32,
+    lead_mean: f32,
+    /// Frames the lead takes to rise.
+    lead_rise: u32,
+    /// The weight of the filter that lets through what is below a frequency.
+    lead_pole: f32,
+    /// The vibrato comes in after this many frames, and is whole after as many again.
+    vibrato_after: f32,
+    /// How far the vibrato bends the pitch, and how far it goes per frame, in periods.
+    vibrato_depth: f32,
+    vibrato_step: f32,
+
+    /// The pitch of the kick goes from the sum of these two to the first, in Hz.
+    kick_floor: f32,
+    kick_drop: f32,
+    /// What the pitch keeps of its way, and the level of itself, from one frame to the next.
+    kick_sweep: f32,
+    kick_fall: f32,
+
+    /// The weight of the filter whose share the noise of the hi-hat loses, and what its level
+    /// keeps from one frame to the next.
+    hat_pole: f32,
+    hat_fall: f32,
+
+    /// The filter that keeps the middle of the noise of the snare: where it is and how much
+    /// it is damped, which sets how wide it is.
+    snare_tune: f32,
+    snare_damp: f32,
+    snare_fall: f32,
+    /// The tone of the snare in Hz, what its level keeps from one frame to the next, and how
+    /// loud it starts against the noise.
+    snare_tone: f32,
+    snare_tone_fall: f32,
+    snare_tone_level: f32,
+}
+
+impl Settings {
+    fn of(sounds: &Sounds) -> Self {
+        let Sounds {
+            kick,
+            hat,
+            snare,
+            bass,
+            pluck,
+            lead,
+        } = sounds;
+        Self {
+            bass_rise: in_frames(bass.rise),
+            bass_floor: bass.to,
+            bass_sweep: bass.from - bass.to,
+            bass_close: fall(bass.sweep),
+
+            pluck_ring: pluck.ring,
+            pluck_smoothing: pluck.smooth,
+            echo_level: pluck.echo_level,
+
+            lead_width: lead.width,
+            lead_mean: 2.0 * lead.width - 1.0,
+            lead_rise: in_frames(lead.rise),
+            lead_pole: pole(lead.below),
+            vibrato_after: lead.vibrato_after * RATE,
+            vibrato_depth: lead.vibrato_depth,
+            vibrato_step: lead.vibrato_rate / RATE,
+
+            kick_floor: kick.to,
+            kick_drop: kick.from - kick.to,
+            kick_sweep: fall(kick.sweep),
+            kick_fall: fall(kick.decay),
+
+            hat_pole: pole(hat.above),
+            hat_fall: fall(hat.decay),
+
+            snare_tune: 2.0 * sine(snare.center / RATE / 2.0),
+            snare_damp: snare.width / snare.center,
+            snare_fall: fall(snare.decay),
+            snare_tone: snare.tone,
+            snare_tone_fall: fall(snare.tone_decay),
+            snare_tone_level: snare.tone_level,
+        }
+    }
+}
+
+/// A time in whole frames, to the nearest one.
+fn in_frames(seconds: f32) -> u32 {
+    (seconds * RATE + 0.5) as u32
 }
 
 /// A level that the director gives, from 0 to 255, as a loudness from 0 to 1.
@@ -247,26 +314,26 @@ struct Bass {
 }
 
 impl Bass {
-    fn start(&mut self, note: Note) {
+    fn start(&mut self, note: Note, set: &Settings) {
         if self.envelope.sounding {
             self.waiting = Some(note);
             self.envelope.cut();
         } else {
-            self.begin(note);
+            self.begin(note, set);
         }
     }
 
-    fn begin(&mut self, note: Note) {
+    fn begin(&mut self, note: Note, set: &Settings) {
         self.note = note;
         self.phase = 0.0;
         self.open = 1.0;
-        self.envelope.start(note.frames, BASS_RISE, GAP);
+        self.envelope.start(note.frames, set.bass_rise, GAP);
     }
 
-    fn frame(&mut self, held: bool) -> f32 {
+    fn frame(&mut self, held: bool, set: &Settings) -> f32 {
         if !self.envelope.sounding {
             match self.waiting.take() {
-                Some(note) => self.begin(note),
+                Some(note) => self.begin(note, set),
                 None => return 0.0,
             }
         }
@@ -276,8 +343,8 @@ impl Bass {
         wave += blep(self.phase, step) - blep(wrap(self.phase + 0.5), step);
         self.phase = wrap(self.phase + step);
 
-        let weight = pole(BASS_FLOOR + BASS_SWEEP * self.open);
-        self.open *= BASS_CLOSE;
+        let weight = pole(set.bass_floor + set.bass_sweep * self.open);
+        self.open *= set.bass_close;
         self.low[0] += weight * (wave - self.low[0]);
         self.low[1] += weight * (self.low[0] - self.low[1]);
         self.low[1] * level
@@ -319,7 +386,7 @@ impl Pluck {
         }
     }
 
-    fn strike(&mut self, tone: Tone, echo: bool) {
+    fn strike(&mut self, tone: Tone, echo: bool, set: &Settings) {
         self.echo = echo;
         let mut hz = frequency(tone.pitch);
         while RATE / hz > STRING as f32 {
@@ -335,8 +402,8 @@ impl Pluck {
         self.last = 0.0;
         self.at = 0;
         // What is lost at each turn makes the note fall by 60 dB in the time it rings.
-        self.keep = 1.0 - 6.908 / (hz * RING);
-        self.left = (1.5 * RING * RATE) as u32;
+        self.keep = 1.0 - 6.908 / (hz * set.pluck_ring);
+        self.left = (1.5 * set.pluck_ring * RATE) as u32;
 
         // The burst is the same noise for every note. It is smoothed, which takes the edge
         // off the attack, then centered on zero and brought to the loudness of the note.
@@ -345,7 +412,7 @@ impl Pluck {
         for frame in burst.iter_mut() {
             *frame = noise.next();
         }
-        for _ in 0..SMOOTHING {
+        for _ in 0..set.pluck_smoothing {
             let mut before = burst[self.length - 1];
             for frame in burst.iter_mut() {
                 (*frame, before) = (0.5 * (*frame + before), *frame);
@@ -402,21 +469,21 @@ struct Lead {
 }
 
 impl Lead {
-    fn start(&mut self, note: Note) {
+    fn start(&mut self, note: Note, set: &Settings) {
         if self.envelope.sounding {
             self.waiting = Some(note);
             self.envelope.cut();
         } else {
-            self.begin(note);
+            self.begin(note, set);
         }
     }
 
-    fn begin(&mut self, note: Note) {
+    fn begin(&mut self, note: Note, set: &Settings) {
         self.note = note;
         self.phase = 0.0;
         self.age = 0.0;
         self.wobble = 0.0;
-        self.envelope.start(note.frames, LEAD_RISE, GAP);
+        self.envelope.start(note.frames, set.lead_rise, GAP);
     }
 
     /// Lets go of the note, and of the one that waits behind it.
@@ -425,26 +492,27 @@ impl Lead {
         self.envelope.release();
     }
 
-    fn frame(&mut self) -> f32 {
+    fn frame(&mut self, set: &Settings) -> f32 {
         if !self.envelope.sounding {
             match self.waiting.take() {
-                Some(note) => self.begin(note),
+                Some(note) => self.begin(note, set),
                 None => return 0.0,
             }
         }
         let level = self.envelope.next(false) * self.note.loud;
-        let depth = VIBRATO_DEPTH * (self.age / VIBRATO_AFTER - 1.0).clamp(0.0, 1.0);
+        let depth = set.vibrato_depth * (self.age / set.vibrato_after - 1.0).clamp(0.0, 1.0);
         let step = self.note.step * (1.0 + depth * sine(self.wobble));
-        self.wobble = wrap(self.wobble + VIBRATO_RATE / RATE);
+        self.wobble = wrap(self.wobble + set.vibrato_step);
         self.age += 1.0;
 
         // The wave is up for a part of its period and down for the rest, less its mean.
-        let mut wave = if self.phase < LEAD_WIDTH { 1.0 } else { -1.0 };
-        wave += blep(self.phase, step) - blep(wrap(self.phase + 1.0 - LEAD_WIDTH), step);
-        wave -= 2.0 * LEAD_WIDTH - 1.0;
+        let width = set.lead_width;
+        let mut wave = if self.phase < width { 1.0 } else { -1.0 };
+        wave += blep(self.phase, step) - blep(wrap(self.phase + 1.0 - width), step);
+        wave -= set.lead_mean;
         self.phase = wrap(self.phase + step);
 
-        self.low += LEAD_POLE * (wave - self.low);
+        self.low += set.lead_pole * (wave - self.low);
         self.low * level
     }
 }
@@ -459,22 +527,22 @@ struct Kick {
 }
 
 impl Kick {
-    fn hit(&mut self, strength: f32) {
+    fn hit(&mut self, strength: f32, set: &Settings) {
         *self = Self {
             phase: 0.0,
-            drop: KICK_DROP,
+            drop: set.kick_drop,
             level: strength,
         };
     }
 
-    fn frame(&mut self) -> f32 {
+    fn frame(&mut self, set: &Settings) -> f32 {
         if self.level == 0.0 {
             return 0.0;
         }
         let out = sine(self.phase) * self.level;
-        self.phase = wrap(self.phase + (KICK_FLOOR + self.drop) / RATE);
-        self.drop *= KICK_SWEEP;
-        self.level *= KICK_FALL;
+        self.phase = wrap(self.phase + (set.kick_floor + self.drop) / RATE);
+        self.drop *= set.kick_sweep;
+        self.level *= set.kick_fall;
         if self.level < SILENT {
             self.level = 0.0;
         }
@@ -498,18 +566,18 @@ impl Hat {
         };
     }
 
-    fn frame(&mut self) -> f32 {
+    fn frame(&mut self, set: &Settings) -> f32 {
         if self.level == 0.0 {
             return 0.0;
         }
         // Twice over, the noise loses what a low-pass filter keeps of it.
         let mut high = self.noise.next();
         for low in &mut self.low {
-            *low += HAT_POLE * (high - *low);
+            *low += set.hat_pole * (high - *low);
             high -= *low;
         }
         let out = high * self.level;
-        self.level *= HAT_FALL;
+        self.level *= set.hat_fall;
         if self.level < SILENT {
             self.level = 0.0;
         }
@@ -529,30 +597,34 @@ struct Snare {
 }
 
 impl Snare {
-    fn hit(&mut self, strength: f32) {
+    fn hit(&mut self, strength: f32, set: &Settings) {
         *self = Self {
             noise: Noise(SNARE_SEED),
             level: strength,
             band: 0.0,
             low: 0.0,
             phase: 0.0,
-            tone: strength * SNARE_TONE_LEVEL,
+            tone: strength * set.snare_tone_level,
         };
     }
 
-    fn frame(&mut self) -> f32 {
-        if self.level == 0.0 {
+    fn frame(&mut self, set: &Settings) -> f32 {
+        if self.level == 0.0 && self.tone == 0.0 {
             return 0.0;
         }
-        let high = self.noise.next() - self.low - SNARE_DAMP * self.band;
-        self.band += SNARE_TUNE * high;
-        self.low += SNARE_TUNE * self.band;
+        let high = self.noise.next() - self.low - set.snare_damp * self.band;
+        self.band += set.snare_tune * high;
+        self.low += set.snare_tune * self.band;
         let out = self.band * self.level + sine(self.phase) * self.tone;
-        self.phase = wrap(self.phase + SNARE_TONE / RATE);
-        self.tone *= SNARE_TONE_FALL;
-        self.level *= SNARE_FALL;
+        self.phase = wrap(self.phase + set.snare_tone / RATE);
+        self.tone *= set.snare_tone_fall;
+        self.level *= set.snare_fall;
         if self.level < SILENT {
             self.level = 0.0;
+            // The tone ends with the noise, or after it when it is the longer of the two.
+            if self.tone < SILENT {
+                self.tone = 0.0;
+            }
         }
         out
     }
@@ -568,7 +640,7 @@ pub struct Synth {
     kick: Kick,
     hat: Hat,
     snare: Snare,
-    /// What the pluck played three steps ago.
+    /// What the pluck played some steps ago: as many as its echo comes after.
     echo: Box<[f32]>,
     echo_at: usize,
     hush: bool,
@@ -581,6 +653,8 @@ pub struct Synth {
     duck: f32,
     /// How loud each instrument is on the left and on the right, as its piece mixes it.
     mix: [[f32; 2]; 6],
+    /// How each instrument sounds, as its piece sets it.
+    set: Settings,
 }
 
 /// A synthesizer for the piece of the game.
@@ -591,8 +665,12 @@ impl Default for Synth {
 }
 
 impl Synth {
-    /// A synthesizer for a piece, which mixes its instruments as the file of that piece says.
+    /// A synthesizer for a piece, which sets and mixes its instruments as the file of that
+    /// piece says.
     pub fn of(score: &Score) -> Self {
+        let piece = &score.piece;
+        // The echo counts its steps at the tempo of the piece, in whole frames.
+        let echo = piece.sounds.pluck.echo_steps * step(piece.tempo) / 2;
         Self {
             bass: Bass::default(),
             plucks: std::array::from_fn(|_| Pluck::new()),
@@ -612,7 +690,7 @@ impl Synth {
                 phase: 0.0,
                 tone: 0.0,
             },
-            echo: vec![0.0; ECHO_FRAMES].into(),
+            echo: vec![0.0; echo as usize].into(),
             echo_at: 0,
             hush: false,
             muffled: false,
@@ -620,7 +698,8 @@ impl Synth {
             dull: [[0.0; 2]; 2],
             ducked: false,
             duck: 0.0,
-            mix: Instrument::ALL.map(|instrument| score.piece.mix(instrument)),
+            mix: Instrument::ALL.map(|instrument| piece.mix(instrument)),
+            set: Settings::of(&piece.sounds),
         }
     }
 
@@ -650,29 +729,30 @@ impl Synth {
         self.hush = step.hush;
 
         if let Some(tone) = step.bass {
-            self.bass.start(Note::new(tone, frames(tone.steps)));
+            self.bass
+                .start(Note::new(tone, frames(tone.steps)), &self.set);
         }
         if let Some(tone) = step.pluck {
-            self.plucks[self.next_pluck].strike(tone, step.echo);
+            self.plucks[self.next_pluck].strike(tone, step.echo, &self.set);
             self.next_pluck = (self.next_pluck + 1) % PLUCKS;
         }
         // The lead plays one line: its new notes take the place of the old ones.
         if step.lead[0].is_some() {
             for (lead, tone) in self.leads.iter_mut().zip(step.lead) {
                 match tone {
-                    Some(tone) => lead.start(Note::new(tone, frames(tone.steps))),
+                    Some(tone) => lead.start(Note::new(tone, frames(tone.steps)), &self.set),
                     None => lead.release(),
                 }
             }
         }
         if step.kick > 0 {
-            self.kick.hit(loudness(step.kick));
+            self.kick.hit(loudness(step.kick), &self.set);
         }
         if step.hat > 0 {
             self.hat.hit(loudness(step.hat));
         }
         if step.snare > 0 {
-            self.snare.hit(loudness(step.snare));
+            self.snare.hit(loudness(step.snare), &self.set);
         }
     }
 
@@ -685,7 +765,8 @@ impl Synth {
     /// The next frame of the music: its left and its right.
     pub fn frame(&mut self) -> [f32; 2] {
         // While the music is hushed, the bass holds its note.
-        let bass = self.bass.frame(self.hush);
+        let set = &self.set;
+        let bass = self.bass.frame(self.hush, set);
         let (mut pluck, mut echoed) = (0.0, 0.0);
         for string in &mut self.plucks {
             let frame = string.frame();
@@ -696,14 +777,19 @@ impl Synth {
         }
         let mut lead = 0.0;
         for voice in &mut self.leads {
-            lead += voice.frame();
+            lead += voice.frame(set);
         }
-        let (kick, hat, snare) = (self.kick.frame(), self.hat.frame(), self.snare.frame());
+        let kick = self.kick.frame(set);
+        let hat = self.hat.frame(set);
+        let snare = self.snare.frame(set);
 
         // The echo of the arpeggio comes back on the other side.
-        let echo = self.echo[self.echo_at] * ECHO_LEVEL;
+        let echo = self.echo[self.echo_at] * set.echo_level;
         self.echo[self.echo_at] = echoed;
-        self.echo_at = (self.echo_at + 1) % ECHO_FRAMES;
+        self.echo_at += 1;
+        if self.echo_at == self.echo.len() {
+            self.echo_at = 0;
+        }
 
         let target = if self.muffled { 1.0 } else { 0.0 };
         self.muffle += (target - self.muffle).clamp(-MUFFLE_RATE, MUFFLE_RATE);
@@ -737,6 +823,7 @@ impl Synth {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::notation::read;
 
     /// How long a step lasts at 120 beats per minute, in half frames.
     const STEP: u32 = crate::score::step(120);
@@ -871,6 +958,95 @@ mod tests {
         assert!(sound[..2000].iter().any(|level| level.abs() > 0.2));
         assert!(sound[RATE as usize / 2..].iter().all(|&level| level == 0.0));
         assert_eq!(synth.hat.level, 0.0);
+    }
+
+    #[test]
+    fn the_file_gives_the_instruments_the_numbers_that_they_had() {
+        // What the file writes in ms, in Hz and in percent comes to the very numbers that the
+        // instruments were made with while these were in the code.
+        let set = Settings::of(&SCORE.piece.sounds);
+        assert_eq!((set.bass_rise, set.lead_rise), (132, 176));
+        assert_eq!((set.bass_floor, set.bass_sweep), (300.0, 1100.0));
+        assert_eq!(set.bass_close, fall(0.05));
+        assert_eq!((set.pluck_ring, set.pluck_smoothing), (1.0, 3));
+        assert_eq!((set.lead_width, set.lead_mean), (0.3, 2.0 * 0.3 - 1.0));
+        assert_eq!(set.lead_pole, pole(3000.0));
+        assert_eq!((set.vibrato_depth, set.vibrato_step), (0.004, 5.5 / RATE));
+        assert_eq!((set.kick_floor, set.kick_drop), (55.0, 55.0));
+        assert_eq!((set.kick_sweep, set.kick_fall), (fall(0.03), fall(0.045)));
+        assert_eq!((set.hat_pole, set.hat_fall), (pole(7000.0), fall(0.008)));
+        assert_eq!(set.snare_tune, 2.0 * sine(2000.0 / RATE / 2.0));
+        assert_eq!((set.snare_damp, set.snare_fall), (0.8, fall(0.035)));
+        assert_eq!((set.snare_tone, set.snare_tone_fall), (220.0, fall(0.03)));
+        assert_eq!(set.snare_tone_level, 0.7);
+        // The echo comes three steps later, which is 16,537 whole frames at 120 beats per
+        // minute.
+        assert_eq!(Synth::default().echo.len(), 16_537);
+        // Two numbers are a hair from what they were: the echo was a third as loud, which no
+        // number of percent writes, and the vibrato came in after 6000 frames, which is not a
+        // whole number of ms.
+        assert_eq!(set.echo_level, 0.33);
+        assert!((set.vibrato_after - 5997.6).abs() < 0.001);
+    }
+
+    #[test]
+    fn the_echo_follows_the_tempo_of_its_piece() {
+        // Four steps at 90 beats per minute, where a step lasts 7350 frames.
+        let text = include_str!("../music.score")
+            .replace("tempo 120", "tempo 90")
+            .replace("echo 3 33%", "echo 4 50%");
+        let score = Score::new(read(&text).unwrap());
+        let mut synth = Synth::of(&score);
+        assert_eq!(synth.echo.len(), 4 * 7350);
+
+        // The echo comes back half as loud and with its sides the other way round: the
+        // pluck is louder on the left, and its echo on the right.
+        let (left, right) = (0.2, 0.1);
+        assert_eq!(score.piece.mix(Instrument::Pluck), [left, right]);
+        let step = Step {
+            echo: true,
+            ..note("pluck", 69, 16)
+        };
+        synth.play(&step, 0);
+        let frames: Vec<[f32; 2]> = (0..40_000).map(|_| synth.frame()).collect();
+        let peak = |frames: &[[f32; 2]], side: usize| {
+            let levels = frames.iter().map(|frame| frame[side].abs());
+            levels.fold(0.0, f32::max)
+        };
+        let (dry, echoed) = frames.split_at(4 * 7350);
+        assert!((peak(dry, 1) / peak(dry, 0) - right / left).abs() < 1e-3);
+        // By then the string has fallen by 40 dB, and its echo starts as the note did.
+        assert!((peak(echoed, 1) / peak(dry, 0) - 0.5).abs() < 0.01);
+        assert!((peak(echoed, 0) / peak(dry, 1) - 0.5).abs() < 0.02);
+    }
+
+    #[test]
+    fn a_tone_that_outlasts_the_noise_of_the_snare_dies_away_too() {
+        // The tone of the snare of the game is shorter than its noise. A piece can turn them
+        // round, and the end of the noise must not cut the tone.
+        let written = "decay 35ms  tone 220Hz 30ms 70%";
+        let text = include_str!("../music.score");
+        assert!(text.contains(written));
+        let text = text.replace(written, "decay 5ms  tone 220Hz 200ms 70%");
+        let mut synth = Synth::of(&Score::new(read(&text).unwrap()));
+        let hit = Step {
+            snare: 255,
+            ..Step::default()
+        };
+        synth.play(&hit, 0);
+        let sound = listen(&mut synth, 2 * RATE as usize);
+        // The noise is over after 0.05 s. The tone goes on for 1.8 s, without a jump.
+        assert!(
+            sound[30_000..40_000]
+                .iter()
+                .any(|level| level.abs() > 0.001)
+        );
+        let jump = sound[3000..]
+            .windows(2)
+            .map(|pair| (pair[1] - pair[0]).abs());
+        assert!(jump.fold(0.0, f32::max) < 0.01);
+        assert!(sound[85_000..].iter().all(|&level| level == 0.0));
+        assert_eq!((synth.snare.level, synth.snare.tone), (0.0, 0.0));
     }
 
     #[test]

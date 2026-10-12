@@ -47,3 +47,10 @@ mix snare 28% 28%
 mix bass  10% 10%
 mix pluck 20% 10%
 mix lead   5%  8%
+
+sound kick  pitch 110Hz 55Hz 30ms  decay 45ms
+sound hat   above 7000Hz  decay 8ms
+sound snare band 2000Hz 1600Hz  decay 35ms  tone 220Hz 30ms 70%
+sound bass  rise 3ms  filter 1400Hz 300Hz 50ms
+sound pluck ring 1000ms  smooth 3  echo 3 33%
+sound lead  width 30%  rise 4ms  below 3000Hz  vibrato 136ms 0.4% 5.5Hz

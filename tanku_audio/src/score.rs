@@ -630,6 +630,40 @@ mod tests {
     }
 
     #[test]
+    fn the_instruments_sound_as_the_specification_has_them() {
+        let sounds = PIECE.sounds;
+        // The kick falls from 110 Hz to 55 Hz.
+        let kick = sounds.kick;
+        assert_eq!((kick.from, kick.to), (110.0, 55.0));
+        assert_eq!((kick.sweep, kick.decay), (0.03, 0.045));
+        let hat = sounds.hat;
+        assert_eq!((hat.above, hat.decay), (7000.0, 0.008));
+        let snare = sounds.snare;
+        assert_eq!(
+            (snare.center, snare.width, snare.decay),
+            (2000.0, 1600.0, 0.035)
+        );
+        assert_eq!(
+            (snare.tone, snare.tone_decay, snare.tone_level),
+            (220.0, 0.03, 0.7)
+        );
+        // The filter of the bass opens at each attack and closes again.
+        let bass = sounds.bass;
+        assert_eq!((bass.rise, bass.from, bass.to), (0.003, 1400.0, 300.0));
+        assert_eq!(bass.sweep, 0.05);
+        // The echo of the pluck comes three steps later.
+        let pluck = sounds.pluck;
+        assert_eq!((pluck.ring, pluck.smooth), (1.0, 3));
+        assert_eq!((pluck.echo_steps, pluck.echo_level), (3, 0.33));
+        let lead = sounds.lead;
+        assert_eq!((lead.width, lead.rise, lead.below), (0.3, 0.004, 3000.0));
+        assert_eq!(
+            (lead.vibrato_after, lead.vibrato_depth, lead.vibrato_rate),
+            (0.136, 0.004, 5.5)
+        );
+    }
+
+    #[test]
     fn the_arrangement_is_that_of_the_specification() {
         // What each scene plays: its sections in turn, then its instruments.
         let scene = |scene: Scene| {

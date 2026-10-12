@@ -238,6 +238,60 @@ mod tests {
     }
 
     #[test]
+    fn the_settings_of_an_instrument_can_only_sound_bad() {
+        // Every instrument at one end of what its `sound` line can say, then at the other,
+        // and all of them as loud as the mix can make them. The music may be ugly: it is
+        // never out of range and never NaN.
+        let ends = [
+            [
+                "sound kick pitch 20000Hz 20Hz 0.1ms decay 10000ms",
+                "sound hat above 20Hz decay 10000ms",
+                "sound snare band 5000Hz 500Hz decay 10000ms tone 20000Hz 10000ms 100%",
+                "sound bass rise 0.1ms filter 20000Hz 20Hz 0.1ms",
+                "sound pluck ring 10000ms smooth 0 echo 1 100%",
+                "sound lead width 1% rise 0.1ms below 20000Hz vibrato 0.1ms 10% 20Hz",
+            ],
+            [
+                "sound kick pitch 20Hz 20000Hz 10000ms decay 0.1ms",
+                "sound hat above 20000Hz decay 0.1ms",
+                "sound snare band 5000Hz 10000Hz decay 0.1ms tone 20Hz 0.1ms 0%",
+                "sound bass rise 10000ms filter 20Hz 20000Hz 10000ms",
+                "sound pluck ring 100ms smooth 8 echo 8 100%",
+                "sound lead width 99% rise 10000ms below 20Hz vibrato 10000ms 0% 0.1Hz",
+            ],
+        ];
+        for end in ends {
+            // The piece of the game, with these lines in place of its own.
+            let mut text = String::new();
+            for line in include_str!("../music.score").lines() {
+                let mut words = line.split_whitespace();
+                let line = match (words.next(), words.next()) {
+                    (Some("mix"), Some(name)) => format!("mix {name} 100% 100%"),
+                    (Some("sound"), Some(name)) => {
+                        let named = |new: &&&str| new.split_whitespace().nth(1) == Some(name);
+                        end.iter().find(named).unwrap().to_string()
+                    }
+                    _ => line.to_string(),
+                };
+                text += &format!("{line}\n");
+            }
+            let score: &'static Score =
+                Box::leak(Box::new(Score::new(notation::read(&text).unwrap())));
+            let fight = Context {
+                place: Place::Arena,
+                fight: true,
+                threat: 4,
+                ..Context::default()
+            };
+            let (mut music, _) = music_of(score, fight);
+            let mut frames = vec![0.0; 2 * 8 * 44_100];
+            music.render(&mut frames);
+            assert!(frames.iter().all(|sample| sample.abs() <= 1.0), "{end:?}");
+            assert!(frames.iter().any(|sample| sample.abs() > 0.5), "{end:?}");
+        }
+    }
+
+    #[test]
     fn another_piece_is_played_as_its_file_says() {
         // The piece of the game, with every instrument but the kick mixed down to nothing,
         // and the kick on the left alone.

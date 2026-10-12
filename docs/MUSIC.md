@@ -150,6 +150,13 @@ mix snare 28% 28%
 mix bass  10% 10%
 mix pluck 20% 10%
 mix lead   5%  8%
+
+sound kick  pitch 110Hz 55Hz 30ms  decay 45ms
+sound hat   above 7000Hz  decay 8ms
+sound snare band 2000Hz 1600Hz  decay 35ms  tone 220Hz 30ms 70%
+sound bass  rise 3ms  filter 1400Hz 300Hz 50ms
+sound pluck ring 1000ms  smooth 3  echo 3 33%
+sound lead  width 30%  rise 4ms  below 3000Hz  vibrato 136ms 0.4% 5.5Hz
 ```
 
 The file is text. It has one record per line, with its words apart by spaces. An empty line is ignored, and so is a line that starts with `#`.
@@ -168,6 +175,7 @@ The file is text. It has one record per line, with its words apart by spaces. An
 | `roll` | The roll that announces a fight: its beats, the drum that rolls, the drum that rolls in an arena, and how loud it is at its start and at its end |
 | `link` | The [connection](#connection) out of a fight: its beats, the degree that it goes to, and how many notes it has at most |
 | `mix` | An instrument, then how loud it is on the left and on the right, in percent of the loudest that a sound can be. Every instrument has its line. |
+| `sound` | An instrument, then the settings of its sound, each by its name, in ms, in Hz and in percent. [Instruments](#instruments) lists them. Every instrument has its line. |
 
 The chords of a section are two words of four, one chord per bar. A chord is the degree that it is built on, or `C` for the chord that gives the mode its color. The melody of a section is eight bars of motifs, one word for each: `A` is motif A as it is written, `a` is motif A with its turn, and `C:7` is motif C with its last note on degree 7.
 
@@ -219,7 +227,7 @@ After its scene, a `play` line has the sections that play in turn, with a comma 
 
 A `threat` line is written in the same way, without `*`. It only names instruments that a scene leaves to the threat.
 
-The file doesn't hold how each [instrument](#instruments) sounds yet: that is in the code. So are the rules: how a line is derived from a melody, and how the music follows the game from one scene to the next.
+The file has the settings of each [instrument](#instruments), and not how the instrument is made: that is in the code. So are the rules: how a line is derived from a melody, and how the music follows the game from one scene to the next.
 
 After a change of the file, two commands tell what it did:
 
@@ -400,6 +408,35 @@ Each instrument is a small synthesizer made of plain shapes, like the drawing: s
 
 The kick has no noise in it because every weapon cue has some. The bass stays above 80 Hz, which leaves the bottom to the kick and to the blasts and keeps it audible on small loudspeakers.
 
+How an instrument is made is in the code, and it is the same for every piece. Its settings are in the `sound` lines of [the file](#the-file). A number is written right before its unit, as in `45ms`, and can have a point, as in `5.5Hz`. The settings of an instrument come in any order, and each of them is there once.
+
+| Line | Setting | What it says | Bounds of its own |
+|---|---|---|---|
+| `sound kick` | `pitch 110Hz 55Hz 30ms` | The frequency that the sine starts at, the one that it goes to, and the time of the way | |
+| | `decay 45ms` | The time that it dies away in | |
+| `sound hat` | `above 7000Hz` | The frequency above which the noise is kept | |
+| | `decay 8ms` | The time that it dies away in | |
+| `sound snare` | `band 2000Hz 1600Hz` | The frequency that the noise is around, and how wide that band is | Around 5000 Hz at most. As wide as a tenth of that frequency at least, and as twice that frequency at most. |
+| | `decay 35ms` | The time that the noise dies away in | |
+| | `tone 220Hz 30ms 70%` | The tone under the noise: its frequency, the time that it dies away in, and how loud it is against the noise | |
+| `sound bass` | `rise 3ms` | The time that a note takes to rise | |
+| | `filter 1400Hz 300Hz 50ms` | The filter lets through what is below a frequency: where that frequency starts at each attack, where it goes, and the time of the way | |
+| `sound pluck` | `ring 1000ms` | The time that a string takes to fall by 60 dB | 100 ms to 10 s |
+| | `smooth 3` | How many times the burst of noise that plucks a string is smoothed. More of it makes a softer attack. | 0 to 8 |
+| | `echo 3 33%` | How many steps after a note its echo comes, at the tempo of the piece, and how loud the echo is against the note | 1 to 8 steps |
+| `sound lead` | `width 30%` | The part of its period that the wave spends up. At 50% it is a square wave. | 1% to 99% |
+| | `rise 4ms` | The time that a note takes to rise | |
+| | `below 3000Hz` | The frequency below which the lead is heard | |
+| | `vibrato 136ms 0.4% 5.5Hz` | The time after which the vibrato comes in, how far it bends the pitch, and how many times per second. It is whole after as long again. | Up to 10%, and from 0.1 Hz to 20 Hz |
+
+Where the table gives no bounds, a time is from 0.1 ms to 10 s, a frequency from 20 Hz to 20 kHz, and a level from 0% to 100%. A pitch and a filter can go either way: up or down.
+
+The times are of two kinds. What dies away, and a pitch or a filter on its way, loses about two thirds of what is left in the time that is written, and as much again in the next: the kick, which dies away in 45 ms, is at a hundredth of its level after 0.2 s. A string rings for the time in which it falls by 60 dB, which is to a thousandth of its level.
+
+The bounds are there so that a setting can only sound bad. Within them the music never goes out of range and is never NaN, whatever the six lines say.
+
+Three things stay in the code, because they keep the music the same everywhere and free of clicks: how many notes an instrument plays at once, the noise that its sound starts from, and the few milliseconds in which a note makes room for the next one.
+
 ## Mix
 
 - **Two volumes.** The settings have a second level, Music, next to Volume. Volume sets everything and Music sets the music against the cues. It starts at 50%. At 0 the music keeps counting its bars and stays silent.
@@ -407,7 +444,7 @@ The kick has no noise in it because every weapon cue has some. The bass stays ab
 - **Melody on top.** The melody is the loudest thing with a pitch. The arpeggio of the pluck and the octave that the lead adds at threat 4 are quieter than the line they go with.
 - **Ducking.** A mine warns for 0.6 s before it blows, unless a bullet or a blast sets it off. While that warning sounds within hearing range, the music is half as loud. It gets there in 0.02 s, in time for the first beep, and takes 0.2 s to come back once the warning is over. Hearing range is 50 m from the middle of the screen. No other cue ducks the music.
 - **Stereo.** The music is in stereo and the cues stay in the middle. The pluck and the lead, which share the pitches of the cues, sit to the sides. How loud each instrument is on each side is in the `mix` lines of [the file](#the-file).
-- **Dry.** There is no reverb. The arpeggio of the pluck has one echo, three steps later, a third as loud and on the other side. Its melodies have none: with an echo, the intro sounded too relaxed.
+- **Dry.** There is no reverb. The arpeggio of the pluck has one echo, three steps later, a third as loud and with its sides the other way round: the pluck is louder on the left, and its echo on the right. Its melodies have none: with an echo, the intro sounded too relaxed.
 - **No clipping.** The sum of the instruments goes through a soft limit.
 
 ## Cues
@@ -532,7 +569,7 @@ With `?probe` after its address, the page shows how long its frames are, how far
 Some tests say what the piece is today:
 
 - **Stable.** Thirty-two seconds of each arrangement match a stored value, as the map of a seed does, and so does each cue.
-- **As written.** The file has the motifs, the chords, the patterns, the arrangement, the mix and the numbers of this document.
+- **As written.** The file has the motifs, the chords, the patterns, the arrangement, the mix, the settings of the instruments and the numbers of this document.
 - **On time.** A fight that is announced on each of the 16 steps of a bar gives a roll at once and the fight two beats later. A fight that ends on each of them plays on to its next beat, and gives a connection there and the bridge two beats later.
 - **Connected.** For every note the lead can be on, the connection goes to degree 5 one step of the scale at a time and never turns back.
 
@@ -546,8 +583,10 @@ Others hold for any piece that the file writes. They are the checks to run after
 
 The rest is about the reader and about the sounds:
 
-- **Read.** The file of the piece reads. A file that doesn't says on which line and why: a bar that is not four beats of four steps, a symbol that an instrument doesn't have, a motif that a section plays and that isn't written above it, a melody that doesn't fill its eight bars, a scene without its line, an instrument that is left to the threat when a threat has no line.
+- **Read.** The file of the piece reads. A file that doesn't says on which line and why: a bar that is not four beats of four steps, a symbol that an instrument doesn't have, a motif that a section plays and that isn't written above it, a melody that doesn't fill its eight bars, a scene without its line, an instrument that is left to the threat when a threat has no line, a setting that an instrument doesn't have or that is past its bounds.
 - **Arranged.** A second piece, which arranges what the piece of the game doesn't, plays as its file says: a lead in the menu, two sections in turn at two tempos, a drum that follows the threat, a line under another, two fights of different lengths.
+- **Set.** The file gives the instruments the numbers that they had while these were in the code, but for two that it writes round: see [Steps](#steps). The echo of the pluck follows the tempo of its piece.
+- **Bounded.** With every instrument at one end of what its `sound` line can say, then at the other, and the mix all the way up, the music stays in range and is never NaN. A tone of the snare that outlasts its noise dies away without a click.
 - **In tune.** Every instrument plays the lowest and the highest note of its range within 3 hundredths of a semitone. The cues that play notes play A and E and nothing else, and the warning of a mine is between two notes.
 - **Whole.** Each cue lasts as long as it says, never goes past full scale and ends without a click.
 - **Ducked.** A ducked music is half as loud within 0.02 s, wherever the step is, and comes back to what it was, to the bit.
@@ -573,6 +612,8 @@ Each step answers a question, and the first one changes nothing in the game.
 | 4, Cues | The waveforms of the cues move to the crate, two cues are retuned, and the warning of a mine ducks the music | Is any cue lost under the music? |
 | 5, Web | The web build with music | Does the music play without gaps in a browser? |
 | 6, File | The piece moves from the code to a file, which the crate reads while it is compiled, and plays as before | Is the notation of the file enough to change the piece by hand? What does an editor of the piece need beyond it? |
+
+Step 6 left the music as it was, to the sample, but for two settings of the instruments that the file writes round. The echo of the pluck is 33% as loud as its note, where it was a third. The vibrato of the lead comes in after 136 ms, where it came in after 6000 frames, which is 136.05 ms. In a sound file of 16 bits, no sample of any arrangement is further than 19 steps from what it was, where the loudest samples are at about 20,000.
 
 The switch of step 2 was an experiment, to settle by ear whether the music needs to know of the fights, and it is gone. On its other side the place alone set the arrangement, as in the first proposal for this music: the verse and the chorus played wherever the players were outside the bay, with the kick alone in a corridor and all three drums in an arena, and nothing called for the bridge. After a playtest, the music that follows the fight too was kept. [IDEAS.md](IDEAS.md) keeps the other one.
 

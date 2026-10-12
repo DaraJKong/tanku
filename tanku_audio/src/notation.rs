@@ -19,6 +19,10 @@
 //! apart, and a `threat` line for each threat. In them an instrument has its line, as in
 //! `bass=long@2` or `lead=answer@4:150`: a pattern, or a form of the melody of the section,
 //! then the octave of its tonic after an `@`, and the level of a melody after a `:`.
+//!
+//! How the instruments sound is written last: a `mix` line for each, with its level on the
+//! left and on the right, and a `sound` line for each, with the settings of its sound. A
+//! number of these lines is written right before its unit, as in `45ms`, `5.5Hz` or `33%`.
 
 use std::fmt;
 
@@ -79,7 +83,7 @@ pub struct Fault {
 impl Fault {
     /// Stops the build with the line of the file and what is wrong with it.
     pub const fn stop(self) -> ! {
-        let mut text = [0; 200];
+        let mut text = [0; 400];
         let mut len = append(&mut text, 0, b"music.score, line ");
         let mut digits = 1;
         while self.line / digits >= 10 {
@@ -469,6 +473,141 @@ pub struct Link {
     pub notes: u8,
 }
 
+/// How the kick sounds: a sine that falls fast.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct KickSound {
+    /// The frequency that its pitch starts at and the one that it goes to, in Hz.
+    pub from: f32,
+    pub to: f32,
+    /// Seconds in which the pitch covers about two thirds of what is left of the way.
+    pub sweep: f32,
+    /// Seconds in which the level loses about two thirds of what is left of it.
+    pub decay: f32,
+}
+
+/// How the hi-hat sounds: a short burst of the top of white noise.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HatSound {
+    /// The frequency above which the noise is kept, in Hz.
+    pub above: f32,
+    /// Seconds in which the level loses about two thirds of what is left of it.
+    pub decay: f32,
+}
+
+/// How the snare sounds: a burst of the middle of white noise over a short tone.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SnareSound {
+    /// The frequency that the noise is around, and how wide that band is, in Hz.
+    pub center: f32,
+    pub width: f32,
+    /// Seconds in which the noise loses about two thirds of what is left of it.
+    pub decay: f32,
+    /// The frequency of the tone in Hz, the seconds of its own decay, and how loud it is
+    /// against the noise.
+    pub tone: f32,
+    pub tone_decay: f32,
+    pub tone_level: f32,
+}
+
+/// How the bass sounds: a square wave through a filter that moves at each attack.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BassSound {
+    /// Seconds that a note takes to rise.
+    pub rise: f32,
+    /// The filter lets through what is below a frequency, which starts here at each attack
+    /// and goes there, in Hz.
+    pub from: f32,
+    pub to: f32,
+    /// Seconds in which the filter covers about two thirds of what is left of the way.
+    pub sweep: f32,
+}
+
+/// How the pluck sounds: a plucked string, and its echo.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PluckSound {
+    /// Seconds that a string takes to fall by 60 dB.
+    pub ring: f32,
+    /// Times that the burst of noise that plucks a string is smoothed, which takes the edge
+    /// off its attack.
+    pub smooth: u32,
+    /// Steps that the echo comes after, at the tempo of the piece, and how loud it is against
+    /// the note.
+    pub echo_steps: u32,
+    pub echo_level: f32,
+}
+
+/// How the lead sounds: a pulse wave with a slow vibrato.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LeadSound {
+    /// The part of its period that the wave spends up.
+    pub width: f32,
+    /// Seconds that a note takes to rise.
+    pub rise: f32,
+    /// The frequency below which the lead is heard, in Hz.
+    pub below: f32,
+    /// Seconds after which the vibrato comes in: it is whole after as long again.
+    pub vibrato_after: f32,
+    /// How far the vibrato bends the pitch, as a part of it, and how many times per second.
+    pub vibrato_depth: f32,
+    pub vibrato_rate: f32,
+}
+
+/// How each instrument sounds: the settings of its recipe, which is in the synthesizer. The
+/// file writes them in ms, in Hz and in percent.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Sounds {
+    pub kick: KickSound,
+    pub hat: HatSound,
+    pub snare: SnareSound,
+    pub bass: BassSound,
+    pub pluck: PluckSound,
+    pub lead: LeadSound,
+}
+
+impl Sounds {
+    /// Before the file says anything.
+    const UNSET: Self = Self {
+        kick: KickSound {
+            from: 0.0,
+            to: 0.0,
+            sweep: 0.0,
+            decay: 0.0,
+        },
+        hat: HatSound {
+            above: 0.0,
+            decay: 0.0,
+        },
+        snare: SnareSound {
+            center: 0.0,
+            width: 0.0,
+            decay: 0.0,
+            tone: 0.0,
+            tone_decay: 0.0,
+            tone_level: 0.0,
+        },
+        bass: BassSound {
+            rise: 0.0,
+            from: 0.0,
+            to: 0.0,
+            sweep: 0.0,
+        },
+        pluck: PluckSound {
+            ring: 0.0,
+            smooth: 0,
+            echo_steps: 0,
+            echo_level: 0.0,
+        },
+        lead: LeadSound {
+            width: 0.0,
+            rise: 0.0,
+            below: 0.0,
+            vibrato_after: 0.0,
+            vibrato_depth: 0.0,
+            vibrato_rate: 0.0,
+        },
+    };
+}
+
 /// The piece as the file writes it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Piece {
@@ -493,6 +632,9 @@ pub struct Piece {
     /// sound can be, and whether the file says so.
     mix: [[f32; 2]; 6],
     mixed: [bool; 6],
+    /// How each instrument sounds, and whether the file says so.
+    pub sounds: Sounds,
+    sounded: [bool; 6],
 }
 
 impl Piece {
@@ -526,6 +668,8 @@ impl Piece {
         },
         mix: [[0.0; 2]; 6],
         mixed: [false; 6],
+        sounds: Sounds::UNSET,
+        sounded: [false; 6],
     };
 
     pub const fn motifs(&self) -> &[Motif] {
@@ -735,14 +879,58 @@ const fn measure(word: &[u8], unit: &[u8]) -> Option<Decimal> {
     Some(Decimal { digits, places })
 }
 
-/// The next word as a share of the whole, from its number of percent, up to 100%.
-const fn percent(words: &mut Words) -> Option<f32> {
+/// The bound of a measure counts ten-thousandths of its unit, which is as fine as a measure is
+/// written.
+const WHOLE: u64 = 10_000;
+
+/// The next word as a measure in a unit, if it is one between two bounds.
+const fn measured(words: &mut Words, unit: &[u8], least: u64, most: u64) -> Option<Decimal> {
     let Some(word) = words.next() else {
         return None;
     };
-    match measure(word, b"%") {
-        Some(share) if share.over(2) <= 1.0 => Some(share.over(2)),
-        _ => None,
+    let Some(found) = measure(word, unit) else {
+        return None;
+    };
+    let mut fine = found.digits as u64;
+    let mut places = found.places;
+    while places < 4 {
+        fine *= 10;
+        places += 1;
+    }
+    if fine >= least && fine <= most {
+        Some(found)
+    } else {
+        None
+    }
+}
+
+/// The next word as a share of the whole, from its number of percent, between two bounds.
+const fn share(words: &mut Words, least: u64, most: u64) -> Option<f32> {
+    match measured(words, b"%", least, most) {
+        Some(share) => Some(share.over(2)),
+        None => None,
+    }
+}
+
+/// The next word as a share of the whole, from its number of percent, up to 100%.
+const fn percent(words: &mut Words) -> Option<f32> {
+    share(words, 0, 100 * WHOLE)
+}
+
+/// The next word as a time in seconds, from its number of milliseconds: a tenth of one at
+/// least, which is four frames, and ten seconds at most.
+const fn time(words: &mut Words) -> Result<f32, &'static str> {
+    match measured(words, b"ms", WHOLE / 10, 10_000 * WHOLE) {
+        Some(time) => Ok(time.over(3)),
+        None => Err(TIME),
+    }
+}
+
+/// The next word as a frequency in Hz, among those that are heard.
+const fn frequency(words: &mut Words) -> Result<f32, &'static str> {
+    match measured(words, b"Hz", 20 * WHOLE, 20_000 * WHOLE) {
+        Some(frequency) => Ok(frequency.over(0)),
+        None => Err(FREQUENCY),
     }
 }
 
@@ -788,7 +976,7 @@ struct Found {
 
 const HEADING: &str = "the file starts with the line `tanku-music 1`";
 const KINDS: &str = "a line starts with `tempo`, `key`, `motif`, `turn`, `pat`, `sec`, `play`, \
-                     `threat`, `roll`, `link` or `mix`";
+                     `threat`, `roll`, `link`, `mix` or `sound`";
 const TEMPO: &str = "a tempo is a number of beats per minute, from 30 to 300";
 const TONIC: &str = "a key starts with its tonic, such as `A`, `C#` or `Eb`";
 const MODES: &str = "a key has two modes, that of the piece and that of the fights of an arena: \
@@ -828,6 +1016,38 @@ const LEFT: &str = "an instrument is left to the threat, and a threat from 0 to 
 const NOT_LEFT: &str = "no `play` line leaves this instrument to the threat, with `*`";
 const MIX: &str = "a `mix` line has an instrument, then how loud it is on the left and on the \
                    right, each from 0% to 100%";
+const SOUND: &str = "a `sound` line has an instrument, then each of its settings by its name";
+const TIME: &str = "a time is a number of ms, from 0.1ms to 10000ms, as in `45ms`";
+const FREQUENCY: &str = "a frequency is a number of Hz, from 20Hz to 20000Hz, as in `3000Hz`";
+const KICK: &str = "the kick has `pitch`, with the frequency that it starts at, the one that it \
+                    goes to and the time of the way, and `decay`, with the time that it dies \
+                    away in, each once";
+const HAT: &str = "the hat has `above`, with the frequency above which its noise is kept, and \
+                   `decay`, with the time that it dies away in, each once";
+const SNARE: &str = "the snare has `band`, with the frequency that its noise is around and the \
+                     width of that band, `decay`, with the time that the noise dies away in, and \
+                     `tone`, with a frequency, the time that it dies away in and its level, from \
+                     0% to 100%, each once";
+const BAND: &str = "the noise of the snare is around a frequency of 5000Hz at most, and its \
+                    band is as wide as a tenth of that frequency at least and as twice that \
+                    frequency at most";
+const BASS: &str = "the bass has `rise`, with the time that a note takes to rise, and `filter`, \
+                    with the frequency that its filter starts at, the one that it goes to and \
+                    the time of the way, each once";
+const PLUCK: &str = "the pluck has `ring`, with the time that a string rings, `smooth`, with how \
+                     many times its attack is smoothed, and `echo`, with the steps that its echo \
+                     comes after and its level, each once";
+const RING: &str = "a string of the pluck rings for 100ms to 10000ms, as in `1000ms`";
+const SMOOTH: &str = "the attack of the pluck is smoothed 0 to 8 times";
+const ECHO: &str = "the echo of the pluck comes 1 to 8 steps after the note, and is from 0% to \
+                    100% as loud, as in `echo 3 33%`";
+const LEAD: &str = "the lead has `width`, with the part of its period that its wave is up for, \
+                    `rise`, with the time that a note takes to rise, `below`, with the frequency \
+                    below which it is heard, and `vibrato`, with the time that it comes in \
+                    after, how far it bends the pitch and how many times per second, each once";
+const WIDTH: &str = "the wave of the lead is up for 1% to 99% of its period, as in `30%`";
+const DEPTH: &str = "the vibrato of the lead bends the pitch by 0% to 10%, as in `0.4%`";
+const RATE: &str = "the vibrato of the lead comes 0.1 to 20 times per second, as in `5.5Hz`";
 const DRUM: &str = "on a drum, a step is `x` for a hit, `o` for a soft one or a dot";
 const PITCHED: &str = "on the bass and the pluck, a step is `x`, `o`, `R`, `O`, `V`, a degree \
                        from 1 to 9, a dot or a dash";
@@ -908,6 +1128,17 @@ pub const fn read(text: &str) -> Result<Piece, Fault> {
                 Instrument::Bass => "the file has no `mix bass` line",
                 Instrument::Pluck => "the file has no `mix pluck` line",
                 Instrument::Lead => "the file has no `mix lead` line",
+            };
+            return Err(Fault { line, what });
+        }
+        if !piece.sounded[instrument] {
+            let what = match Instrument::ALL[instrument] {
+                Instrument::Kick => "the file has no `sound kick` line",
+                Instrument::Hat => "the file has no `sound hat` line",
+                Instrument::Snare => "the file has no `sound snare` line",
+                Instrument::Bass => "the file has no `sound bass` line",
+                Instrument::Pluck => "the file has no `sound pluck` line",
+                Instrument::Lead => "the file has no `sound lead` line",
             };
             return Err(Fault { line, what });
         }
@@ -1025,6 +1256,8 @@ const fn record(
         piece.link = tri!(link(words));
     } else if same(kind, b"mix") {
         tri!(mix(piece, words));
+    } else if same(kind, b"sound") {
+        tri!(sound(piece, words));
     } else {
         return Err(KINDS);
     }
@@ -1592,6 +1825,187 @@ const fn mix(piece: &mut Piece, words: &mut Words) -> Result<(), &'static str> {
     Ok(())
 }
 
+const fn sound(piece: &mut Piece, words: &mut Words) -> Result<(), &'static str> {
+    let instrument = match words.next() {
+        Some(name) => Instrument::named(name),
+        None => None,
+    };
+    let instrument = need!(instrument, SOUND);
+    if piece.sounded[instrument as usize] {
+        return Err("the sound of this instrument is written twice");
+    }
+    match instrument {
+        Instrument::Kick => piece.sounds.kick = tri!(kick(words)),
+        Instrument::Hat => piece.sounds.hat = tri!(hat(words)),
+        Instrument::Snare => piece.sounds.snare = tri!(snare(words)),
+        Instrument::Bass => piece.sounds.bass = tri!(bass(words)),
+        Instrument::Pluck => piece.sounds.pluck = tri!(pluck(words)),
+        Instrument::Lead => piece.sounds.lead = tri!(lead(words)),
+    }
+    piece.sounded[instrument as usize] = true;
+    Ok(())
+}
+
+const fn kick(words: &mut Words) -> Result<KickSound, &'static str> {
+    let (mut pitch, mut decay) = (None, None);
+    while let Some(setting) = words.next() {
+        if same(setting, b"pitch") && pitch.is_none() {
+            let (from, to) = (tri!(frequency(words)), tri!(frequency(words)));
+            pitch = Some((from, to, tri!(time(words))));
+        } else if same(setting, b"decay") && decay.is_none() {
+            decay = Some(tri!(time(words)));
+        } else {
+            return Err(KICK);
+        }
+    }
+    match (pitch, decay) {
+        (Some((from, to, sweep)), Some(decay)) => Ok(KickSound {
+            from,
+            to,
+            sweep,
+            decay,
+        }),
+        _ => Err(KICK),
+    }
+}
+
+const fn hat(words: &mut Words) -> Result<HatSound, &'static str> {
+    let (mut above, mut decay) = (None, None);
+    while let Some(setting) = words.next() {
+        if same(setting, b"above") && above.is_none() {
+            above = Some(tri!(frequency(words)));
+        } else if same(setting, b"decay") && decay.is_none() {
+            decay = Some(tri!(time(words)));
+        } else {
+            return Err(HAT);
+        }
+    }
+    match (above, decay) {
+        (Some(above), Some(decay)) => Ok(HatSound { above, decay }),
+        _ => Err(HAT),
+    }
+}
+
+const fn snare(words: &mut Words) -> Result<SnareSound, &'static str> {
+    let (mut band, mut decay, mut tone) = (None, None, None);
+    while let Some(setting) = words.next() {
+        if same(setting, b"band") && band.is_none() {
+            let (center, width) = (tri!(frequency(words)), tri!(frequency(words)));
+            // The filter of the band is steady within these bounds, and not past them.
+            if center > 5000.0 || width < center / 10.0 || width > 2.0 * center {
+                return Err(BAND);
+            }
+            band = Some((center, width));
+        } else if same(setting, b"decay") && decay.is_none() {
+            decay = Some(tri!(time(words)));
+        } else if same(setting, b"tone") && tone.is_none() {
+            let (frequency, fall) = (tri!(frequency(words)), tri!(time(words)));
+            tone = Some((frequency, fall, need!(percent(words), SNARE)));
+        } else {
+            return Err(SNARE);
+        }
+    }
+    match (band, decay, tone) {
+        (Some((center, width)), Some(decay), Some((tone, tone_decay, tone_level))) => {
+            Ok(SnareSound {
+                center,
+                width,
+                decay,
+                tone,
+                tone_decay,
+                tone_level,
+            })
+        }
+        _ => Err(SNARE),
+    }
+}
+
+const fn bass(words: &mut Words) -> Result<BassSound, &'static str> {
+    let (mut rise, mut filter) = (None, None);
+    while let Some(setting) = words.next() {
+        if same(setting, b"rise") && rise.is_none() {
+            rise = Some(tri!(time(words)));
+        } else if same(setting, b"filter") && filter.is_none() {
+            let (from, to) = (tri!(frequency(words)), tri!(frequency(words)));
+            filter = Some((from, to, tri!(time(words))));
+        } else {
+            return Err(BASS);
+        }
+    }
+    match (rise, filter) {
+        (Some(rise), Some((from, to, sweep))) => Ok(BassSound {
+            rise,
+            from,
+            to,
+            sweep,
+        }),
+        _ => Err(BASS),
+    }
+}
+
+const fn pluck(words: &mut Words) -> Result<PluckSound, &'static str> {
+    let (mut ring, mut smooth, mut echo) = (None, None, None);
+    while let Some(setting) = words.next() {
+        if same(setting, b"ring") && ring.is_none() {
+            // A string that rings for less would lose more than itself at each turn.
+            ring = match measured(words, b"ms", 100 * WHOLE, 10_000 * WHOLE) {
+                Some(time) => Some(time.over(3)),
+                None => return Err(RING),
+            };
+        } else if same(setting, b"smooth") && smooth.is_none() {
+            smooth = Some(need!(amount(words, 0, 8), SMOOTH));
+        } else if same(setting, b"echo") && echo.is_none() {
+            let steps = need!(amount(words, 1, 8), ECHO);
+            echo = Some((steps, need!(percent(words), ECHO)));
+        } else {
+            return Err(PLUCK);
+        }
+    }
+    match (ring, smooth, echo) {
+        (Some(ring), Some(smooth), Some((echo_steps, echo_level))) => Ok(PluckSound {
+            ring,
+            smooth,
+            echo_steps,
+            echo_level,
+        }),
+        _ => Err(PLUCK),
+    }
+}
+
+const fn lead(words: &mut Words) -> Result<LeadSound, &'static str> {
+    let (mut width, mut rise, mut below, mut vibrato) = (None, None, None, None);
+    while let Some(setting) = words.next() {
+        if same(setting, b"width") && width.is_none() {
+            width = Some(need!(share(words, WHOLE, 99 * WHOLE), WIDTH));
+        } else if same(setting, b"rise") && rise.is_none() {
+            rise = Some(tri!(time(words)));
+        } else if same(setting, b"below") && below.is_none() {
+            below = Some(tri!(frequency(words)));
+        } else if same(setting, b"vibrato") && vibrato.is_none() {
+            let after = tri!(time(words));
+            let depth = need!(share(words, 0, 10 * WHOLE), DEPTH);
+            let rate = match measured(words, b"Hz", WHOLE / 10, 20 * WHOLE) {
+                Some(rate) => rate.over(0),
+                None => return Err(RATE),
+            };
+            vibrato = Some((after, depth, rate));
+        } else {
+            return Err(LEAD);
+        }
+    }
+    match (width, rise, below, vibrato) {
+        (Some(width), Some(rise), Some(below), Some((after, depth, rate))) => Ok(LeadSound {
+            width,
+            rise,
+            below,
+            vibrato_after: after,
+            vibrato_depth: depth,
+            vibrato_rate: rate,
+        }),
+        _ => Err(LEAD),
+    }
+}
+
 /// One bar of a melody from its grid, for a test that writes a bar of its own.
 #[cfg(test)]
 pub(crate) const fn line(grid: &str) -> Line {
@@ -1636,6 +2050,13 @@ mod tests {
                           mix bass 10% 10%\n\
                           mix pluck 20% 15%\n\
                           mix lead 5.5% 12.25%\n";
+    /// How the six instruments sound.
+    const SOUNDS: &str = "sound kick pitch 120Hz 50Hz 25ms decay 60ms\n\
+                          sound hat above 8000Hz decay 12.5ms\n\
+                          sound snare band 1800Hz 900Hz decay 40ms tone 180Hz 20ms 50%\n\
+                          sound bass rise 2ms filter 2000Hz 250Hz 80ms\n\
+                          sound pluck ring 750ms smooth 2 echo 4 25%\n\
+                          sound lead width 25% rise 5ms below 4000Hz vibrato 200ms 0.5% 6Hz\n";
     /// A motif of one bar and a motif of two, with its turn.
     const MOTIFS: &str = "motif A 1... .... .... ....\n\
                           motif B 1..2 .... 3-.. .... | 5... .... .... 6...\n\
@@ -1673,15 +2094,16 @@ mod tests {
         fault(&format!("{SMALL}{lines}"))
     }
 
-    /// A file that reads: the small one, some more lines, the shortest arrangement and a mix.
+    /// A file that reads: the small one, some more lines, the shortest arrangement, a mix and
+    /// the sounds of the instruments.
     fn whole(lines: &str) -> String {
-        format!("{SMALL}{lines}{SILENCE}{LEVELS}")
+        format!("{SMALL}{lines}{SILENCE}{LEVELS}{SOUNDS}")
     }
 
     /// The same for an arrangement of its own, over the motifs, the patterns and the two
     /// sections that such a file has.
     fn arranged(arrangement: &str) -> String {
-        format!("{SMALL}{MOTIFS}{PATTERNS}{SECTIONS}{arrangement}{LEVELS}")
+        format!("{SMALL}{MOTIFS}{PATTERNS}{SECTIONS}{arrangement}{LEVELS}{SOUNDS}")
     }
 
     #[test]
@@ -1726,12 +2148,12 @@ mod tests {
         let calm = "the file has no `play calm` line";
         assert_eq!(
             fault(&whole("").replace("play calm rest\n", "")),
-            (16, calm)
+            (22, calm)
         );
         let arena = "the file has no `play arena` line";
         assert_eq!(
             fault(&whole("").replace("play arena rest\n", "")),
-            (16, arena)
+            (22, arena)
         );
     }
 
@@ -1739,7 +2161,7 @@ mod tests {
     fn comments_empty_lines_and_line_endings_change_nothing() {
         let dressed = "# A comment.\r\n\r\n  tanku-music   1\r\n#tempo 60\r\ntempo 96\r\n\
                        \tkey C# ionian mixolydian\n\nroll 1 kick snare 20 200\nlink 3 2 6";
-        let whole_dressed = format!("{dressed}\n{SILENCE}{LEVELS}");
+        let whole_dressed = format!("{dressed}\n{SILENCE}{LEVELS}{SOUNDS}");
         assert_eq!(read(&whole_dressed), read(&whole("")));
         assert!(read(&whole("")).is_ok());
     }
@@ -1998,7 +2420,7 @@ mod tests {
         assert_eq!(with("threat 2 hat=off", "threat 2 hat=*"), (24, STAR));
         // A scene leaves instruments to the threat, and one threat has no line.
         let third = "threat 3 hat=off bass=walk@1 lead=ornate@4\n";
-        assert_eq!(with(third, ""), (31, LEFT));
+        assert_eq!(with(third, ""), (37, LEFT));
         // A threat gives an instrument that no scene leaves to it.
         assert_eq!(
             with("threat 1 hat=off", "threat 1 pluck=up@3 hat=off"),
@@ -2056,9 +2478,194 @@ mod tests {
         assert_eq!(fault("mix hat 70% 40%", "mix kick 70% 40%"), (13, twice));
         // Every instrument has its line.
         let none = "the file has no `mix lead` line";
-        assert_eq!(fault("mix lead 5.5% 12.25%\n", ""), (16, none));
+        assert_eq!(fault("mix lead 5.5% 12.25%\n", ""), (22, none));
         let none = "the file has no `mix bass` line";
-        assert_eq!(fault("mix bass 10% 10%\n", ""), (16, none));
+        assert_eq!(fault("mix bass 10% 10%\n", ""), (22, none));
+    }
+
+    #[test]
+    fn the_sounds_read_in_ms_in_hz_and_in_percent() {
+        let sounds = read(&whole("")).unwrap().sounds;
+        // A time is in seconds from then on, and a share is a part of the whole: each is the
+        // nearest value to what is written.
+        let kick = KickSound {
+            from: 120.0,
+            to: 50.0,
+            sweep: 0.025,
+            decay: 0.06,
+        };
+        assert_eq!(sounds.kick, kick);
+        let hat = HatSound {
+            above: 8000.0,
+            decay: 0.0125,
+        };
+        assert_eq!(sounds.hat, hat);
+        let snare = SnareSound {
+            center: 1800.0,
+            width: 900.0,
+            decay: 0.04,
+            tone: 180.0,
+            tone_decay: 0.02,
+            tone_level: 0.5,
+        };
+        assert_eq!(sounds.snare, snare);
+        let bass = BassSound {
+            rise: 0.002,
+            from: 2000.0,
+            to: 250.0,
+            sweep: 0.08,
+        };
+        assert_eq!(sounds.bass, bass);
+        let pluck = PluckSound {
+            ring: 0.75,
+            smooth: 2,
+            echo_steps: 4,
+            echo_level: 0.25,
+        };
+        assert_eq!(sounds.pluck, pluck);
+        let lead = LeadSound {
+            width: 0.25,
+            rise: 0.005,
+            below: 4000.0,
+            vibrato_after: 0.2,
+            vibrato_depth: 0.005,
+            vibrato_rate: 6.0,
+        };
+        assert_eq!(sounds.lead, lead);
+
+        // The sounds start on line 18, with the kick, and the lead is on line 23.
+        let with = |old: &str, new: &str| {
+            let text = whole("");
+            assert!(text.contains(old), "{old}");
+            read(&text.replace(old, new))
+        };
+        // The settings of an instrument come in any order, and a pitch or a filter can go
+        // either way.
+        let turned = "sound snare tone 180Hz 20ms 50% decay 40ms band 1800Hz 900Hz";
+        let snare = "sound snare band 1800Hz 900Hz decay 40ms tone 180Hz 20ms 50%";
+        assert_eq!(with(snare, turned), read(&whole("")));
+        let rising = with("pitch 120Hz 50Hz", "pitch 50Hz 120Hz").unwrap().sounds;
+        assert_eq!((rising.kick.from, rising.kick.to), (50.0, 120.0));
+        let opening = with("filter 2000Hz 250Hz", "filter 250Hz 2000Hz").unwrap();
+        assert_eq!(
+            (opening.sounds.bass.from, opening.sounds.bass.to),
+            (250.0, 2000.0)
+        );
+
+        // Every setting has its bounds, and both ends of them read.
+        let ends = [
+            ("decay 60ms", "decay 0.1ms"),
+            ("decay 60ms", "decay 10000ms"),
+            ("above 8000Hz", "above 20Hz"),
+            ("above 8000Hz", "above 20000Hz"),
+            ("band 1800Hz 900Hz", "band 5000Hz 500Hz"),
+            ("band 1800Hz 900Hz", "band 5000Hz 10000Hz"),
+            ("band 1800Hz 900Hz", "band 20Hz 40Hz"),
+            ("tone 180Hz 20ms 50%", "tone 180Hz 20ms 0%"),
+            ("tone 180Hz 20ms 50%", "tone 180Hz 20ms 100%"),
+            ("ring 750ms", "ring 100ms"),
+            ("ring 750ms", "ring 10000ms"),
+            ("smooth 2", "smooth 0"),
+            ("smooth 2", "smooth 8"),
+            ("echo 4 25%", "echo 1 0%"),
+            ("echo 4 25%", "echo 8 100%"),
+            ("width 25%", "width 1%"),
+            ("width 25%", "width 99%"),
+            ("vibrato 200ms 0.5% 6Hz", "vibrato 0.1ms 0% 0.1Hz"),
+            ("vibrato 200ms 0.5% 6Hz", "vibrato 10000ms 10% 20Hz"),
+        ];
+        for (old, new) in ends {
+            assert!(with(old, new).is_ok(), "{new}");
+        }
+        let fault = |old: &str, new: &str| {
+            let fault = with(old, new).unwrap_err();
+            (fault.line, fault.what)
+        };
+        let past = [
+            // A time, with its unit.
+            ("decay 60ms", "decay 60", 18, TIME),
+            ("decay 60ms", "decay 60Hz", 18, TIME),
+            ("decay 60ms", "decay 60 ms", 18, TIME),
+            ("decay 60ms", "decay 0.09ms", 18, TIME),
+            ("decay 60ms", "decay 10001ms", 18, TIME),
+            ("decay 60ms", "decay", 18, TIME),
+            ("decay 12.5ms", "decay 12.50001ms", 19, TIME),
+            ("rise 2ms", "rise 0ms", 21, TIME),
+            ("rise 5ms", "rise -5ms", 23, TIME),
+            // A frequency, with its unit.
+            ("above 8000Hz", "above 8000", 19, FREQUENCY),
+            ("above 8000Hz", "above 8kHz", 19, FREQUENCY),
+            ("above 8000Hz", "above 8000hz", 19, FREQUENCY),
+            ("above 8000Hz", "above 19.9Hz", 19, FREQUENCY),
+            ("above 8000Hz", "above 20001Hz", 19, FREQUENCY),
+            ("pitch 120Hz 50Hz 25ms", "pitch 120Hz 25ms", 18, FREQUENCY),
+            ("below 4000Hz", "below 4000ms", 23, FREQUENCY),
+            // The band of the snare.
+            ("band 1800Hz 900Hz", "band 5001Hz 900Hz", 20, BAND),
+            ("band 1800Hz 900Hz", "band 1800Hz 179Hz", 20, BAND),
+            ("band 1800Hz 900Hz", "band 1800Hz 3601Hz", 20, BAND),
+            ("tone 180Hz 20ms 50%", "tone 180Hz 20ms 101%", 20, SNARE),
+            ("tone 180Hz 20ms 50%", "tone 180Hz 20ms 0.5", 20, SNARE),
+            // The string and its echo.
+            ("ring 750ms", "ring 99.9ms", 22, RING),
+            ("ring 750ms", "ring 10001ms", 22, RING),
+            ("ring 750ms", "ring 1s", 22, RING),
+            ("smooth 2", "smooth 9", 22, SMOOTH),
+            ("smooth 2", "smooth 2.5", 22, SMOOTH),
+            ("echo 4 25%", "echo 0 25%", 22, ECHO),
+            ("echo 4 25%", "echo 9 25%", 22, ECHO),
+            ("echo 4 25%", "echo 4 101%", 22, ECHO),
+            ("echo 4 25%", "echo 500ms 25%", 22, ECHO),
+            ("echo 4 25%", "echo 4", 22, ECHO),
+            // The wave of the lead and its vibrato.
+            ("width 25%", "width 0.9%", 23, WIDTH),
+            ("width 25%", "width 100%", 23, WIDTH),
+            ("width 25%", "width 0.25", 23, WIDTH),
+            ("0.5% 6Hz", "10.1% 6Hz", 23, DEPTH),
+            ("0.5% 6Hz", "6Hz 0.5%", 23, DEPTH),
+            ("0.5% 6Hz", "0.5% 20.5Hz", 23, RATE),
+            ("0.5% 6Hz", "0.5% 0.09Hz", 23, RATE),
+            ("0.5% 6Hz", "0.5%", 23, RATE),
+            // A setting that an instrument doesn't have, one that is missing and one that is
+            // there twice.
+            ("decay 60ms", "decay 60ms ring 750ms", 18, KICK),
+            (" decay 60ms", "", 18, KICK),
+            ("decay 60ms", "decay 60ms decay 60ms", 18, KICK),
+            ("above 8000Hz decay", "below 8000Hz decay", 19, HAT),
+            ("sound hat above 8000Hz ", "sound hat ", 19, HAT),
+            (" tone 180Hz 20ms 50%", "", 20, SNARE),
+            ("band 1800Hz 900Hz", "band 1800Hz 900Hz 40ms", 20, SNARE),
+            ("rise 2ms", "rise 2ms width 25%", 21, BASS),
+            ("rise 2ms ", "", 21, BASS),
+            ("smooth 2 ", "", 22, PLUCK),
+            ("ring 750ms", "ring 750ms 800ms", 22, PLUCK),
+            ("below 4000Hz", "pass 4000Hz", 23, LEAD),
+            ("width 25% ", "", 23, LEAD),
+            ("sound lead width 25%", "sound lead 25%", 23, LEAD),
+        ];
+        for (old, new, line, what) in past {
+            assert_eq!(fault(old, new), (line, what), "{new}");
+        }
+
+        // An instrument that the game doesn't have, and one whose sound is written twice.
+        assert_eq!(fault("sound kick pitch", "sound organ pitch"), (18, SOUND));
+        assert_eq!(
+            fault(&SOUNDS[..SOUNDS.find('\n').unwrap()], "sound"),
+            (18, SOUND)
+        );
+        let twice = "the sound of this instrument is written twice";
+        let again = "sound kick pitch 120Hz 50Hz 25ms decay 60ms";
+        assert_eq!(
+            fault("sound hat above 8000Hz decay 12.5ms", again),
+            (19, twice)
+        );
+        // Every instrument has its line.
+        let lead = SOUNDS.lines().last().unwrap();
+        let none = "the file has no `sound lead` line";
+        assert_eq!(fault(&format!("{lead}\n"), ""), (22, none));
+        let none = "the file has no `sound snare` line";
+        let snare = format!("{snare}\n");
+        assert_eq!(fault(&snare, ""), (22, none));
     }
 
     #[test]
@@ -2245,6 +2852,16 @@ mod tests {
         let fault = Fault {
             line: 104,
             what: LEVEL,
+        };
+        fault.stop();
+    }
+
+    #[test]
+    #[should_panic(expected = "and how many times per second, each once")]
+    fn the_longest_fault_is_whole_when_it_stops_the_build() {
+        let fault = Fault {
+            line: 1234,
+            what: LEAD,
         };
         fault.stop();
     }

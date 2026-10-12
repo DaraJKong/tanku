@@ -1169,7 +1169,13 @@ mod tests {
                          mix snare 30% 30%\n\
                          mix bass 10% 10%\n\
                          mix pluck 10% 10%\n\
-                         mix lead 10% 10%\n";
+                         mix lead 10% 10%\n\
+                         sound kick pitch 110Hz 55Hz 30ms decay 45ms\n\
+                         sound hat above 7000Hz decay 8ms\n\
+                         sound snare band 2000Hz 1600Hz decay 35ms tone 220Hz 30ms 70%\n\
+                         sound bass rise 3ms filter 1400Hz 300Hz 50ms\n\
+                         sound pluck ring 1000ms smooth 3 echo 3 33%\n\
+                         sound lead width 30% rise 4ms below 3000Hz vibrato 136ms 0.4% 5.5Hz\n";
 
     /// That piece, as a director plays it.
     fn other() -> &'static Score {
