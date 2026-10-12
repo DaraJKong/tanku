@@ -20,7 +20,7 @@ use tanku_core::{
 use crate::{
     Casualties, Maker,
     bullets::{self, Flight},
-    field::{Field, InSector},
+    field::{self, Collider, Field, InSector},
 };
 
 /// What a shield did in a tick.
@@ -90,6 +90,19 @@ pub fn step(
     position: &mut Vec2,
     motion: &mut Motion,
 ) {
+    step_among(&field.colliders, tank, is_player, command, position, motion);
+}
+
+/// One tick of a tank among these colliders alone. A brain that works out where its tank gets
+/// to in time takes the ones that are near.
+pub fn step_among(
+    colliders: &[Collider],
+    tank: &Tank,
+    is_player: bool,
+    command: &TankCommand,
+    position: &mut Vec2,
+    motion: &mut Motion,
+) {
     let top_speed = tank.genome.top_speed();
     let drive = command.drive.clamp_length_max(1.0);
 
@@ -109,7 +122,7 @@ pub fn step(
     let change = wanted - motion.velocity;
     motion.velocity += change.clamp_length_max(acceleration);
     *position += motion.velocity * TICK;
-    field.push_out(tank, position, &mut motion.velocity);
+    field::push_out(colliders, tank, position, &mut motion.velocity);
 
     if command.aim.distance_squared(*position) > 0.01 {
         let rate = if is_player {

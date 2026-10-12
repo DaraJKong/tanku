@@ -189,26 +189,7 @@ impl Field {
 
     /// Moves a tank out of everything solid it overlaps.
     pub fn push_out(&self, tank: &Tank, position: &mut Vec2, velocity: &mut Vec2) {
-        for _ in 0..3 {
-            let mut moved = false;
-            for collider in &self.colliders {
-                if !collider.solid.stops(tank) {
-                    continue;
-                }
-                let closest = geom::closest_point_on_segment(*position, collider.a, collider.b);
-                let offset = *position - closest;
-                let distance = offset.length();
-                if distance < TANK_RADIUS && distance > 1e-5 {
-                    let normal = offset / distance;
-                    *position += normal * (TANK_RADIUS - distance);
-                    *velocity -= normal * velocity.dot(normal).min(0.0);
-                    moved = true;
-                }
-            }
-            if !moved {
-                break;
-            }
-        }
+        push_out(&self.colliders, tank, position, velocity);
     }
 
     /// Loads a sector: its walls, its barrier, its obstacles and, unless it is cleared, its
@@ -323,6 +304,30 @@ impl Field {
             let plan = self.corridor.plan(previous).clone();
             spawn_barrier(commands, &plan);
             self.stale = true;
+        }
+    }
+}
+
+/// Moves a tank out of those of these colliders that it overlaps.
+pub fn push_out(colliders: &[Collider], tank: &Tank, position: &mut Vec2, velocity: &mut Vec2) {
+    for _ in 0..3 {
+        let mut moved = false;
+        for collider in colliders {
+            if !collider.solid.stops(tank) {
+                continue;
+            }
+            let closest = geom::closest_point_on_segment(*position, collider.a, collider.b);
+            let offset = *position - closest;
+            let distance = offset.length();
+            if distance < TANK_RADIUS && distance > 1e-5 {
+                let normal = offset / distance;
+                *position += normal * (TANK_RADIUS - distance);
+                *velocity -= normal * velocity.dot(normal).min(0.0);
+                moved = true;
+            }
+        }
+        if !moved {
+            break;
         }
     }
 }
