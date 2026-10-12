@@ -15,7 +15,7 @@ use tanku_core::{
     rules::{MAX_PLAYERS, PLAYTEST_LAST_SECTOR, TICK_RATE},
     seed::{self, VERSION},
     sim::{Playtest, Run, RunPhase, RunRequest, SimEvent},
-    stats::{Genome, PLAYER_BUDGET, Stat},
+    stats::{Ammo, Genome, PLAYER_BUDGET, Stat},
 };
 
 use crate::{
@@ -72,6 +72,8 @@ enum Press {
     OpenGarage,
     /// In the garage: gives the tank a level more or less of a stat.
     Level(Stat, i8),
+    /// In the garage: gives the tank a type of bullet, in place of the one that it fires.
+    Ammo(Ammo),
     /// In the garage: brings the standard tank back.
     Standard,
     /// Leaves the garage for the screen that opened it.
@@ -1530,16 +1532,70 @@ fn step(parent: &mut ChildSpawnerCommands, garage: &Garage, stat: Stat, by: i8) 
 /// What the level of a stat gives the tank of the garage. A stat that a tank does without
 /// says so: the report of a run only lists the parts that a tank has.
 fn gives(tank: &Genome, stat: Stat) -> String {
-    let without = matches!(stat, Stat::Ricochet | Stat::Mines | Stat::Piercing);
+    let without = matches!(stat, Stat::Ricochet | Stat::Mines);
     if without && tank.level(stat) == 0 {
         return "None".to_string();
     }
     report::gives(tank, stat)
 }
 
+/// The name of a type of bullet, as the garage offers it.
+fn ammo_name(ammo: Ammo) -> &'static str {
+    match ammo {
+        Ammo::Normal => "Normal",
+        Ammo::Piercing => "Piercing",
+        Ammo::Seeking => "Seeking",
+        Ammo::Splitting => "Splitting",
+        Ammo::Exploding => "Exploding",
+    }
+}
+
+/// What the bullets of a type do, besides what every bullet does.
+fn ammo_gives(ammo: Ammo) -> &'static str {
+    match ammo {
+        Ammo::Normal => "Nothing more",
+        Ammo::Piercing => "Pierce a bullet and fly on",
+        Ammo::Seeking => "Seek a tank at each bounce",
+        Ammo::Splitting => "Split in two after 1 s",
+        Ammo::Exploding => "Go off in a blast of 3 m",
+    }
+}
+
+/// One of the types of bullet that the garage offers, with its price: the one that the tank
+/// fires stands in the accent and takes no press, each of the others that the points pay for
+/// is a button, and a dim box stands for one that they don't pay for. A tank fires one type,
+/// so a press on a type takes it in place of the other.
+fn ammo_choice(parent: &mut ChildSpawnerCommands, garage: &Garage, ammo: Ammo) {
+    let chosen = garage.tank.ammo() == ammo;
+    let (words, price, edge) = match (chosen, garage.loaded(ammo).is_some()) {
+        (true, _) => (theme::ACCENT, theme::ACCENT, theme::ACCENT),
+        (false, true) => (theme::TEXT, theme::TEXT_DIM, theme::RULE),
+        (false, false) => (theme::RULE, theme::RULE, theme::RULE_DIM),
+    };
+    let node = Node {
+        flex_grow: 1.0,
+        column_gap: px(5),
+        padding: UiRect::axes(px(5), px(5)),
+        ..button_node(Val::Auto)
+    };
+    let content = children![
+        theme::text(ammo_name(ammo), 16.0, words),
+        theme::figure(ammo.price().to_string(), 16.0, price),
+    ];
+    let mut choice = parent.spawn((node, BorderColor::all(edge), content));
+    if !chosen && garage.loaded(ammo).is_some() {
+        choice.insert((
+            Button,
+            Press::Ammo(ammo),
+            BackgroundColor(theme::SURFACE_RAISED),
+        ));
+    }
+}
+
 /// The garage: where a player spends the points of their tank for free mode. Every stat has
 /// its level, what that level gives, what it costs and what one more level would cost. The
-/// tank is drawn next to the list as it will look, and follows every change.
+/// type of the bullets is one choice among five, under the stats. The tank is drawn next to
+/// the list as it will look, and follows every change.
 fn garage_screen(
     mut commands: Commands,
     garage: Res<Garage>,
@@ -1634,6 +1690,38 @@ fn garage_screen(
                                 theme::figure(next, 16.0, theme::TEXT_DIM),
                             );
                         });
+                    }
+                    // The type of the bullets, under a rule: what the bullets of the tank
+                    // do and what that costs, then the five types to choose among.
+                    let ammo = tank.ammo();
+                    let fired = Node {
+                        margin: UiRect::top(px(4)),
+                        padding: UiRect::top(px(8)),
+                        border: UiRect::top(px(1)),
+                        ..line.clone()
+                    };
+                    table
+                        .spawn((fired, BorderColor::all(theme::RULE_DIM)))
+                        .with_children(|row| {
+                            let name = theme::text("Bullets", 16.0, theme::TEXT);
+                            cell(row, GARAGE_COLUMNS[0], name);
+                            let wide = GARAGE_COLUMNS[1] + GARAGE_COLUMNS[2] + 6.0;
+                            let does = theme::text(ammo_gives(ammo), 16.0, theme::TEXT);
+                            cell(row, wide, does);
+                            let price = ammo.price().to_string();
+                            cell(
+                                row,
+                                GARAGE_COLUMNS[3],
+                                theme::figure(price, 16.0, theme::TEXT),
+                            );
+                        });
+                    table.spawn(line.clone()).with_children(|types| {
+                        for offered in Ammo::ALL {
+                            ammo_choice(types, &garage, offered);
+                        }
+                    });
+                    if let Some(why) = garage.wasted() {
+                        table.spawn(theme::text(why, 16.0, theme::DANGER));
                     }
                 });
                 parent
@@ -3208,6 +3296,11 @@ fn press(
                     garage.tank = tank;
                 }
             }
+            Press::Ammo(ammo) => {
+                if let Some(tank) = garage.loaded(ammo) {
+                    garage.tank = tank;
+                }
+            }
             Press::Standard => {
                 if garage.tank != Genome::PLAYER {
                     garage.tank = Genome::PLAYER;
@@ -3807,6 +3900,23 @@ mod tests {
                 ];
                 let tank = Genome::of_the_garage(&parts).unwrap();
                 assert_eq!(tank.cost(), 58);
+                app.insert_resource(Garage { tank });
+                build(app, garage_screen);
+            }),
+            // A tank whose bullets say the most, with a bounce that buys it nothing, which
+            // the garage tells in a line more.
+            ("the garage of a tank that paid for nothing", |app| {
+                let parts = [
+                    (Stat::Engine, 4),
+                    (Stat::Tracks, 5),
+                    (Stat::Muzzle, 2),
+                    (Stat::Magazine, 4),
+                    (Stat::Loader, 6),
+                    (Stat::Ricochet, 1),
+                    (Stat::Exploding, 1),
+                ];
+                let tank = Genome::of_the_garage(&parts).unwrap();
+                assert!(Garage { tank }.wasted().is_some());
                 app.insert_resource(Garage { tank });
                 build(app, garage_screen);
             }),
@@ -5352,12 +5462,14 @@ mod tests {
             (of(-1), of(1))
         };
         // The standard tank spends every point: no level can be added, and every stat
-        // that it has can come down. It has no piercing to give up.
+        // that it has can come down.
         let (down, up) = steps(|app| build(app, garage_screen));
         assert_eq!(up, []);
         let has = |stat: &Stat| Genome::PLAYER.level(*stat) > 0;
         let owned: Vec<Stat> = garage::LISTED.into_iter().filter(has).collect();
         assert_eq!(down, owned);
+        // Its bullets are normal, and it has no point for another type.
+        assert_eq!(types(|app| build(app, garage_screen)), []);
         // A tank with points left takes the levels that they pay for. Its engine stays.
         let cheap = |app: &mut App| {
             let parts = [
@@ -5374,15 +5486,103 @@ mod tests {
         let (down, up) = steps(cheap);
         assert_eq!(down, [Stat::Muzzle, Stat::Magazine, Stat::Loader]);
         // Five points pay for a level of the engine, of the tracks needs an engine, which
-        // it has, a first bounce, a first mine or piercing bullets, and not for a shield.
-        let affordable = [
-            Stat::Engine,
-            Stat::Tracks,
-            Stat::Ricochet,
-            Stat::Mines,
-            Stat::Piercing,
-        ];
+        // it has, a first bounce or a first mine, and not for a shield.
+        let affordable = [Stat::Engine, Stat::Tracks, Stat::Ricochet, Stat::Mines];
         assert_eq!(up, affordable);
+        // They pay for bullets that pierce or seek, and not for those that split or explode.
+        assert_eq!(types(cheap), [Ammo::Piercing, Ammo::Seeking]);
+    }
+
+    /// The types of bullet that the garage of a screen lets the player take, in the order
+    /// in which it offers them. The type that the tank fires is not among them.
+    fn types(screen: fn(&mut App)) -> Vec<Ammo> {
+        let presses = presses(screen);
+        let offered = |ammo: &Ammo| presses.contains(&Press::Ammo(*ammo));
+        Ammo::ALL.into_iter().filter(offered).collect()
+    }
+
+    #[test]
+    fn the_garage_offers_the_type_of_the_bullets_as_one_choice() {
+        // A tank with points to spare is offered every type but its own.
+        let spare = |app: &mut App| {
+            let tank = Genome::of_the_garage(&[(Stat::Engine, 4), (Stat::Ricochet, 1)]);
+            app.insert_resource(Garage {
+                tank: tank.unwrap(),
+            });
+            build(app, garage_screen);
+        };
+        let special = [
+            Ammo::Piercing,
+            Ammo::Seeking,
+            Ammo::Splitting,
+            Ammo::Exploding,
+        ];
+        assert_eq!(types(spare), special);
+        // No stat of the list is a type of bullet: none has a level to step.
+        let stepped = presses(spare).into_iter().filter_map(|press| match press {
+            Press::Level(stat, _) => Some(stat),
+            _ => None,
+        });
+        assert!(stepped.into_iter().all(|stat| !Ammo::STATS.contains(&stat)));
+
+        // A press takes a type in place of the one that the tank fires.
+        let mut app = stage(spare, WINDOWS[0]);
+        let fired = |app: &App| app.world().resource::<Garage>().tank.ammo();
+        let cost = |app: &App| app.world().resource::<Garage>().tank.cost();
+        assert_eq!((fired(&app), cost(&app)), (Ammo::Normal, 12));
+        for (ammo, price) in [
+            (Ammo::Seeking, 4),
+            (Ammo::Exploding, 8),
+            (Ammo::Splitting, 6),
+            (Ammo::Piercing, 4),
+        ] {
+            click(&mut app, Press::Ammo(ammo));
+            assert_eq!((fired(&app), cost(&app)), (ammo, 12 + price));
+            // The screen is drawn again around the new type, which is no button now.
+            build(&mut app, garage_screen);
+            app.update();
+            let world = app.world_mut();
+            let mut buttons = world.query_filtered::<&Press, With<Button>>();
+            let offered: Vec<Press> = buttons.iter(world).copied().collect();
+            assert!(!offered.contains(&Press::Ammo(ammo)), "{ammo:?}");
+            assert!(offered.contains(&Press::Ammo(Ammo::Normal)));
+        }
+        click(&mut app, Press::Ammo(Ammo::Normal));
+        assert_eq!((fired(&app), cost(&app)), (Ammo::Normal, 12));
+        // The standard tank comes back with normal bullets.
+        click(&mut app, Press::Ammo(Ammo::Splitting));
+        click(&mut app, Press::Standard);
+        assert_eq!(app.world().resource::<Garage>().tank, Genome::PLAYER);
+    }
+
+    #[test]
+    fn the_garage_says_what_buys_a_tank_nothing() {
+        let said = |parts: &[(Stat, u8)]| -> Vec<String> {
+            let mut app = stage(|_| {}, WINDOWS[0]);
+            let tank = Genome::of_the_garage(parts).unwrap();
+            app.insert_resource(Garage { tank });
+            build(&mut app, garage_screen);
+            let world = app.world_mut();
+            let mut texts = world.query::<&Text>();
+            let nothing = |text: &&Text| text.0.contains("buys nothing");
+            let found = texts.iter(world).filter(nothing);
+            found.map(|text| text.0.clone()).collect()
+        };
+        let engine = (Stat::Engine, 4);
+        assert_eq!(said(&[engine, (Stat::Ricochet, 2)]), [] as [String; 0]);
+        assert_eq!(
+            said(&[engine, (Stat::Ricochet, 2), (Stat::Exploding, 1)]),
+            ["Its bullets never bounce: Ricochet buys nothing."]
+        );
+        assert_eq!(said(&[engine, (Stat::Exploding, 1)]), [] as [String; 0]);
+        assert_eq!(
+            said(&[engine, (Stat::Seeking, 1)]),
+            ["Its bullets can't bounce: Seeking buys nothing."]
+        );
+        assert_eq!(
+            said(&[engine, (Stat::Ricochet, 1), (Stat::Seeking, 1)]),
+            [] as [String; 0]
+        );
     }
 
     #[test]
@@ -5399,7 +5599,6 @@ mod tests {
             "None",
             "None",
             "10 s cooldown",
-            "1 bullet",
         ];
         assert_eq!(told, wanted);
         let standard = garage::LISTED.map(|stat| gives(&Genome::PLAYER, stat));
@@ -5412,9 +5611,42 @@ mod tests {
             "1 bounce",
             "2 mines",
             "9 s cooldown",
-            "None",
         ];
         assert_eq!(standard.to_vec(), wanted);
+        // The type of the bullets is told in words of its own, with its price next to its
+        // name where the five are offered.
+        let does = Ammo::ALL.map(ammo_gives);
+        let wanted = [
+            "Nothing more",
+            "Pierce a bullet and fly on",
+            "Seek a tank at each bounce",
+            "Split in two after 1 s",
+            "Go off in a blast of 3 m",
+        ];
+        assert_eq!(does, wanted);
+        let mut app = stage(
+            |app| {
+                let parts = [(Stat::Engine, 1), (Stat::Shield, 1), (Stat::Piercing, 1)];
+                let tank = Genome::of_the_garage(&parts).unwrap();
+                app.insert_resource(Garage { tank });
+                build(app, garage_screen);
+            },
+            WINDOWS[0],
+        );
+        let world = app.world_mut();
+        let mut texts = world.query::<&Text>();
+        let shown: Vec<String> = texts.iter(world).map(|text| text.0.clone()).collect();
+        for words in ["Bullets", "Pierce a bullet and fly on"] {
+            assert!(shown.iter().any(|text| text == words), "{words}");
+        }
+        for ammo in Ammo::ALL {
+            let name = ammo_name(ammo);
+            assert_eq!(
+                shown.iter().filter(|text| *text == name).count(),
+                1,
+                "{name}"
+            );
+        }
     }
 
     #[test]
