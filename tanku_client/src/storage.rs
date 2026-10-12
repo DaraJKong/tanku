@@ -10,6 +10,11 @@ use std::{
 /// Set for a run that must leave the player's files alone.
 static KEEPS_NOTHING: AtomicBool = AtomicBool::new(false);
 
+/// Whether the player's files are left alone: in a run that asked for it, and in every test.
+fn keeps_nothing() -> bool {
+    cfg!(test) || KEEPS_NOTHING.load(Ordering::Relaxed)
+}
+
 /// Makes this run read and write nothing: it starts from the defaults and leaves no trace.
 #[cfg(feature = "script")]
 pub fn keep_nothing() {
@@ -34,14 +39,14 @@ fn directory() -> Option<std::path::PathBuf> {
 
 /// Reads a file of pairs. A missing or unreadable file reads as empty.
 pub fn load(name: &str) -> BTreeMap<String, String> {
-    if KEEPS_NOTHING.load(Ordering::Relaxed) {
+    if keeps_nothing() {
         return BTreeMap::new();
     }
     parse(&read(name).unwrap_or_default())
 }
 
 pub fn save(name: &str, pairs: &BTreeMap<String, String>) {
-    if KEEPS_NOTHING.load(Ordering::Relaxed) {
+    if keeps_nothing() {
         return;
     }
     let text: String = pairs
@@ -97,6 +102,12 @@ fn write(name: &str, text: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_test_leaves_the_files_of_the_player_alone() {
+        assert!(keeps_nothing());
+        assert!(load("settings.txt").is_empty());
+    }
 
     #[test]
     fn pairs_are_parsed_and_junk_is_skipped() {
