@@ -366,7 +366,7 @@ TANKU_DEV_SCRIPT="tape run.wav; wait 4; start TANKU; wait 4; play 0 1 0 0 4; wai
 
 ## Trials of the balance
 
-The trials measure what the rules of the game make, without anyone at the keyboard, and tell it in reports that can be compared from one change to the next. They are a tool of their own, `tanku_trials`, with a command for each kind of trial. The census is the first one, and the only one so far.
+The trials measure what the rules of the game make, without anyone at the keyboard, and tell it in reports that can be compared from one change to the next. They are a tool of their own, `tanku_trials`, with a command for each kind of trial. The census counts what the seeds generate, and the comparison of the reference players says what the yardstick of every fight is worth.
 
 ### Census
 
@@ -397,6 +397,38 @@ cargo run --release -p tanku_trials -- census
 | `--out DIRECTORY` | Writes the report there as `census.md` and `census.csv`. It is printed either way. |
 
 The CSV file holds one cell on each line, with its table, its row and its column, for whatever compares two reports. The same command gives the same report.
+
+### Reference players
+
+A fight of a trial is the real simulation, without a window, with a reference player in the players' tank. The player is always the same, so that two reports differ by what was changed in the game and by nothing else. There are three, which fight the same way and differ in what they do about what flies at them:
+
+| | Novice | Regular | Expert |
+|---|---|---|---|
+| Sees a bullet coming | Never | After 0.30 s | After 0.20 s |
+| Follows a bullet off a wall | No | No | Yes |
+| Shield | Never | When the bullet can't be dodged | The same |
+
+With the time that the standard tank takes to get out of the way, the regular player reacts in about the 0.55 s that the specification counts for a player who keeps moving. All three keep 8 to 14 m from the nearest enemy and drive around it, lead their shots, find a shot off a wall at an enemy that they don't see, and fire as fast as the gun does. Those who see bullets coming keep out of the reach of mines and of the blasts that are marked. None lays a mine, takes cover or picks the moment of a fight.
+
+Nothing destroys the tank of a reference player. What would have is counted as a loss, so that every fight lasts until the group has fallen or the time is up. The losses are the one measure of what a group costs. What hits the tank within 1.5 s of a loss is no other one, since a tank that is destroyed is gone for that long.
+
+This command puts each of them against the group of every sector that is a corridor, on the same seeds. It takes about half a minute on 24 cores:
+
+```bash
+cargo run --release -p tanku_trials -- players
+```
+
+| Option | Effect |
+|---|---|
+| `--sectors 1-30` | The sectors whose groups are fought |
+| `--seeds 40` | How many seeds to fight them on: `TRIAL0`, `TRIAL1` and so on |
+| `--difficulty normal` | `normal` or `hard` |
+| `--player NAME` | A player to compare: `novice`, `regular` or `expert`. It can be given several times, and all three are compared without it. |
+| `--limit 60` | How long a fight lasts at most, in seconds |
+| `--threads N` | How many fights run side by side: as many as the machine has cores, unless told |
+| `--out DIRECTORY` | Writes the report there as `players.md` and `players.csv` |
+
+The players use nothing of the brains of the enemies but how to aim and how to steer around a wall, so a change to how a brain dodges doesn't move the yardstick. A change to a reference player does: its numbers are then compared with nothing that came before.
 
 ## Listening to the music
 

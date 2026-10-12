@@ -8,5 +8,9 @@ license.workspace = true
 workspace = true
 
 [dependencies]
+# Headless: the fights of a trial are simulated without a window.
+bevy = { workspace = true, features = ["std"] }
 clap.workspace = true
 tanku_core.workspace = true
+# The simulation, without the network and without what development adds to it.
+tanku_server.workspace = true

@@ -175,7 +175,7 @@ impl Brain {
 }
 
 /// Where a target will be when a bullet fired now gets there.
-pub(crate) fn lead(origin: Vec2, target: Vec2, velocity: Vec2, bullet_speed: f32) -> Vec2 {
+pub fn lead(origin: Vec2, target: Vec2, velocity: Vec2, bullet_speed: f32) -> Vec2 {
     let mut predicted = target;
     for _ in 0..2 {
         predicted = target + velocity * (origin.distance(predicted) / bullet_speed);
@@ -185,7 +185,7 @@ pub(crate) fn lead(origin: Vec2, target: Vec2, velocity: Vec2, bullet_speed: f32
 
 /// The turret angle, closest to the current one, of a shot that reaches the target after one
 /// bounce or more.
-pub(crate) fn bank_shot(
+pub fn bank_shot(
     field: &Field,
     origin: Vec2,
     target: Vec2,
@@ -224,7 +224,7 @@ pub(crate) fn bank_shot(
 }
 
 /// A direction close to the wanted one that isn't blocked right ahead.
-pub(crate) fn steer(field: &Field, tank: &Tank, from: Vec2, wanted: Vec2) -> Vec2 {
+pub fn steer(field: &Field, tank: &Tank, from: Vec2, wanted: Vec2) -> Vec2 {
     let Some(wanted) = wanted.try_normalize() else {
         return Vec2::ZERO;
     };

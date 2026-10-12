@@ -61,11 +61,7 @@ struct Stretch {
 
 impl Stretch {
     fn name(&self) -> String {
-        if self.first == self.last {
-            self.first.to_string()
-        } else {
-            format!("{}-{}", self.first, self.last)
-        }
+        stretch_name((self.first, self.last))
     }
 
     /// The sectors that hold a group: every one but the start bay.
@@ -82,8 +78,12 @@ impl Stretch {
 
 /// The rows of a census: the stretches that lie in the sectors asked for, cut to them.
 fn rows(asked: &Asked) -> Vec<(u32, u32)> {
-    let (first, last) = asked.sectors;
-    if asked.each {
+    stretches(asked.sectors, asked.each)
+}
+
+/// The stretches that lie in some sectors, cut to them, or each of the sectors alone.
+pub fn stretches((first, last): (u32, u32), each: bool) -> Vec<(u32, u32)> {
+    if each {
         return (first..=last).map(|sector| (sector, sector)).collect();
     }
     let mut rows: Vec<(u32, u32)> = STRETCHES
@@ -97,6 +97,15 @@ fn rows(asked: &Asked) -> Vec<(u32, u32)> {
         rows.push((first.max(end + 1), last));
     }
     rows
+}
+
+/// The name of a stretch of sectors.
+pub fn stretch_name((first, last): (u32, u32)) -> String {
+    if first == last {
+        first.to_string()
+    } else {
+        format!("{first}-{last}")
+    }
 }
 
 /// The seed of a census by its number, as a player types it.

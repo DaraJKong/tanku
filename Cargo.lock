@@ -7822,8 +7822,10 @@ dependencies = [
 name = "tanku_trials"
 version = "0.7.0"
 dependencies = [
+ "bevy",
  "clap",
  "tanku_core",
+ "tanku_server",
 ]
 
 [[package]]

@@ -2,20 +2,27 @@
 //! anyone at the keyboard, and told in reports that can be compared from one change to the
 //! next.
 //!
-//! `census` is the first of them. It fights nothing: it counts what the rules produce for
-//! each stretch of sectors, on many seeds.
+//! `census` fights nothing: it counts what the rules produce for each stretch of sectors, on
+//! many seeds. `players` puts the reference players, whose hands hold the players' tank in
+//! every fight of a trial, against the same groups, to tell what that yardstick is worth.
 //!
 //! ```text
 //! cargo run --release -p tanku_trials -- census --sectors 1-30 --seeds 300 --out target/trials
+//! cargo run --release -p tanku_trials -- players --sectors 1-30 --seeds 40 --out target/trials
 //! ```
 
 mod census;
+mod fight;
+mod players;
+mod reference;
 mod report;
 
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
 use tanku_core::modes::Difficulty;
+
+use crate::{reference::Reference, report::Report};
 
 #[derive(Parser)]
 #[command(
@@ -33,6 +40,9 @@ enum Command {
     /// Counts what the rules make of each stretch of sectors: the groups, their tanks and
     /// the terrain. It fights nothing, and takes seconds.
     Census(CensusArgs),
+    /// Compares the reference players: each of them fights the same groups, on the same
+    /// seeds. It takes about half a minute on every core of the machine.
+    Players(PlayersArgs),
 }
 
 #[derive(Args)]
@@ -58,6 +68,32 @@ struct CensusArgs {
     out: Option<PathBuf>,
 }
 
+#[derive(Args)]
+struct PlayersArgs {
+    /// The sectors whose groups are fought, as FIRST-LAST. Only corridors hold a fight.
+    #[arg(long, default_value = "1-30", value_parser = sectors)]
+    sectors: (u32, u32),
+    /// How many seeds to fight them on: TRIAL0, TRIAL1 and so on, which the game takes too.
+    #[arg(long, default_value_t = 40, value_parser = clap::value_parser!(u32).range(1..))]
+    seeds: u32,
+    /// The difficulty: normal or hard.
+    #[arg(long, default_value = "normal", value_parser = difficulty)]
+    difficulty: Difficulty,
+    /// The players to compare: novice, regular and expert, all three unless some are named.
+    #[arg(long = "player", value_parser = player)]
+    players: Vec<Reference>,
+    /// How long a fight lasts at most, in seconds.
+    #[arg(long, default_value_t = 60.0)]
+    limit: f32,
+    /// How many fights run side by side: as many as the machine has cores, unless told.
+    #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
+    threads: Option<u32>,
+    /// A directory to write the report to, as players.md and players.csv. It is printed
+    /// either way.
+    #[arg(long)]
+    out: Option<PathBuf>,
+}
+
 /// Reads a stretch of sectors as the command line writes it: `6-10`, or `6` for one sector.
 fn sectors(text: &str) -> Result<(u32, u32), String> {
     let number = |text: &str| {
@@ -78,6 +114,25 @@ fn difficulty(text: &str) -> Result<Difficulty, String> {
     Difficulty::of_key(&text.to_lowercase()).ok_or_else(|| format!("`{text}` is no difficulty"))
 }
 
+fn player(text: &str) -> Result<Reference, String> {
+    Reference::of_name(&text.to_lowercase())
+        .ok_or_else(|| format!("`{text}` is no reference player"))
+}
+
+/// Prints a report, and writes it to a directory under a name if one is given.
+fn tell(report: &Report, out: Option<PathBuf>, name: &str) {
+    print!("{}", report.markdown());
+    if let Some(directory) = out {
+        match report.write(&directory, name) {
+            Ok(()) => eprintln!("Written to {}.", directory.display()),
+            Err(error) => {
+                eprintln!("The report was not written: {error}");
+                std::process::exit(1);
+            }
+        }
+    }
+}
+
 fn main() {
     let cli = Cli::parse();
     match cli.command {
@@ -89,17 +144,22 @@ fn main() {
                 difficulty: args.difficulty,
                 each: args.each,
             };
-            let report = census::census(&asked);
-            print!("{}", report.markdown());
-            if let Some(directory) = args.out {
-                match report.write(&directory, "census") {
-                    Ok(()) => eprintln!("Written to {}.", directory.display()),
-                    Err(error) => {
-                        eprintln!("The report was not written: {error}");
-                        std::process::exit(1);
-                    }
-                }
-            }
+            tell(&census::census(&asked), args.out, "census");
+        }
+        Command::Players(args) => {
+            let cores = std::thread::available_parallelism().map_or(1, usize::from);
+            let asked = players::Asked {
+                sectors: args.sectors,
+                seeds: args.seeds,
+                difficulty: args.difficulty,
+                players: match args.players.is_empty() {
+                    true => Reference::ALL.to_vec(),
+                    false => args.players,
+                },
+                limit: args.limit,
+                threads: args.threads.map_or(cores, |threads| threads as usize),
+            };
+            tell(&players::players(&asked), args.out, "players");
         }
     }
 }
@@ -138,11 +198,32 @@ mod tests {
             "4",
             "--each",
         ];
-        let Command::Census(args) = Cli::try_parse_from(line).unwrap().command;
+        let Command::Census(args) = Cli::try_parse_from(line).unwrap().command else {
+            panic!("not a census");
+        };
         assert_eq!((args.sectors, args.players, args.each), ((3, 9), 4, true));
         assert_eq!((args.seeds, args.difficulty), (200, Difficulty::Normal));
         // No game has five players.
         let five = ["tanku_trials", "census", "--players", "5"];
         assert!(Cli::try_parse_from(five).is_err());
+    }
+
+    #[test]
+    fn the_players_are_all_compared_unless_some_are_named() {
+        let line = [
+            "tanku_trials",
+            "players",
+            "--player",
+            "expert",
+            "--seeds",
+            "2",
+        ];
+        let Command::Players(args) = Cli::try_parse_from(line).unwrap().command else {
+            panic!("not a comparison of the players");
+        };
+        assert_eq!(args.players, vec![Reference::Expert]);
+        assert_eq!((args.sectors, args.seeds, args.limit), ((1, 30), 2, 60.0));
+        let nobody = ["tanku_trials", "players", "--player", "master"];
+        assert!(Cli::try_parse_from(nobody).is_err());
     }
 }
