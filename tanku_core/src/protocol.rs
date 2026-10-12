@@ -110,6 +110,8 @@ pub struct Lobby {
     /// Whether the next run is in free mode, in which each player has the tank that they
     /// built in their own garage.
     pub free: bool,
+    /// Whether the next run is in arena mode: in one room, against one group after another.
+    pub arena: bool,
     /// Who has said that they are ready for the run, by seat.
     pub ready: [bool; MAX_PLAYERS as usize],
     /// The seconds until the run starts by itself, once everyone is ready.

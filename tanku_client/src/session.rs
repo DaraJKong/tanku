@@ -28,9 +28,10 @@ pub struct Sign {
     /// The password that those who join must type, or nothing.
     pub password: String,
     /// What its first run is set to, which the host changes in the lobby: how hard it is,
-    /// and whether it is in free mode.
+    /// and whether it is in free mode and in arena mode.
     pub difficulty: Difficulty,
     pub free: bool,
+    pub arena: bool,
 }
 
 /// What the menus ask about a game of several players.

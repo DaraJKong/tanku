@@ -265,12 +265,15 @@ pub struct Settings {
     pub solo_difficulty: Difficulty,
     /// Whether the player chose free mode for the last run of their own.
     pub solo_free: bool,
+    /// Whether that run was in arena mode.
+    pub solo_arena: bool,
     /// The name that the player gave the last game that they hosted.
     pub host_name: String,
     /// The difficulty that the player chose last for a game that they hosted, and whether
     /// they chose free mode for it.
     pub host_difficulty: Difficulty,
     pub host_free: bool,
+    pub host_arena: bool,
 }
 
 impl Default for Settings {
@@ -289,9 +292,11 @@ impl Default for Settings {
             address: String::new(),
             solo_difficulty: Difficulty::Normal,
             solo_free: false,
+            solo_arena: false,
             host_name: String::new(),
             host_difficulty: Difficulty::Normal,
             host_free: false,
+            host_arena: false,
         }
     }
 }
@@ -398,6 +403,7 @@ impl Settings {
             .and_then(|key| Difficulty::of_key(key))
             .unwrap_or_default();
         settings.solo_free = flag("solo.free", settings.solo_free);
+        settings.solo_arena = flag("solo.arena", settings.solo_arena);
         // The same goes for the name of a game: what is kept is what a host could type.
         let name = pairs.get("host.name").map(String::as_str);
         settings.host_name = named(name.unwrap_or_default());
@@ -406,6 +412,7 @@ impl Settings {
             .and_then(|key| Difficulty::of_key(key))
             .unwrap_or_default();
         settings.host_free = flag("host.free", settings.host_free);
+        settings.host_arena = flag("host.arena", settings.host_arena);
         for (action, bindings) in &mut settings.bindings {
             if let Some(saved) = pairs.get(action.key()) {
                 let mut codes = saved.split(',').map(|code| Binding::parse(code.trim()));
@@ -427,10 +434,12 @@ impl Settings {
         let difficulty = self.solo_difficulty.key().to_string();
         pairs.insert("solo.difficulty".to_string(), difficulty);
         pairs.insert("solo.free".to_string(), self.solo_free.to_string());
+        pairs.insert("solo.arena".to_string(), self.solo_arena.to_string());
         pairs.insert("host.name".to_string(), self.host_name.clone());
         let difficulty = self.host_difficulty.key().to_string();
         pairs.insert("host.difficulty".to_string(), difficulty);
         pairs.insert("host.free".to_string(), self.host_free.to_string());
+        pairs.insert("host.arena".to_string(), self.host_arena.to_string());
         for (action, bindings) in &self.bindings {
             let codes = bindings.map(|binding| binding.map_or("", Binding::code));
             pairs.insert(action.key().to_string(), codes.join(", "));
@@ -439,7 +448,7 @@ impl Settings {
     }
 }
 
-/// The furthest a run got.
+/// The furthest a run got: the last sector that it cleared, or the last group in arena mode.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Record {
     pub sector: u32,
@@ -447,20 +456,26 @@ pub struct Record {
     pub version: String,
 }
 
-/// What records tell apart, besides the number of players: how hard a run is, and whether
-/// its players built their own tanks.
+/// What records tell apart, besides the number of players: how hard a run is, whether its
+/// players built their own tanks, and whether it was fought in the room of arena mode.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct League {
     pub difficulty: Difficulty,
     pub free: bool,
+    pub arena: bool,
 }
 
 impl League {
-    /// Every league there is: each difficulty in the standard tank, then in free mode.
+    /// Every league there is: each difficulty in the standard tank, then in free mode, in
+    /// the corridor and then in arena mode.
     pub fn all() -> impl Iterator<Item = League> {
-        [false, true].into_iter().flat_map(|free| {
-            let league = move |difficulty: Difficulty| League { difficulty, free };
-            Difficulty::ALL.into_iter().map(league)
+        let options = [(false, false), (false, true), (true, false), (true, true)];
+        options.into_iter().flat_map(|(arena, free)| {
+            Difficulty::ALL.into_iter().map(move |difficulty| League {
+                difficulty,
+                free,
+                arena,
+            })
         })
     }
 
@@ -469,17 +484,31 @@ impl League {
         Self {
             difficulty: run.difficulty,
             free: run.free,
+            arena: run.arena,
         }
     }
 
-    /// What tells it from the league of normal mode in the standard tank, if anything does.
-    pub fn words(self) -> Option<&'static str> {
-        match (self.difficulty, self.free) {
-            (Difficulty::Normal, false) => None,
-            (Difficulty::Hard, false) => Some("hard mode"),
-            (Difficulty::Normal, true) => Some("free mode"),
-            (Difficulty::Hard, true) => Some("hard mode and free mode"),
+    /// What tells it from the league of normal mode in the corridor and in the standard
+    /// tank, if anything does.
+    pub fn words(self) -> Option<String> {
+        let hard = (self.difficulty == Difficulty::Hard).then_some("hard mode");
+        let modes = [
+            hard,
+            self.arena.then_some("arena mode"),
+            self.free.then_some("free mode"),
+        ];
+        let modes: Vec<&str> = modes.into_iter().flatten().collect();
+        match modes.as_slice() {
+            [] => None,
+            [only] => Some(only.to_string()),
+            [first, second] => Some(format!("{first} and {second}")),
+            [first, rest @ ..] => Some(format!("{first}, {}", rest.join(" and "))),
         }
+    }
+
+    /// What its records count: the sectors of the corridor, or the groups of arena mode.
+    pub fn unit(self) -> &'static str {
+        if self.arena { "group" } else { "sector" }
     }
 }
 
@@ -489,12 +518,14 @@ pub struct Records(BTreeMap<String, Record>);
 
 impl Records {
     fn key(league: League, players: u32) -> String {
-        let difficulty = league.difficulty.key();
-        if league.free {
-            format!("{difficulty}.free.{players}")
-        } else {
-            format!("{difficulty}.{players}")
+        let mut key = league.difficulty.key().to_string();
+        if league.arena {
+            key.push_str(".arena");
         }
+        if league.free {
+            key.push_str(".free");
+        }
+        format!("{key}.{players}")
     }
 
     pub fn best(&self, league: League, players: u32) -> Option<&Record> {
@@ -627,9 +658,11 @@ mod tests {
             address: "192.168.1.20:4000".to_string(),
             solo_difficulty: Difficulty::Hard,
             solo_free: true,
+            solo_arena: true,
             host_name: "Friday = game night".to_string(),
             host_difficulty: Difficulty::Hard,
             host_free: true,
+            host_arena: true,
             ..default()
         };
         settings.bind(Action::Shield, 0, Binding::Key(KeyCode::ShiftLeft));
@@ -685,7 +718,11 @@ mod tests {
 
     #[test]
     fn records_keep_the_best_run() {
-        let league = |difficulty: Difficulty, free: bool| League { difficulty, free };
+        let league = |difficulty: Difficulty, free: bool| League {
+            difficulty,
+            free,
+            arena: false,
+        };
         let (normal, hard) = (League::default(), league(Difficulty::Hard, false));
         let mut records = Records::default();
         assert!(records.submit(normal, 1, 7, "ABC"));
@@ -722,10 +759,57 @@ mod tests {
         assert_eq!(Records::key(normal, 1), "normal.1");
         assert_eq!(Records::key(hard, 2), "hard.2");
         assert_eq!(Records::key(free, 1), "normal.free.1");
-        // There are four leagues, and one alone needs no words to be told.
-        let words: Vec<Option<&str>> = League::all().map(League::words).collect();
-        assert_eq!(words.len(), 4);
+        // The runs of arena mode have records of their own too: they count groups.
+        let room = |difficulty: Difficulty, free: bool| League {
+            arena: true,
+            ..league(difficulty, free)
+        };
+        let (arena, hard_arena) = (
+            room(Difficulty::Normal, false),
+            room(Difficulty::Hard, false),
+        );
+        assert!(records.submit(arena, 1, 12, "STU"));
+        assert!(records.submit(room(Difficulty::Hard, true), 2, 3, "VWX"));
+        let reloaded = Records::from_pairs(&records.to_pairs());
+        assert_eq!(reloaded.best(normal, 1).unwrap().sector, 7);
+        assert_eq!(reloaded.best(arena, 1).unwrap().sector, 12);
+        assert!(reloaded.best(hard_arena, 1).is_none());
+        assert_eq!(
+            reloaded
+                .best(room(Difficulty::Hard, true), 2)
+                .unwrap()
+                .sector,
+            3
+        );
+        assert_eq!(Records::key(arena, 1), "normal.arena.1");
+        assert_eq!(
+            Records::key(room(Difficulty::Hard, true), 2),
+            "hard.arena.free.2"
+        );
+        assert_eq!((normal.unit(), arena.unit()), ("sector", "group"));
+        // There are eight leagues, each with a key of its own, and one alone needs no words
+        // to be told.
+        let words: Vec<Option<String>> = League::all().map(League::words).collect();
+        assert_eq!(words.len(), 8);
         assert_eq!(words.iter().filter(|words| words.is_none()).count(), 1);
         assert_eq!(League::all().next(), Some(normal));
+        let mut keys: Vec<String> = League::all()
+            .map(|league| Records::key(league, 1))
+            .collect();
+        keys.sort();
+        keys.dedup();
+        assert_eq!(keys.len(), 8);
+        let told = |league: League| league.words().unwrap_or_default();
+        assert_eq!(told(hard), "hard mode");
+        assert_eq!(told(arena), "arena mode");
+        assert_eq!(told(hard_arena), "hard mode and arena mode");
+        assert_eq!(
+            told(room(Difficulty::Normal, true)),
+            "arena mode and free mode"
+        );
+        assert_eq!(
+            told(room(Difficulty::Hard, true)),
+            "hard mode, arena mode and free mode"
+        );
     }
 }

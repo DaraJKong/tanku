@@ -69,6 +69,7 @@ impl Unlocks {
 /// What a mode or an option is called on screen.
 pub fn name(unlock: Unlock) -> &'static str {
     match unlock {
+        Unlock::ArenaMode => "Arena mode",
         Unlock::ChosenSeed => "Chosen seed",
         Unlock::FreeMode => "Free mode",
         Unlock::HardMode => "Hard mode",
@@ -173,8 +174,12 @@ mod tests {
         assert!(!unlocks.has(Unlock::ChosenSeed));
         assert!(unlocks.wanting());
         assert!(!Unlocks::of(&Unlock::ALL).wanting());
-        // With the impossible mode, only the two options are left to earn.
-        let unlocks = Unlocks::of(&[Unlock::ChosenSeed, Unlock::FreeMode, Unlock::ImpossibleMode]);
-        assert!(!unlocks.wanting());
+        // With the impossible mode, only the options are left to earn.
+        let options = [Unlock::ArenaMode, Unlock::ChosenSeed, Unlock::FreeMode];
+        assert!(Unlocks::of(&[Unlock::ImpossibleMode]).wanting());
+        let mut every = options.to_vec();
+        every.push(Unlock::ImpossibleMode);
+        assert!(!Unlocks::of(&every).wanting());
+        assert!(Unlocks::of(&every[1..]).wanting());
     }
 }

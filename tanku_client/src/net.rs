@@ -1073,6 +1073,123 @@ pub(crate) mod tests {
         assert_eq!(world.query::<&Sector>().iter(world).count(), 0);
     }
 
+    #[test]
+    fn a_guest_plays_a_run_in_arena_mode() {
+        use tanku_core::{
+            map::{Room, SectorKind},
+            seed::seed_value,
+            sim::{Block, Enemy, Planned, Reserve, Tank},
+        };
+        use tanku_server::{Casualties, field::Field};
+
+        let port = free_port();
+        let mut host = host(port);
+        let mut guest = guest(port);
+        run_until("the lobby", &mut [&mut host, &mut guest], |games| {
+            screen(games[1]) == Screen::Lobby
+        });
+        // The host sets the run to arena mode, and the guest is told.
+        let world = host.world_mut();
+        world.query::<&mut Lobby>().single_mut(world).unwrap().arena = true;
+        run_until("the mode", &mut [&mut host, &mut guest], |games| {
+            lobby(games[1]).arena
+        });
+
+        // What a game holds of the room: the kinds of its sectors with their walls, the
+        // tanks in reserve, where its blocks stand, and how many more are planned.
+        type Outline = Vec<IVec2>;
+        fn rooms(game: &mut App) -> Vec<(SectorKind, Outline)> {
+            let world = game.world_mut();
+            let mut sectors = world.query::<&Sector>();
+            let plans = sectors.iter(world).map(|sector| &sector.layout.plan);
+            plans
+                .map(|plan| (plan.kind, plan.outline.clone()))
+                .collect()
+        }
+        fn reserves(game: &mut App) -> Vec<(u32, u32, Genome)> {
+            let world = game.world_mut();
+            let mut waiting: Vec<(u32, u32, Genome)> = world
+                .query::<&Reserve>()
+                .iter(world)
+                .map(|reserve| (reserve.group, reserve.number, reserve.genome))
+                .collect();
+            waiting.sort_by_key(|(group, number, _)| (*group, *number));
+            waiting
+        }
+        fn blocks(game: &mut App) -> Vec<(i32, i32)> {
+            let world = game.world_mut();
+            let mut blocks = world.query_filtered::<&Position, With<Block>>();
+            let corner = |at: &Position| (at.0.x as i32 - 1, at.0.y as i32 - 1);
+            let mut corners: Vec<(i32, i32)> = blocks.iter(world).map(corner).collect();
+            corners.sort_unstable();
+            corners
+        }
+        fn planned(game: &mut App) -> usize {
+            let world = game.world_mut();
+            world.query::<&Planned>().iter(world).count()
+        }
+        fn enemies(game: &mut App) -> usize {
+            let world = game.world_mut();
+            let mut tanks = world.query_filtered::<&Tank, With<Enemy>>();
+            tanks.iter(world).count()
+        }
+        let corners = |corners: Vec<IVec2>| -> Vec<(i32, i32)> {
+            let mut corners: Vec<(i32, i32)> = corners.iter().map(|c| (c.x, c.y)).collect();
+            corners.sort_unstable();
+            corners
+        };
+
+        // The run starts in the room of the seed, which the guest lays out itself. The
+        // first group waits in reserve on both machines, among the same blocks.
+        ask(&mut host, SessionRequest::Start);
+        run_until("the room", &mut [&mut host, &mut guest], |games| {
+            screen(games[1]) == Screen::Playing
+                && seats(games[1]) == [0, 1]
+                && rooms(games[1]).len() == 1
+                && !reserves(games[1]).is_empty()
+                && reserves(games[1]) == reserves(games[0])
+                && !blocks(games[1]).is_empty()
+                && blocks(games[1]) == blocks(games[0])
+        });
+        let room = Room::new(seed_value("NET"));
+        let wanted = vec![(SectorKind::Room, room.plan().outline.clone())];
+        assert_eq!(rooms(&mut guest), wanted);
+        assert_eq!(rooms(&mut host), wanted);
+        assert_eq!(blocks(&mut guest), corners(room.obstacles(1).0));
+        let run = guest.world().resource::<Run>().clone();
+        assert!(run.arena && !run.earns && run.lull.is_some());
+        assert_eq!((run.sector, run.players, run.solo), (0, 2, false));
+        // Two players call for two tanks, which come one at a time.
+        assert_eq!(reserves(&mut guest).len(), 2);
+
+        // After the lull, the group is on for both, and its first tank is in the room.
+        run_until("the group", &mut [&mut host, &mut guest], |games| {
+            let run = games[1].world().resource::<Run>();
+            (run.sector, run.lull) == (1, None) && enemies(games[1]) == 1
+        });
+        assert_eq!(reserves(&mut guest).len(), 1);
+
+        // The host's game clears the group. The room is laid out anew: the guest is told of
+        // what is planned, and then of what stands, as the next group goes into reserve.
+        let world = host.world_mut();
+        world.resource_mut::<Field>().arenas.clear();
+        let mut tanks = world.query_filtered::<Entity, With<Enemy>>();
+        let doomed: Vec<Entity> = tanks.iter(world).collect();
+        world.resource_mut::<Casualties>().tanks.extend(doomed);
+        run_until("the lull", &mut [&mut host, &mut guest], |games| {
+            let run = games[1].world().resource::<Run>();
+            run.cleared == 1 && run.lull.is_some() && planned(games[1]) > 0
+        });
+        assert!(blocks(&mut guest).is_empty());
+        let next: Vec<u32> = reserves(&mut guest).iter().map(|tank| tank.0).collect();
+        assert_eq!(next, [2, 2]);
+        run_until("the new room", &mut [&mut host, &mut guest], |games| {
+            planned(games[1]) == 0 && !blocks(games[1]).is_empty()
+        });
+        assert_eq!(blocks(&mut guest), corners(room.obstacles(2).0));
+        assert_eq!(blocks(&mut host), blocks(&mut guest));
+    }
+
     /// The lobby that a game holds, its own or the one that its host told it of.
     pub(crate) fn lobby(game: &mut App) -> Lobby {
         let world = game.world_mut();
@@ -1584,10 +1701,11 @@ pub(crate) mod tests {
         };
         // When the host changes what the run is set to, nobody is ready any more: its
         // difficulty, its seed, its mode.
-        let changes: [fn(&mut Lobby); 4] = [
+        let changes: [fn(&mut Lobby); 5] = [
             |lobby| lobby.difficulty = Difficulty::Hard,
             |lobby| lobby.seed = "OTHER".into(),
             |lobby| lobby.typed = true,
+            |lobby| lobby.arena = true,
             |lobby| lobby.free = true,
         ];
         for change in changes {

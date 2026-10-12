@@ -25,7 +25,8 @@
 //! `quit`, plus `play DX DY AX AY SECONDS`, which drives the tank in a direction while it fires
 //! at a point relative to itself, `aim AX AY`, which turns the turret to such a point without
 //! firing, `press LABEL`, which presses the button of a menu that bears
-//! this label, in capitals or not, `lineup`, which lays out one bullet of each kind next to the
+//! this label, in capitals or not, or `press ROW: LABEL` for the button of one row of a
+//! menu, as `press Arena mode: On`, `lineup`, which lays out one bullet of each kind next to the
 //! tank, `pierce`, which sends a piercing bullet at a bullet of the players there,
 //! `showcase STAT`, which lines up in the start bay one tank for each level of a stat,
 //! `palette`, which lines up there three tanks of each class, from a weak one to a strong one,
@@ -353,21 +354,38 @@ fn press(
     mut script: ResMut<Script>,
     mut buttons: Query<(Entity, &mut Interaction), With<Button>>,
     inside: Query<&Children>,
+    holders: Query<&ChildOf>,
     labels: Query<&Text>,
 ) {
-    let Some(label) = script.press.take() else {
+    let Some(asked) = script.press.take() else {
         return;
     };
-    // A button bears every text that it holds: the row of a game holds several.
-    let bears = |button: Entity| {
-        let mut texts = inside
-            .iter_descendants(button)
-            .filter_map(|piece| labels.get(piece).ok());
-        texts.any(|text| text.0.eq_ignore_ascii_case(&label))
+    // Two rows of a menu may hold buttons that bear the same word: `ROW: LABEL` names the
+    // button of one row.
+    let (row, label) = match asked.split_once(": ") {
+        Some((row, label)) => (Some(row), label),
+        None => (None, asked.as_str()),
     };
-    match buttons.iter_mut().find(|(button, _)| bears(*button)) {
+    // A piece bears every text that it holds: the row of a game holds several.
+    let bears = |piece: Entity, wanted: &str| {
+        let mut texts = inside
+            .iter_descendants(piece)
+            .filter_map(|piece| labels.get(piece).ok());
+        texts.any(|text| text.0.eq_ignore_ascii_case(wanted))
+    };
+    // The row of a button is what holds it: further up, the whole menu bears every label.
+    let in_its_row = |button: Entity| {
+        row.is_none_or(|row| {
+            let held_by = holders.get(button).map(ChildOf::parent);
+            held_by.is_ok_and(|holder| bears(holder, row))
+        })
+    };
+    let mut found = buttons
+        .iter_mut()
+        .filter(|(button, _)| bears(*button, label) && in_its_row(*button));
+    match found.next() {
         Some((_, mut interaction)) => *interaction = Interaction::Pressed,
-        None => warn!("no button bears the label: {label}"),
+        None => warn!("no button bears the label: {asked}"),
     }
 }
 
