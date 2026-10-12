@@ -1145,12 +1145,13 @@ impl Room {
         spaced(&mut rng, &candidates)
     }
 
-    /// Where each tank of a group waits in reserve, by its number, for a group whose waves
-    /// have this many tanks: outside the south wall, where the players read the tanks that
+    /// Where each tank of a group waits in reserve, by its number, for a group whose parts
+    /// have this many tanks: those that come with it, then those that each wait for one to be
+    /// destroyed. They stand outside the south wall, where the players read the tanks that
     /// have not come yet. A small group stands in one row, in the order it comes, with a gap
-    /// between two waves. A larger one stands a wave to a row, the first wave nearest the
-    /// wall, and a wave that is too large for a row takes the next one too.
-    pub fn reserve(&self, waves: &[u32]) -> Vec<Vec2> {
+    /// between its parts. A larger one stands a part to a row, the first part nearest the
+    /// wall, and a part that is too large for a row takes the next one too.
+    pub fn reserve(&self, parts: &[u32]) -> Vec<Vec2> {
         let (min, max) = (self.plan.min.as_vec2(), self.plan.max.as_vec2());
         // The place of a tank in a row of this many places.
         let place = |row: u32, place: u32, places: u32| {
@@ -1159,20 +1160,20 @@ impl Room {
             let behind = RESERVE_ROW + row as f32 * RESERVE_ROWS_APART;
             Vec2::new((min.x + max.x) / 2.0 + along * spacing, min.y - behind)
         };
-        let tanks: u32 = waves.iter().sum();
-        let gaps = waves.len().saturating_sub(1) as u32;
+        let tanks: u32 = parts.iter().sum();
+        let gaps = parts.len().saturating_sub(1) as u32;
         let mut places = Vec::new();
         if tanks + gaps <= RESERVE_ROW_MOST {
             let mut next = 0;
-            for &wave in waves {
-                places.extend((next..next + wave).map(|at| place(0, at, tanks + gaps)));
-                next += wave + 1;
+            for &part in parts {
+                places.extend((next..next + part).map(|at| place(0, at, tanks + gaps)));
+                next += part + 1;
             }
             return places;
         }
         let mut row = 0;
-        for &wave in waves {
-            let mut left = wave;
+        for &part in parts {
+            let mut left = part;
             while left > 0 {
                 let here = left.min(RESERVE_ROW_MOST);
                 places.extend((0..here).map(|at| place(row, at, here)));
@@ -1751,12 +1752,12 @@ mod room_tests {
             let room = Room::new(seed);
             let (min, max) = (room.plan().min.as_vec2(), room.plan().max.as_vec2());
             let middle = (min.x + max.x) / 2.0;
-            let rows = |waves: &[u32]| -> Vec<f32> {
-                let mut rows: Vec<f32> = room.reserve(waves).iter().map(|at| at.y).collect();
+            let rows = |parts: &[u32]| -> Vec<f32> {
+                let mut rows: Vec<f32> = room.reserve(parts).iter().map(|at| at.y).collect();
                 rows.dedup();
                 rows
             };
-            for waves in [
+            for parts in [
                 vec![1],
                 vec![1, 1],
                 vec![3, 3],
@@ -1764,18 +1765,18 @@ mod room_tests {
                 vec![6],
                 vec![15],
             ] {
-                let places = room.reserve(&waves);
-                assert_eq!(places.len() as u32, waves.iter().sum::<u32>());
+                let places = room.reserve(&parts);
+                assert_eq!(places.len() as u32, parts.iter().sum::<u32>());
                 // The ground that the reserve takes: a single player never calls for more
                 // than one row.
-                let depth = reserve_depth(rows(&waves).len() == 1);
+                let depth = reserve_depth(rows(&parts).len() == 1);
                 for (number, place) in places.iter().enumerate() {
                     // Outside the room, and a tank is 2 m long.
                     assert!(place.y <= min.y - 2.0 && place.y >= min.y - depth + 1.5);
-                    assert!((place.x - middle).abs() <= 10.0, "seed {seed}: {waves:?}");
+                    assert!((place.x - middle).abs() <= 10.0, "seed {seed}: {parts:?}");
                     // A tank is 1.6 m wide.
                     for other in &places[..number] {
-                        assert!(place.distance(*other) >= 2.5, "seed {seed}: {waves:?}");
+                        assert!(place.distance(*other) >= 2.5, "seed {seed}: {parts:?}");
                     }
                 }
                 // A row is centered on the room.
@@ -1787,19 +1788,20 @@ mod room_tests {
                 let center = (first_row[0] + first_row[first_row.len() - 1]) / 2.0;
                 assert!((center - middle).abs() < 1e-3);
             }
-            // A small group stands in one row, with a gap between its two waves.
+            // A small group stands in one row, with a gap between the tanks that come with it
+            // and those that wait for one of them to be destroyed.
             let small = room.reserve(&[3, 3]);
             assert_eq!(rows(&[3, 3]).len(), 1);
             let step = small[1].x - small[0].x;
             assert!((small[3].x - small[2].x - 2.0 * step).abs() < 1e-3);
-            // A larger one stands a wave to a row, the second wave behind the first, and a
-            // wave that is too large for a row takes two.
+            // A larger one stands a part to a row, the second part behind the first, and a
+            // part that is too large for a row takes two.
             let two = rows(&[5, 4]);
             assert_eq!(two.len(), 2);
             assert!(two[1] < two[0]);
             assert_eq!(rows(&[15]), rows(&[8, 7]));
         }
-        // The largest group of a single player has six tanks, in two waves or all at once.
+        // The largest group of a single player has six tanks, which stand in one row.
         assert!(reserve_depth(true) < reserve_depth(false));
     }
 }

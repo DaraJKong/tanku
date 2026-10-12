@@ -123,8 +123,6 @@ enum Press {
     ResetBindings,
     /// In a playtest: turns the infinite lives on or off.
     InfiniteLives,
-    /// In a playtest of arena mode: sends a group all at once, or in waves again.
-    WholeGroups,
     /// In a playtest: moves the sector to skip to by this many.
     Destination(i32),
     /// In a playtest: skips to that sector.
@@ -2701,11 +2699,6 @@ fn unit_name(in_a_room: bool) -> &'static str {
     if in_a_room { "Group" } else { "Sector" }
 }
 
-/// What a group of arena mode does in a playtest, as the switch of the menu says it.
-fn group_words(whole: bool) -> &'static str {
-    if whole { "All at once" } else { "In two waves" }
-}
-
 fn pause_menu(
     mut commands: Commands,
     run: Option<Res<Run>>,
@@ -2755,13 +2748,6 @@ fn pause_menu(
                 );
                 let skip = format!("Skip to {unit} {}", destination.0);
                 button(parent, skip, Press::Skip);
-                // What a playtest tries in arena mode, from the next group on.
-                if in_a_room {
-                    row(parent, "A group comes", |row| {
-                        let state = group_words(playtest.whole_groups);
-                        small(row, state, 170.0, Press::WholeGroups);
-                    });
-                }
             }
             if let Some(run) = run {
                 line(parent, level_line(&run), theme::TEXT_DIM);
@@ -3377,11 +3363,6 @@ fn press(
                     playtest.infinite_lives = !playtest.infinite_lives;
                 }
             }
-            Press::WholeGroups => {
-                if let Some(playtest) = &mut playtest {
-                    playtest.whole_groups = !playtest.whole_groups;
-                }
-            }
             Press::Destination(change) => {
                 let sector = destination.0.saturating_add_signed(change);
                 destination.0 = sector.clamp(1, PLAYTEST_LAST_SECTOR);
@@ -3706,7 +3687,6 @@ mod tests {
                 app.insert_resource(Records::of_every_team(128, "85GVTHQA"))
                     .insert_resource(Playtest {
                         infinite_lives: true,
-                        ..default()
                     })
                     .insert_resource(Options {
                         playtest: true,
@@ -3720,7 +3700,6 @@ mod tests {
                 app.insert_resource(Records::of_every_team(128, "85GVTHQA"))
                     .insert_resource(Playtest {
                         infinite_lives: true,
-                        ..default()
                     })
                     .insert_resource(Options {
                         playtest: true,
@@ -4056,11 +4035,10 @@ mod tests {
                     .insert_resource(Session::Host)
                     .insert_resource(Playtest {
                         infinite_lives: true,
-                        ..default()
                     });
                 build(app, pause_menu);
             }),
-            // In arena mode, a playtest has one more switch, and its level a longer line.
+            // In arena mode, a playtest skips to a group, and its level has a longer line.
             (
                 "the menu of a host during a playtest of arena mode",
                 |app| {
@@ -4074,7 +4052,6 @@ mod tests {
                         .insert_resource(Session::Host)
                         .insert_resource(Playtest {
                             infinite_lives: true,
-                            whole_groups: true,
                         });
                     build(app, pause_menu);
                 },
@@ -4946,7 +4923,7 @@ mod tests {
     }
 
     #[test]
-    fn a_playtest_of_arena_mode_has_a_switch_and_skips_to_a_group() {
+    fn a_playtest_of_arena_mode_skips_to_a_group() {
         let menu = |arena: bool| {
             move |app: &mut App| {
                 app.insert_resource(Run {
@@ -4967,26 +4944,17 @@ mod tests {
                 .iter(world)
                 .any(|text| text.0.to_lowercase() == wanted.to_lowercase())
         };
-        // In the corridor, a playtest skips to a sector and has nothing to say of groups.
+        // In the corridor, a playtest skips to a sector. In arena mode, to a group. Both
+        // menus offer the same cheats.
         let mut corridor = stage(|_| {}, WINDOWS[0]);
         menu(false)(&mut corridor);
-        let offered = buttons(&mut corridor);
-        assert!(!offered.contains(&Press::WholeGroups));
+        assert!(said(&mut corridor, "Sector to skip to"));
         assert!(said(&mut corridor, "Skip to sector 8"));
-
         let mut room = stage(|_| {}, WINDOWS[0]);
         menu(true)(&mut room);
-        let offered = buttons(&mut room);
-        assert!(offered.contains(&Press::WholeGroups));
+        assert!(said(&mut room, "Group to skip to"));
         assert!(said(&mut room, "Skip to group 8"));
-        assert!(said(&mut room, "In two waves"));
-        // The switch turns its rule over, and the menu says what holds now.
-        click(&mut room, Press::WholeGroups);
-        assert!(room.world().resource::<Playtest>().whole_groups);
-        build(&mut room, refresh_pause);
-        assert!(said(&mut room, "All at once"));
-        click(&mut room, Press::WholeGroups);
-        assert!(!room.world().resource::<Playtest>().whole_groups);
+        assert!(buttons(&mut room) == buttons(&mut corridor));
     }
 
     /// The difficulties that the solo screen lets the player switch to.

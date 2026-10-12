@@ -1,10 +1,11 @@
 //! A run in arena mode: one room, and one group after another without end.
 //!
 //! The run never leaves the room, so nothing unlocks and nothing is crossed. A group is the
-//! group of the sector of its number, and it comes in waves as the group of an arena does.
-//! Between two groups there is a lull: the room is laid out anew, and the next group stands in
-//! reserve outside the south wall, where the players read it as they read a group through a
-//! barrier.
+//! group of the sector of its number. Half of it comes when the group does, and then a tank
+//! for each one that is destroyed: the room stays as full until the group has no more to
+//! send. Between two groups there is a short lull: the room is laid out anew, and the next
+//! group stands in reserve outside the south wall, where the players read it as they read a
+//! group through a barrier.
 
 use std::collections::VecDeque;
 
@@ -15,15 +16,15 @@ use tanku_core::{
     progression,
     rules::{
         ARENA_DELAY, BLOCK_SIZE, BULLET_RADIUS, LIFE_GROUPS, LULL, MINE_RADIUS, RISE_TIME,
-        ROOM_WAVES, SOLO_LIVES, TANK_RADIUS, TICK,
+        SOLO_LIVES, TANK_RADIUS, TICK,
     },
     sim::{
-        Block, Bullet, Enemy, ExplosiveCrate, Mine, Planned, Player, Playtest, Position, Reserve,
-        Run, RunPhase, Sector, SectorIndex, SimEvent, Tank,
+        Block, Bullet, Enemy, ExplosiveCrate, Mine, Planned, Player, Position, Reserve, Run,
+        RunPhase, Sector, SectorIndex, SimEvent, Tank,
     },
 };
 
-use crate::field::{Arena, Field, Fuse, InSector, Recruit};
+use crate::field::{Arena, Field, Fuse, InSector, Order, Recruit};
 
 /// The room of a run in arena mode, and how the run stands in it.
 #[derive(Clone, Debug)]
@@ -31,13 +32,15 @@ pub struct RoomState {
     pub room: Room,
     /// The seconds left before the next group is announced, between two groups.
     pub lull: Option<f32>,
-    /// The waves of the group that comes when the lull is over.
+    /// The group that comes when the lull is over, in its two parts: the tanks that come
+    /// with it, and those that each wait for one of the group to be destroyed.
     pub next: VecDeque<Vec<Recruit>>,
-    /// How many tanks each wave has of the group that is on, or of the next one during a
-    /// lull. A tank keeps its place in the reserve by it.
+    /// How many tanks each of these parts has, for the group that is on, or for the next one
+    /// during a lull. A tank keeps its place in the reserve by it.
     pub split: Vec<u32>,
     /// The places of that group that none of its tanks has: a tank whose own place has a
-    /// player too close takes one of them, so that a wave never waits for a player to move.
+    /// player too close, or a tank of its group on it, takes one of them, so that a tank
+    /// never waits for a player to move.
     pub spare: Vec<Vec2>,
     /// What stands in the room as it was last laid out: the lowest corners of its blocks, and
     /// those of its crates.
@@ -63,7 +66,7 @@ impl RoomState {
     }
 
     /// Where a tank of the group that is on, or of the next one during a lull, waits in
-    /// reserve: with its wave, the first wave nearest the room.
+    /// reserve: with its part of the group, the tanks that come first nearest the room.
     fn reserve(&self, number: u32) -> Vec2 {
         let places = self.room.reserve(&self.split);
         let fallback = self.room.start().as_vec2();
@@ -111,17 +114,10 @@ fn plan(commands: &mut Commands, at: Vec2, explosive: bool) {
     ));
 }
 
-/// In how many waves a group comes: two, or all at once if a playtest says so.
-fn waves(playtest: Option<&Playtest>) -> u32 {
-    match playtest {
-        Some(playtest) if playtest.whole_groups => 1,
-        _ => ROOM_WAVES,
-    }
-}
-
 /// Draws up a group: the tanks of the sector of its number, as many as the players call for,
-/// each with the place where it appears, in the waves that it comes in.
-fn muster(field: &Field, state: &mut RoomState, group: u32, waves: u32) -> VecDeque<Vec<Recruit>> {
+/// each with the place where it appears, in the order they come: those that come with the
+/// group, then those that each wait for one of them to be destroyed.
+fn muster(field: &Field, state: &mut RoomState, group: u32) -> VecDeque<Vec<Recruit>> {
     let count = progression::enemy_count(group, field.players().max(1), false);
     let genomes = enemy::group(field.seed, field.difficulty, group, count);
     let places = state.room.places(group, &state.blocks, &state.crates);
@@ -133,7 +129,8 @@ fn muster(field: &Field, state: &mut RoomState, group: u32, waves: u32) -> VecDe
     });
     let left_over = places.iter().skip(tanks.len());
     state.spare = left_over.map(|place| place.as_vec2()).collect();
-    state.split = progression::wave_sizes(tanks.len() as u32, waves);
+    let (first, held) = progression::room_parts(tanks.len() as u32);
+    state.split = [first, held].into_iter().filter(|&part| part > 0).collect();
     let sizes = state.split.iter();
     sizes
         .map(|&size| tanks.by_ref().take(size as usize).collect())
@@ -142,7 +139,7 @@ fn muster(field: &Field, state: &mut RoomState, group: u32, waves: u32) -> VecDe
 
 /// Opens the room for a run that has cleared this many groups: the room with what stands in
 /// it, the next group in reserve, and a lull before it comes.
-pub fn open(commands: &mut Commands, field: &mut Field, cleared: u32, playtest: Option<&Playtest>) {
+pub fn open(commands: &mut Commands, field: &mut Field, cleared: u32) {
     let Some(mut state) = field.room.take() else {
         return;
     };
@@ -152,7 +149,7 @@ pub fn open(commands: &mut Commands, field: &mut Field, cleared: u32, playtest: 
     let layout = state.room.shell();
     commands.spawn((Sector { layout }, SectorIndex(0), InSector(0)));
     state.lay(commands, cleared + 1, true);
-    state.next = muster(field, &mut state, cleared + 1, waves(playtest));
+    state.next = muster(field, &mut state, cleared + 1);
     state.lull = Some(LULL);
     field.room = Some(state);
 }
@@ -162,7 +159,6 @@ pub fn advance(
     mut commands: Commands,
     mut field: ResMut<Field>,
     mut run: ResMut<Run>,
-    playtest: Option<Res<Playtest>>,
     mut players: Query<(&mut Tank, &Position), With<Player>>,
     enemies: Query<&Tank, (With<Enemy>, Without<Player>)>,
     standing: Query<Entity, Or<(With<Block>, With<ExplosiveCrate>, With<Planned>)>>,
@@ -171,13 +167,12 @@ pub fn advance(
     let Some(mut state) = field.room.take() else {
         return;
     };
-    let playtest = playtest.as_deref();
     let front = run.sector;
     match state.lull {
         // The lull waits for a single player who fell.
         Some(_) if run.phase != RunPhase::Playing => {}
         Some(left) if left > TICK => state.lull = Some(left - TICK),
-        // The next group is on: its first wave is announced at once.
+        // The next group is on. It is announced at once, with the tanks that come first.
         Some(_) => {
             state.lull = None;
             let group = front + 1;
@@ -187,14 +182,16 @@ pub fn advance(
                 tank.sector = group;
             }
             let waiting = std::mem::take(&mut state.next);
+            // As many tanks stay in the room as come first, for as long as any waits.
+            let most = state.split.first().copied().unwrap_or(0);
             field.arenas.clear();
             field.arenas.insert(
                 group,
                 Arena {
-                    waves: waiting.len() as u32,
                     waiting,
                     incoming: Vec::new(),
-                    fuse: Fuse::Out,
+                    fuse: Fuse::Burning(0.0),
+                    order: Order::Refill(most),
                 },
             );
             events.write(SimEvent::SectorEntered { sector: group });
@@ -220,7 +217,7 @@ pub fn advance(
                 }
                 field.stale = true;
                 state.lay(&mut commands, front + 1, false);
-                state.next = muster(&field, &mut state, front + 1, waves(playtest));
+                state.next = muster(&field, &mut state, front + 1);
                 state.lull = Some(LULL);
             }
             // A single player who comes back finds the tanks that were left in reserve. They
@@ -241,8 +238,8 @@ pub fn advance(
 }
 
 /// Keeps in reserve the tanks that have not come yet: the group that a lull announces, or
-/// what the group that is on still holds back. A tank leaves the reserve when its place in
-/// the room is marked.
+/// what the group that is on still holds back, each for a tank to be destroyed. A tank leaves
+/// the reserve when its place in the room is marked.
 pub fn reserve(
     mut commands: Commands,
     field: Res<Field>,

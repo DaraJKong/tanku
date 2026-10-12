@@ -7,7 +7,7 @@ The solo game and co-op are playable, on Linux, on Windows and in a browser:
 - **Solo:** the corridor, the generated enemies with their classes and their brains, arenas and their waves, lives and checkpoints, the menus, the sound cues and the music. Runs unlock achievements. Clearing sector 5 unlocks arena mode, a run in one room against one group after another. Clearing sector 10 lets the player type the seed of a run. Clearing sector 20 unlocks free mode, in which the player spends the 59 points of their tank as they like, in a garage that draws the tank as they build it. Clearing sector 30 unlocks hard mode, whose enemies are stronger from the first sector.
 - **Co-op:** up to four players. One of them hosts a game, which the others find on the local network or join by its address, from a desktop build or from a browser. A game can have a name and a password. The host sets the run in the lobby: its difficulty, its seed, arena mode, and free mode, in which each player has the tank of their own garage. Nothing is locked for a host who has company. The run starts once everyone has said that they are ready. A destroyed tank is a wreck that a teammate repairs.
 
-Co-op has been played by two players. With three or four, it is checked by tests and by scripted runs only. Arena mode is new and an experiment: nobody has played it yet, and one of its rules has a switch in a playtest (see [Arena mode](#arena-mode)). The build for Windows is checked under wine, not yet on Windows itself. The specification is in [docs/PROJECT.md](docs/PROJECT.md).
+Co-op has been played by two players. With three or four, it is checked by tests and by scripted runs only. Arena mode is new and an experiment: its rules are still being set in play (see [Arena mode](#arena-mode)). The build for Windows is checked under wine, not yet on Windows itself. The specification is in [docs/PROJECT.md](docs/PROJECT.md).
 
 ## Workspace
 
@@ -80,24 +80,20 @@ Arena mode is an option of a run, as free mode is. A single player unlocks it by
 
 A run in arena mode has no corridor. It is fought in one room, which the seed draws, against one group after another:
 
-- **Groups.** A group is the group of the sector of its number, for as many players. It comes in two waves, each as large as a wave of an arena of the corridor: the second one when the last tank of the first is destroyed. The place of each tank is marked for a second before the tank appears, as in an arena. A tank whose place has a player within 4 m takes another place that has room, so that a wave never waits for a player to move.
-- **The lull and the reserve.** Between two groups, and before the first one, there is a lull of 3 s. The tanks that have not come yet wait in reserve south of the room, as outlines in dashes with every part that tells a stat, so that the next group is read as a group is through a barrier. A tank leaves the reserve when its place in the room is marked: during a fight, the reserve holds the second wave.
+- **Groups.** A group is the group of the sector of its number, for as many players. Half of it comes when the lull is over, rounded up: as many tanks as a wave of an arena of the corridor has. From then on, a tank comes for each one that is destroyed, so that the room stays as full for as long as a tank waits. The place of each tank is marked for a second before the tank appears, as in an arena. A tank whose place has a player within 4 m, or a tank of its group on it, takes another place that has room, so that no tank waits for a player to move.
+- **The lull and the reserve.** Between two groups, and before the first one, there is a lull of 3 s. The tanks that have not come yet wait in reserve south of the room, as outlines in dashes with every part that tells a stat, so that the next group is read as a group is through a barrier. A tank leaves the reserve when its place in the room is marked: during a fight, the reserve holds the tanks that each wait for one to be destroyed, and they leave it from left to right.
 - **The room.** It is laid out anew for each group, with the cover and the crates of the sector of that number. The place of each block and of each crate is inked in on the floor for 2 s first, and one that has a tank or a mine in its place waits. The marks that a fight left on the floor go with the old layout.
 - **Lives.** A single player gets a life back for every fifth group that is cleared, up to three. A tank that is destroyed comes back in the middle of the room, and what was left of the group goes back into reserve and comes again. Several players repair each other, as in the corridor.
 - **The view** stays on the room: on a wide screen, all of it and the reserve show at once.
 - **The score** is the number of groups cleared. Arena mode has records of its own, and its runs earn no achievement.
 
-One of these rules is the least settled, and has a switch in the pause menu of a playtest, which holds from the next group on:
-
-| Switch | The rule | The other way |
-|---|---|---|
-| A group comes | In two waves | All at once: every tank of the group is marked together |
+Three other rules were tried behind switches of a playtest and left the game: a group in two waves, the second when the last tank of the first was destroyed, a group all at once, and blocks and crates that stood again 10 s after they were destroyed.
 
 ```bash
 cargo run -p tanku_client -- --playtest --seed TANKU
 ```
 
-Pick "Solo", turn arena mode on and start. Esc opens the menu with the switch, and "Skip to group" goes straight to a later group: group 15 is the first with six tanks.
+Pick "Solo", turn arena mode on and start. Esc opens the menu, where "Skip to group" goes straight to a later group: group 15 is the first with six tanks.
 
 ### Playtest
 
@@ -113,7 +109,6 @@ cargo run -p tanku_client -- --playtest
 | Skip to a sector | The pause menu picks any sector up to 999. The tank comes back at the end of the sector before it, in front of its barrier, as it does after clearing that sector. In arena mode, it picks a group: the run goes on with the lull before that group. |
 | Choose the seed | `--seed TEXT` after `--playtest` starts every run on that seed instead of a random one. |
 | Nothing locked | The solo screen takes a typed seed and offers hard mode, arena mode and free mode, whatever the player has unlocked. |
-| The rules of arena mode | In arena mode, the pause menu has a switch: see [Arena mode](#arena-mode). |
 | Bring a tank | `--tank TANK` after `--playtest` starts every run in free mode, in that tank, without a visit to the garage: see [The garage check](#the-garage-check). |
 
 With a seed and a skip, a seed and a sector from a report are a few clicks away:
@@ -264,22 +259,24 @@ After a change to what a mode makes of its enemies, two more tests send the same
 cargo test -p tanku_server trials::modes -- --ignored --nocapture
 ```
 
-After a change to arena mode, one more test fights the groups of sectors 6 to 9 and 15 to 20 three ways on the same eight seeds: each in its sector of the corridor, in the room in two waves, and in the room all at once. It prints the same figures, and takes two minutes:
+After a change to arena mode, one more test fights the groups of sectors 6 to 9 and 15 to 20 twice on the same eight seeds: each in its sector of the corridor, and in the room. It prints the same figures, and takes a minute and a half:
 
 ```bash
 cargo test -p tanku_server trials::arena -- --ignored --nocapture
 ```
 
-On 2026-10-12 it gave this. In two waves, the room is about as dangerous as the corridor. All at once, half as many shots again land in a minute in the late groups, and twice as many in the early ones:
+On 2026-10-12 it gave this, with the two ways that were tried first, on the same seeds. A room that is kept full is faster and more dangerous than the corridor: about 30% more shots land in a minute, and in the late groups a fifth more for each tank that falls. It lies between the two waves, which were about as dangerous as the corridor, and the group that came all at once:
 
 | Groups | Fought | Median time | Shots that landed in a minute | For each tank that fell |
 |---|---|---|---|---|
 | 6 to 9 | In the corridor | 13.1 s | 7.0 | 0.62 |
-| 6 to 9 | In the room, two waves | 10.3 s | 8.2 | 0.48 |
-| 6 to 9 | In the room, at once | 10.9 s | 14.3 | 0.85 |
+| 6 to 9 | In the room | 9.6 s | 9.1 | 0.52 |
+| 6 to 9 | In the room, in two waves (left the game) | 10.3 s | 8.2 | 0.48 |
+| 6 to 9 | In the room, all at once (left the game) | 10.9 s | 14.3 | 0.85 |
 | 15 to 20 | In the corridor | 33.3 s | 13.3 | 1.30 |
-| 15 to 20 | In the room, two waves | 27.5 s | 14.7 | 1.29 |
-| 15 to 20 | In the room, at once | 25.6 s | 20.2 | 1.66 |
+| 15 to 20 | In the room | 26.9 s | 17.1 | 1.57 |
+| 15 to 20 | In the room, in two waves (left the game) | 27.5 s | 14.7 | 1.29 |
+| 15 to 20 | In the room, all at once (left the game) | 25.6 s | 20.2 | 1.66 |
 
 The crude player says little about one of flesh and blood: nothing destroys it, and it neither takes cover nor reads the reserve.
 
@@ -316,7 +313,7 @@ TANKU_DEV_SCRIPT="start TANKU; wait 1; warp 12; wait 1; peek 0; wait 1; shot sec
 A run starts in arena mode with `arena` after the difficulty. There, `warp 14` goes to the lull before group 15, and `clear` destroys the tanks that are in the room:
 
 ```bash
-TANKU_DEV_SCRIPT="start TANKU 1 normal arena; warp 14; wait 2; shot reserve.png; wait 3; shot wave.png; quit" cargo run -p tanku_client
+TANKU_DEV_SCRIPT="start TANKU 1 normal arena; warp 14; wait 2; shot reserve.png; wait 3; shot group.png; quit" cargo run -p tanku_client
 ```
 
 Two scripted games can play together: one hosts on a port, and the other joins it. A game that hosts on a port of its own takes browsers on the port after it, and the words after the port are the name of the game, as in `host 28999 Friday night`. `password sesame` before it gives the game a password, and `join 127.0.0.1:28999 sesame` joins with one. A script can also go through the menus as a player does: `press` presses a button by its label, `type` writes a text and `key` presses `enter`, `tab` or `backspace`. Where two rows of a menu hold buttons with the same label, `press` names the row first, as in `press Arena mode: On`.

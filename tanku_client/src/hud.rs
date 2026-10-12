@@ -792,11 +792,9 @@ fn place(run: &Run) -> (&'static str, String) {
 }
 
 /// What a message says of a wave that is on its way: in an arena of the corridor, which
-/// wave of how many. In arena mode, the group too, and a group that comes at once has no
-/// waves to count.
+/// wave of how many. In arena mode, the group that comes: it has no waves to count.
 fn wave_words(run: Option<&Run>, wave: u32, of: u32) -> String {
     match run.filter(|run| run.arena) {
-        Some(run) if of > 1 => format!("Group {} - wave {wave} of {of}", group(run)),
         Some(run) => format!("Group {}", group(run)),
         None => format!("Wave {wave} of {of}"),
     }
@@ -1052,7 +1050,8 @@ fn toasts(
                 (3, message)
             }
             SimEvent::TankRepaired { .. } => (2, "Tank repaired".to_string()),
-            // The waves of an arena are counted, so that the players know when it ends.
+            // The waves of an arena are counted, so that the players know when it ends. A
+            // group of arena mode is named when it comes.
             SimEvent::WaveIncoming { wave, of } => (2, wave_words(run.as_deref(), wave, of)),
             _ => continue,
         };
@@ -1639,20 +1638,15 @@ mod tests {
         assert_eq!(told(&run(true, 7, Some(2))), "NEXT GROUP 8");
         assert_eq!(told(&run(true, 8, None)), "GROUP 8");
 
-        // A wave of an arena of the corridor is counted. One of arena mode names its group
-        // too, and a group that comes at once has no waves to count.
+        // A wave of an arena of the corridor is counted. A group of arena mode is named: it
+        // has no waves to count.
         let corridor = run(false, 7, None);
         assert_eq!(wave_words(Some(&corridor), 2, 3), "Wave 2 of 3");
         assert_eq!(wave_words(None, 1, 3), "Wave 1 of 3");
         let room = run(true, 8, None);
-        assert_eq!(wave_words(Some(&room), 1, 2), "Group 8 - wave 1 of 2");
-        assert_eq!(wave_words(Some(&room), 2, 2), "Group 8 - wave 2 of 2");
         assert_eq!(wave_words(Some(&room), 1, 1), "Group 8");
-        // A guest may hear of the wave before it hears that the lull is over.
-        assert_eq!(
-            wave_words(Some(&run(true, 7, Some(1))), 1, 2),
-            "Group 8 - wave 1 of 2"
-        );
+        // A guest may hear of the group before it hears that the lull is over.
+        assert_eq!(wave_words(Some(&run(true, 7, Some(1))), 1, 1), "Group 8");
 
         // The last seconds of a lull are counted down, each of them once. Its first second
         // is left to the message that says that a group is cleared.

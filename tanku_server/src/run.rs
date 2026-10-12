@@ -48,16 +48,11 @@ fn clear(
 
 /// Loads the corridor around a sector and puts the players in it. In arena mode, opens the
 /// room for a run that has cleared this many groups. Returns where the players stand.
-fn enter(
-    commands: &mut Commands,
-    field: &mut Field,
-    sector: u32,
-    playtest: Option<&Playtest>,
-) -> Vec2 {
+fn enter(commands: &mut Commands, field: &mut Field, sector: u32) -> Vec2 {
     field.loaded.clear();
     field.arenas.clear();
     if field.room.is_some() {
-        room::open(commands, field, sector, playtest);
+        room::open(commands, field, sector);
     } else {
         field.load_entry_barrier(commands, sector);
         field.load(commands, sector);
@@ -115,7 +110,7 @@ fn place_players(commands: &mut Commands, field: &mut Field, sector: u32) -> Vec
 /// how a playtest skips to a sector.
 fn restart(
     commands: &mut Commands,
-    (run, playtest): (&mut Run, Option<&Playtest>),
+    run: &mut Run,
     field: &mut Field,
     entities: &Query<Entity, Or<(With<InSector>, With<Player>)>>,
     casualties: &mut Casualties,
@@ -124,7 +119,7 @@ fn restart(
     clear(commands, entities, casualties);
     let checkpoint = run.checkpoint;
     field.cleared.retain(|&sector| sector <= checkpoint);
-    let at = enter(commands, field, checkpoint, playtest);
+    let at = enter(commands, field, checkpoint);
     run.sector = checkpoint;
     run.phase = RunPhase::Playing;
     events.write(SimEvent::PlayerRespawned { at });
@@ -164,7 +159,7 @@ pub fn handle_requests(
                         *seat = *tank;
                     }
                 }
-                enter(&mut commands, &mut field, 0, playtest.as_deref());
+                enter(&mut commands, &mut field, 0);
                 commands.insert_resource(field);
                 commands.insert_resource(Run {
                     seed_text: seed_text.trim().to_uppercase(),
@@ -209,7 +204,6 @@ pub fn skip(
     mut requests: MessageReader<RunRequest>,
     mut run: ResMut<Run>,
     mut field: ResMut<Field>,
-    playtest: Option<Res<Playtest>>,
     entities: Query<Entity, Or<(With<InSector>, With<Player>)>>,
     mut casualties: ResMut<Casualties>,
     mut events: MessageWriter<SimEvent>,
@@ -229,7 +223,7 @@ pub fn skip(
     field.cleared.extend(0..=checkpoint);
     restart(
         &mut commands,
-        (&mut run, playtest.as_deref()),
+        &mut run,
         &mut field,
         &entities,
         &mut casualties,
@@ -376,7 +370,6 @@ pub fn clock(
     mut commands: Commands,
     mut run: ResMut<Run>,
     mut field: ResMut<Field>,
-    playtest: Option<Res<Playtest>>,
     entities: Query<Entity, Or<(With<InSector>, With<Player>)>>,
     (players, weapons, mut enemies): (
         Query<(), With<Player>>,
@@ -400,7 +393,7 @@ pub fn clock(
     if !players.is_empty() || !field.loaded.contains(&checkpoint) {
         restart(
             &mut commands,
-            (&mut run, playtest.as_deref()),
+            &mut run,
             &mut field,
             &entities,
             &mut casualties,

@@ -93,25 +93,44 @@ pub enum Fuse {
     Out,
 }
 
+/// When the tanks that an arena holds back come.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Order {
+    /// In this many waves in all, each when nothing is left of the one before it: an arena
+    /// of the corridor.
+    Waves(u32),
+    /// One for each tank that is destroyed, so that this many are there for as long as any is
+    /// held back: a group of arena mode.
+    Refill(u32),
+}
+
 /// The enemies that an arena still holds back. An arena is empty when the players come in:
 /// its enemies appear in waves, each when the one before it is destroyed, at places that are
-/// marked for a moment first.
+/// marked for a moment first. A group of arena mode is held back the same way, and comes
+/// half at first, then a tank for each one that is destroyed.
 #[derive(Clone, Debug)]
 pub struct Arena {
-    /// The waves that have not started, the next one first.
+    /// The tanks that have not come, the next ones first, in the waves that they were drawn
+    /// up in.
     pub waiting: VecDeque<Vec<Recruit>>,
-    /// The tanks of the wave in progress that are not there yet, each with the time until it
+    /// The tanks that are on their way and not there yet, each with the time until it
     /// appears. A tank whose place a player stands too close to has none: it waits for room.
     pub incoming: Vec<(Recruit, Option<f32>)>,
     pub fuse: Fuse,
-    /// How many waves the arena has in all.
-    pub waves: u32,
+    pub order: Order,
 }
 
 impl Arena {
-    /// Whether enemies are still to come.
+    /// Whether enemies are still to come. A wave that was drawn empty holds nobody.
     pub fn holds_more(&self) -> bool {
-        !self.waiting.is_empty() || !self.incoming.is_empty()
+        self.waiting.iter().any(|wave| !wave.is_empty()) || !self.incoming.is_empty()
+    }
+
+    /// Takes the next tank that is held back. The wave that it was drawn up in may be left
+    /// with nobody.
+    pub fn draw(&mut self) -> Option<Recruit> {
+        self.waiting.retain(|wave| !wave.is_empty());
+        Some(self.waiting.front_mut()?.remove(0))
     }
 }
 
@@ -256,7 +275,7 @@ impl Field {
                         waiting: waves.collect(),
                         incoming: Vec::new(),
                         fuse: Fuse::Unlit,
-                        waves: sizes.len() as u32,
+                        order: Order::Waves(sizes.len() as u32),
                     },
                 );
             } else {

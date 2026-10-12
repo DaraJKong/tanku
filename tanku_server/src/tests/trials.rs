@@ -234,7 +234,6 @@ fn fight(
     let mut app = begin(seed);
     app.insert_resource(Playtest {
         infinite_lives: true,
-        ..default()
     });
     skip_to(&mut app, sector);
     let mut field = app.world_mut().resource_mut::<Field>();
@@ -302,7 +301,6 @@ fn skirmish_in(
     let mut app = begin_as(seed, 1, difficulty, tank.into_iter().collect());
     app.insert_resource(Playtest {
         infinite_lives: true,
-        ..default()
     });
     skip_to(&mut app, sector);
     let mut field = app.world_mut().resource_mut::<Field>();
@@ -614,14 +612,13 @@ mod arena {
 
     use super::*;
 
-    /// A group of arena mode against the bot in the standard tank, which fires bursts: in
-    /// two waves, or all at once. The fight is timed from the end of the lull.
-    fn room_skirmish(seed: &str, group: u32, whole: bool, limit: f32) -> (Vec<Genome>, Trial) {
+    /// A group of arena mode against the bot in the standard tank, which fires bursts. The
+    /// fight is timed from the end of the lull.
+    fn room_skirmish(seed: &str, group: u32, limit: f32) -> (Vec<Genome>, Trial) {
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, CorePlugin, ServerPlugin));
         app.insert_resource(Playtest {
             infinite_lives: true,
-            whole_groups: whole,
         });
         app.world_mut().write_message(RunRequest::Start {
             seed: seed.into(),
@@ -714,10 +711,10 @@ mod arena {
         (made, trial)
     }
 
-    /// The groups of two stretches of sectors, each fought three ways on the same seeds: in
-    /// its sector of the corridor, in the room in two waves, and in the room all at once.
-    /// Only the sectors that are corridors are fought: the group is then the same, tank for
-    /// tank. It takes about ten minutes.
+    /// The groups of two stretches of sectors, each fought twice on the same seeds: in its
+    /// sector of the corridor, and in the room of arena mode. Only the sectors that are
+    /// corridors are fought: the group is then the same, tank for tank. It takes about a
+    /// minute.
     #[test]
     #[ignore = "takes minutes and prints a table"]
     fn the_same_groups_in_the_corridor_and_in_the_room() {
@@ -727,22 +724,20 @@ mod arena {
         );
         skirmish_header();
         for (from, to) in [(6, 9), (15, 20)] {
-            let (mut corridor, mut waves, mut whole) = (Vec::new(), Vec::new(), Vec::new());
+            let (mut corridor, mut room) = (Vec::new(), Vec::new());
             for seed in trial_seeds(8) {
                 for sector in from..=to {
                     let Some(fight) = skirmish(&seed, sector, Difficulty::Normal, SKIRMISH) else {
                         continue;
                     };
-                    let in_waves = room_skirmish(&seed, sector, false, SKIRMISH);
-                    assert_eq!(fight.0, in_waves.0, "seed {seed}, sector {sector}");
+                    let in_the_room = room_skirmish(&seed, sector, SKIRMISH);
+                    assert_eq!(fight.0, in_the_room.0, "seed {seed}, sector {sector}");
                     corridor.push(fight);
-                    waves.push(in_waves);
-                    whole.push(room_skirmish(&seed, sector, true, SKIRMISH));
+                    room.push(in_the_room);
                 }
             }
             skirmishes(&format!("{from}-{to}, corridor"), &corridor);
-            skirmishes(&format!("{from}-{to}, room, two waves"), &waves);
-            skirmishes(&format!("{from}-{to}, room, at once"), &whole);
+            skirmishes(&format!("{from}-{to}, room"), &room);
         }
     }
 }
