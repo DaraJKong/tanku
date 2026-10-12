@@ -4,6 +4,7 @@ use bevy::prelude::*;
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use tanku_core::{
     CorePlugin,
+    modes::Difficulty,
     sim::{Enemy, Run, RunPhase, RunRequest},
 };
 use tanku_server::{ServerPlugin, field::Field};
@@ -16,6 +17,7 @@ fn fight(sector: u32) -> App {
         seed: "BENCH".into(),
         players: 1,
         drawn: true,
+        difficulty: Difficulty::Normal,
     });
     app.world_mut().run_schedule(FixedUpdate);
 

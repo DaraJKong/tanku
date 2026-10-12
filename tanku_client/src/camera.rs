@@ -307,6 +307,7 @@ mod tests {
         Run {
             seed_text: "TEST".into(),
             seed: 1,
+            difficulty: default(),
             players: 1,
             team: 1,
             solo: true,

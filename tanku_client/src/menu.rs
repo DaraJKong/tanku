@@ -9,7 +9,7 @@ use bevy::{
 };
 use tanku_core::{
     discovery::Standing,
-    modes::Unlock,
+    modes::{Difficulty, Unlock},
     protocol::{Lobby, Member},
     rules::{MAX_PLAYERS, PLAYTEST_LAST_SECTOR, TICK_RATE},
     seed::{self, VERSION},
@@ -31,8 +31,6 @@ use crate::{
     unlocks::{self, Unlocks},
 };
 
-/// The only mode there is so far, as records name it.
-const MODE: &str = "normal";
 /// Seconds between the end of a run and the game over screen.
 const GAME_OVER_DELAY: f32 = 1.4;
 /// Meters of ground that the main menu shows from the bottom to the top of the screen.
@@ -43,6 +41,9 @@ const EXHIBIT_PLACE: Vec2 = Vec2::new(3.2, 0.2);
 const ADDRESS_LENGTH: usize = 64;
 /// The longest seed that a player types: as many letters as the screens have room for.
 const SEED_LENGTH: usize = 10;
+/// What the solo screen says of hard mode when it is chosen.
+const HARD_MODE: &str = "In hard mode, enemies have more points, every brain from the first \
+                         sector, and the guns and the experience of twenty sectors further.";
 
 /// What a button does.
 #[derive(Component, Clone, Copy, PartialEq)]
@@ -53,6 +54,10 @@ enum Press {
     Begin,
     /// On that screen: draws another seed.
     Redraw,
+    /// On that screen: sets how hard the run is.
+    Difficulty(Difficulty),
+    /// On the main menu: lists the best runs of a difficulty.
+    List(Difficulty),
     OpenAchievements,
     /// Opens a game on this machine for others to join.
     Host,
@@ -112,6 +117,14 @@ struct LobbyRoot;
 #[derive(Component)]
 struct SoloRoot;
 
+/// Where the main menu lists the best runs of a difficulty.
+#[derive(Component)]
+struct RecordList;
+
+/// The difficulty whose best runs the main menu lists.
+#[derive(Resource, Default)]
+struct Listed(Difficulty);
+
 /// The text that shows the address being typed.
 #[derive(Component)]
 struct AddressField;
@@ -139,6 +152,7 @@ struct Setup {
     seed: String,
     /// Whether the player typed the seed. The game drew it otherwise.
     typed: bool,
+    difficulty: Difficulty,
 }
 
 /// The players whom the lobby of a host tells how to join: those at a desktop game, or
@@ -194,10 +208,14 @@ pub fn plugin(app: &mut App) {
         .init_resource::<Outcome>()
         .init_resource::<Address>()
         .init_resource::<Setup>()
+        .init_resource::<Listed>()
         .init_resource::<Way>()
         .init_resource::<Copied>()
         .insert_resource(Destination(1))
-        .add_systems(OnEnter(Screen::Menu), main_menu)
+        .add_systems(
+            OnEnter(Screen::Menu),
+            (list_what_was_played, main_menu).chain(),
+        )
         .add_systems(OnEnter(Screen::Solo), draw_a_seed_for_one)
         .add_systems(OnEnter(Screen::Achievements), achievements_screen)
         .add_systems(OnEnter(Screen::Join), join_screen)
@@ -227,6 +245,7 @@ pub fn plugin(app: &mut App) {
                 refresh_settings.run_if(in_state(Overlay::Settings)),
                 (lobby_screen.run_if(in_state(Screen::Lobby)), show_copy).chain(),
                 list_games.run_if(in_state(Screen::Join)),
+                list_records.run_if(in_state(Screen::Menu)),
                 (show_address, tell_how_it_goes),
                 hover,
                 pause_time,
@@ -425,6 +444,28 @@ fn small_with(parent: &mut ChildSpawnerCommands, words: impl Bundle, width: f32,
     ));
 }
 
+/// One of the choices of a row. The one that is chosen stands in the accent and takes no
+/// press, and each of the others is a small button.
+fn choice(
+    parent: &mut ChildSpawnerCommands,
+    content: &str,
+    width: f32,
+    press: Press,
+    chosen: bool,
+) {
+    if !chosen {
+        return small(parent, content, width, press);
+    }
+    parent.spawn((
+        Node {
+            padding: UiRect::axes(px(6), px(5)),
+            ..button_node(px(width))
+        },
+        BorderColor::all(theme::ACCENT),
+        children![theme::text(content, 16.0, theme::ACCENT)],
+    ));
+}
+
 /// A figure of a run with its name above it, in a row of figures.
 fn figure(parent: &mut ChildSpawnerCommands, name: &str, value: String, last: bool) {
     parent.spawn((
@@ -457,27 +498,46 @@ fn level(wanted: f32) -> f32 {
     (wanted * 10.0).round().clamp(0.0, 10.0) / 10.0
 }
 
-/// The best run of a team of some size, or of a single player.
-fn record_line(records: &Records, players: u32) -> String {
-    match records.best(MODE, players) {
+/// The best run of a difficulty and of a team of some size, or of a single player.
+fn record_line(records: &Records, difficulty: Difficulty, players: u32) -> String {
+    let (best, none) = match difficulty {
+        Difficulty::Normal => ("Best run", "No run yet"),
+        Difficulty::Hard => ("Best run in hard mode", "No run in hard mode yet"),
+    };
+    match records.best(difficulty, players) {
         Some(record) => format!(
-            "Best run: sector {}, seed {}, v{}",
+            "{best}: sector {}, seed {}, v{}",
             record.sector, record.seed, record.version
         ),
-        None => "No run yet".to_string(),
+        None => none.to_string(),
     }
 }
 
-/// The best runs of the teams that have one, a line for each size.
-fn team_records(records: &Records) -> Vec<String> {
-    let teams = (2..=MAX_PLAYERS).filter_map(|players| {
-        let record = records.best(MODE, players)?;
+/// The best runs of a difficulty, a line for each size of team that has one: a single player
+/// first.
+fn records_of(records: &Records, difficulty: Difficulty) -> Vec<String> {
+    let teams = (1..=MAX_PLAYERS).filter_map(|players| {
+        let record = records.best(difficulty, players)?;
+        let whose = match players {
+            1 => "Best run".to_string(),
+            players => format!("{players} players"),
+        };
         Some(format!(
-            "{players} players: sector {}, seed {}, v{}",
+            "{whose}: sector {}, seed {}, v{}",
             record.sector, record.seed, record.version
         ))
     });
     teams.collect()
+}
+
+/// The seed of a run with the version of the game and, in hard mode, the difficulty: what
+/// tells one level from another.
+fn level_line(run: &Run) -> String {
+    let level = format!("Seed {}, v{VERSION}", run.seed_text);
+    match run.difficulty {
+        Difficulty::Normal => level,
+        Difficulty::Hard => format!("{level}, hard mode"),
+    }
 }
 
 /// A line that tells the player how a game of several players goes.
@@ -485,12 +545,82 @@ fn status_line(parent: &mut ChildSpawnerCommands) {
     parent.spawn((StatusLine, theme::text("", 17.0, theme::DANGER)));
 }
 
-fn main_menu(
+/// The main menu first lists the best runs of the difficulty that the player chose last
+/// for a run of their own.
+fn list_what_was_played(
+    settings: Res<Settings>,
+    unlocks: Res<Unlocks>,
+    options: Res<Options>,
+    mut listed: ResMut<Listed>,
+) {
+    listed.0 = last_difficulty(&settings, &unlocks, &options);
+}
+
+/// Lists the best runs of a difficulty on the main menu, again whenever there is a new one
+/// or the player asks for those of another difficulty. A difficulty is only offered once the
+/// player has a run in it.
+fn list_records(
     mut commands: Commands,
     records: Res<Records>,
-    playtest: Option<Res<Playtest>>,
-    options: Res<Options>,
+    listed: Res<Listed>,
+    lists: Query<(Entity, Ref<RecordList>)>,
 ) {
+    for (list, fresh) in &lists {
+        if !records.is_changed() && !listed.is_changed() && !fresh.is_added() {
+            continue;
+        }
+        let (name, none) = match listed.0 {
+            Difficulty::Normal => ("RECORD", "No run yet"),
+            Difficulty::Hard => ("RECORD IN HARD MODE", "No run in hard mode yet"),
+        };
+        let other = match listed.0 {
+            Difficulty::Normal => Difficulty::Hard,
+            Difficulty::Hard => Difficulty::Normal,
+        };
+        let offered = listed.0 != Difficulty::Normal || !records_of(&records, other).is_empty();
+        let mut lines = records_of(&records, listed.0);
+        if lines.is_empty() {
+            lines.push(none.to_string());
+        }
+        commands
+            .entity(list)
+            .despawn_related::<Children>()
+            .with_children(|record| {
+                let header = Node {
+                    justify_content: JustifyContent::SpaceBetween,
+                    align_items: AlignItems::Center,
+                    column_gap: px(12),
+                    ..default()
+                };
+                record.spawn(header).with_children(|header| {
+                    header.spawn(theme::label(name, 12.0, theme::TEXT_DIM));
+                    if offered {
+                        let to = match other {
+                            Difficulty::Normal => "Normal mode",
+                            Difficulty::Hard => "Hard mode",
+                        };
+                        header.spawn((
+                            Button,
+                            Press::List(other),
+                            Node {
+                                padding: UiRect::axes(px(8), px(2)),
+                                border: UiRect::all(px(1)),
+                                ..default()
+                            },
+                            BackgroundColor(theme::SURFACE_RAISED),
+                            BorderColor::all(theme::RULE),
+                            children![theme::label(to, 12.0, theme::TEXT)],
+                        ));
+                    }
+                });
+                for line in lines {
+                    record.spawn(theme::text(line, 16.0, theme::TEXT));
+                }
+            });
+    }
+}
+
+fn main_menu(mut commands: Commands, playtest: Option<Res<Playtest>>, options: Res<Options>) {
     commands
         .spawn((
             DespawnOnExit(Screen::Menu),
@@ -529,21 +659,17 @@ fn main_menu(
                 if cfg!(not(target_arch = "wasm32")) {
                     button(parent, "Quit", Press::Quit);
                 }
-                parent
-                    .spawn(ruled(Node {
+                // `list_records` fills it in.
+                parent.spawn((
+                    RecordList,
+                    ruled(Node {
                         flex_direction: FlexDirection::Column,
                         row_gap: px(4),
                         padding: UiRect::axes(px(12), px(8)),
-                        margin: UiRect::top(px(14)),
+                        margin: UiRect::top(px(8)),
                         ..default()
-                    }))
-                    .with_children(|record| {
-                        record.spawn(theme::label("RECORD", 12.0, theme::TEXT_DIM));
-                        record.spawn(theme::text(record_line(&records, 1), 16.0, theme::TEXT));
-                        for team in team_records(&records) {
-                            record.spawn(theme::text(team, 16.0, theme::TEXT));
-                        }
-                    });
+                    }),
+                ));
                 status_line(parent);
                 if playtest.is_some() {
                     line(
@@ -741,17 +867,39 @@ fn tell_how_it_goes(
     }
 }
 
-/// Draws a seed for the run that a single player sets up.
-fn draw_a_seed_for_one(options: Res<Options>, time: Res<Time<Real>>, mut setup: ResMut<Setup>) {
+/// Draws a seed for the run that a single player sets up. Its difficulty is the one that the
+/// player chose last, if it is still theirs to choose.
+fn draw_a_seed_for_one(
+    options: Res<Options>,
+    time: Res<Time<Real>>,
+    settings: Res<Settings>,
+    unlocks: Res<Unlocks>,
+    mut setup: ResMut<Setup>,
+) {
     *setup = Setup {
         seed: new_seed(&options, time.elapsed().as_nanos() as u64),
         typed: false,
+        difficulty: last_difficulty(&settings, &unlocks, &options),
     };
 }
 
 /// Whether a mode or an option is open to a single player. A playtest has them all.
 fn open(unlocks: &Unlocks, options: &Options, unlock: Unlock) -> bool {
     options.playtest || unlocks.has(unlock)
+}
+
+/// Whether a single player may play a difficulty.
+fn plays(unlocks: &Unlocks, options: &Options, difficulty: Difficulty) -> bool {
+    let unlock = difficulty.unlock();
+    unlock.is_none_or(|unlock| open(unlocks, options, unlock))
+}
+
+/// The difficulty that the player chose last for a run of their own, if it is still theirs
+/// to choose: a choice that was made in a playtest is none for a run that counts.
+fn last_difficulty(settings: &Settings, unlocks: &Unlocks, options: &Options) -> Difficulty {
+    Some(settings.solo_difficulty)
+        .filter(|&difficulty| plays(unlocks, options, difficulty))
+        .unwrap_or_default()
 }
 
 /// What a key does to the seed being typed. A seed is made of letters and digits, and reads
@@ -778,6 +926,7 @@ fn begin(setup: &Setup, requests: &mut MessageWriter<RunRequest>, screen: &mut N
         seed: setup.seed.clone(),
         players: 1,
         drawn: !setup.typed,
+        difficulty: setup.difficulty,
     });
     screen.set(Screen::Playing);
 }
@@ -809,7 +958,7 @@ fn type_seed(
             }
             typed_seed(&mut seed, &key.logical_key, key.text.as_deref());
             if seed != setup.seed {
-                *setup = Setup { seed, typed: true };
+                (setup.seed, setup.typed) = (seed, true);
             }
         }
     }
@@ -850,7 +999,7 @@ fn solo_screen(
     for root in &roots {
         commands.entity(root).despawn();
     }
-    // Neither mode is in the game yet: an unlocked one says so.
+    // Free mode is not in the game yet: once it is unlocked, it says so.
     let waits = |unlock: Unlock| {
         if open(&unlocks, &options, unlock) {
             "Not in the game yet".to_string()
@@ -858,6 +1007,7 @@ fn solo_screen(
             unlocks::condition(unlock)
         }
     };
+    let hard = plays(&unlocks, &options, Difficulty::Hard);
     let types = open(&unlocks, &options, Unlock::ChosenSeed);
     commands
         .spawn((
@@ -881,11 +1031,25 @@ fn solo_screen(
                 parent.spawn(theme::title("Solo", 84.0, theme::TEXT));
                 section(parent, "Run");
                 row(parent, "Difficulty", |row| {
-                    row.spawn(theme::text("Normal", 16.0, theme::TEXT));
+                    // A player who has a single difficulty has nothing to choose.
+                    if !hard {
+                        row.spawn(theme::text("Normal", 16.0, theme::TEXT));
+                        return;
+                    }
+                    for difficulty in Difficulty::ALL {
+                        let name = unlocks::difficulty_name(difficulty);
+                        let chosen = setup.difficulty == difficulty;
+                        choice(row, name, 90.0, Press::Difficulty(difficulty), chosen);
+                    }
                 });
-                row(parent, "Hard mode", |row| {
-                    row.spawn(theme::text(waits(Unlock::HardMode), 16.0, theme::TEXT_DIM));
-                });
+                if !hard {
+                    row(parent, "Hard mode", |row| {
+                        let unlock = unlocks::condition(Unlock::HardMode);
+                        row.spawn(theme::text(unlock, 16.0, theme::TEXT_DIM));
+                    });
+                } else if setup.difficulty == Difficulty::Hard {
+                    line(parent, HARD_MODE, theme::TEXT_DIM);
+                }
                 row(parent, "Free mode", |row| {
                     row.spawn(theme::text(waits(Unlock::FreeMode), 16.0, theme::TEXT_DIM));
                 });
@@ -949,6 +1113,12 @@ fn achievements_screen(mut commands: Commands, unlocks: Res<Unlocks>) {
                         ("Unlocked", theme::GOOD)
                     } else {
                         ("Locked", theme::TEXT_DIM)
+                    };
+                    // What isn't built yet says so, before a player sets out to earn it.
+                    let state = if unlocks::built(unlock) {
+                        state.to_string()
+                    } else {
+                        format!("{state} \u{b7} not in the game yet")
                     };
                     parent
                         .spawn(ruled(Node {
@@ -1374,7 +1544,7 @@ fn lobby_screen(
                         }
                     });
                 section(parent, "Run");
-                row(parent, "Mode", |row| {
+                row(parent, "Difficulty", |row| {
                     row.spawn(theme::text("Normal", 16.0, theme::TEXT));
                 });
                 row(parent, "Seed", |row| {
@@ -1463,11 +1633,7 @@ fn pause_menu(
                 button(parent, skip, Press::Skip);
             }
             if let Some(run) = run {
-                line(
-                    parent,
-                    format!("Seed {}, v{VERSION}", run.seed_text),
-                    theme::TEXT_DIM,
-                );
+                line(parent, level_line(&run), theme::TEXT_DIM);
             }
         },
     );
@@ -1501,7 +1667,7 @@ fn new_seed(options: &Options, entropy: u64) -> String {
 /// Keeps the record of a run for a team of the size it started with, unless it was a playtest.
 /// Returns whether the record is new.
 fn keep_record(records: &mut Records, run: &Run) -> bool {
-    !run.playtest && records.submit(MODE, run.team, run.cleared, &run.seed_text)
+    !run.playtest && records.submit(run.difficulty, run.team, run.cleared, &run.seed_text)
 }
 
 /// Where a run ended, as the stamp of the game over screen tells it.
@@ -1529,6 +1695,13 @@ fn game_over(
         _ if playtest => "PLAYTEST".to_string(),
         1 => "SOLO".to_string(),
         team => format!("CO-OP \u{b7} {team} PLAYERS"),
+    };
+    let difficulty = run
+        .as_ref()
+        .map_or(Difficulty::Normal, |run| run.difficulty);
+    let mode = match difficulty {
+        Difficulty::Normal => mode,
+        Difficulty::Hard => format!("{mode} \u{b7} HARD MODE"),
     };
     let blow = run.as_ref().and_then(|run| run.lost_to);
     commands
@@ -1586,18 +1759,15 @@ fn game_over(
                             figure(figures, "TIME", time, false);
                             figure(figures, "KILLS", run.kills.to_string(), true);
                         });
-                    line(
-                        parent,
-                        format!("Seed {}, v{VERSION}", run.seed_text),
-                        theme::TEXT_DIM,
-                    );
+                    line(parent, level_line(run), theme::TEXT_DIM);
                 }
                 if playtest {
                     line(parent, "Playtest: no record kept", theme::TEXT_DIM);
                 } else if outcome.new_record {
                     line(parent, "New record", theme::GOOD);
                 } else {
-                    line(parent, record_line(&records, team), theme::TEXT_DIM);
+                    let best = record_line(&records, difficulty, team);
+                    line(parent, best, theme::TEXT_DIM);
                 }
                 for &unlock in &unlocks.new {
                     let name = unlocks::name(unlock);
@@ -1781,7 +1951,7 @@ fn press(
     mut destination: ResMut<Destination>,
     (options, run, time): (Res<Options>, Option<Res<Run>>, Res<Time<Real>>),
     (session, mut address, mut notice): (Res<Session>, ResMut<Address>, ResMut<Notice>),
-    (mut setup, mut drawn): (ResMut<Setup>, ResMut<Drawn>),
+    (mut setup, mut drawn, mut listed): (ResMut<Setup>, ResMut<Drawn>, ResMut<Listed>),
     (found, mut way, invitation, mut clipboard, mut copied): (
         Res<Found>,
         ResMut<Way>,
@@ -1810,12 +1980,15 @@ fn press(
                 next_screen.set(Screen::Solo);
             }
             Press::Begin => begin(&setup, &mut requests, &mut next_screen),
-            Press::Redraw => {
-                *setup = Setup {
-                    seed: fresh_seed(),
-                    typed: false,
-                };
+            Press::Redraw => (setup.seed, setup.typed) = (fresh_seed(), false),
+            // The choice is kept for the next time.
+            Press::Difficulty(difficulty) => {
+                setup.difficulty = difficulty;
+                if settings.solo_difficulty != difficulty {
+                    settings.solo_difficulty = difficulty;
+                }
             }
+            Press::List(difficulty) => listed.0 = difficulty,
             Press::OpenAchievements => next_screen.set(Screen::Achievements),
             Press::NewRun | Press::Retry => {
                 // A seed that is played again was not drawn for the run: it can be practiced.
@@ -1826,10 +1999,13 @@ fn press(
                 notice.0 = None;
                 match *session {
                     Session::Solo => {
+                        // The next run is as hard as the one that is over.
+                        let difficulty = run.as_ref().map(|run| run.difficulty);
                         requests.write(RunRequest::Start {
                             seed,
                             players: 1,
                             drawn: fresh,
+                            difficulty: difficulty.unwrap_or(setup.difficulty),
                         });
                         next_screen.set(Screen::Playing);
                         next_overlay.set(Overlay::None);
@@ -2079,7 +2255,10 @@ fn keep_records(run: Option<Res<Run>>, mut records: ResMut<Records>, mut last: L
 
 #[cfg(test)]
 mod tests {
-    use bevy::{ecs::system::RunSystemOnce, platform::collections::HashMap};
+    use bevy::{
+        ecs::{message::Messages, system::RunSystemOnce},
+        platform::collections::HashMap,
+    };
     use tanku_core::{
         sim::{Blow, Team, Weapon},
         stats::Stat,
@@ -2112,6 +2291,7 @@ mod tests {
         Run {
             seed_text: "85GVTHQA".into(),
             seed: 1,
+            difficulty: default(),
             players: team,
             team,
             solo: team == 1,
@@ -2168,15 +2348,23 @@ mod tests {
     /// Every screen of the menus, each with as much on it as it ever holds.
     fn screens() -> Vec<(&'static str, fn(&mut App))> {
         vec![
+            // A record for every difficulty and every size of team, each on a seed as long
+            // as one gets.
             ("the main menu", |app| {
-                app.insert_resource(Records::of_every_team(MODE, 128, "85GVTHQA"))
+                app.insert_resource(Records::of_every_team(128, LONG_SEED))
+                    .insert_resource(Notice(Some(LONG_NOTICE.into())));
+                build(app, main_menu);
+            }),
+            ("the main menu with the records of hard mode", |app| {
+                app.insert_resource(Records::of_every_team(128, LONG_SEED))
+                    .insert_resource(Listed(Difficulty::Hard))
                     .insert_resource(Notice(Some(LONG_NOTICE.into())));
                 build(app, main_menu);
             }),
             // A notice on top of this one would cross the fine line around the sheet by a
             // few pixels in the smallest windows. A playtest is a tool of the game's makers.
             ("the main menu of a playtest", |app| {
-                app.insert_resource(Records::of_every_team(MODE, 128, "85GVTHQA"))
+                app.insert_resource(Records::of_every_team(128, "85GVTHQA"))
                     .insert_resource(Playtest {
                         infinite_lives: true,
                     })
@@ -2190,6 +2378,7 @@ mod tests {
                 app.insert_resource(Setup {
                     seed: "85GVTHQA".into(),
                     typed: false,
+                    difficulty: Difficulty::Normal,
                 });
                 build(app, solo_screen);
             }),
@@ -2201,6 +2390,19 @@ mod tests {
                     .insert_resource(Setup {
                         seed: LONG_SEED.into(),
                         typed: true,
+                        difficulty: Difficulty::Normal,
+                    });
+                build(app, solo_screen);
+            }),
+            // Hard mode is unlocked and chosen, and something is left to unlock: the screen
+            // then offers the difficulties, and says what hard mode is and what the run earns.
+            ("the solo screen in hard mode", |app| {
+                let unlocks = [Unlock::ChosenSeed, Unlock::HardMode];
+                app.insert_resource(Unlocks::of(&unlocks))
+                    .insert_resource(Setup {
+                        seed: LONG_SEED.into(),
+                        typed: true,
+                        difficulty: Difficulty::Hard,
                     });
                 build(app, solo_screen);
             }),
@@ -2267,7 +2469,7 @@ mod tests {
             }),
             ("the report of a run", |app| {
                 app.insert_resource(lost_run(1))
-                    .insert_resource(Records::of_every_team(MODE, 128, "85GVTHQA"));
+                    .insert_resource(Records::of_every_team(128, "85GVTHQA"));
                 build(app, game_over);
             }),
             // A run on a seed that was played again, by a player who has things left to
@@ -2278,7 +2480,21 @@ mod tests {
                     ..lost_run(1)
                 };
                 app.insert_resource(run)
-                    .insert_resource(Records::of_every_team(MODE, 128, "85GVTHQA"));
+                    .insert_resource(Records::of_every_team(128, "85GVTHQA"));
+                build(app, game_over);
+            }),
+            // A run of four players in hard mode, on a seed as long as one gets: the lines
+            // of the report are then as long as they get.
+            ("the report of a run in hard mode", |app| {
+                let run = Run {
+                    seed_text: LONG_SEED.into(),
+                    difficulty: Difficulty::Hard,
+                    earns: false,
+                    ..lost_run(4)
+                };
+                app.insert_resource(run)
+                    .insert_resource(Session::Host)
+                    .insert_resource(Records::of_every_team(128, LONG_SEED));
                 build(app, game_over);
             }),
             ("the report of a run that unlocked three things", |app| {
@@ -2286,7 +2502,7 @@ mod tests {
                 unlocks.new = vec![Unlock::ChosenSeed, Unlock::FreeMode, Unlock::HardMode];
                 app.insert_resource(lost_run(1))
                     .insert_resource(unlocks)
-                    .insert_resource(Records::of_every_team(MODE, 128, "85GVTHQA"));
+                    .insert_resource(Records::of_every_team(128, "85GVTHQA"));
                 build(app, game_over);
             }),
             ("the report of a run, for its host", |app| {
@@ -2307,7 +2523,12 @@ mod tests {
                 build(app, settings_menu);
             }),
             ("the menu of a host during a playtest", |app| {
-                app.insert_resource(lost_run(4))
+                let run = Run {
+                    seed_text: LONG_SEED.into(),
+                    difficulty: Difficulty::Hard,
+                    ..lost_run(4)
+                };
+                app.insert_resource(run)
                     .insert_resource(Session::Host)
                     .insert_resource(Playtest {
                         infinite_lives: true,
@@ -2333,8 +2554,8 @@ mod tests {
         inside: Vec<Entity>,
     }
 
-    /// Lays out a screen of the menus as a window of this many pixels shows it.
-    fn lay_out(screen: fn(&mut App), pixels: UVec2) -> Vec<Piece> {
+    /// A game with a window of this many pixels and a screen of the menus on it.
+    fn stage(screen: fn(&mut App), pixels: UVec2) -> App {
         let mut app = sheet::tests::window(pixels, 1.0);
         app.init_state::<Screen>().init_state::<Overlay>();
         theme::plugin(&mut app);
@@ -2344,6 +2565,7 @@ mod tests {
             .init_resource::<Options>()
             .init_resource::<Address>()
             .init_resource::<Setup>()
+            .init_resource::<Listed>()
             .init_resource::<Unlocks>()
             .init_resource::<Way>()
             .init_resource::<Copied>()
@@ -2353,13 +2575,28 @@ mod tests {
         // The fonts are there from the second frame on.
         app.update();
         screen(&mut app);
-        // What the menus fill in afterward: the games that were found, the address that was
-        // typed and the notice.
+        // What the menus fill in afterward: the games that were found, the best runs, the
+        // address that was typed and the notice.
         build(&mut app, list_games);
+        build(&mut app, list_records);
         build(&mut app, show_address);
         build(&mut app, tell_how_it_goes);
         app.update();
         app.update();
+        app
+    }
+
+    /// What the buttons of a screen of the menus do.
+    fn presses(screen: fn(&mut App)) -> Vec<Press> {
+        let mut app = stage(screen, WINDOWS[0]);
+        let world = app.world_mut();
+        let mut buttons = world.query_filtered::<&Press, With<Button>>();
+        buttons.iter(world).copied().collect()
+    }
+
+    /// Lays out a screen of the menus as a window of this many pixels shows it.
+    fn lay_out(screen: fn(&mut App), pixels: UVec2) -> Vec<Piece> {
+        let mut app = stage(screen, pixels);
 
         let world = app.world_mut();
         let mut nodes = world.query::<(
@@ -2613,10 +2850,204 @@ mod tests {
     }
 
     #[test]
+    fn a_run_sets_the_record_of_its_difficulty_and_of_a_team_of_its_size() {
+        use Difficulty::{Hard, Normal};
+        let run = |difficulty: Difficulty, team: u32, cleared: u32| Run {
+            difficulty,
+            cleared,
+            ..lost_run(team)
+        };
+        let mut records = Records::default();
+        assert!(keep_record(&mut records, &run(Hard, 1, 3)));
+        assert!(records.best(Normal, 1).is_none());
+        assert_eq!(records.best(Hard, 1).unwrap().sector, 3);
+        // A run in normal mode that got further is no record of hard mode.
+        assert!(keep_record(&mut records, &run(Normal, 1, 12)));
+        assert_eq!(records.best(Hard, 1).unwrap().sector, 3);
+        assert!(!keep_record(&mut records, &run(Hard, 1, 3)));
+        assert!(keep_record(&mut records, &run(Hard, 2, 1)));
+        // The report and the main menu say which difficulty a best run is of.
+        assert_eq!(
+            record_line(&records, Normal, 1),
+            format!("Best run: sector 12, seed 85GVTHQA, v{VERSION}")
+        );
+        assert_eq!(
+            record_line(&records, Hard, 1),
+            format!("Best run in hard mode: sector 3, seed 85GVTHQA, v{VERSION}")
+        );
+        assert_eq!(record_line(&records, Normal, 3), "No run yet");
+        assert_eq!(record_line(&records, Hard, 3), "No run in hard mode yet");
+        let hard = records_of(&records, Hard);
+        assert_eq!(hard.len(), 2);
+        assert!(hard[0].starts_with("Best run: sector 3"));
+        assert!(hard[1].starts_with("2 players: sector 1"));
+    }
+
+    #[test]
+    fn a_level_is_told_by_its_seed_its_version_and_its_difficulty() {
+        let run = lost_run(1);
+        assert_eq!(level_line(&run), format!("Seed 85GVTHQA, v{VERSION}"));
+        let hard = Run {
+            difficulty: Difficulty::Hard,
+            ..run
+        };
+        assert_eq!(
+            level_line(&hard),
+            format!("Seed 85GVTHQA, v{VERSION}, hard mode")
+        );
+    }
+
+    /// The difficulties that the solo screen lets the player switch to.
+    fn offered(screen: fn(&mut App)) -> Vec<Difficulty> {
+        let offered = presses(screen).into_iter().filter_map(|press| match press {
+            Press::Difficulty(difficulty) => Some(difficulty),
+            _ => None,
+        });
+        offered.collect()
+    }
+
+    #[test]
+    fn the_solo_screen_offers_hard_mode_once_it_is_unlocked() {
+        // A player who has not unlocked it has nothing to choose.
+        assert_eq!(offered(|app| build(app, solo_screen)), []);
+        // One who has is offered the difficulty that isn't chosen.
+        let unlocked = |app: &mut App| {
+            app.insert_resource(Unlocks::of(&[Unlock::HardMode]));
+            build(app, solo_screen);
+        };
+        assert_eq!(offered(unlocked), [Difficulty::Hard]);
+        let chosen = |app: &mut App| {
+            app.insert_resource(Unlocks::of(&[Unlock::ImpossibleMode]))
+                .insert_resource(Setup {
+                    difficulty: Difficulty::Hard,
+                    ..default()
+                });
+            build(app, solo_screen);
+        };
+        assert_eq!(offered(chosen), [Difficulty::Normal]);
+        // A playtest has nothing locked.
+        let playtest = |app: &mut App| {
+            app.insert_resource(Options {
+                playtest: true,
+                seed: None,
+            });
+            build(app, solo_screen);
+        };
+        assert_eq!(offered(playtest), [Difficulty::Hard]);
+    }
+
+    /// What the solo screen sets up for a player who chose a difficulty last.
+    fn set_up(last: Difficulty, unlocks: &[Unlock], playtest: bool) -> Difficulty {
+        let mut world = World::new();
+        world.insert_resource(Options {
+            playtest,
+            seed: None,
+        });
+        world.insert_resource(Time::<Real>::default());
+        let mut settings = Settings::default();
+        settings.solo_difficulty = last;
+        world.insert_resource(settings);
+        world.insert_resource(Unlocks::of(unlocks));
+        world.init_resource::<Setup>();
+        world.run_system_once(draw_a_seed_for_one).unwrap();
+        let setup = world.resource::<Setup>();
+        assert!(!setup.seed.is_empty() && !setup.typed);
+        setup.difficulty
+    }
+
+    #[test]
+    fn the_solo_screen_opens_on_the_difficulty_that_was_chosen_last_if_it_is_unlocked() {
+        use Difficulty::{Hard, Normal};
+        assert_eq!(set_up(Normal, &[Unlock::HardMode], false), Normal);
+        assert_eq!(set_up(Hard, &[Unlock::HardMode], false), Hard);
+        // Whoever unlocked the impossible mode has hard mode too.
+        assert_eq!(set_up(Hard, &[Unlock::ImpossibleMode], false), Hard);
+        // A choice that was made in a playtest is not one for a run that counts.
+        assert_eq!(set_up(Hard, &[Unlock::ChosenSeed], false), Normal);
+        assert_eq!(set_up(Hard, &[], true), Hard);
+    }
+
+    #[test]
+    fn the_solo_screen_starts_a_run_of_the_difficulty_and_on_the_seed_that_it_shows() {
+        fn start(
+            setup: Res<Setup>,
+            mut requests: MessageWriter<RunRequest>,
+            mut screen: ResMut<NextState<Screen>>,
+        ) {
+            begin(&setup, &mut requests, &mut screen);
+        }
+        let asked = |setup: Setup| {
+            let mut world = World::new();
+            world.insert_resource(setup);
+            world.init_resource::<Messages<RunRequest>>();
+            world.init_resource::<NextState<Screen>>();
+            world.run_system_once(start).unwrap();
+            let mut requests = world.resource_mut::<Messages<RunRequest>>();
+            let asked: Vec<RunRequest> = requests.drain().collect();
+            asked
+        };
+        let started = asked(Setup {
+            seed: "TANKU".into(),
+            typed: true,
+            difficulty: Difficulty::Hard,
+        });
+        let [
+            RunRequest::Start {
+                seed,
+                players,
+                drawn,
+                difficulty,
+            },
+        ] = started.as_slice()
+        else {
+            panic!("{started:?}");
+        };
+        // A seed that was typed is not one that the game drew.
+        assert_eq!((seed.as_str(), *players, *drawn), ("TANKU", 1, false));
+        assert_eq!(*difficulty, Difficulty::Hard);
+        // A run needs a seed.
+        assert!(asked(Setup::default()).is_empty());
+    }
+
+    /// The difficulties whose best runs the main menu offers to list instead.
+    fn listed(screen: fn(&mut App)) -> Vec<Difficulty> {
+        let listed = presses(screen).into_iter().filter_map(|press| match press {
+            Press::List(difficulty) => Some(difficulty),
+            _ => None,
+        });
+        listed.collect()
+    }
+
+    #[test]
+    fn the_main_menu_lists_the_best_runs_of_hard_mode_once_there_is_one() {
+        // A player who never played in hard mode is shown the best runs of normal mode,
+        // and no way to others.
+        let normal = |app: &mut App| {
+            let mut records = Records::default();
+            records.submit(Difficulty::Normal, 1, 12, "85GVTHQA");
+            app.insert_resource(records);
+            build(app, main_menu);
+        };
+        assert_eq!(listed(normal), []);
+        let both = |app: &mut App| {
+            app.insert_resource(Records::of_every_team(128, "85GVTHQA"));
+            build(app, main_menu);
+        };
+        assert_eq!(listed(both), [Difficulty::Hard]);
+        // From the best runs of hard mode, there is always a way back.
+        let hard = |app: &mut App| {
+            app.insert_resource(Listed(Difficulty::Hard));
+            build(app, main_menu);
+        };
+        assert_eq!(listed(hard), [Difficulty::Normal]);
+    }
+
+    #[test]
     fn a_playtest_sets_no_record() {
         let run = Run {
             seed_text: "TEST".into(),
             seed: 1,
+            difficulty: default(),
             players: 1,
             team: 1,
             solo: true,

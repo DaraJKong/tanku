@@ -893,7 +893,7 @@ mod tests {
     #[test]
     fn an_outline_lies_flat_where_its_tank_stands() {
         let outline = Outline::dormant(theme::PLAYER, theme::FLOOR);
-        let enemies = (0..5).flat_map(|seed| tanku_core::enemy::group(seed, 20, 6));
+        let enemies = (0..5).flat_map(|seed| tanku_core::enemy::group(seed, default(), 20, 6));
         for genome in enemies.chain([full(), Genome::empty(10), Genome::PLAYER]) {
             let pairs = [
                 (

@@ -3,7 +3,7 @@
 use std::hint::black_box;
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use tanku_core::{enemy, map::Corridor};
+use tanku_core::{enemy, map::Corridor, modes::Difficulty};
 
 fn generation(criterion: &mut Criterion) {
     criterion.bench_function("plan and fill 30 sectors", |bencher| {
@@ -17,7 +17,7 @@ fn generation(criterion: &mut Criterion) {
     criterion.bench_function("generate 100 enemies", |bencher| {
         bencher.iter(|| {
             for sector in 20..30 {
-                black_box(enemy::group(black_box(42), sector, 10));
+                black_box(enemy::group(black_box(42), Difficulty::Normal, sector, 10));
             }
         });
     });

@@ -132,6 +132,7 @@ mod tests {
         Run {
             seed_text: "TEST".into(),
             seed: 1,
+            difficulty: default(),
             players: 1,
             team: 1,
             solo: true,
@@ -336,7 +337,7 @@ mod tests {
         for sector in 1..=30 {
             let arena = corridor.plan(sector).kind == SectorKind::Arena;
             let count = progression::enemy_count(sector, 1, arena);
-            let group = enemy::group(seed, sector, count);
+            let group = enemy::group(seed, default(), sector, count);
             let brains: Vec<u8> = group.iter().map(|tank| tank.brain()).collect();
             let threat = brains.iter().copied().max().unwrap_or(0);
             let brains: Vec<String> = brains.iter().map(u8::to_string).collect();

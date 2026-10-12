@@ -5,6 +5,7 @@
 use bevy::prelude::*;
 use tanku_core::{
     discovery::{Reach, local_address},
+    modes::Difficulty,
     protocol::{Lobby, PORT, WEB_PORT},
     sim::{Run, RunRequest},
 };
@@ -114,10 +115,12 @@ fn direct(
                     let players = server::muster(hosting, &mut seats);
                     // The next run on this seed is one on a seed that was played.
                     let (seed, drawn) = (lobby.seed.clone(), std::mem::take(&mut drawn.0));
+                    // A host sets no difficulty yet: the lobby has no options so far.
                     run_requests.write(RunRequest::Start {
                         seed,
                         players,
                         drawn,
+                        difficulty: Difficulty::Normal,
                     });
                     next_screen.set(Screen::Playing);
                     next_overlay.set(Overlay::None);

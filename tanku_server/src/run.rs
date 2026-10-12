@@ -127,16 +127,18 @@ pub fn handle_requests(
                 seed: seed_text,
                 players,
                 drawn,
+                difficulty,
             } => {
                 clear(&mut commands, &entities, &mut casualties);
                 let seed = seed::seed_value(seed_text);
                 let players = (*players).clamp(1, MAX_PLAYERS);
-                let mut field = Field::new(seed, players);
+                let mut field = Field::new(seed, players, *difficulty);
                 enter(&mut commands, &mut field, 0);
                 commands.insert_resource(field);
                 commands.insert_resource(Run {
                     seed_text: seed_text.trim().to_uppercase(),
                     seed,
+                    difficulty: *difficulty,
                     players,
                     team: players,
                     solo: players == 1,

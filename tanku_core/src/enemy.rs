@@ -5,6 +5,7 @@
 //! decides what it spends its share on.
 
 use crate::{
+    modes::Difficulty,
     progression,
     rng::{Purpose, Stream},
     stats::{Class, Genome, Stat},
@@ -26,23 +27,26 @@ const LEADER_SHARE: u32 = 150;
 const WEIGHTS: [u32; 6] = [1, 1, 2, 2, 3, 8];
 
 /// The highest level of a stat that an enemy of a class can have in a sector.
-fn highest_level(stat: Stat, sector: u32, class: Class) -> u8 {
+fn highest_level(stat: Stat, difficulty: Difficulty, sector: u32, class: Class) -> u8 {
     let allowed = match stat {
-        // Fast bullets, good brains and good aim wait for later sectors.
-        Stat::Muzzle => progression::muzzle_cap(sector),
-        Stat::Brain => progression::brain_cap(sector),
-        Stat::Ballistics => progression::ballistics_cap(sector),
+        // Fast bullets, good brains and good aim wait for later sectors, except in hard mode.
+        Stat::Muzzle => progression::muzzle_cap(sector, difficulty),
+        Stat::Brain => progression::brain_cap(sector, difficulty),
+        Stat::Ballistics => progression::ballistics_cap(sector, difficulty),
         _ => stat.max_level(),
     };
     allowed.min(class.highest(stat))
 }
 
-/// The budgets of the tanks of a group, which depend on the seed, the sector and the size of
-/// the group. Together they are what so many tanks have on average. The strongest may have
-/// more than the sector budget, and no other does.
-pub fn budgets(seed: u64, sector: u32, count: u32) -> Vec<u32> {
+/// The budgets of the tanks of a group, which depend on the seed, the difficulty, the sector
+/// and the size of the group. Together they are what so many tanks have on average. The
+/// strongest may have more than the sector budget, and no other does.
+///
+/// A group shares its budget in the same way whatever the difficulty: the tank that leads it
+/// in normal mode leads it in hard mode.
+pub fn budgets(seed: u64, difficulty: Difficulty, sector: u32, count: u32) -> Vec<u32> {
     let mut rng = Stream::new(seed, Purpose::Group, sector, count);
-    let cap = progression::sector_budget(sector);
+    let cap = progression::sector_budget(sector, difficulty);
     let share = rng.range(GROUP_SHARE.0, GROUP_SHARE.1) as u32;
     let total = (count * cap * share + 50) / 100;
     let least = (cap * LEAST_SHARE).div_ceil(100);
@@ -83,23 +87,24 @@ pub fn budgets(seed: u64, sector: u32, count: u32) -> Vec<u32> {
     budgets
 }
 
-/// The genomes of the group of a sector, which depend only on the seed, the sector and the
-/// size of the group.
-pub fn group(seed: u64, sector: u32, count: u32) -> Vec<Genome> {
-    let budgets = budgets(seed, sector, count);
+/// The genomes of the group of a sector, which depend only on the seed, the difficulty, the
+/// sector and the size of the group.
+pub fn group(seed: u64, difficulty: Difficulty, sector: u32, count: u32) -> Vec<Genome> {
+    let budgets = budgets(seed, difficulty, sector, count);
     let tanks = budgets.iter().enumerate();
     tanks
-        .map(|(index, &budget)| build(seed, sector, index as u32, budget))
+        .map(|(index, &budget)| build(seed, difficulty, sector, index as u32, budget))
         .collect()
 }
 
-/// One tank of a group: its class, then what its budget buys.
-fn build(seed: u64, sector: u32, index: u32, budget: u32) -> Genome {
+/// One tank of a group: its class, then what its budget buys. A tank has the same class
+/// whatever the difficulty.
+fn build(seed: u64, difficulty: Difficulty, sector: u32, index: u32, budget: u32) -> Genome {
     let mut rng = Stream::new(seed, Purpose::Enemy, sector, index);
     let class = rng.pick(&Class::ALL);
     let mut genome = Genome::empty(budget as u16);
     genome.class = class;
-    let highest = |stat: Stat| highest_level(stat, sector, class);
+    let highest = |stat: Stat| highest_level(stat, difficulty, sector, class);
 
     // A tactician takes the best brain and the best aim that its sector allows. A sapper
     // needs a brain for its mines and its shield. The others take what they draw.
@@ -177,26 +182,33 @@ fn build(seed: u64, sector: u32, index: u32, budget: u32) -> Genome {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use Difficulty::{Hard, Normal};
 
     /// Groups of every size up to nine, over six seeds and sixty sectors: each tank with its
     /// sector.
-    fn groups() -> impl Iterator<Item = (u32, Vec<Genome>)> {
-        (0..6u64).flat_map(|seed| {
-            (1..=60u32).map(move |sector| (sector, group(seed, sector, 1 + (sector + 3) % 9)))
+    fn groups(difficulty: Difficulty) -> impl Iterator<Item = (u32, Vec<Genome>)> {
+        (0..6u64).flat_map(move |seed| {
+            (1..=60u32).map(move |sector| {
+                let count = 1 + (sector + 3) % 9;
+                (sector, group(seed, difficulty, sector, count))
+            })
         })
     }
 
-    fn sample() -> impl Iterator<Item = (u32, Genome)> {
-        groups().flat_map(|(sector, tanks)| tanks.into_iter().map(move |tank| (sector, tank)))
+    fn sample(difficulty: Difficulty) -> impl Iterator<Item = (u32, Genome)> {
+        let tanks =
+            |(sector, tanks): (u32, Vec<Genome>)| tanks.into_iter().map(move |tank| (sector, tank));
+        groups(difficulty).flat_map(tanks)
     }
 
     #[test]
     fn same_inputs_same_group() {
-        assert_eq!(group(42, 12, 4), group(42, 12, 4));
-        assert_ne!(group(42, 12, 4), group(43, 12, 4));
-        assert_ne!(group(42, 12, 4), group(42, 13, 4));
+        assert_eq!(group(42, Normal, 12, 4), group(42, Normal, 12, 4));
+        assert_ne!(group(42, Normal, 12, 4), group(43, Normal, 12, 4));
+        assert_ne!(group(42, Normal, 12, 4), group(42, Normal, 13, 4));
+        assert_ne!(group(42, Normal, 12, 4), group(42, Hard, 12, 4));
         // A tank keeps its class whatever the size of its group: only its share changes.
-        let (four, six) = (group(42, 12, 4), group(42, 12, 6));
+        let (four, six) = (group(42, Normal, 12, 4), group(42, Normal, 12, 6));
         for (small, large) in four.iter().zip(&six) {
             assert_eq!(small.class, large.class);
         }
@@ -205,7 +217,7 @@ mod tests {
     #[test]
     fn generation_is_stable() {
         // Golden value, as for the map: it must never change by accident.
-        let tanks = group(crate::seed::seed_value("TANKU"), 20, 6);
+        let tanks = group(crate::seed::seed_value("TANKU"), Normal, 20, 6);
         assert_eq!(
             format!("{:?}", tanks[0]),
             "Genome { levels: [3, 6, 6, 6, 5, 4, 1, 0, 0, 0, 0, 0], budget: 64, class: None }"
@@ -214,16 +226,65 @@ mod tests {
         assert_eq!(format!("{classes:?}"), CLASSES);
         let budgets: Vec<u16> = tanks.iter().map(|tank| tank.budget).collect();
         assert_eq!(format!("{budgets:?}"), BUDGETS);
+        // The same group in hard mode.
+        let tanks = group(crate::seed::seed_value("TANKU"), Hard, 20, 6);
+        assert_eq!(format!("{:?}", tanks[0]), HARD_TANK);
+        let classes: Vec<Class> = tanks.iter().map(|tank| tank.class).collect();
+        assert_eq!(format!("{classes:?}"), CLASSES);
+        let budgets: Vec<u16> = tanks.iter().map(|tank| tank.budget).collect();
+        assert_eq!(format!("{budgets:?}"), HARD_BUDGETS);
     }
 
     const CLASSES: &str = "[None, Tactician, Tactician, None, Lancer, Sapper]";
     const BUDGETS: &str = "[64, 112, 35, 48, 35, 48]";
+    const HARD_TANK: &str =
+        "Genome { levels: [7, 6, 6, 7, 5, 7, 1, 0, 0, 0, 0, 0], budget: 90, class: None }";
+    const HARD_BUDGETS: &str = "[90, 157, 49, 67, 49, 67]";
+
+    #[test]
+    fn hard_mode_makes_the_same_group_stronger() {
+        let pairs = groups(Normal).zip(groups(Hard));
+        for ((sector, normal), (_, hard)) in pairs {
+            assert_eq!(normal.len(), hard.len());
+            for (normal, hard) in normal.iter().zip(&hard) {
+                // Each tank is of the same class and has more points, so that a seed is the
+                // same level, made harder.
+                assert_eq!(normal.class, hard.class, "sector {sector}");
+                assert!(hard.budget > normal.budget, "sector {sector}");
+            }
+            // The tank that has the most points is the same one.
+            let leader = |tanks: &[Genome]| {
+                let most = tanks.iter().map(|tank| tank.budget).max();
+                tanks.iter().position(|tank| Some(tank.budget) == most)
+            };
+            assert_eq!(leader(&normal), leader(&hard), "sector {sector}");
+        }
+        // From its first sector, hard mode has the brains and the guns that normal mode
+        // only has late.
+        let early = |difficulty: Difficulty| sample(difficulty).filter(|(sector, _)| *sector <= 3);
+        let aces = |difficulty: Difficulty| early(difficulty).filter(|(_, tank)| tank.brain() == 4);
+        assert_eq!(aces(Normal).count(), 0);
+        assert!(aces(Hard).count() * 5 > early(Hard).count());
+        let fastest = |difficulty: Difficulty| {
+            early(difficulty)
+                .map(|(_, tank)| tank.level(Stat::Muzzle))
+                .max()
+        };
+        assert_eq!(fastest(Normal), Some(2));
+        assert_eq!(fastest(Hard), Some(6));
+    }
 
     #[test]
     fn a_group_shares_its_budget_unevenly() {
+        for difficulty in Difficulty::ALL {
+            a_group_shares_its_budget_unevenly_in(difficulty);
+        }
+    }
+
+    fn a_group_shares_its_budget_unevenly_in(difficulty: Difficulty) {
         let (mut ratios, mut led) = (Vec::new(), 0);
-        for (sector, tanks) in groups() {
-            let cap = progression::sector_budget(sector);
+        for (sector, tanks) in groups(difficulty) {
+            let cap = progression::sector_budget(sector, difficulty);
             let count = tanks.len() as u32;
             let total: u32 = tanks.iter().map(|tank| tank.budget as u32).sum();
             // Together, the tanks have what so many have on average.
@@ -270,7 +331,10 @@ mod tests {
     #[test]
     fn points_are_spent() {
         // A tank stops buying when it can afford nothing it is allowed to have.
-        for (sector, genome) in sample() {
+        let both = Difficulty::ALL.into_iter();
+        let tanks =
+            both.flat_map(|difficulty| sample(difficulty).map(move |tank| (difficulty, tank)));
+        for (difficulty, (sector, genome)) in tanks {
             let left = genome.budget as u32 - genome.cost();
             for stat in Stat::HARDWARE {
                 let level = genome.level(stat);
@@ -281,7 +345,7 @@ mod tests {
                 };
                 assert!(
                     !allowed
-                        || level == highest_level(stat, sector, genome.class)
+                        || level == highest_level(stat, difficulty, sector, genome.class)
                         || stat.price(level + 1) - stat.price(level) > left,
                     "sector {sector}: {left} points left for {stat:?} in {genome:?}"
                 );
@@ -291,10 +355,13 @@ mod tests {
 
     #[test]
     fn prerequisites_and_caps_hold() {
-        for (sector, genome) in sample() {
-            assert!(genome.brain() <= progression::brain_cap(sector));
-            assert!(genome.ballistics() <= progression::ballistics_cap(sector));
-            assert!(genome.level(Stat::Muzzle) <= progression::muzzle_cap(sector));
+        let both = Difficulty::ALL.into_iter();
+        let tanks =
+            both.flat_map(|difficulty| sample(difficulty).map(move |tank| (difficulty, tank)));
+        for (difficulty, (sector, genome)) in tanks {
+            assert!(genome.brain() <= progression::brain_cap(sector, difficulty));
+            assert!(genome.ballistics() <= progression::ballistics_cap(sector, difficulty));
+            assert!(genome.level(Stat::Muzzle) <= progression::muzzle_cap(sector, difficulty));
             if genome.level(Stat::Tracks) > 0 {
                 assert!(genome.level(Stat::Engine) > 0);
             }
@@ -311,21 +378,27 @@ mod tests {
         // Between two steps of the cap, some tank has the fastest gun allowed and none has
         // a faster one.
         let stretches = [(1, 3), (4, 8), (9, 13), (14, 18), (19, 23), (24, 60)];
-        for (from, to) in stretches {
-            let fastest = sample()
+        let hard_stretches = [(1, 3), (4, 60)];
+        let stretches = stretches.map(|stretch| (Normal, stretch));
+        let hard_stretches = hard_stretches.map(|stretch| (Hard, stretch));
+        for (difficulty, (from, to)) in stretches.into_iter().chain(hard_stretches) {
+            let cap = |sector: u32| progression::muzzle_cap(sector, difficulty);
+            let fastest = sample(difficulty)
                 .filter(|(sector, _)| (from..=to).contains(sector))
                 .map(|(_, genome)| genome.level(Stat::Muzzle))
                 .max();
-            assert_eq!(fastest, Some(progression::muzzle_cap(from)), "from {from}");
-            assert_eq!(progression::muzzle_cap(from), progression::muzzle_cap(to));
+            assert_eq!(fastest, Some(cap(from)), "from {from} in {difficulty:?}");
+            assert_eq!(cap(from), cap(to));
         }
     }
 
     #[test]
     fn every_class_is_about_as_common_as_the_others() {
-        let total = sample().count();
+        // A tank has the same class whatever the difficulty.
+        let total = sample(Normal).count();
         for class in Class::ALL {
-            let tanks = sample().filter(|(_, genome)| genome.class == class).count();
+            let of_class = |(_, genome): &(u32, Genome)| genome.class == class;
+            let tanks = sample(Normal).filter(of_class).count();
             assert!(
                 tanks * 12 > total && tanks * 6 < total,
                 "{class:?}: {tanks} of {total}"
@@ -335,7 +408,8 @@ mod tests {
 
     #[test]
     fn piercing_and_long_ricochets_belong_to_their_classes() {
-        for (sector, genome) in sample() {
+        let everyone = || sample(Normal).chain(sample(Hard));
+        for (sector, genome) in everyone() {
             let class = genome.class;
             if genome.piercing() > 0 {
                 assert_eq!(class, Class::Lancer, "sector {sector}");
@@ -346,7 +420,7 @@ mod tests {
             }
         }
         // A lancer pierces and a trickster's bullets bounce, as soon as they can pay for it.
-        for (sector, genome) in sample() {
+        for (sector, genome) in everyone() {
             let rich = genome.budget >= 8;
             match genome.class {
                 Class::Lancer if rich => assert_eq!(genome.piercing(), 1, "sector {sector}"),
@@ -355,8 +429,9 @@ mod tests {
             }
         }
         // With the budget of a late sector, most tricksters have all the bounces there are.
-        let late =
-            || sample().filter(|(sector, tank)| *sector >= 20 && tank.class == Class::Trickster);
+        let late = || {
+            sample(Normal).filter(|(sector, tank)| *sector >= 20 && tank.class == Class::Trickster)
+        };
         let full = late().filter(|(_, tank)| tank.bounces() == 3).count();
         assert!(
             full * 4 >= late().count() * 3,
@@ -369,7 +444,13 @@ mod tests {
     fn a_tank_has_what_its_class_favors() {
         // From sector 10 on, a tank can pay for a level of each stat of its class, and has
         // more of them than the tanks of the other classes do.
-        let late = || sample().filter(|(sector, _)| *sector >= 10);
+        for difficulty in Difficulty::ALL {
+            a_tank_has_what_its_class_favors_in(difficulty);
+        }
+    }
+
+    fn a_tank_has_what_its_class_favors_in(difficulty: Difficulty) {
+        let late = || sample(difficulty).filter(|(sector, _)| *sector >= 10);
         for class in Class::ALL {
             for &stat in class.favorites() {
                 let level = |genome: &Genome| genome.level(stat) as f32;
@@ -395,11 +476,14 @@ mod tests {
 
     #[test]
     fn a_tactician_has_the_best_brain_of_its_sector() {
-        for (sector, genome) in sample() {
+        let both = Difficulty::ALL.into_iter();
+        let tanks =
+            both.flat_map(|difficulty| sample(difficulty).map(move |tank| (difficulty, tank)));
+        for (difficulty, (sector, genome)) in tanks {
             if genome.class == Class::Tactician {
-                assert_eq!(genome.brain(), progression::brain_cap(sector));
+                assert_eq!(genome.brain(), progression::brain_cap(sector, difficulty));
                 // Its aim is the best that it can pay the bounces for.
-                let cap = progression::ballistics_cap(sector);
+                let cap = progression::ballistics_cap(sector, difficulty);
                 let short = genome.budget as u32 - genome.cost() < 10;
                 assert!(
                     genome.ballistics() == cap || short,

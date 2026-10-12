@@ -345,7 +345,10 @@ mod tests {
     fn reference_builds_cost_what_the_specification_says() {
         use Stat::*;
 
-        use crate::progression::{ballistics_cap, brain_cap, muzzle_cap, sector_budget};
+        use crate::{
+            modes::Difficulty::Normal,
+            progression::{ballistics_cap, brain_cap, muzzle_cap, sector_budget},
+        };
         // Each build with its budget and the first sector that can have it.
         let builds: [(&str, u16, u32, &[(Stat, u8)]); 8] = [
             (
@@ -464,10 +467,10 @@ mod tests {
             let genome = build(budget, levels);
             assert_eq!(genome.cost(), budget as u32, "{name}");
             let possible = |sector: &u32| {
-                sector_budget(*sector) >= budget as u32
-                    && brain_cap(*sector) >= genome.brain()
-                    && ballistics_cap(*sector) >= genome.ballistics()
-                    && muzzle_cap(*sector) >= genome.level(Muzzle)
+                sector_budget(*sector, Normal) >= budget as u32
+                    && brain_cap(*sector, Normal) >= genome.brain()
+                    && ballistics_cap(*sector, Normal) >= genome.ballistics()
+                    && muzzle_cap(*sector, Normal) >= genome.level(Muzzle)
             };
             assert_eq!((1..).find(possible), Some(sector), "{name}");
         }

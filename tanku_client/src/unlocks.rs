@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use bevy::prelude::*;
 use tanku_core::{
-    modes::{self, Unlock},
+    modes::{self, Difficulty, Unlock},
     sim::{Run, SimEvent},
 };
 
@@ -74,6 +74,20 @@ pub fn name(unlock: Unlock) -> &'static str {
         Unlock::HardMode => "Hard mode",
         Unlock::ImpossibleMode => "Impossible mode",
     }
+}
+
+/// What a difficulty is called on screen.
+pub fn difficulty_name(difficulty: Difficulty) -> &'static str {
+    match difficulty {
+        Difficulty::Normal => "Normal",
+        Difficulty::Hard => "Hard",
+    }
+}
+
+/// Whether what an achievement unlocks is in the game. Until it is, the achievement is
+/// earned and kept, and the player is told that nothing comes of it yet.
+pub fn built(unlock: Unlock) -> bool {
+    matches!(unlock, Unlock::ChosenSeed | Unlock::HardMode)
 }
 
 /// What a run must do to unlock it.

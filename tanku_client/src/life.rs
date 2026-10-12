@@ -243,6 +243,7 @@ mod tests {
         let mut run = Run {
             seed_text: String::new(),
             seed: 0,
+            difficulty: default(),
             players: 1,
             team: 1,
             solo: true,

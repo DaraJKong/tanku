@@ -7,7 +7,9 @@ use std::f32::consts::{PI, TAU};
 
 use bevy::prelude::*;
 use tanku_core::{
-    geom, progression,
+    geom,
+    modes::Difficulty,
+    progression,
     rng::Stream,
     rules::{BLAST_RADIUS, BULLET_RADIUS, MINE_TRIGGER_RADIUS, MUZZLE_DISTANCE, TANK_RADIUS, TICK},
     sim::{
@@ -105,10 +107,10 @@ struct Watch {
 }
 
 impl Brain {
-    pub fn new(rng: Stream, sector: u32) -> Self {
+    pub fn new(rng: Stream, sector: u32, difficulty: Difficulty) -> Self {
         Self {
             rng,
-            experience: progression::experience(sector),
+            experience: progression::experience(sector, difficulty),
             awake_for: 0.0,
             reaction: 0.0,
             had_solution: false,
@@ -127,7 +129,7 @@ impl Brain {
     }
 
     /// Delay before the brain reacts: 0.50 s for a novice, 0.12 s for a flawless brain.
-    fn reaction_delay(&self) -> f32 {
+    pub(crate) fn reaction_delay(&self) -> f32 {
         0.50 - 0.38 * self.experience
     }
 
@@ -898,7 +900,7 @@ mod tests {
 
     /// A room 20 m wide and 10 m deep.
     fn room() -> Field {
-        let mut field = Field::new(0, 1);
+        let mut field = Field::new(0, 1, Difficulty::Normal);
         field.colliders = vec![
             wall((0.0, 0.0), (20.0, 0.0)),
             wall((20.0, 0.0), (20.0, 10.0)),
@@ -1023,7 +1025,8 @@ mod tests {
         let mut world = World::new();
         let [first, second] = [(); 2].map(|()| world.spawn_empty().id());
         // A brain of the first sector takes half a second to act on what it sees.
-        let mut brain = Brain::new(Stream::new(1, tanku_core::rng::Purpose::Brain, 0, 0), 1);
+        let stream = Stream::new(1, tanku_core::rng::Purpose::Brain, 0, 0);
+        let mut brain = Brain::new(stream, 1, Difficulty::Normal);
         let seen =
             |brain: &mut Brain, bullet: Entity| brain.watching(bullet).map(|watch| watch.seen);
         let both = [first, second];

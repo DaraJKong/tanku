@@ -373,7 +373,7 @@ fn keep_field(
         // A new run, maybe of another host: what was asked and shown in the last one is of
         // no use.
         (Some(run), _) => {
-            commands.insert_resource(Field::new(run.seed, run.players));
+            commands.insert_resource(Field::new(run.seed, run.players, run.difficulty));
             commands.insert_resource(Orders::default());
             commands.insert_resource(Echoes::default());
         }

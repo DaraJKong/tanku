@@ -7,6 +7,7 @@ use tanku_core::{
     enemy,
     geom::{self, Hit},
     map::{Corridor, SectorKind, SectorPlan},
+    modes::Difficulty,
     progression,
     rng::{Purpose, Stream},
     rules::{BLOCK_SIZE, TANK_RADIUS},
@@ -117,6 +118,8 @@ impl Arena {
 #[derive(Resource)]
 pub struct Field {
     pub seed: u64,
+    /// How hard the enemies of the run are. The corridor is the same for every difficulty.
+    pub difficulty: Difficulty,
     /// The seats of the players in the run. Sectors are loaded for as many: enemy groups grow
     /// with their number.
     pub seats: Vec<u8>,
@@ -134,9 +137,10 @@ pub struct Field {
 }
 
 impl Field {
-    pub fn new(seed: u64, players: u32) -> Self {
+    pub fn new(seed: u64, players: u32, difficulty: Difficulty) -> Self {
         Self {
             seed,
+            difficulty,
             seats: (0..players as u8).collect(),
             solo: players == 1,
             corridor: Corridor::new(seed),
@@ -219,7 +223,7 @@ impl Field {
             let count = progression::enemy_count(index, self.players().max(1), arena);
             // The group shares its budget among as many tanks as the players call for. A
             // sector that is too small for all of them holds as many as fit.
-            let genomes = enemy::group(self.seed, index, count);
+            let genomes = enemy::group(self.seed, self.difficulty, index, count);
             let group = layout.spawns.iter().zip(genomes).enumerate();
             let mut group = group.map(|(number, (spawn, genome))| Recruit {
                 number: number as u32,
@@ -295,7 +299,7 @@ impl Field {
     pub fn brain(&self, sector: u32, number: u32) -> (Brain, f32) {
         let mut rng = Stream::new(self.seed, Purpose::Brain, sector, number);
         let hull = rng.unit() * std::f32::consts::TAU;
-        (Brain::new(rng, sector), hull)
+        (Brain::new(rng, sector, self.difficulty), hull)
     }
 
     /// The barrier in front of a sector, for a sector that is loaded without the one before it.

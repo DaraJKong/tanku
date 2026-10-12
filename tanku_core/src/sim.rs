@@ -3,7 +3,7 @@
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::{map::SectorLayout, stats::Genome};
+use crate::{map::SectorLayout, modes::Difficulty, stats::Genome};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Team {
@@ -243,6 +243,8 @@ pub enum RunPhase {
 pub struct Run {
     pub seed_text: String,
     pub seed: u64,
+    /// How hard the enemies of the run are.
+    pub difficulty: Difficulty,
     /// Players in the run. Sectors are generated for this many.
     pub players: u32,
     /// Players at the start of the run. Its record is the one of a team of this size.
@@ -291,6 +293,7 @@ pub enum RunRequest {
         /// Whether the game has just drawn that seed for this run, which then earns
         /// achievements unless it is a playtest.
         drawn: bool,
+        difficulty: Difficulty,
     },
     Abandon,
     /// A player leaves a run of several players, and their tank goes with them.

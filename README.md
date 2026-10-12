@@ -4,9 +4,9 @@ A cooperative top-down tank game for one to four players, built with Rust and Be
 
 The solo game and co-op are playable, on Linux, on Windows and in a browser:
 
-- **Solo:** the corridor, the generated enemies with their classes and their brains, arenas and their waves, lives and checkpoints, the menus, the sound cues and the music. Runs unlock achievements, and the first one lets the player type the seed of a run.
+- **Solo:** the corridor, the generated enemies with their classes and their brains, arenas and their waves, lives and checkpoints, the menus, the sound cues and the music. Runs unlock achievements: the first one lets the player type the seed of a run, and clearing sector 30 unlocks hard mode, whose enemies are stronger from the first sector.
 - **Co-op:** up to four players. One of them hosts a game, which the others find on the local network or join by its address, from a desktop build or from a browser. A destroyed tank is a wreck that a teammate repairs.
-- **Not in yet:** hard mode, free mode with its garage, what a host sets for a game (its name, its password, its difficulty, free mode), and the ready check of the lobby.
+- **Not in yet:** free mode with its garage, what a host sets for a game (its name, its password, its difficulty, free mode), and the ready check of the lobby. Until then, a game of several players is in normal mode.
 
 Co-op has been played by two players. With three or four, it is checked by tests and by scripted runs only. The build for Windows is checked under wine, not yet on Windows itself. The specification is in [docs/PROJECT.md](docs/PROJECT.md).
 
@@ -80,7 +80,7 @@ cargo run -p tanku_client -- --playtest
 | Infinite lives | On from the start. The pause menu turns them off and on. |
 | Skip to a sector | The pause menu picks any sector up to 999. The tank comes back at the end of the sector before it, in front of its barrier, as it does after clearing that sector. |
 | Choose the seed | `--seed TEXT` after `--playtest` starts every run on that seed instead of a random one. |
-| Nothing locked | The solo screen takes a typed seed whatever the player has unlocked. |
+| Nothing locked | The solo screen takes a typed seed and offers hard mode, whatever the player has unlocked. |
 
 With both, a seed and a sector from a report are a few clicks away:
 

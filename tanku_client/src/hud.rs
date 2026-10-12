@@ -76,6 +76,8 @@ enum Readout {
     Seed,
     /// Says that the run earns no achievement, when it earns none.
     Earning,
+    /// How hard the run is.
+    Difficulty,
     Shield,
     Hint,
     /// What to do about a wreck, among several players.
@@ -468,7 +470,14 @@ fn title_block() -> impl Bundle {
                         ],
                     ),
                     (
-                        cell(2.0, true),
+                        cell(1.0, false),
+                        children![
+                            caption("DIFFICULTY"),
+                            (Readout::Difficulty, theme::title("", 15.0, theme::TEXT)),
+                        ],
+                    ),
+                    (
+                        cell(1.0, true),
                         children![
                             caption("VERSION"),
                             theme::figure(VERSION, 15.0, theme::TEXT)
@@ -761,6 +770,7 @@ fn status(
             // A playtest says what it is next to the name of the game.
             Readout::Earning if !run.earns && !run.playtest => "NO ACHIEVEMENTS".to_string(),
             Readout::Earning => String::new(),
+            Readout::Difficulty => unlocks::difficulty_name(run.difficulty).to_uppercase(),
             // The controls are shown where a run starts. Several players have one more.
             Readout::Hint if run.sector == 0 => {
                 let repair = if run.solo {

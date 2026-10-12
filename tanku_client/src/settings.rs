@@ -7,7 +7,7 @@ use bevy::{
     prelude::*,
     window::{MonitorSelection, PresentMode, PrimaryWindow, WindowMode},
 };
-use tanku_core::seed::VERSION;
+use tanku_core::{modes::Difficulty, seed::VERSION};
 
 use crate::{audio::Muted, storage};
 
@@ -261,6 +261,8 @@ pub struct Settings {
     pub vsync: bool,
     /// The address of the game that was joined last.
     pub address: String,
+    /// The difficulty that the player chose last for a run of their own.
+    pub solo_difficulty: Difficulty,
 }
 
 impl Default for Settings {
@@ -277,6 +279,7 @@ impl Default for Settings {
             fullscreen: !cfg!(target_arch = "wasm32"),
             vsync: true,
             address: String::new(),
+            solo_difficulty: Difficulty::Normal,
         }
     }
 }
@@ -378,6 +381,10 @@ impl Settings {
         let lettered = |letter: &char| letter.is_ascii_alphanumeric() || ".:-".contains(*letter);
         let address = pairs.get("address").map(String::as_str).unwrap_or_default();
         settings.address = address.chars().filter(lettered).take(64).collect();
+        let difficulty = pairs.get("solo.difficulty");
+        settings.solo_difficulty = difficulty
+            .and_then(|key| Difficulty::of_key(key))
+            .unwrap_or_default();
         for (action, bindings) in &mut settings.bindings {
             if let Some(saved) = pairs.get(action.key()) {
                 let mut codes = saved.split(',').map(|code| Binding::parse(code.trim()));
@@ -396,6 +403,8 @@ impl Settings {
         pairs.insert("fullscreen".to_string(), self.fullscreen.to_string());
         pairs.insert("vsync".to_string(), self.vsync.to_string());
         pairs.insert("address".to_string(), self.address.clone());
+        let difficulty = self.solo_difficulty.key().to_string();
+        pairs.insert("solo.difficulty".to_string(), difficulty);
         for (action, bindings) in &self.bindings {
             let codes = bindings.map(|binding| binding.map_or("", Binding::code));
             pairs.insert(action.key().to_string(), codes.join(", "));
@@ -412,23 +421,30 @@ pub struct Record {
     pub version: String,
 }
 
-/// The best run per mode and number of players.
+/// The best run per difficulty and number of players.
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
 pub struct Records(BTreeMap<String, Record>);
 
 impl Records {
-    fn key(mode: &str, players: u32) -> String {
-        format!("{mode}.{players}")
+    fn key(difficulty: Difficulty, players: u32) -> String {
+        format!("{}.{players}", difficulty.key())
     }
 
-    pub fn best(&self, mode: &str, players: u32) -> Option<&Record> {
-        self.0.get(&Self::key(mode, players))
+    pub fn best(&self, difficulty: Difficulty, players: u32) -> Option<&Record> {
+        self.0.get(&Self::key(difficulty, players))
     }
 
-    /// Keeps a run if it went further than the record. Returns whether it did.
-    pub fn submit(&mut self, mode: &str, players: u32, sector: u32, seed: &str) -> bool {
-        let best = self.best(mode, players).map_or(0, |record| record.sector);
-        if sector <= best {
+    /// Keeps a run if it went further than the record of its difficulty and of a team of its
+    /// size. Returns whether it did.
+    pub fn submit(
+        &mut self,
+        difficulty: Difficulty,
+        players: u32,
+        sector: u32,
+        seed: &str,
+    ) -> bool {
+        let best = self.best(difficulty, players);
+        if sector <= best.map_or(0, |record| record.sector) {
             return false;
         }
         let record = Record {
@@ -436,7 +452,7 @@ impl Records {
             seed: seed.to_string(),
             version: VERSION.to_string(),
         };
-        self.0.insert(Self::key(mode, players), record);
+        self.0.insert(Self::key(difficulty, players), record);
         storage::save(RECORDS_FILE, &self.to_pairs());
         true
     }
@@ -471,20 +487,16 @@ impl Records {
 
 #[cfg(test)]
 impl Records {
-    /// The records of a player who got this far alone and in a team of every size. A test
-    /// shows them, and nothing is saved.
-    pub fn of_every_team(mode: &str, sector: u32, seed: &str) -> Self {
-        let record = Record {
-            sector,
-            seed: seed.to_string(),
-            version: VERSION.to_string(),
-        };
-        let teams = 1..=tanku_core::rules::MAX_PLAYERS;
-        Self(
-            teams
-                .map(|players| (Self::key(mode, players), record.clone()))
-                .collect(),
-        )
+    /// The records of a player who got this far alone and in a team of every size, in every
+    /// difficulty. A test shows them, and nothing is saved.
+    pub fn of_every_team(sector: u32, seed: &str) -> Self {
+        let mut records = Self::default();
+        for difficulty in Difficulty::ALL {
+            for players in 1..=tanku_core::rules::MAX_PLAYERS {
+                records.submit(difficulty, players, sector, seed);
+            }
+        }
+        records
     }
 }
 
@@ -552,6 +564,7 @@ mod tests {
             music: 0.8,
             camera_shake: false,
             address: "192.168.1.20:4000".to_string(),
+            solo_difficulty: Difficulty::Hard,
             ..default()
         };
         settings.bind(Action::Shield, 0, Binding::Key(KeyCode::ShiftLeft));
@@ -567,7 +580,9 @@ mod tests {
         pairs.insert("ui_scale".to_string(), "40".to_string());
         pairs.insert("bind.up".to_string(), "NoSuchKey".to_string());
         pairs.insert("address".to_string(), "10.0.0.7 /etc".to_string());
+        pairs.insert("solo.difficulty".to_string(), "easy".to_string());
         let settings = Settings::from_pairs(&pairs);
+        assert_eq!(settings.solo_difficulty, Difficulty::Normal);
         // Only what an address is made of is kept.
         assert_eq!(settings.address, "10.0.0.7etc");
         assert_eq!(settings.volume, Settings::default().volume);
@@ -601,19 +616,26 @@ mod tests {
 
     #[test]
     fn records_keep_the_best_run() {
+        use Difficulty::{Hard, Normal};
         let mut records = Records::default();
-        // `submit` saves to disk, so the test works on the pairs only.
-        records.0.insert(
-            Records::key("normal", 1),
-            Record {
-                sector: 7,
-                seed: "ABC".into(),
-                version: "0.1.0".into(),
-            },
-        );
+        assert!(records.submit(Normal, 1, 7, "ABC"));
+        assert!(!records.submit(Normal, 1, 7, "DEF"));
+        assert!(!records.submit(Normal, 1, 0, "DEF"));
         let reloaded = Records::from_pairs(&records.to_pairs());
         assert_eq!(reloaded, records);
-        assert_eq!(reloaded.best("normal", 1).unwrap().sector, 7);
-        assert!(reloaded.best("normal", 2).is_none());
+        let best = reloaded.best(Normal, 1).unwrap();
+        assert_eq!((best.sector, best.seed.as_str()), (7, "ABC"));
+        assert!(reloaded.best(Normal, 2).is_none());
+        // Each difficulty has records of its own, and so has each size of team.
+        assert!(reloaded.best(Hard, 1).is_none());
+        assert!(records.submit(Hard, 1, 2, "GHI"));
+        assert!(records.submit(Normal, 3, 4, "JKL"));
+        let reloaded = Records::from_pairs(&records.to_pairs());
+        assert_eq!(reloaded.best(Normal, 1).unwrap().sector, 7);
+        assert_eq!(reloaded.best(Hard, 1).unwrap().sector, 2);
+        assert_eq!(reloaded.best(Normal, 3).unwrap().sector, 4);
+        assert!(reloaded.best(Hard, 3).is_none());
+        // The records of normal mode are kept as they were before there was another.
+        assert_eq!(Records::key(Normal, 1), "normal.1");
     }
 }

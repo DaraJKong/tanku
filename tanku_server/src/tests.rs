@@ -4,6 +4,7 @@ use bevy::{ecs::message::Messages, prelude::*};
 use tanku_core::{
     CorePlugin,
     map::SectorKind,
+    modes::Difficulty,
     progression,
     rng::{Purpose, Stream},
     rules::{
@@ -42,13 +43,18 @@ fn tick(app: &mut App, ticks: u32) {
 
 /// Starts a run of this many players. The tanks have just appeared and can't shoot yet.
 fn begin_with(seed: &str, players: u32) -> App {
+    begin_in(seed, players, Difficulty::Normal)
+}
+
+/// Starts a run of this many players and of this difficulty.
+fn begin_in(seed: &str, players: u32, difficulty: Difficulty) -> App {
     let mut app = App::new();
     app.add_plugins((MinimalPlugins, CorePlugin, ServerPlugin));
-    let (seed, drawn) = (seed.into(), true);
     app.world_mut().write_message(RunRequest::Start {
-        seed,
+        seed: seed.into(),
         players,
-        drawn,
+        drawn: true,
+        difficulty,
     });
     tick(&mut app, 1);
     events(&mut app);
@@ -193,7 +199,8 @@ fn spawn_awake(app: &mut App, at: Vec2, levels: &[(Stat, u8)]) -> Entity {
 /// An enemy that is awake and thinks with the experience of a sector.
 fn spawn_thinker(app: &mut App, at: Vec2, levels: &[(Stat, u8)], sector: u32) -> Entity {
     let enemy = spawn_enemy(app, at, levels);
-    let brain = Brain::new(Stream::new(1, Purpose::Brain, 0, 0), sector);
+    let stream = Stream::new(1, Purpose::Brain, 0, 0);
+    let brain = Brain::new(stream, sector, Difficulty::Normal);
     app.world_mut()
         .entity_mut(enemy)
         .insert((brain, Enemy { awake: true }));
@@ -1719,6 +1726,7 @@ fn a_skip_asked_with_the_start_of_a_run_applies_to_that_run() {
         seed: "TEST".into(),
         players: 1,
         drawn: true,
+        difficulty: Difficulty::Normal,
     });
     skip_to(&mut app, 5);
     assert_eq!((run(&app).sector, loaded(&app)), (4, vec![4, 5]));
@@ -2236,6 +2244,7 @@ fn a_run_earns_achievements_on_a_seed_that_was_drawn_for_it_unless_it_is_a_playt
             seed: "TEST".into(),
             players: 1,
             drawn,
+            difficulty: Difficulty::Normal,
         });
         tick(&mut app, 1);
         run(&app).earns
@@ -2244,6 +2253,75 @@ fn a_run_earns_achievements_on_a_seed_that_was_drawn_for_it_unless_it_is_a_playt
     // A seed that a player chose, or plays again, can be practiced.
     assert!(!earns(false, false));
     assert!(!earns(true, true));
+}
+
+#[test]
+fn a_run_in_hard_mode_has_the_corridor_of_its_seed_and_the_enemies_of_hard_mode() {
+    let mut normal = begin_in("TEST", 2, Difficulty::Normal);
+    let mut hard = begin_in("TEST", 2, Difficulty::Hard);
+    assert_eq!(run(&normal).difficulty, Difficulty::Normal);
+    assert_eq!(run(&hard).difficulty, Difficulty::Hard);
+    // Everything stands where it stands in normal mode: the walls, the blocks, the crates
+    // and the enemies.
+    assert_eq!(fingerprint(&mut hard), fingerprint(&mut normal));
+    let solids = |app: &App| app.world().resource::<Field>().colliders.len();
+    assert_eq!(solids(&hard), solids(&normal));
+    let group = |app: &mut App| -> Vec<(u32, Genome)> {
+        let world = app.world_mut();
+        let mut tanks: Vec<(u32, Genome)> = world
+            .query_filtered::<(&Home, &Tank), With<Enemy>>()
+            .iter(world)
+            .map(|(home, tank)| (home.number, tank.genome))
+            .collect();
+        tanks.sort_by_key(|(number, _)| *number);
+        tanks
+    };
+    let (weak, strong) = (group(&mut normal), group(&mut hard));
+    assert_eq!(weak.len(), 2);
+    assert_eq!(strong.len(), weak.len());
+    // They are the group that hard mode makes of that sector for so many players: of the
+    // same classes, with more points.
+    let seed = tanku_core::seed::seed_value("TEST");
+    let made = tanku_core::enemy::group(seed, Difficulty::Hard, 1, 2);
+    for ((_, weak), ((number, strong), made)) in weak.iter().zip(strong.iter().zip(&made)) {
+        assert_eq!(strong, made, "tank {number}");
+        assert_eq!(strong.class, weak.class);
+        assert!(strong.budget > weak.budget);
+    }
+}
+
+#[test]
+fn a_player_who_comes_back_in_hard_mode_finds_the_brains_of_hard_mode() {
+    let mut app = begin_in("TEST", 1, Difficulty::Hard);
+    advance_to(&mut app, 1);
+    shelter(&mut app);
+    tick(&mut app, 2);
+    // How long each brain takes to react, with the sector of its tank.
+    let quick = |app: &mut App| -> Vec<(u32, f32)> {
+        let world = app.world_mut();
+        let mut brains = world.query::<(&Tank, &Brain)>();
+        let delays = brains.iter(world);
+        let mut delays: Vec<(u32, f32)> = delays
+            .map(|(tank, brain)| (tank.sector, brain.reaction_delay()))
+            .collect();
+        delays.sort_by(|one, other| one.partial_cmp(other).unwrap());
+        delays
+    };
+    let before = quick(&mut app);
+    assert!(before.iter().any(|(sector, _)| *sector == 1));
+    // A brain of hard mode is as quick as one of twenty sectors further in normal mode.
+    for &(sector, delay) in &before {
+        let late = progression::experience(sector + 20, Difficulty::Normal);
+        assert!((delay - (0.50 - 0.38 * late)).abs() < 1e-6, "{delay}");
+        assert!(delay < 0.27, "{delay}");
+    }
+    // The enemies that are left go back to where they started, with the brains they had.
+    let entity = player(&mut app).unwrap();
+    app.world_mut().entity_mut(entity).remove::<Protected>();
+    destroy_player(&mut app);
+    tick(&mut app, seconds(RESPAWN_DELAY) + 2);
+    assert_eq!((run(&app).phase, run(&app).lives), (RunPhase::Playing, 2));
+    assert_eq!(quick(&mut app), before);
 }
 
 /// A position that changes with everything that moves.

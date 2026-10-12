@@ -2,7 +2,8 @@
 //! a development build has.
 //!
 //! `TANKU_DEV_SCRIPT` holds commands separated by semicolons, run one after the other:
-//! `start SEED PLAYERS`, `seat NUMBER`, `repair SECONDS` and `shield SECONDS`, which hold the
+//! `start SEED PLAYERS DIFFICULTY`, which starts a run in normal mode unless `hard` is asked
+//! for, `seat NUMBER`, `repair SECONDS` and `shield SECONDS`, which hold the
 //! key of that name for so long, `wait SECONDS`, `warp SECTOR`, `unlock`, which unlocks every
 //! mode and option,
 //! `host PORT`, which opens a game for others to join, and takes browsers on the port after
@@ -54,7 +55,7 @@ use bevy::{
     winit::WinitPlugin,
 };
 use tanku_core::{
-    modes::Unlock,
+    modes::{Difficulty, Unlock},
     sim::{
         Barrier, Blow, Bullet, Enemy, Life, Mine, MineState, Motion, Position, PreviousPosition,
         Run, RunPhase, RunRequest, Shield, ShieldState, SimEvent, Tank, TankCommand, Team, Weapon,
@@ -410,6 +411,7 @@ fn run_script(
                 seed: word(1).to_string(),
                 players: (number(2) as u32).max(1),
                 drawn: true,
+                difficulty: Difficulty::of_key(word(3)).unwrap_or_default(),
             });
             screen.set(Screen::Playing);
         }
