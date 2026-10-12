@@ -455,7 +455,11 @@ fn run_script(
             }
             let name = words.get(2..).unwrap_or_default().join(" ");
             let password = std::mem::take(&mut script.password);
-            session_requests.write(SessionRequest::Host(Sign { name, password }));
+            session_requests.write(SessionRequest::Host(Sign {
+                name,
+                password,
+                ..default()
+            }));
         }
         // Gives a password to the game that the script hosts next.
         "password" => script.password = words[1..].join(" "),

@@ -138,6 +138,7 @@ mod tests {
             SessionRequest::Host(Sign {
                 name: "Friday".into(),
                 password: "sesame".into(),
+                ..default()
             }),
         );
         run_until("a lobby", &mut [&mut game], |games| {

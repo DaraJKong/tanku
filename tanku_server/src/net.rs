@@ -46,6 +46,7 @@ use tanku_core::{
         Bullet, Gun, Motion, Player, Position, Run, RunPhase, RunRequest, Shield, SimEvent, Tank,
         TankCommand,
     },
+    stats::Genome,
 };
 
 use crate::field::InSector;
@@ -54,6 +55,11 @@ use crate::field::InSector;
 /// the ones that follow.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Seat(pub u8);
+
+/// The tank that the player behind a connection built in their garage, for runs in free mode.
+/// Until they tell of one, they have the standard tank.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Built(pub Genome);
 
 /// The ports on which a game listens: for the games of other machines, and for browsers if it
 /// takes them.
@@ -217,15 +223,16 @@ impl ConnectionRequestHandler for Doorkeeper {
 }
 
 /// Opens a game on this machine, for others to join, and announces it where games are looked
-/// for, under the name that its host gave it, if any. With a password, it lets in only those
-/// who type it. Fails if the port for desktop games is taken. If the one for browsers is,
-/// the game opens without them. Returns how browsers reach it, if they do.
+/// for, under the name that its host gave it, if any. Its lobby starts as the host set the
+/// game up: its name, and what its first run is. With a password, it lets in only those who
+/// type it. Fails if the port for desktop games is taken. If the one for browsers is, the
+/// game opens without them. Returns how browsers reach it, if they do.
 pub fn open(
     commands: &mut Commands,
     ports: Ports,
     reach: &Reach,
     credentials: &mut Credentials,
-    (name, password): (&str, &str),
+    (game, password): (Lobby, &str),
 ) -> io::Result<Option<Web>> {
     let on = |port: u16| SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), port);
     // The network library takes a port a moment later, and stops the game if it can't.
@@ -273,13 +280,14 @@ pub fn open(
         commands.trigger(LinkStart { entity: listener });
         Some(listener)
     });
-    let name = named(name);
+    let name = named(&game.name);
     // The password is turned into a key here and kept nowhere.
     let lock = Lock::new(password, drawn());
     let mut lobby = Lobby {
         name: name.clone(),
         locked: lock.is_some(),
-        ..default()
+        seats: default(),
+        ..game
     };
     lobby.seats[0] = Some(Member::Host);
     let game = commands
@@ -324,10 +332,9 @@ pub fn close(commands: &mut Commands, hosting: &Hosting) {
     commands.remove_resource::<Beacon>();
 }
 
-/// Gives the guests the seats that follow the host's, in the order they had. Returns how many
-/// players there are.
-fn rank(seats: &mut Query<&mut Seat>) -> u32 {
-    let mut ranked: Vec<Mut<Seat>> = seats.iter_mut().collect();
+/// Gives the guests the seats that follow the host's, in the order they had.
+fn rank<'a>(seats: impl Iterator<Item = Mut<'a, Seat>>) {
+    let mut ranked: Vec<Mut<Seat>> = seats.collect();
     ranked.sort_by_key(|seat| seat.0);
     for (place, seat) in ranked.iter_mut().enumerate() {
         let wanted = place as u8 + 1;
@@ -335,14 +342,24 @@ fn rank(seats: &mut Query<&mut Seat>) -> u32 {
             seat.0 = wanted;
         }
     }
-    ranked.len() as u32 + 1
 }
 
-/// Counts the players for a run that is about to start. Their seats have no gap, and nobody
-/// joins from now on.
-pub fn muster(hosting: &Hosting, seats: &mut Query<&mut Seat>) -> u32 {
+/// Gathers the guests for a run that is about to start. Their seats have no gap, and nobody
+/// joins from now on. Returns the tank that each of them built, in the order of their seats:
+/// the standard tank for whoever built none.
+pub fn muster(hosting: &Hosting, seats: &mut Query<(&mut Seat, Option<&Built>)>) -> Vec<Genome> {
     hosting.open.store(false, Ordering::Relaxed);
-    rank(seats)
+    rank(seats.iter_mut().map(|(seat, _)| seat));
+    by_seat(seats.iter().map(|(seat, built)| (*seat, built.copied())))
+}
+
+/// The tanks of the guests in the order of their seats, whatever order they are given in:
+/// the standard tank for whoever built none.
+fn by_seat(guests: impl Iterator<Item = (Seat, Option<Built>)>) -> Vec<Genome> {
+    let tank = |built: Option<Built>| built.map_or(Genome::PLAYER, |built| built.0);
+    let mut guests: Vec<(u8, Genome)> = guests.map(|(seat, built)| (seat.0, tank(built))).collect();
+    guests.sort_by_key(|(seat, _)| *seat);
+    guests.into_iter().map(|(_, tank)| tank).collect()
 }
 
 pub struct NetPlugin;
@@ -462,9 +479,10 @@ fn challenge(hosting: Res<Hosting>, mut guests: Query<(&mut Knock, &mut MessageS
     }
 }
 
-/// Lets in the guests who prove that their player knows the password of the game, and tells
-/// the others that they don't. A challenge takes one answer: whoever would try another
-/// password comes back for another challenge.
+/// Hears what the guests say. Those who prove that their player knows the password of the
+/// game are let in, and the others are told that they don't: a challenge takes one answer,
+/// so whoever would try another password comes back for another challenge. A guest who has
+/// a seat tells of the tank that their player built.
 fn admit(
     mut commands: Commands,
     hosting: Res<Hosting>,
@@ -472,7 +490,7 @@ fn admit(
         (
             Entity,
             &RemoteId,
-            Option<&Knock>,
+            (Option<&Knock>, Has<Seat>),
             &mut MessageReceiver<Word>,
             &mut MessageSender<Door>,
         ),
@@ -481,10 +499,17 @@ fn admit(
     seats: Query<&Seat>,
 ) {
     let mut taken: Vec<u8> = seats.iter().map(|seat| seat.0).collect();
-    for (guest, id, knock, mut words, mut door) in &mut guests {
+    for (guest, id, (knock, seated), mut words, mut door) in &mut guests {
         let mut knock = knock;
         for word in words.receive() {
             match word {
+                // A guest can say anything: only a tank that a player may build is taken,
+                // and only from a guest who is in the game.
+                Word::Tank(tank) => {
+                    if seated && tank.is_a_players() {
+                        commands.entity(guest).insert(Built(tank));
+                    }
+                }
                 Word::Proof(proof) => {
                     // A proof that answers no challenge is nothing: the game has no
                     // password, or this guest was let in or turned away already.
@@ -520,7 +545,7 @@ fn part(
 /// While the lobby is open, the seats have no gap: a guest who leaves makes room at the end.
 fn close_ranks(hosting: Res<Hosting>, mut seats: Query<&mut Seat>) {
     if hosting.is_open() {
-        rank(&mut seats);
+        rank(seats.iter_mut());
     }
 }
 
@@ -714,6 +739,22 @@ mod tests {
         // days every game that it serves.
         assert!(DATED_BACK + GOOD_FOR < Duration::from_secs(14 * DAY));
         assert!(GOOD_FOR > KEPT + Duration::from_secs(2 * DAY));
+    }
+
+    #[test]
+    fn the_tanks_of_the_guests_go_by_their_seats() {
+        let mut fast = Genome::PLAYER;
+        fast.set(tanku_core::stats::Stat::Engine, 6);
+        let mut slow = Genome::PLAYER;
+        slow.set(tanku_core::stats::Stat::Engine, 1);
+        // The guests come in no order: the game keeps them as it pleases.
+        let guests = [
+            (Seat(3), Some(Built(slow))),
+            (Seat(1), None),
+            (Seat(2), Some(Built(fast))),
+        ];
+        assert_eq!(by_seat(guests.into_iter()), [Genome::PLAYER, fast, slow]);
+        assert!(by_seat(std::iter::empty()).is_empty());
     }
 
     #[test]

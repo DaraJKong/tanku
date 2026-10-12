@@ -5,16 +5,17 @@
 use bevy::prelude::*;
 use tanku_core::{
     discovery::{Reach, local_address},
-    modes::Difficulty,
     protocol::{Lobby, PORT, WEB_PORT},
     sim::{Run, RunRequest},
+    stats::Genome,
 };
-use tanku_server::net::{self as server, Credentials, Hosting, Ports, Seat};
+use tanku_server::net::{self as server, Built, Credentials, Hosting, Ports, Seat};
 
 use crate::{
     Overlay, Screen,
     cli::Options,
     crew::LocalSeat,
+    garage::Garage,
     net::{web_code, written},
     session::{Drawn, Invitation, Notice, Session, SessionRequest},
 };
@@ -30,8 +31,10 @@ pub struct WebPort(pub Option<u16>);
 /// Comes after the plugins of the network library and the protocol.
 pub fn plugin(app: &mut App) {
     app.add_plugins(server::NetPlugin)
-        // A game that was given no command line brings nothing of its own to a run.
+        // A game that was given no command line brings nothing of its own to a run, and one
+        // without a garage has the standard tank in it.
         .init_resource::<Options>()
+        .init_resource::<Garage>()
         .insert_resource(HostPort(PORT))
         .insert_resource(WebPort(Some(WEB_PORT)))
         .add_systems(Update, direct)
@@ -57,8 +60,13 @@ fn direct(
         Res<Reach>,
         ResMut<Credentials>,
     ),
-    (hosting, run, options): (Option<Res<Hosting>>, Option<Res<Run>>, Res<Options>),
-    mut seats: Query<&mut Seat>,
+    (hosting, run, options, garage): (
+        Option<Res<Hosting>>,
+        Option<Res<Run>>,
+        Res<Options>,
+        Res<Garage>,
+    ),
+    mut seats: Query<(&mut Seat, Option<&Built>)>,
     lobbies: Query<&Lobby>,
     mut run_requests: MessageWriter<RunRequest>,
     mut drawn: ResMut<Drawn>,
@@ -72,8 +80,16 @@ fn direct(
                     game: port.0,
                     web: web.0,
                 };
-                let sign = (sign.name.as_str(), sign.password.as_str());
-                let opened = server::open(&mut commands, ports, &reach, &mut credentials, sign);
+                // The lobby opens on the run that the host set the game up for.
+                let game = Lobby {
+                    name: sign.name.clone(),
+                    difficulty: sign.difficulty,
+                    free: sign.free,
+                    playtest: options.playtest,
+                    ..default()
+                };
+                let game = (game, sign.password.as_str());
+                let opened = server::open(&mut commands, ports, &reach, &mut credentials, game);
                 let Ok(web) = opened else {
                     notice.0 = Some(format!(
                         "Port {} is taken on this machine. Is another game open?",
@@ -116,18 +132,27 @@ fn direct(
                     Some((hosting, lobby))
                 });
                 if let Some((hosting, lobby)) = lobby {
-                    let players = server::muster(hosting, &mut seats);
-                    // The next run on this seed is one on a seed that was played.
-                    let (seed, drawn) = (lobby.seed.clone(), std::mem::take(&mut drawn.0));
-                    // A host sets no difficulty yet: the lobby has no options so far.
+                    let guests = server::muster(hosting, &mut seats);
+                    let players = guests.len() as u32 + 1;
+                    // The next run on this seed is one on a seed that was played, and a
+                    // seed that the host typed is none that the game drew.
+                    let (seed, fresh) = (lobby.seed.clone(), std::mem::take(&mut drawn.0));
+                    // In free mode, each player has the tank that they built: the host has
+                    // the first seat. Outside it, only a playtest brings a tank, and that
+                    // one is its host's alone.
+                    let tanks: Vec<Genome> = if lobby.free {
+                        let own = options.tank.unwrap_or(garage.tank);
+                        std::iter::once(own).chain(guests).collect()
+                    } else {
+                        options.tanks()
+                    };
                     run_requests.write(RunRequest::Start {
                         seed,
                         players,
-                        drawn,
-                        difficulty: Difficulty::Normal,
-                        // The host has the first seat, and the tank of a playtest is theirs.
-                        free: options.tank.is_some(),
-                        tanks: options.tanks(),
+                        drawn: fresh && !lobby.typed,
+                        difficulty: lobby.difficulty,
+                        free: lobby.free || options.tank.is_some(),
+                        tanks,
                     });
                     next_screen.set(Screen::Playing);
                     next_overlay.set(Overlay::None);

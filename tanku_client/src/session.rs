@@ -5,7 +5,7 @@
 use std::net::Ipv4Addr;
 
 use bevy::prelude::*;
-use tanku_core::discovery::Standing;
+use tanku_core::{discovery::Standing, modes::Difficulty};
 use tanku_server::Simulation;
 
 /// How the game at this screen is played.
@@ -27,6 +27,10 @@ pub struct Sign {
     pub name: String,
     /// The password that those who join must type, or nothing.
     pub password: String,
+    /// What its first run is set to, which the host changes in the lobby: how hard it is,
+    /// and whether it is in free mode.
+    pub difficulty: Difficulty,
+    pub free: bool,
 }
 
 /// What the menus ask about a game of several players.

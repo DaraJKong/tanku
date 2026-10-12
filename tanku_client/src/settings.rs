@@ -267,6 +267,10 @@ pub struct Settings {
     pub solo_free: bool,
     /// The name that the player gave the last game that they hosted.
     pub host_name: String,
+    /// The difficulty that the player chose last for a game that they hosted, and whether
+    /// they chose free mode for it.
+    pub host_difficulty: Difficulty,
+    pub host_free: bool,
 }
 
 impl Default for Settings {
@@ -286,6 +290,8 @@ impl Default for Settings {
             solo_difficulty: Difficulty::Normal,
             solo_free: false,
             host_name: String::new(),
+            host_difficulty: Difficulty::Normal,
+            host_free: false,
         }
     }
 }
@@ -395,6 +401,11 @@ impl Settings {
         // The same goes for the name of a game: what is kept is what a host could type.
         let name = pairs.get("host.name").map(String::as_str);
         settings.host_name = named(name.unwrap_or_default());
+        let difficulty = pairs.get("host.difficulty");
+        settings.host_difficulty = difficulty
+            .and_then(|key| Difficulty::of_key(key))
+            .unwrap_or_default();
+        settings.host_free = flag("host.free", settings.host_free);
         for (action, bindings) in &mut settings.bindings {
             if let Some(saved) = pairs.get(action.key()) {
                 let mut codes = saved.split(',').map(|code| Binding::parse(code.trim()));
@@ -417,6 +428,9 @@ impl Settings {
         pairs.insert("solo.difficulty".to_string(), difficulty);
         pairs.insert("solo.free".to_string(), self.solo_free.to_string());
         pairs.insert("host.name".to_string(), self.host_name.clone());
+        let difficulty = self.host_difficulty.key().to_string();
+        pairs.insert("host.difficulty".to_string(), difficulty);
+        pairs.insert("host.free".to_string(), self.host_free.to_string());
         for (action, bindings) in &self.bindings {
             let codes = bindings.map(|binding| binding.map_or("", Binding::code));
             pairs.insert(action.key().to_string(), codes.join(", "));
@@ -614,6 +628,8 @@ mod tests {
             solo_difficulty: Difficulty::Hard,
             solo_free: true,
             host_name: "Friday = game night".to_string(),
+            host_difficulty: Difficulty::Hard,
+            host_free: true,
             ..default()
         };
         settings.bind(Action::Shield, 0, Binding::Key(KeyCode::ShiftLeft));

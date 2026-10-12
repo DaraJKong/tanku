@@ -38,12 +38,14 @@ use tanku_core::{
     rules::TICK_RATE,
     seed::VERSION,
     sim::{Player, Run, RunPhase, Sector, SectorIndex, SimEvent, TankCommand},
+    stats::Genome,
 };
 use tanku_server::field::Field;
 
 use crate::{
     Overlay, Screen,
     crew::{LocalSeat, Own},
+    garage::Garage,
     mirror,
     session::{Asked, Notice, Session, SessionRequest, Shut},
 };
@@ -92,6 +94,8 @@ struct Joined {
     waited: f32,
     /// Whether the host turned this machine away at its door, and how.
     turned: Option<Turned>,
+    /// The tank that the host was last told of, as the one that the player built.
+    told: Option<Genome>,
 }
 
 /// The name of a host being looked up, before its game can be joined.
@@ -293,6 +297,7 @@ fn join(
         seated: false,
         waited: 0.0,
         turned: None,
+        told: None,
     });
     true
 }
@@ -316,6 +321,8 @@ impl Plugin for NetPlugin {
             // A guest makes its picture of the run from what its host told, once that is in.
             .configure_sets(PreUpdate, mirror::Picture.after(lay_out_sectors))
             .insert_resource(Patience(5))
+            // A game without a garage has the standard tank in it.
+            .init_resource::<Garage>()
             .add_systems(Update, direct)
             .add_systems(
                 FixedPreUpdate,
@@ -327,6 +334,7 @@ impl Plugin for NetPlugin {
                     knock,
                     watch,
                     (
+                        tell_of_the_tank,
                         take_the_controls,
                         hear,
                         follow_run,
@@ -640,6 +648,25 @@ fn watch(
     next_overlay.set(Overlay::None);
 }
 
+/// Tells the host of the tank that the player built, whenever a run in free mode is ahead
+/// and the host doesn't know that tank: when the host turns free mode on, and when the player
+/// changes the tank in their garage.
+fn tell_of_the_tank(
+    mut joined: ResMut<Joined>,
+    garage: Res<Garage>,
+    lobbies: Query<&Lobby>,
+    mut words: Query<&mut MessageSender<Word>, With<Client>>,
+) {
+    let free = lobbies.single().is_ok_and(|lobby| lobby.free);
+    if !joined.seated || !free || joined.told == Some(garage.tank) {
+        return;
+    }
+    if let Ok(mut words) = words.get_mut(joined.client) {
+        words.send::<Reliable>(Word::Tank(garage.tank));
+        joined.told = Some(garage.tank);
+    }
+}
+
 /// A connection that ended goes once its last words are out. What it received went when it
 /// ended.
 fn let_go(mut commands: Commands, time: Res<Time<Real>>, mut gone: Query<(Entity, &mut Leaving)>) {
@@ -744,8 +771,9 @@ fn follow_host(
         return;
     }
     let in_progress = run.as_ref().is_some_and(|run| run.phase != RunPhase::Over);
+    // A run may start while the player is in their garage.
     let wanted = match (*screen.get(), run.is_some()) {
-        (Screen::Lobby | Screen::GameOver, _) if in_progress => Screen::Playing,
+        (Screen::Lobby | Screen::Garage | Screen::GameOver, _) if in_progress => Screen::Playing,
         (Screen::Playing | Screen::GameOver, false) => Screen::Lobby,
         _ => return,
     };
@@ -759,6 +787,7 @@ pub(crate) mod tests {
 
     use bevy::state::app::StatesPlugin;
     use lightyear::link::LinkSystems;
+    use tanku_core::modes::Difficulty;
     use tanku_core::{
         CorePlugin,
         sim::{Position, Tank, Wreck},
@@ -767,7 +796,7 @@ pub(crate) mod tests {
     use tanku_core::{discovery::Reach, sim::RunRequest};
     use tanku_server::{
         ServerPlugin,
-        net::{Hosting, Seat},
+        net::{Built, Hosting, Seat},
     };
 
     use super::*;
@@ -1080,6 +1109,7 @@ pub(crate) mod tests {
         let sign = Sign {
             name: "Friday".into(),
             password: "open sesame".into(),
+            ..default()
         };
         ask(&mut host, SessionRequest::Host(sign));
         let at = format!("127.0.0.1:{port}");
@@ -1138,6 +1168,7 @@ pub(crate) mod tests {
         let sign = Sign {
             name: String::new(),
             password: "sesame".into(),
+            ..default()
         };
         ask(&mut host, SessionRequest::Host(sign));
         run_until("a lobby", &mut [&mut host], |games| {
@@ -1171,6 +1202,7 @@ pub(crate) mod tests {
         let sign = Sign {
             name: String::new(),
             password: "sesame".into(),
+            ..default()
         };
         ask(&mut host, SessionRequest::Host(sign));
         // A guest that doesn't do as the game does: it stays at the door when it is turned
@@ -1235,6 +1267,183 @@ pub(crate) mod tests {
         let world = guest.world_mut();
         assert_eq!(world.query::<&Lobby>().iter(world).count(), 0);
         assert!(hears(&mut guest).is_empty());
+    }
+
+    /// The tank of a seat in the run that a game plays or shows.
+    fn tank(game: &mut App, seat: u8) -> Genome {
+        let world = game.world_mut();
+        let mut tanks = world.query::<(&Player, &Tank)>();
+        let tank = tanks.iter(world).find(|(player, _)| player.seat == seat);
+        tank.unwrap().1.genome
+    }
+
+    /// Sets the lobby of a host as its menus do.
+    fn set(host: &mut App, change: impl FnOnce(&mut Lobby)) {
+        let world = host.world_mut();
+        change(&mut world.query::<&mut Lobby>().single_mut(world).unwrap());
+    }
+
+    /// A tank that a player builds in their garage: a fast one with a fast gun.
+    fn racer() -> Genome {
+        let parts = [(Stat::Engine, 7), (Stat::Muzzle, 7), (Stat::Loader, 6)];
+        Genome::of_the_garage(&parts).unwrap()
+    }
+
+    /// Another one: a slow tank whose bullets pierce and bounce three times.
+    fn bouncer() -> Genome {
+        let parts = [(Stat::Engine, 1), (Stat::Ricochet, 3), (Stat::Piercing, 1)];
+        Genome::of_the_garage(&parts).unwrap()
+    }
+
+    /// Waits until the run of a host has started for its guest too, with a tank for each.
+    fn until_both_play(host: &mut App, guest: &mut App) {
+        run_until("the run", &mut [host, guest], |games| {
+            screen(games[1]) == Screen::Playing && seats(games[1]) == [0, 1]
+        });
+    }
+
+    #[test]
+    fn in_free_mode_each_player_has_the_tank_that_they_built() {
+        let port = free_port();
+        let mut host = host(port);
+        host.insert_resource(Garage { tank: bouncer() });
+        let mut guest = guest(port);
+        guest.insert_resource(Garage { tank: racer() });
+        run_until("the lobby", &mut [&mut host, &mut guest], |games| {
+            screen(games[1]) == Screen::Lobby
+        });
+        // Outside free mode, nobody tells of a tank, and everyone has the standard one.
+        let built = |host: &mut App| -> Vec<Genome> {
+            let world = host.world_mut();
+            let mut built = world.query::<&Built>();
+            built.iter(world).map(|built| built.0).collect()
+        };
+        ask(&mut host, SessionRequest::Start);
+        until_both_play(&mut host, &mut guest);
+        assert!(built(&mut host).is_empty());
+        for game in [&mut host, &mut guest] {
+            assert_eq!(
+                (tank(game, 0), tank(game, 1)),
+                (Genome::PLAYER, Genome::PLAYER)
+            );
+            assert!(!game.world().resource::<Run>().free);
+        }
+
+        // The host turns free mode on in the lobby: the guest tells of their tank.
+        host.world_mut().write_message(RunRequest::Abandon);
+        let mut next = host.world_mut().resource_mut::<NextState<Screen>>();
+        next.set(Screen::Lobby);
+        run_until("the lobby again", &mut [&mut host, &mut guest], |games| {
+            screen(games[1]) == Screen::Lobby
+        });
+        set(&mut host, |lobby| lobby.free = true);
+        run_until("the tank", &mut [&mut host, &mut guest], |games| {
+            built(games[0]) == [racer()]
+        });
+        // The guest changes it in their garage, and the host is told again.
+        let slower = Genome::of_the_garage(&[(Stat::Engine, 2), (Stat::Muzzle, 7)]).unwrap();
+        guest.insert_resource(Garage { tank: slower });
+        run_until("the other tank", &mut [&mut host, &mut guest], |games| {
+            built(games[0]) == [slower]
+        });
+        // The run is in free mode, each player in their own tank, on both machines. It
+        // starts for a guest who is still in their garage.
+        let mut next = guest.world_mut().resource_mut::<NextState<Screen>>();
+        next.set(Screen::Garage);
+        run_until("the garage", &mut [&mut host, &mut guest], |games| {
+            screen(games[1]) == Screen::Garage
+        });
+        ask(&mut host, SessionRequest::Start);
+        until_both_play(&mut host, &mut guest);
+        for game in [&mut host, &mut guest] {
+            assert_eq!((tank(game, 0), tank(game, 1)), (bouncer(), slower));
+            let run = game.world().resource::<Run>();
+            assert!(run.free && !run.earns);
+        }
+    }
+
+    #[test]
+    fn a_tank_that_no_player_may_build_is_not_taken() {
+        let port = free_port();
+        let mut host = host(port);
+        // A guest whose game claims a tank with a brain, at a price that no garage allows.
+        let mut cheat = Genome::empty(200);
+        for stat in Stat::GARAGE.into_iter().chain([Stat::Brain]) {
+            cheat.set(stat, stat.max_level());
+        }
+        assert!(!cheat.is_a_players());
+        let mut guest = guest(port);
+        guest.insert_resource(Garage { tank: cheat });
+        run_until("the lobby", &mut [&mut host, &mut guest], |games| {
+            screen(games[1]) == Screen::Lobby
+        });
+        set(&mut host, |lobby| lobby.free = true);
+        // The guest tells of it, and the host keeps none of it.
+        run_until("the claim", &mut [&mut host, &mut guest], |games| {
+            games[1].world().resource::<Joined>().told == Some(cheat)
+        });
+        let since = std::time::Instant::now();
+        run_until("a while", &mut [&mut host, &mut guest], |_| {
+            since.elapsed().as_secs_f32() > 0.3
+        });
+        let world = host.world_mut();
+        assert_eq!(world.query::<&Built>().iter(world).count(), 0);
+        ask(&mut host, SessionRequest::Start);
+        until_both_play(&mut host, &mut guest);
+        assert_eq!(tank(&mut host, 1), Genome::PLAYER);
+    }
+
+    #[test]
+    fn a_run_is_as_the_host_set_it_in_the_lobby() {
+        let port = free_port();
+        let mut host = host(port);
+        let mut guest = guest(port);
+        run_until("the lobby", &mut [&mut host, &mut guest], |games| {
+            screen(games[1]) == Screen::Lobby
+        });
+        // The guest is told what the run is set to.
+        set(&mut host, |lobby| {
+            lobby.difficulty = Difficulty::Hard;
+            lobby.seed = "FRIDAY".into();
+            lobby.typed = true;
+        });
+        run_until("the options", &mut [&mut host, &mut guest], |games| {
+            let lobby = lobby(games[1]);
+            (lobby.difficulty, lobby.seed.as_str(), lobby.typed)
+                == (Difficulty::Hard, "FRIDAY", true)
+        });
+        // A run on a seed that the host typed earns nothing, though no run was played on
+        // it: it is a chosen seed.
+        host.insert_resource(session::Drawn(true));
+        ask(&mut host, SessionRequest::Start);
+        until_both_play(&mut host, &mut guest);
+        for game in [&mut host, &mut guest] {
+            let run = game.world().resource::<Run>();
+            assert_eq!(
+                (run.seed_text.as_str(), run.difficulty, run.earns, run.free),
+                ("FRIDAY", Difficulty::Hard, false, false)
+            );
+        }
+        // The next one is on a seed that the game drew, in normal mode: it earns.
+        host.world_mut().write_message(RunRequest::Abandon);
+        let mut next = host.world_mut().resource_mut::<NextState<Screen>>();
+        next.set(Screen::Lobby);
+        run_until("the lobby again", &mut [&mut host, &mut guest], |games| {
+            screen(games[1]) == Screen::Lobby
+        });
+        set(&mut host, |lobby| {
+            lobby.difficulty = Difficulty::Normal;
+            lobby.seed = "DRAWN".into();
+            lobby.typed = false;
+        });
+        host.insert_resource(session::Drawn(true));
+        ask(&mut host, SessionRequest::Start);
+        until_both_play(&mut host, &mut guest);
+        let run = guest.world().resource::<Run>();
+        assert_eq!(
+            (run.seed_text.as_str(), run.difficulty, run.earns),
+            ("DRAWN", Difficulty::Normal, true)
+        );
     }
 
     #[test]

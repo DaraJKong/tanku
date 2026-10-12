@@ -5,8 +5,8 @@ A cooperative top-down tank game for one to four players, built with Rust and Be
 The solo game and co-op are playable, on Linux, on Windows and in a browser:
 
 - **Solo:** the corridor, the generated enemies with their classes and their brains, arenas and their waves, lives and checkpoints, the menus, the sound cues and the music. Runs unlock achievements: the first one lets the player type the seed of a run. Clearing sector 20 unlocks free mode, in which the player spends the 59 points of their tank as they like, in a garage that draws the tank as they build it. Clearing sector 30 unlocks hard mode, whose enemies are stronger from the first sector.
-- **Co-op:** up to four players. One of them hosts a game, which the others find on the local network or join by its address, from a desktop build or from a browser. A destroyed tank is a wreck that a teammate repairs.
-- **Not in yet:** what a host sets for a run (its difficulty, free mode), and the ready check of the lobby. Until then, a game of several players is in normal mode and in the standard tank.
+- **Co-op:** up to four players. One of them hosts a game, which the others find on the local network or join by its address, from a desktop build or from a browser. The host sets the run in the lobby: its difficulty, its seed, and free mode, in which each player has the tank of their own garage. Nothing is locked for a host who has company. A destroyed tank is a wreck that a teammate repairs.
+- **Not in yet:** the ready check of the lobby. Until then, the host starts the run.
 
 Co-op has been played by two players. With three or four, it is checked by tests and by scripted runs only. The build for Windows is checked under wine, not yet on Windows itself. The specification is in [docs/PROJECT.md](docs/PROJECT.md).
 
@@ -46,7 +46,10 @@ Up to four players share a run. One of them hosts the game, and the others join 
 
 1. The host picks "Host a game" in the main menu, gives the game a name and a password if they like, and opens it. The lobby shows the address of the machine on its network.
 2. Each of the others picks "Join a game". A game that is hosted on the same network shows there, under its name if it has one, and a click joins it. One that doesn't show is joined by typing the address of its host. A game that has a password asks for it.
-3. The host starts the run once everyone is in the lobby. Nobody joins a run in progress.
+3. The host sets the run in the lobby, and the others see it: normal or hard mode, a seed that the game draws or one that the host types, and free mode. In free mode, each player opens their own garage from the lobby and builds their tank there.
+4. The host starts the run once everyone is in the lobby. Nobody joins a run in progress.
+
+A host needs none of the achievements: every difficulty and every option is theirs from the start. Only a host who starts alone plays a solo run, with its locks. A run in free mode or on a seed that the host typed earns no achievement, and the lobby says so. The game keeps what a host chose last, the difficulty and free mode, for their next game.
 
 A tank that is destroyed stays as a wreck, in a circle in dashes. It is in nobody's way: tanks drive over it and bullets fly over it. A teammate repairs it by driving into the circle and holding the repair key for two seconds, and can drive, shoot, lay mines and shield meanwhile: the circle is inked in as the repair goes on, and starts over if the key is let go or the tank leaves the circle. A tank repairs one wreck at a time: the nearest one whose circle it is in. The run is over when every tank is a wreck. A marker at the edge of the screen points to each teammate who is out of view, by the number of its player: full for a tank that runs, hollow for a wreck.
 
@@ -110,7 +113,7 @@ A tank is written as its stats with their levels, with commas between them. A st
 cargo run -p tanku_client -- --playtest --seed GARAGE --tank engine=4,tracks=5,muzzle=7,magazine=4,loader=6
 ```
 
-The main menu draws the tank and says how many of its points it spends. In a game of several players, the tank is the host's alone, and the others keep the standard one. A tank from the command line doesn't change the one of the garage.
+The main menu draws the tank and says how many of its points it spends. In a game of several players, the tank is the host's alone: the others keep the standard one, or the one of their garage if the host turns free mode on. A tank from the command line doesn't change the one of the garage.
 
 ## Building
 

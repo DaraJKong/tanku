@@ -18,18 +18,20 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     lock::{Challenge, Proof},
+    modes::Difficulty,
     rules::MAX_PLAYERS,
     seed::VERSION,
     sim::{
         Barrier, Block, Bullet, Enemy, ExplosiveCrate, Gun, Mine, Motion, Player, Position,
         Protected, Run, SectorIndex, Shield, SimEvent, Tank, TankCommand, Wreck,
     },
+    stats::Genome,
 };
 
 /// Counts the changes to what the server and its clients tell each other since the version of
 /// the game was last raised. Two builds that don't count the same don't speak the same, so
 /// they don't join each other: raise this with every such change.
-pub const REVISION: u32 = 6;
+pub const REVISION: u32 = 7;
 
 /// The port a game listens on unless it is told otherwise.
 pub const PORT: u16 = 28405;
@@ -86,8 +88,8 @@ pub enum Member {
     Guest(u64),
 }
 
-/// The lobby of a game that several players share: who is there, and the seed of their next
-/// run. The host decides, and the guests are told.
+/// The lobby of a game that several players share: who is there, and what their next run is.
+/// The host decides, and the guests are told.
 #[derive(Component, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Lobby {
     /// Who sits where. A seat is the number of a player in a run.
@@ -96,7 +98,18 @@ pub struct Lobby {
     pub name: String,
     /// Whether the game has a password, which whoever joins must type.
     pub locked: bool,
+    /// Whether the game is a playtest of its host: its runs set no record and earn no
+    /// achievement, for anyone in them.
+    pub playtest: bool,
     pub seed: String,
+    /// Whether the host typed the seed, which makes it a chosen one: a run on it earns no
+    /// achievement.
+    pub typed: bool,
+    /// How hard the next run is.
+    pub difficulty: Difficulty,
+    /// Whether the next run is in free mode, in which each player has the tank that they
+    /// built in their own garage.
+    pub free: bool,
 }
 
 /// What a host tells one guest who knocks at a game that has a password.
@@ -113,6 +126,8 @@ pub enum Door {
 pub enum Word {
     /// The proof that its player typed the password of the game.
     Proof(Proof),
+    /// The tank that its player built in their garage, for a run in free mode.
+    Tank(Genome),
 }
 
 impl Lobby {

@@ -307,7 +307,7 @@ pub fn plugin(app: &mut App) {
         .add_systems(OnEnter(Screen::Host), set_up_to_host)
         .add_systems(OnEnter(Screen::Join), set_up_to_join)
         .add_systems(OnExit(Screen::Join), forget_the_game)
-        .add_systems(OnEnter(Screen::Lobby), draw_a_seed)
+        .add_systems(OnEnter(Screen::Lobby), draw_a_seed.run_if(gathering))
         .add_systems(OnExit(Screen::Menu), put_the_exhibit_away)
         .add_systems(OnExit(Screen::Solo), put_the_exhibit_away)
         .add_systems(OnExit(Screen::Garage), put_the_exhibit_away)
@@ -337,12 +337,17 @@ pub fn plugin(app: &mut App) {
                     escape,
                 )
                     .chain(),
-                (solo_screen.run_if(in_state(Screen::Solo)), show_seed).chain(),
+                solo_screen.run_if(in_state(Screen::Solo)),
                 garage_screen.run_if(in_state(Screen::Garage)),
                 refresh_pause
                     .run_if(in_state(Overlay::Pause).and_then(resource_exists::<Playtest>)),
                 refresh_settings.run_if(in_state(Overlay::Settings)),
-                (lobby_screen.run_if(in_state(Screen::Lobby)), show_copy).chain(),
+                (
+                    lobby_screen.run_if(in_state(Screen::Lobby)),
+                    show_copy,
+                    show_seed.after(solo_screen),
+                )
+                    .chain(),
                 (
                     host_screen.run_if(in_state(Screen::Host)),
                     (forget_the_password, join_screen, list_games)
@@ -779,7 +784,7 @@ fn main_menu(
 ) {
     // What the drawing shows: the standard tank, the one that the player built for free
     // mode or the one that a playtest brought. Those two may have points left over.
-    let tank = shown_tank(Screen::Menu, &setup, &options, &garage);
+    let tank = shown_tank(Screen::Menu, (&setup, None), &options, &garage);
     let spent = format!("{} OF {} POINTS", tank.cost(), tank.budget);
     let (drawn, budget) = match (options.tank.is_some(), is_free(&setup, &options)) {
         (true, _) => ("PLAYTEST TANK", spent),
@@ -904,10 +909,12 @@ fn exhibit(
     mut view: ResMut<View>,
     screen: Res<State<Screen>>,
     (setup, options, garage): (Res<Setup>, Res<Options>, Res<Garage>),
+    lobbies: Query<&Lobby>,
     mut shown: Local<Option<(Screen, Genome)>>,
 ) {
     // The drawing follows the tank: every change in the garage shows at once.
-    let genome = shown_tank(*screen.get(), &setup, &options, &garage);
+    let shared = lobbies.single().ok().map(|lobby| lobby.free);
+    let genome = shown_tank(*screen.get(), (&setup, shared), &options, &garage);
     let wanted = (*screen.get(), genome);
     if !exhibits.is_empty() && *shown == Some(wanted) {
         return;
@@ -936,16 +943,24 @@ fn exhibit(
 }
 
 /// The tank that the menus draw on a screen: the one that the player takes into a run from
-/// there.
-fn shown_tank(screen: Screen, setup: &Setup, options: &Options, garage: &Garage) -> Genome {
+/// there. `shared` tells whether the game of several players that the player is in, if they
+/// are in one, is set to free mode.
+fn shown_tank(
+    screen: Screen,
+    (setup, shared): (&Setup, Option<bool>),
+    options: &Options,
+    garage: &Garage,
+) -> Genome {
     let alone = matches!(screen, Screen::Menu | Screen::Solo | Screen::Achievements);
-    match screen {
+    match (screen, shared) {
         // The garage draws the tank that is being built.
-        Screen::Garage => garage.tank,
-        // A single player in free mode has the tank that they built or brought.
+        (Screen::Garage, _) => garage.tank,
+        // A single player in free mode has the tank that they built or brought, and so has
+        // each of several players.
         _ if alone && is_free(setup, options) => own_tank(options, garage),
-        // Several players have the standard tank, and the host of a playtest the one that
-        // it brought.
+        (Screen::Lobby, Some(true)) => own_tank(options, garage),
+        // Outside free mode, everyone has the standard tank, and the host of a playtest the
+        // one that it brought.
         _ => options.tank.unwrap_or(Genome::PLAYER),
     }
 }
@@ -1207,55 +1222,84 @@ fn begin(
     screen.set(Screen::Playing);
 }
 
+/// What a key makes of a seed that a player may type, if it makes anything of it. The first
+/// key takes the place of a seed that the game drew. A key that writes nothing of a seed,
+/// such as Shift or an arrow, leaves the seed as it is.
+fn retyped(seed: &str, typed: bool, key: &Key, text: Option<&str>) -> Option<String> {
+    let letters = text.unwrap_or_default().chars();
+    let writes = letters.filter(char::is_ascii_alphanumeric).count() > 0;
+    if !writes && *key != Key::Backspace {
+        return None;
+    }
+    let mut wanted = String::new();
+    if typed {
+        wanted.push_str(seed);
+    }
+    typed_seed(&mut wanted, key, text);
+    Some(wanted).filter(|wanted| wanted != seed)
+}
+
 /// Takes what the player types on the solo screen: the seed of the run, once typing one is
-/// unlocked. Enter starts the run.
+/// unlocked. Enter starts the run. In the lobby of a game, its host types the seed of the
+/// next run, which nothing locks.
 fn type_seed(
     mut keys: MessageReader<KeyboardInput>,
     screen: Res<State<Screen>>,
-    unlocks: Res<Unlocks>,
+    (session, unlocks): (Res<Session>, Res<Unlocks>),
     (options, garage): (Res<Options>, Res<Garage>),
-    mut setup: ResMut<Setup>,
+    (mut setup, mut drawn): (ResMut<Setup>, ResMut<Drawn>),
+    mut lobbies: Query<&mut Lobby>,
     mut requests: MessageWriter<RunRequest>,
     mut next_screen: ResMut<NextState<Screen>>,
 ) {
     let setting_up = *screen.get() == Screen::Solo;
     let typing = setting_up && open(&unlocks, &options, Unlock::ChosenSeed);
+    // A playtest that was given a seed keeps it.
+    let hosting = *screen.get() == Screen::Lobby && *session == Session::Host;
+    let mut lobby = lobbies.single_mut().ok().filter(|_| hosting);
     for key in keys.read() {
-        if !setting_up || key.state != ButtonState::Pressed {
+        if key.state != ButtonState::Pressed {
             continue;
         }
-        if key.logical_key == Key::Enter {
+        let (pressed, text) = (&key.logical_key, key.text.as_deref());
+        if let Some(lobby) = lobby.as_mut().filter(|_| options.seed.is_none()) {
+            if let Some(seed) = retyped(&lobby.seed, lobby.typed, pressed, text) {
+                (lobby.seed, lobby.typed) = (seed, true);
+                // A seed that the host typed is none that the game drew.
+                drawn.0 = false;
+            }
+        } else if setting_up && *pressed == Key::Enter {
             begin(&setup, (&options, &garage), &mut requests, &mut next_screen);
-        } else if typing {
-            // The first key takes the place of a seed that the game drew.
-            let mut seed = String::new();
-            if setup.typed {
-                seed.clone_from(&setup.seed);
-            }
-            typed_seed(&mut seed, &key.logical_key, key.text.as_deref());
-            if seed != setup.seed {
-                (setup.seed, setup.typed) = (seed, true);
-            }
+        } else if typing && let Some(seed) = retyped(&setup.seed, setup.typed, pressed, text) {
+            (setup.seed, setup.typed) = (seed, true);
         }
     }
 }
 
-/// Shows the seed of the solo screen, with a mark that blinks where the next letter goes
-/// when the player may type one.
+/// Shows the seed of the solo screen, or the one of the lobby to its host, with a mark that
+/// blinks where the next letter goes when the player may type one.
 fn show_seed(
     time: Res<Time<Real>>,
-    unlocks: Res<Unlocks>,
+    screen: Res<State<Screen>>,
+    (session, unlocks): (Res<Session>, Res<Unlocks>),
     options: Res<Options>,
     setup: Res<Setup>,
+    lobbies: Query<&Lobby>,
     mut fields: Query<&mut Text, With<SeedField>>,
 ) {
+    let (seed, types) = match (*screen.get(), lobbies.single()) {
+        (Screen::Lobby, Ok(lobby)) => {
+            let types = *session == Session::Host && options.seed.is_none();
+            (&lobby.seed, types)
+        }
+        _ => (&setup.seed, open(&unlocks, &options, Unlock::ChosenSeed)),
+    };
     // A seed that is as long as it gets takes no further letter.
-    let typing = open(&unlocks, &options, Unlock::ChosenSeed) && setup.seed.len() < SEED_LENGTH;
-    let blinks = typing && time.elapsed_secs() % 1.0 < 0.5;
-    let wanted = format!("{}{}", setup.seed, if blinks { "_" } else { "" });
+    let blinks = types && seed.len() < SEED_LENGTH && time.elapsed_secs() % 1.0 < 0.5;
+    let wanted = format!("{seed}{}", if blinks { "_" } else { "" });
     for mut text in &mut fields {
         if text.0 != wanted {
-            text.0 = wanted.clone();
+            text.0.clone_from(&wanted);
         }
     }
 }
@@ -1382,6 +1426,15 @@ fn solo_screen(
                 button(parent, "Back", Press::Abandon);
             });
         });
+}
+
+/// The screen that the garage was opened from, and goes back to: the one where a single
+/// player sets up a run, or the lobby of a game of several players.
+fn garage_opened_from(session: Session) -> Screen {
+    match session {
+        Session::Solo => Screen::Solo,
+        Session::Host | Session::Guest => Screen::Lobby,
+    }
 }
 
 /// A cell of the table of the garage: a box of a width that holds what a column tells of a
@@ -1631,8 +1684,13 @@ fn ask_to_host(
     if settings.host_name != name {
         settings.host_name.clone_from(&name);
     }
-    let password = opening.password.text.clone();
-    requests.write(SessionRequest::Host(Sign { name, password }));
+    // The lobby opens on the run that the host set up last, which they can change there.
+    requests.write(SessionRequest::Host(Sign {
+        name,
+        password: opening.password.text.clone(),
+        difficulty: settings.host_difficulty,
+        free: settings.host_free,
+    }));
 }
 
 /// Takes what the player types on the host screen: the name of the game or its password,
@@ -2122,24 +2180,6 @@ fn show_copy(
     }
 }
 
-/// A line of the lobby that tells how to join, with a small button at its end.
-fn told_row(
-    parent: &mut ChildSpawnerCommands,
-    told: impl Bundle,
-    control: impl FnOnce(&mut ChildSpawnerCommands),
-) {
-    let row = Node {
-        justify_content: JustifyContent::SpaceBetween,
-        align_items: AlignItems::Center,
-        column_gap: px(12),
-        ..default()
-    };
-    parent.spawn(row).with_children(|row| {
-        row.spawn(told);
-        control(row);
-    });
-}
-
 /// How others join the game of this machine, in the lobby of its host: the players at a
 /// desktop game, or those in a browser.
 fn ways_to_join(
@@ -2148,22 +2188,27 @@ fn ways_to_join(
     way: Way,
     copied: &Copied,
 ) {
+    // The buttons of a way stand in a row under what it tells.
+    let buttons = Node {
+        column_gap: px(6),
+        ..default()
+    };
     let code = invitation.web.as_ref().filter(|_| way == Way::Browser);
     if let (Some(code), Some(port)) = (code, invitation.web_port) {
         let [place, first, second] = link_ending(code);
         section(parent, "Link for a browser");
-        told_row(parent, theme::figure(place, 20.0, theme::TEXT), |row| {
-            small(row, "For a desktop", 150.0, Press::Show(Way::Desktop));
-        });
+        parent.spawn(theme::figure(place, 20.0, theme::TEXT));
         // Nobody types the print: a button copies the lot.
-        told_row(parent, theme::figure(first, 15.0, theme::TEXT), |row| {
+        parent.spawn(theme::figure(first, 15.0, theme::TEXT));
+        parent.spawn(theme::figure(second, 15.0, theme::TEXT));
+        parent.spawn(buttons).with_children(|row| {
             let words = (
                 CopyLabel,
                 theme::text(copy_label(copied), 16.0, theme::TEXT),
             );
-            small_with(row, words, 150.0, Press::Copy);
+            small_with(row, words, 120.0, Press::Copy);
+            small(row, "For a desktop", 140.0, Press::Show(Way::Desktop));
         });
-        parent.spawn(theme::figure(second, 15.0, theme::TEXT));
         let hint = "In a browser, it goes at the end of the address of the game's page, or is \
                     pasted into that page. The log has it too.";
         line(parent, hint, theme::TEXT_DIM);
@@ -2175,23 +2220,25 @@ fn ways_to_join(
         return;
     }
     section(parent, "Address");
-    let other = |row: &mut ChildSpawnerCommands| {
-        if invitation.web.is_some() {
-            small(row, "For a browser", 150.0, Press::Show(Way::Browser));
-        }
-    };
     match &invitation.address {
         Some(address) => {
-            let told = theme::figure(address.clone(), 24.0, theme::TEXT);
-            told_row(parent, told, other);
-            let hint = "Players on this network find the game on their join screen, or type \
-                        this address there.";
-            line(parent, hint, theme::TEXT_DIM);
+            parent.spawn(theme::figure(address.clone(), 24.0, theme::TEXT));
         }
-        None => {
-            let hint = "This machine has no address on a network.";
-            told_row(parent, theme::text(hint, 17.0, theme::TEXT_DIM), other);
-        }
+        None => line(
+            parent,
+            "This machine has no address on a network.",
+            theme::TEXT_DIM,
+        ),
+    }
+    if invitation.web.is_some() {
+        parent.spawn(buttons).with_children(|row| {
+            small(row, "For a browser", 140.0, Press::Show(Way::Browser));
+        });
+    }
+    if invitation.address.is_some() {
+        let hint = "Players on this network find the game on their join screen, or type this \
+                    address there.";
+        line(parent, hint, theme::TEXT_DIM);
     }
     line(
         parent,
@@ -2209,6 +2256,15 @@ fn ways_to_join(
     }
 }
 
+/// Whether the lobby opens for the players to gather: for a new game, or after a run. A
+/// player who comes back from their garage finds the lobby as it was.
+fn gathering(mut transitions: MessageReader<StateTransitionEvent<Screen>>) -> bool {
+    let from_the_garage = |transition: &StateTransitionEvent<Screen>| {
+        transition.exited == Some(Screen::Garage) && transition.entered == Some(Screen::Lobby)
+    };
+    !transitions.read().any(from_the_garage)
+}
+
 /// The host draws a seed whenever the players gather in the lobby.
 fn draw_a_seed(
     session: Res<Session>,
@@ -2219,7 +2275,54 @@ fn draw_a_seed(
 ) {
     if let (Session::Host, Ok(mut lobby)) = (*session, lobbies.single_mut()) {
         lobby.seed = new_seed(&options, time.elapsed().as_nanos() as u64);
+        lobby.typed = false;
         drawn.0 = true;
+    }
+}
+
+/// What a single player has still to unlock before they can play the run that a lobby is set
+/// to. A host who starts alone plays a solo run, with its locks.
+fn locked_alone(lobby: &Lobby, unlocks: &Unlocks, options: &Options) -> Option<Unlock> {
+    let needed = [
+        lobby.difficulty.unlock(),
+        lobby.typed.then_some(Unlock::ChosenSeed),
+        lobby.free.then_some(Unlock::FreeMode),
+    ];
+    let mut needed = needed.into_iter().flatten();
+    needed.find(|unlock| !open(unlocks, options, *unlock))
+}
+
+/// What the lobby tells a host who is alone and has not unlocked what the run is set to.
+fn locked_words(unlock: Unlock) -> String {
+    let (name, condition) = (unlocks::name(unlock), unlocks::condition(unlock));
+    format!(
+        "Locked for a single player: {} ({}).",
+        name.to_lowercase(),
+        condition.to_lowercase()
+    )
+}
+
+/// Why the host of a lobby can't start its run, if they can't: the run has no seed, or the
+/// host is alone and has not unlocked what the run is set to.
+fn held_back(lobby: &Lobby, unlocks: &Unlocks, options: &Options) -> Option<String> {
+    if lobby.seed.is_empty() {
+        return Some("A run needs a seed: type one, or take a new one.".to_string());
+    }
+    let alone = lobby.players() == 1;
+    let locked = locked_alone(lobby, unlocks, options).filter(|_| alone);
+    locked.map(locked_words)
+}
+
+/// Why the next run of a lobby will earn no achievement, if it won't.
+fn unearned(lobby: &Lobby) -> Option<&'static str> {
+    if lobby.playtest {
+        Some("A playtest of the host: its runs set no record and earn no achievement.")
+    } else if lobby.free {
+        Some("A run in free mode earns no achievement.")
+    } else if lobby.typed {
+        Some("A run on a typed seed earns no achievement.")
+    } else {
+        None
     }
 }
 
@@ -2271,22 +2374,41 @@ fn seat_row(parent: &mut ChildSpawnerCommands, seat: usize, member: Option<Membe
     ));
 }
 
-/// The lobby: who is there, what they are about to play, and how others join. It is drawn
-/// again whenever something it shows changes.
+/// A column of a menu to the right of its margin, level with what stands under its title. It
+/// ends short of what the sheet draws.
+fn aside(root: &mut ChildSpawnerCommands, content: impl FnOnce(&mut ChildSpawnerCommands)) {
+    root.spawn(Node {
+        position_type: PositionType::Absolute,
+        left: px(620),
+        top: px(227),
+        width: px(380),
+        flex_direction: FlexDirection::Column,
+        row_gap: px(10),
+        ..default()
+    })
+    .with_children(content);
+}
+
+/// The lobby: who is there, what they are about to play, and how others join. The host sets
+/// the run, and the others see it. It is drawn again whenever something it shows changes.
 fn lobby_screen(
     mut commands: Commands,
     lobbies: Query<Ref<Lobby>>,
     session: Res<Session>,
     seat: Res<LocalSeat>,
     (invitation, way, copied): (Res<Invitation>, Res<Way>, Res<Copied>),
-    options: Res<Options>,
+    (options, unlocks, garage): (Res<Options>, Res<Unlocks>, Res<Garage>),
     roots: Query<Entity, With<LobbyRoot>>,
 ) {
     let Ok(lobby) = lobbies.single() else {
         return;
     };
-    let stale =
-        lobby.is_changed() || seat.is_changed() || invitation.is_changed() || way.is_changed();
+    let stale = lobby.is_changed()
+        || seat.is_changed()
+        || invitation.is_changed()
+        || way.is_changed()
+        || unlocks.is_changed()
+        || garage.is_changed();
     if !roots.is_empty() && !stale {
         return;
     }
@@ -2294,6 +2416,8 @@ fn lobby_screen(
         commands.entity(root).despawn();
     }
     let host = *session == Session::Host;
+    // A playtest that was given a seed keeps it, and one that brought a tank plays in it.
+    let (reseeds, brought) = (host && options.seed.is_none(), options.tank.is_some());
     commands
         .spawn((
             LobbyRoot,
@@ -2335,35 +2459,91 @@ fn lobby_screen(
                     });
                 section(parent, "Run");
                 row(parent, "Difficulty", |row| {
-                    row.spawn(theme::text("Normal", 16.0, theme::TEXT));
+                    if !host {
+                        let name = unlocks::difficulty_name(lobby.difficulty);
+                        row.spawn(theme::text(name, 16.0, theme::TEXT));
+                        return;
+                    }
+                    for difficulty in Difficulty::ALL {
+                        let name = unlocks::difficulty_name(difficulty);
+                        let chosen = lobby.difficulty == difficulty;
+                        choice(row, name, 90.0, Press::Difficulty(difficulty), chosen);
+                    }
                 });
+                row(parent, "Free mode", |row| {
+                    if !host {
+                        row.spawn(theme::text(on_off(lobby.free), 16.0, theme::TEXT));
+                        return;
+                    }
+                    for (name, on) in [("Off", false), ("On", true)] {
+                        choice(row, name, 90.0, Press::Free(on), lobby.free == on);
+                    }
+                });
+                // In free mode, each player has the tank of their own garage.
+                if lobby.free {
+                    row(parent, "Your tank", |row| {
+                        if host && brought {
+                            let told = "The tank of this playtest";
+                            row.spawn(theme::text(told, 16.0, theme::TEXT));
+                            return;
+                        }
+                        let spent = format!("{} of {PLAYER_BUDGET} points", garage.tank.cost());
+                        row.spawn((
+                            Node {
+                                min_width: px(130),
+                                ..default()
+                            },
+                            children![theme::text(spent, 16.0, theme::TEXT)],
+                        ));
+                        small(row, "Garage", 110.0, Press::OpenGarage);
+                    });
+                }
                 row(parent, "Seed", |row| {
                     row.spawn((
                         Node {
                             min_width: px(130),
                             ..default()
                         },
-                        children![theme::code(lobby.seed.clone(), 16.0, theme::TEXT)],
+                        children![(
+                            SeedField,
+                            theme::code(lobby.seed.clone(), 16.0, theme::TEXT)
+                        )],
                     ));
-                    // A playtest that was given a seed keeps it.
-                    if host && options.seed.is_none() {
+                    if reseeds {
                         small(row, "New seed", 110.0, Press::Reseed);
                     }
                 });
+                if reseeds {
+                    let hint = "Type a seed of your own, in letters and digits.";
+                    line(parent, hint, theme::TEXT_DIM);
+                }
+                // A player who has everything is not told what the run doesn't earn, but
+                // everyone is told of a playtest: it sets no record either.
+                let told = unlocks.wanting() || lobby.playtest;
+                if let Some(why) = unearned(&lobby).filter(|_| told) {
+                    line(parent, why, theme::TEXT);
+                }
                 if host {
-                    ways_to_join(parent, &invitation, *way, &copied);
-                    let start = if lobby.players() > 1 {
-                        "Start"
-                    } else {
-                        "Start alone"
-                    };
-                    primary(parent, start, Press::Start);
+                    // A host who starts alone plays a solo run, with its locks.
+                    match held_back(&lobby, &unlocks, &options) {
+                        Some(why) => line(parent, why, theme::TEXT),
+                        None if lobby.players() == 1 => {
+                            primary(parent, "Start alone", Press::Start);
+                        }
+                        None => primary(parent, "Start", Press::Start),
+                    }
                     button(parent, "Close the game", Press::Abandon);
                 } else {
                     line(parent, "The host starts the run.", theme::TEXT);
                     button(parent, "Leave the game", Press::Abandon);
                 }
             });
+            // The host tells the others how to join, next to the lobby.
+            if host {
+                aside(root, |parent| {
+                    ways_to_join(parent, &invitation, *way, &copied);
+                });
+            }
         });
 }
 
@@ -2746,7 +2926,12 @@ fn press(
     mut capture: ResMut<Capture>,
     mut playtest: Option<ResMut<Playtest>>,
     mut destination: ResMut<Destination>,
-    (options, run, time): (Res<Options>, Option<Res<Run>>, Res<Time<Real>>),
+    (options, run, time, unlocks): (
+        Res<Options>,
+        Option<Res<Run>>,
+        Res<Time<Real>>,
+        Res<Unlocks>,
+    ),
     (session, mut address, mut notice, mut opening, mut asked, mut entry): (
         Res<Session>,
         ResMut<Address>,
@@ -2790,20 +2975,38 @@ fn press(
             }
             Press::Begin => begin(&setup, (&options, &garage), &mut requests, &mut next_screen),
             Press::Redraw => (setup.seed, setup.typed) = (fresh_seed(), false),
-            // The choice is kept for the next time.
-            Press::Difficulty(difficulty) => {
-                setup.difficulty = difficulty;
-                if settings.solo_difficulty != difficulty {
-                    settings.solo_difficulty = difficulty;
+            // The choice is kept for the next time: the one of a host for their next game,
+            // and the one of a single player for their next run.
+            Press::Difficulty(difficulty) => match (*session, lobbies.single_mut()) {
+                (Session::Host, Ok(mut lobby)) => {
+                    lobby.difficulty = difficulty;
+                    if settings.host_difficulty != difficulty {
+                        settings.host_difficulty = difficulty;
+                    }
                 }
-            }
-            // The choice is kept for the next time.
-            Press::Free(on) => {
-                setup.free = on;
-                if settings.solo_free != on {
-                    settings.solo_free = on;
+                (Session::Solo, _) => {
+                    setup.difficulty = difficulty;
+                    if settings.solo_difficulty != difficulty {
+                        settings.solo_difficulty = difficulty;
+                    }
                 }
-            }
+                _ => {}
+            },
+            Press::Free(on) => match (*session, lobbies.single_mut()) {
+                (Session::Host, Ok(mut lobby)) => {
+                    lobby.free = on;
+                    if settings.host_free != on {
+                        settings.host_free = on;
+                    }
+                }
+                (Session::Solo, _) => {
+                    setup.free = on;
+                    if settings.solo_free != on {
+                        settings.solo_free = on;
+                    }
+                }
+                _ => {}
+            },
             Press::OpenGarage => next_screen.set(Screen::Garage),
             Press::Level(stat, by) => {
                 if let Some(tank) = garage.changed(stat, by) {
@@ -2815,7 +3018,7 @@ fn press(
                     garage.tank = Genome::PLAYER;
                 }
             }
-            Press::CloseGarage => next_screen.set(Screen::Solo),
+            Press::CloseGarage => next_screen.set(garage_opened_from(*session)),
             Press::List(league) => listed.0 = league,
             Press::OpenAchievements => next_screen.set(Screen::Achievements),
             Press::NewRun | Press::Retry => {
@@ -2835,10 +3038,13 @@ fn press(
                         next_screen.set(Screen::Playing);
                         next_overlay.set(Overlay::None);
                     }
-                    // A host starts the run for everyone, on the seed of the lobby.
+                    // A host starts the run for everyone, on the seed of the lobby, as
+                    // the lobby is set and in the tanks that the players have.
                     Session::Host => {
                         if let Ok(mut lobby) = lobbies.single_mut() {
                             lobby.seed = seed;
+                            // A seed that the game has just drawn is none that was typed.
+                            lobby.typed &= !fresh;
                         }
                         drawn.0 = fresh;
                         session_requests.write(SessionRequest::Start);
@@ -2886,12 +3092,17 @@ fn press(
                 notice.0 = None;
                 asked.0 = None;
             }
+            // A host who is alone starts a solo run, if what it is set to is unlocked.
             Press::Start => {
-                session_requests.write(SessionRequest::Start);
+                let held = |lobby: &Lobby| held_back(lobby, &unlocks, &options).is_some();
+                if !lobbies.single().is_ok_and(held) {
+                    session_requests.write(SessionRequest::Start);
+                }
             }
             Press::Reseed => {
                 if let Ok(mut lobby) = lobbies.single_mut() {
                     lobby.seed = fresh_seed();
+                    lobby.typed = false;
                     drawn.0 = true;
                 }
             }
@@ -2991,7 +3202,7 @@ fn escape(
         return;
     }
     if *screen.get() == Screen::Garage && *overlay.get() == Overlay::None {
-        next_screen.set(Screen::Solo);
+        next_screen.set(garage_opened_from(*session));
         return;
     }
     if *screen.get() == Screen::Join && *overlay.get() == Overlay::None {
@@ -3187,12 +3398,17 @@ mod tests {
         Genome::of_the_garage(&parts).unwrap()
     }
 
-    /// Sits this many players in the lobby of a game, the host first.
+    /// Sits this many players in the lobby of a game, the host first. The game is set to
+    /// what takes the most room to show: hard mode and free mode, on a seed that was typed
+    /// and is as long as one gets.
     fn gather(app: &mut App, players: usize) {
         let mut lobby = Lobby {
             name: LONG_GAME.into(),
             locked: true,
-            seed: "85GVTHQA".into(),
+            seed: LONG_SEED.into(),
+            typed: true,
+            difficulty: Difficulty::Hard,
+            free: true,
             ..default()
         };
         for (seat, place) in lobby.seats.iter_mut().take(players).enumerate() {
@@ -3439,8 +3655,25 @@ mod tests {
                     });
                 build(app, lobby_screen);
             }),
+            // A host who is alone and has unlocked nothing is told what locks the run.
+            ("the lobby of a host who is alone", |app| {
+                gather(app, 1);
+                app.insert_resource(Session::Host)
+                    .insert_resource(invitation());
+                build(app, lobby_screen);
+            }),
             ("the lobby of a guest", |app| {
                 gather(app, 4);
+                app.insert_resource(Session::Guest)
+                    .insert_resource(crew::LocalSeat(3));
+                build(app, lobby_screen);
+            }),
+            // The game of a playtest says so to its guests, which takes the most words.
+            ("the lobby of a guest of a playtest", |app| {
+                gather(app, 4);
+                let world = app.world_mut();
+                let mut lobby = world.query::<&mut Lobby>().single_mut(world).unwrap();
+                lobby.playtest = true;
                 app.insert_resource(Session::Guest)
                     .insert_resource(crew::LocalSeat(3));
                 build(app, lobby_screen);
@@ -3554,7 +3787,8 @@ mod tests {
             .init_resource::<Copied>()
             .init_resource::<Capture>()
             .init_resource::<Outcome>()
-            .insert_resource(Destination(1));
+            .insert_resource(Destination(1))
+            .add_message::<RunRequest>();
         // The fonts are there from the second frame on.
         app.update();
         screen(&mut app);
@@ -3564,10 +3798,22 @@ mod tests {
         build(&mut app, list_records);
         build(&mut app, show_address);
         build(&mut app, show_what_is_typed);
+        build(&mut app, show_seed);
         build(&mut app, tell_how_it_goes);
         app.update();
         app.update();
         app
+    }
+
+    /// Presses the button of a screen that does this, as a click does, and lets the menus
+    /// do what follows.
+    fn click(app: &mut App, wanted: Press) {
+        let world = app.world_mut();
+        let mut buttons = world.query::<(&Press, &mut Interaction)>();
+        let pressed = buttons.iter_mut(world).find(|(does, _)| **does == wanted);
+        let (_, mut interaction) = pressed.expect("a button that does it");
+        *interaction = Interaction::Pressed;
+        build(app, press);
     }
 
     /// What the buttons of a screen of the menus do.
@@ -3856,6 +4102,7 @@ mod tests {
         let mut world = World::new();
         let mut settings = Settings::default();
         settings.host_name = "Friday".into();
+        (settings.host_difficulty, settings.host_free) = (Difficulty::Hard, true);
         world.insert_resource(settings);
         world.insert_resource(State::new(Screen::Host));
         world.insert_resource(Session::Solo);
@@ -3893,10 +4140,13 @@ mod tests {
         let mut asked = world.resource_mut::<Messages<SessionRequest>>();
         let asked: Vec<SessionRequest> = asked.drain().collect();
         // The game opens under the name without the space at its end, and the name is kept
-        // for the next game. The password goes with it as it was typed.
+        // for the next game. The password goes with it as it was typed, and the lobby
+        // opens on the run that the host set up for their last game.
         let sign = Sign {
             name: "Friday nights".into(),
             password: "sesame".into(),
+            difficulty: Difficulty::Hard,
+            free: true,
         };
         assert_eq!(asked, [SessionRequest::Host(sign)]);
         assert_eq!(world.resource::<Settings>().host_name, "Friday nights");
@@ -4587,16 +4837,23 @@ mod tests {
         );
         let none = Options::default();
         let alone = [Screen::Menu, Screen::Solo, Screen::Achievements];
+        let shown = |screen: Screen, setup: &Setup, shared: Option<bool>, options: &Options| {
+            shown_tank(screen, (setup, shared), options, &garage)
+        };
         for screen in alone {
-            assert_eq!(shown_tank(screen, &plain, &none, &garage), Genome::PLAYER);
-            assert_eq!(shown_tank(screen, &free, &none, &garage), racer());
+            assert_eq!(shown(screen, &plain, None, &none), Genome::PLAYER);
+            assert_eq!(shown(screen, &free, None, &none), racer());
         }
-        // The garage draws what is being built, and a game of several players is in the
-        // standard tank.
-        assert_eq!(shown_tank(Screen::Garage, &plain, &none, &garage), racer());
+        // The garage draws what is being built, alone or in a game of several players.
+        assert_eq!(shown(Screen::Garage, &plain, None, &none), racer());
+        assert_eq!(shown(Screen::Garage, &plain, Some(false), &none), racer());
+        // A game of several players is in the standard tank, whatever a player set up for
+        // a run of their own, unless its host set it to free mode.
         for screen in [Screen::Join, Screen::Lobby] {
-            assert_eq!(shown_tank(screen, &free, &none, &garage), Genome::PLAYER);
+            assert_eq!(shown(screen, &free, None, &none), Genome::PLAYER);
+            assert_eq!(shown(screen, &free, Some(false), &none), Genome::PLAYER);
         }
+        assert_eq!(shown(Screen::Lobby, &plain, Some(true), &none), racer());
         // The tank that a playtest brought is drawn everywhere but in the garage.
         let parts = [(Stat::Engine, 2), (Stat::Piercing, 1)];
         let brought = Options {
@@ -4605,11 +4862,373 @@ mod tests {
             ..default()
         };
         for screen in alone.into_iter().chain([Screen::Join, Screen::Lobby]) {
-            assert_eq!(
-                shown_tank(screen, &plain, &brought, &garage),
-                brought.tank.unwrap()
-            );
+            for shared in [None, Some(false), Some(true)] {
+                assert_eq!(
+                    shown(screen, &plain, shared, &brought),
+                    brought.tank.unwrap()
+                );
+            }
         }
+    }
+
+    /// The lobby of a game that the test set up, as its host sees it or as a guest does.
+    fn in_the_lobby(session: Session, players: usize) -> App {
+        let mut app = stage(|_| {}, WINDOWS[0]);
+        gather(&mut app, players);
+        app.insert_resource(session)
+            .insert_resource(crew::LocalSeat(if session == Session::Host {
+                0
+            } else {
+                1
+            }));
+        build(&mut app, lobby_screen);
+        app
+    }
+
+    /// The lobby that a game holds.
+    fn lobby_of(app: &mut App) -> Lobby {
+        let world = app.world_mut();
+        world.query::<&Lobby>().single(world).unwrap().clone()
+    }
+
+    fn buttons(app: &mut App) -> Vec<Press> {
+        let world = app.world_mut();
+        let mut buttons = world.query_filtered::<&Press, With<Button>>();
+        buttons.iter(world).copied().collect()
+    }
+
+    #[test]
+    fn the_host_sets_the_run_of_a_lobby_and_the_guests_see_it() {
+        // The lobby of the tests is in hard mode and in free mode, on a seed that was typed.
+        let mut host = in_the_lobby(Session::Host, 2);
+        let offered = buttons(&mut host);
+        for press in [
+            Press::Difficulty(Difficulty::Normal),
+            Press::Free(false),
+            Press::OpenGarage,
+            Press::Reseed,
+            Press::Start,
+        ] {
+            assert!(offered.contains(&press));
+        }
+        // What is chosen stands in the accent, and is no button.
+        assert!(!offered.contains(&Press::Difficulty(Difficulty::Hard)));
+        assert!(!offered.contains(&Press::Free(true)));
+
+        // A guest sees what the run is set to and can change none of it. In free mode,
+        // their garage is theirs to open.
+        let mut guest = in_the_lobby(Session::Guest, 2);
+        let offered = buttons(&mut guest);
+        assert!(offered == [Press::OpenGarage, Press::Abandon]);
+        let world = guest.world_mut();
+        let told: Vec<String> = world
+            .query::<&Text>()
+            .iter(world)
+            .map(|text| text.0.clone())
+            .collect();
+        for wanted in ["Hard", "On", LONG_SEED, "59 of 59 points"] {
+            assert!(says(&told, wanted), "{wanted}");
+        }
+        // Nor does a press that reaches a guest's game by another way.
+        for press in [Press::Difficulty(Difficulty::Normal), Press::Free(false)] {
+            guest.world_mut().spawn((Button, press, Interaction::None));
+            click(&mut guest, press);
+        }
+        let lobby = lobby_of(&mut guest);
+        assert_eq!((lobby.difficulty, lobby.free), (Difficulty::Hard, true));
+
+        // The host changes the difficulty and the mode, and both are kept for the next game.
+        // Until then, the settings hold what the host chose for their last game, and what
+        // they chose for their last run alone.
+        let mut settings = host.world_mut().resource_mut::<Settings>();
+        (settings.host_difficulty, settings.host_free) = (Difficulty::Hard, true);
+        (settings.solo_difficulty, settings.solo_free) = (Difficulty::Hard, true);
+        host.insert_resource(Setup {
+            difficulty: Difficulty::Hard,
+            free: true,
+            ..default()
+        });
+        click(&mut host, Press::Difficulty(Difficulty::Normal));
+        click(&mut host, Press::Free(false));
+        let lobby = lobby_of(&mut host);
+        assert_eq!((lobby.difficulty, lobby.free), (Difficulty::Normal, false));
+        let settings = host.world().resource::<Settings>();
+        assert_eq!(
+            (settings.host_difficulty, settings.host_free),
+            (Difficulty::Normal, false)
+        );
+        // What a single player chose last for a run of their own is as it was.
+        assert_eq!(
+            (settings.solo_difficulty, settings.solo_free),
+            (Difficulty::Hard, true)
+        );
+        let setup = host.world().resource::<Setup>();
+        assert_eq!((setup.difficulty, setup.free), (Difficulty::Hard, true));
+        // A new seed is one that the game drew.
+        click(&mut host, Press::Reseed);
+        let lobby = lobby_of(&mut host);
+        assert!(lobby.seed != LONG_SEED && !lobby.seed.is_empty() && !lobby.typed);
+        assert!(host.world().resource::<Drawn>().0);
+        // Outside free mode, nobody has a garage to open.
+        build(&mut host, lobby_screen);
+        assert!(!buttons(&mut host).contains(&Press::OpenGarage));
+    }
+
+    #[test]
+    fn a_key_that_writes_nothing_leaves_the_seed_as_it_is() {
+        let letter = |letter: &str| (Key::Character(letter.into()), Some(letter.to_string()));
+        let made = |seed: &str, typed: bool, (key, text): (Key, Option<String>)| {
+            retyped(seed, typed, &key, text.as_deref())
+        };
+        // The first letter takes the place of a seed that the game drew, and the next ones
+        // follow it.
+        assert_eq!(made("85GVTHQA", false, letter("f")), Some("F".to_string()));
+        assert_eq!(made("F", true, letter("r")), Some("FR".to_string()));
+        // Backspace takes a letter away, and all of a seed that the game drew.
+        assert_eq!(
+            made("FR", true, (Key::Backspace, None)),
+            Some("F".to_string())
+        );
+        assert_eq!(
+            made("85GVTHQA", false, (Key::Backspace, None)),
+            Some(String::new())
+        );
+        // Keys that write nothing, or nothing that a seed is made of, change no seed:
+        // neither one that the game drew nor one that was typed.
+        let idle = [
+            (Key::Shift, None),
+            (Key::ArrowLeft, None),
+            (Key::Escape, None),
+            (Key::Tab, Some("\t".to_string())),
+            (Key::Enter, None),
+            letter(" "),
+            letter("!"),
+        ];
+        for key in idle {
+            assert_eq!(made("85GVTHQA", false, key.clone()), None, "{key:?}");
+            assert_eq!(made("FR", true, key.clone()), None, "{key:?}");
+        }
+        // A seed that is as long as it gets takes no further letter.
+        assert_eq!(made(LONG_SEED, true, letter("w")), None);
+        // Nor does one that has nothing left to lose.
+        assert_eq!(made("", true, (Key::Backspace, None)), None);
+    }
+
+    #[test]
+    fn the_host_of_a_lobby_types_the_seed_of_the_next_run() {
+        let typed = |session: Session, options: Options, keys: &str| -> (Lobby, bool) {
+            let mut world = World::new();
+            world.insert_resource(State::new(Screen::Lobby));
+            world.insert_resource(session);
+            world.insert_resource(options);
+            world.insert_resource(Drawn(true));
+            world.init_resource::<Unlocks>();
+            world.init_resource::<Garage>();
+            world.init_resource::<Setup>();
+            world.init_resource::<NextState<Screen>>();
+            world.init_resource::<Messages<KeyboardInput>>();
+            world.init_resource::<Messages<RunRequest>>();
+            world.spawn(Lobby {
+                seed: "85GVTHQA".into(),
+                ..default()
+            });
+            let mut pressed = world.resource_mut::<Messages<KeyboardInput>>();
+            for key in strokes(keys) {
+                pressed.write(key);
+            }
+            pressed.write(stroke(Key::Enter, None));
+            world.run_system_once(type_seed).unwrap();
+            // Enter starts nothing in a lobby, and a single player's run is not set up there.
+            assert!(world.resource::<Messages<RunRequest>>().is_empty());
+            assert_eq!(world.resource::<Setup>().seed, "");
+            let lobby = world.query::<&Lobby>().single(&world).unwrap().clone();
+            (lobby, world.resource::<Drawn>().0)
+        };
+        let seed = |(lobby, drawn): (Lobby, bool)| (lobby.seed, lobby.typed, drawn);
+        // The first key takes the place of the seed that the game drew. A seed that the
+        // host typed is a chosen one, which nothing locks for a host, and none that the
+        // game drew.
+        assert_eq!(
+            seed(typed(Session::Host, default(), "friday 13!")),
+            ("FRIDAY13".to_string(), true, false)
+        );
+        // Nothing was typed: the seed is the one that the game drew.
+        assert_eq!(
+            seed(typed(Session::Host, default(), "")),
+            ("85GVTHQA".to_string(), false, true)
+        );
+        // A guest types nothing into the lobby of their host.
+        assert_eq!(
+            seed(typed(Session::Guest, default(), "mine")),
+            ("85GVTHQA".to_string(), false, true)
+        );
+        // A playtest that was given a seed keeps it.
+        let given = Options {
+            playtest: true,
+            seed: Some("85GVTHQA".into()),
+            tank: None,
+        };
+        assert_eq!(
+            seed(typed(Session::Host, given, "mine")),
+            ("85GVTHQA".to_string(), false, true)
+        );
+    }
+
+    #[test]
+    fn a_host_who_is_alone_plays_under_the_locks_of_solo() {
+        let none = Options::default();
+        let lobby = |players: usize, set: fn(&mut Lobby)| {
+            let mut lobby = Lobby {
+                seed: "85GVTHQA".into(),
+                ..default()
+            };
+            for seat in lobby.seats.iter_mut().take(players) {
+                *seat = Some(Member::Host);
+            }
+            set(&mut lobby);
+            lobby
+        };
+        let nothing = Unlocks::default();
+        // A run in normal mode on a seed that the game drew is everyone's.
+        assert_eq!(held_back(&lobby(1, |_| {}), &nothing, &none), None);
+        // What a single player has not unlocked holds a host back while they are alone.
+        let hard = |lobby: &mut Lobby| lobby.difficulty = Difficulty::Hard;
+        let typed = |lobby: &mut Lobby| lobby.typed = true;
+        let free = |lobby: &mut Lobby| lobby.free = true;
+        let locks = [
+            (
+                hard as fn(&mut Lobby),
+                Unlock::HardMode,
+                "hard mode (clear sector 30)",
+            ),
+            (typed, Unlock::ChosenSeed, "chosen seed (clear sector 10)"),
+            (free, Unlock::FreeMode, "free mode (clear sector 20)"),
+        ];
+        for (set, unlock, words) in locks {
+            let told = held_back(&lobby(1, set), &nothing, &none);
+            assert_eq!(told, Some(format!("Locked for a single player: {words}.")));
+            // Not once they have unlocked it, nor in a playtest, which has everything.
+            let earned = Unlocks::of(&[unlock]);
+            assert_eq!(held_back(&lobby(1, set), &earned, &none), None);
+            let playtest = Options {
+                playtest: true,
+                ..default()
+            };
+            assert_eq!(held_back(&lobby(1, set), &nothing, &playtest), None);
+            // And nothing is locked for a host who has company.
+            assert_eq!(held_back(&lobby(2, set), &nothing, &none), None);
+        }
+        // Hard mode is also theirs who unlocked the difficulty above it.
+        let above = Unlocks::of(&[Unlock::ImpossibleMode]);
+        assert_eq!(held_back(&lobby(1, hard), &above, &none), None);
+        // No run starts without a seed, alone or not.
+        let seedless = |lobby: &mut Lobby| lobby.seed.clear();
+        for players in [1, 4] {
+            let told = held_back(&lobby(players, seedless), &nothing, &none);
+            assert!(told.is_some_and(|told| told.starts_with("A run needs a seed")));
+        }
+
+        // The lobby of the tests is in hard mode and in free mode on a typed seed: a host
+        // who is alone there and has unlocked nothing can't start, and is told why.
+        let mut alone = in_the_lobby(Session::Host, 1);
+        assert!(!buttons(&mut alone).contains(&Press::Start));
+        alone
+            .world_mut()
+            .spawn((Button, Press::Start, Interaction::None));
+        click(&mut alone, Press::Start);
+        assert!(
+            alone
+                .world()
+                .resource::<Messages<SessionRequest>>()
+                .is_empty()
+        );
+        // With a guest, the run starts.
+        let mut together = in_the_lobby(Session::Host, 2);
+        click(&mut together, Press::Start);
+        let mut asked = together
+            .world_mut()
+            .resource_mut::<Messages<SessionRequest>>();
+        let asked: Vec<SessionRequest> = asked.drain().collect();
+        assert_eq!(asked, [SessionRequest::Start]);
+    }
+
+    #[test]
+    fn the_lobby_says_when_its_run_will_earn_nothing() {
+        let lobby = |set: fn(&mut Lobby)| {
+            let mut lobby = Lobby::default();
+            set(&mut lobby);
+            lobby
+        };
+        assert_eq!(unearned(&lobby(|_| {})), None);
+        let free = unearned(&lobby(|lobby| lobby.free = true)).unwrap();
+        assert!(free.contains("free mode"));
+        let typed = unearned(&lobby(|lobby| lobby.typed = true)).unwrap();
+        assert!(typed.contains("typed seed"));
+        // A playtest earns nothing whatever it is set to, and sets no record either.
+        let playtest = unearned(&lobby(|lobby| {
+            lobby.playtest = true;
+            lobby.free = true;
+        }));
+        assert!(playtest.unwrap().contains("playtest"));
+
+        // The guests are told too: the lobby of the tests is in free mode.
+        let told = |app: &mut App| -> Vec<String> {
+            let world = app.world_mut();
+            let mut texts = world.query::<&Text>();
+            texts.iter(world).map(|text| text.0.clone()).collect()
+        };
+        let mut guest = in_the_lobby(Session::Guest, 2);
+        assert!(says(&told(&mut guest), free));
+        // A player who has everything is not told what a run doesn't earn.
+        let mut guest = stage(|_| {}, WINDOWS[0]);
+        gather(&mut guest, 2);
+        guest
+            .insert_resource(Session::Guest)
+            .insert_resource(Unlocks::of(&Unlock::ALL));
+        build(&mut guest, lobby_screen);
+        assert!(!says(&told(&mut guest), free));
+    }
+
+    #[test]
+    fn a_player_who_leaves_the_garage_is_back_where_they_opened_it() {
+        assert_eq!(garage_opened_from(Session::Solo), Screen::Solo);
+        assert_eq!(garage_opened_from(Session::Host), Screen::Lobby);
+        assert_eq!(garage_opened_from(Session::Guest), Screen::Lobby);
+    }
+
+    #[test]
+    fn a_seed_is_drawn_when_the_players_gather_and_not_after_a_visit_to_the_garage() {
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin)
+            .init_state::<Screen>()
+            .init_resource::<Time<Real>>()
+            .init_resource::<Options>()
+            .init_resource::<Drawn>()
+            .insert_resource(Session::Host)
+            .add_systems(OnEnter(Screen::Lobby), draw_a_seed.run_if(gathering));
+        app.world_mut().spawn(Lobby::default());
+        let go = |app: &mut App, to: Screen| {
+            app.world_mut().resource_mut::<NextState<Screen>>().set(to);
+            app.update();
+        };
+        // A game that opens has a seed that the game drew.
+        go(&mut app, Screen::Lobby);
+        let first = lobby_of(&mut app);
+        assert!(!first.seed.is_empty() && !first.typed);
+        assert!(app.world().resource::<Drawn>().0);
+        // The host types one, and visits their garage: the lobby is as they left it.
+        let world = app.world_mut();
+        let mut lobby = world.query::<&mut Lobby>().single_mut(world).unwrap();
+        (lobby.seed, lobby.typed) = ("MINE".into(), true);
+        go(&mut app, Screen::Garage);
+        go(&mut app, Screen::Lobby);
+        let kept = lobby_of(&mut app);
+        assert_eq!((kept.seed.as_str(), kept.typed), ("MINE", true));
+        // After a run, the players gather for another, on a new seed.
+        go(&mut app, Screen::Playing);
+        go(&mut app, Screen::Lobby);
+        let next = lobby_of(&mut app);
+        assert!(next.seed != "MINE" && !next.seed.is_empty() && !next.typed);
     }
 
     #[test]
