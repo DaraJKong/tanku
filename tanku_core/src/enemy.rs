@@ -40,9 +40,28 @@ const CLASS_WEIGHTS: [u32; Class::ALL.len()] = {
     weights
 };
 
-/// The class that a tank draws.
-fn draw_class(rng: &mut Stream) -> Class {
-    Class::ALL[rng.weighted(&CLASS_WEIGHTS)]
+/// Whether the tanks of a sector can be of a class: the sector must allow a first level of
+/// every stat that the class favors. A tactician waits for the sector that has a brain and
+/// ballistics to give it. The sectors of normal mode decide, whatever the difficulty, so that
+/// a tank has the same class in hard mode.
+pub fn comes(class: Class, sector: u32) -> bool {
+    let has = |stat: &Stat| highest_level(*stat, Difficulty::Normal, sector, class) > 0;
+    class.favorites().iter().all(has)
+}
+
+/// The class that a tank of a sector draws, among those that the sector has.
+fn draw_class(rng: &mut Stream, sector: u32) -> Class {
+    let mut weights = CLASS_WEIGHTS;
+    for (weight, class) in weights.iter_mut().zip(Class::ALL) {
+        if !comes(class, sector) {
+            *weight = 0;
+        }
+    }
+    // A balance that left a sector no class at all gets them all back there.
+    if weights.iter().all(|weight| *weight == 0) {
+        weights = CLASS_WEIGHTS;
+    }
+    Class::ALL[rng.weighted(&weights)]
 }
 
 /// The highest level of a stat that an enemy of a class can have in a sector.
@@ -145,7 +164,7 @@ fn smarter(genome: &Genome, highest: impl Fn(Stat) -> u8) -> Option<Genome> {
 /// whatever the difficulty.
 fn build(seed: u64, difficulty: Difficulty, sector: u32, index: u32, budget: u32) -> Genome {
     let mut rng = Stream::new(seed, Purpose::Enemy, sector, index);
-    let class = draw_class(&mut rng);
+    let class = draw_class(&mut rng, sector);
     spend(rng, difficulty, sector, class, budget)
 }
 
@@ -162,7 +181,7 @@ pub fn of_class(
 ) -> Genome {
     let mut rng = Stream::new(seed, Purpose::Enemy, sector, index);
     // The draw of the class is made and set aside, so that the rest is drawn as in a group.
-    draw_class(&mut rng);
+    draw_class(&mut rng, sector);
     spend(rng, difficulty, sector, class, budget)
 }
 
@@ -347,7 +366,14 @@ mod tests {
         let early = |difficulty: Difficulty| sample(difficulty).filter(|(sector, _)| *sector <= 3);
         let aces = |difficulty: Difficulty| early(difficulty).filter(|(_, tank)| tank.brain() == 4);
         assert_eq!(aces(Normal).count(), 0);
-        assert!(aces(Hard).count() * 5 > early(Hard).count());
+        // The tacticians, which take the best brain there is, come from the sector that
+        // normal mode gives them.
+        assert!(
+            aces(Hard).count() * 8 > early(Hard).count(),
+            "{} of {}",
+            aces(Hard).count(),
+            early(Hard).count()
+        );
         let fastest = |difficulty: Difficulty| {
             early(difficulty)
                 .map(|(_, tank)| tank.level(Stat::Muzzle))
@@ -680,6 +706,34 @@ mod tests {
     }
 
     #[test]
+    fn a_class_waits_for_the_sector_that_has_what_it_favors() {
+        // A tactician favors the brain and ballistics: it comes with the first tier of both.
+        let first = |class: Class| (1..60).find(|sector| comes(class, *sector));
+        let both = (1..60).find(|sector| {
+            progression::brain_cap(*sector, Normal) > 0
+                && progression::ballistics_cap(*sector, Normal) > 0
+        });
+        assert_eq!(first(Class::Tactician), both);
+        assert!(both > Some(1));
+        // What the other classes favor is there from the first sector.
+        for class in Class::ALL {
+            if class != Class::Tactician {
+                assert_eq!(first(class), Some(1), "{class:?}");
+            }
+        }
+        // No tank is of a class before its sector, in either mode, and tanks are of it after.
+        for (sector, tank) in sample(Normal).chain(sample(Hard)) {
+            assert!(
+                comes(tank.class, sector),
+                "sector {sector}: {:?}",
+                tank.class
+            );
+        }
+        let tacticians = sample(Normal).filter(|(_, tank)| tank.class == Class::Tactician);
+        assert!(tacticians.count() > 0);
+    }
+
+    #[test]
     fn special_bullets_and_long_ricochets_belong_to_their_classes() {
         let everyone = || sample(Normal).chain(sample(Hard));
         for (sector, genome) in everyone() {
@@ -711,7 +765,10 @@ mod tests {
             let ammo = genome.ammo();
             match genome.class {
                 Class::Lancer if rich => assert_eq!(ammo, Ammo::Piercing, "sector {sector}"),
-                Class::Seeker if rich => assert_eq!(ammo, Ammo::Seeking, "sector {sector}"),
+                // A seeker that has a brain to pay for needs a little more for both.
+                Class::Seeker if genome.budget >= 10 => {
+                    assert_eq!(ammo, Ammo::Seeking, "sector {sector}: {genome:?}")
+                }
                 Class::Flanker if rich => assert_eq!(ammo, Ammo::Splitting, "sector {sector}"),
                 Class::Grenadier if rich => assert_eq!(ammo, Ammo::Exploding, "sector {sector}"),
                 Class::Trickster if rich => assert!(genome.bounces() > 0, "sector {sector}"),

@@ -176,6 +176,8 @@ A `class` line names a class, then says three things:
 
 Ballistics 2 needs a bounce and ballistics 3 needs two, so a class has no more ballistics than its ricochet and one. A class that favors `seeking` has a bounce.
 
+A class comes from the first sector that allows a level of every stat that it favors. The `step` lines say which sectors those are: with `step brain 0  2 6 14 22` and `step ballistics 0  3 10 15`, the brain comes at sector 2 and ballistics at sector 3, so the first tactician is in sector 3. Until then its weight counts for nothing, and the other classes share the draw. Hard mode has every tier from its first sector, and still takes its classes from the sectors of normal mode: a tank is of the same class in both. Today the steps are of the brain, of ballistics and of Muzzle, so the tactician is the class that they hold back, and the sniper if Muzzle starts at 0.
+
 The classes are `all-rounder`, `sniper`, `scout`, `tactician`, `trickster`, `lancer`, `sapper`, `gunner`, `seeker`, `flanker` and `grenadier`. What else tells them apart is a rule: a tactician takes the best software that its sector allows, and a sapper has a brain.
 
 ## Terrain
