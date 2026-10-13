@@ -438,7 +438,7 @@ mod tests {
     use super::*;
 
     /// The fingerprint of the balance that `docs/PROJECT.md` describes.
-    const SPECIFIED: u64 = 0xf411_4153_0081_323d;
+    const SPECIFIED: u64 = 0xd7ff_b2ee_ea92_f9d6;
 
     #[test]
     fn the_balance_of_the_game_is_the_one_that_the_specification_describes() {

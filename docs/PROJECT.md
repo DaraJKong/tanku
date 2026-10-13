@@ -58,7 +58,7 @@ Tanku has no player-versus-player mode, no loot, no upgrades during a run, no st
 | Budget | The number of points a tank has to spend on stats |
 | Sector budget | The measure of an enemy's budget in a given sector. No tank has more, except the leader of its group. |
 | Group | The enemies of one sector, which share one budget unevenly |
-| Leader | The tank with the largest share of its group's budget: up to 1.5 times the sector budget |
+| Leader | The tank with the largest share of its group's budget: up to 1.25 times the sector budget |
 | Class | What an enemy favors when it spends its points. Its color tells it. |
 | Type of bullet | What a tank's bullets do besides flying straight: nothing more, or pierce, seek, split or explode. A tank fires one type. |
 | Genome | A tank's full list of stat levels |
@@ -140,10 +140,10 @@ Arena mode trades reading for pace. The reserve shows every tank before it comes
 | Mode or option | Effect | Unlocked in solo by |
 |---|---|---|
 | Normal | The rules of this document | Available from the start |
-| Chosen seed | The solo player, or the host of a game, types the seed of the run instead of getting a random one. | Clearing sector 10 |
-| Arena mode | The run is fought in one room, against one group after another (see [Arena mode](#arena-mode)). | Clearing sector 5 |
+| Chosen seed | The solo player, or the host of a game, types the seed of the run instead of getting a random one. | Clearing sector 15 |
+| Arena mode | The run is fought in one room, against one group after another (see [Arena mode](#arena-mode)). | Clearing sector 10 |
 | Free mode | Each player spends the 59 points of their tank as they like before the run (see [Garage](#garage)). | Clearing sector 20 |
-| Hard mode | Sector budgets start at 40 and are capped at 130, all software tiers are available from sector 1, and experience and the cap on Muzzle are those of 20 sectors further. | Clearing sector 30 |
+| Hard mode | Sector budgets start at 40 and are capped at 165, all software tiers are available from sector 1, and experience and the cap on Muzzle are those of 20 sectors further. | Clearing sector 30 |
 | Impossible mode | Later. Enemies adapt to the players during the run (see [Impossible mode](#impossible-mode)). | Clearing sector 20 in hard mode |
 
 Normal, hard and impossible are the three difficulties. Chosen seed, arena mode and free mode are options that combine with any of them, and with each other.
@@ -234,7 +234,7 @@ A tank drops a mine at its own position, at most one every 0.5 s, and can have a
 
 ### Shield
 
-The shield is a bubble around the tank that lasts 0.5 s. It destroys every bullet that touches it, piercing or not, and protects against blasts. The tank keeps moving and shooting while the bubble is up: its own shots leave the bubble, but a ricochet doesn't come back through it. Once the bubble is gone, the tank can't shield again before the cooldown ends. Higher Shield levels shorten the cooldown.
+The shield is a bubble around the tank that lasts 1 s. It destroys every bullet that touches it, piercing or not, and protects against blasts. The tank keeps moving and shooting while the bubble is up: its own shots leave the bubble, but a ricochet doesn't come back through it. Once the bubble is gone, the tank can't shield again before the cooldown ends. Higher Shield levels shorten the cooldown.
 
 The cooldown is the only drawback. A shield saves a tank from one threat, and for several seconds it can't save it from the next. It beats single shots, and it loses to bursts that outlast the bubble and to patient opponents who bait the shield and fire again.
 
@@ -265,11 +265,12 @@ A wreck lies in a circle in dashes and keeps the number of its player over it: a
 | Seeking bullet | At each bounce, toward the nearest tank in sight that its side fights. Its bounce is marked from 1.5 s before. |
 | Splitting bullet | Splits after 1 s, 30° to each side. Its lines flash for the last 0.6 s. |
 | Exploding bullet | Goes off where it ends. Its end on what stands still is marked from 1.5 s before. |
-| Shield duration | 0.5 s |
+| Shield duration | 1 s |
 | Lives of a solo player | 3 at the start, and never more |
 | Life of an arena | 4 m in front of the barrier, taken within 1.5 m |
 | Waves of an arena | 3, the first announced 2 s after the first player has crossed |
 | Mark of a tank that is about to appear | 1 s, once no player's tank is within 4 m of the place |
+| Sight of an enemy | 30 m: it holds its fire at a player who is further |
 | Repair | 2 s within 3 m |
 | Group of arena mode | Half of its tanks at once, rounded up, after a lull of 3 s. Then one for each tank that is destroyed. |
 | Place of a tank that appears in arena mode | 4 m or more from a player's tank, and 2 m or more from a tank of its group |
@@ -289,20 +290,20 @@ Level 0 of each stat is free. Costs are cumulative: each number is the total pri
 | Engine | Top speed in m/s | 0, 2, 3, 4, 5, 6, 7, 8 | 0, 2, 4, 6, 8, 11, 14, 17 |
 | Tracks | Hull turn rate in °/s | 90, 135, 180, 225, 270, 315, 360 | 0, 1, 2, 3, 4, 5, 6 |
 | Turret | Turret turn rate in °/s (enemies only) | 45, 60, 90, 120, 180, 270, 360 | 0, 1, 2, 3, 5, 7, 10 |
-| Muzzle | Bullet speed in m/s | 6, 7.5, 9, 11, 13, 15, 17, 19 | 0, 1, 3, 6, 9, 12, 16, 21 |
+| Muzzle | Bullet speed in m/s | 6, 7.5, 9, 11, 13, 15, 17, 19 | 0, 1, 3, 6, 11, 17, 24, 32 |
 | Magazine | Rounds held | 1, 2, 3, 4, 5, 6 | 0, 3, 6, 9, 12, 15 |
 | Loader | Seconds to reload one round | 4.0, 3.2, 2.5, 2.0, 1.6, 1.25, 1.0, 0.8 | 0, 1, 2, 4, 6, 9, 12, 16 |
 | Ricochet | Bounces per bullet | 0, 1, 2, 3 | 0, 4, 10, 18 |
 | Mines | Mines armed at once | 0, 1, 2, 3, 4 | 0, 4, 6, 8, 10 |
 | Shield | Cooldown in s | none, 10, 9, 8, 7, 6 | 0, 6, 9, 12, 15, 18 |
-| Piercing | Bullets that each of its bullets pierces | 0, 1 | 0, 4 |
-| Seeking | Whether its bullets seek at their bounces | no, yes | 0, 4 |
-| Splitting | Whether its bullets split | no, yes | 0, 6 |
-| Exploding | Whether its bullets explode | no, yes | 0, 8 |
+| Piercing | Bullets that each of its bullets pierces | 0, 1 | 0, 6 |
+| Seeking | Whether its bullets seek at their bounces | no, yes | 0, 10 |
+| Splitting | Whether its bullets split | no, yes | 0, 9 |
+| Exploding | Whether its bullets explode | no, yes | 0, 10 |
 
 Piercing, Seeking, Splitting and Exploding are the four special types of bullet (see [Special bullets](#special-bullets)). A tank has one of them at most.
 
-Every stat stops at its highest level. These limits keep the game sound: a bullet, for instance, never gets fast enough to pass through a wall. Buying every hardware stat at its highest level, with the dearest type of bullet, costs 139 points. An enemy's Muzzle level is also limited by its sector (see [Progression](#progression)), and its type of bullet and its Ricochet level by its class (see [Classes](#classes)).
+Every stat stops at its highest level. These limits keep the game sound: a bullet, for instance, never gets fast enough to pass through a wall. Buying every hardware stat at its highest level, with the dearest type of bullet, costs 152 points. An enemy's Muzzle level is also limited by its sector, and each special bullet waits for a sector of its own (see [Progression](#progression)). Its type of bullet and its Ricochet level are limited by its class (see [Classes](#classes)).
 
 ### Software stats
 
@@ -333,12 +334,12 @@ A price should reflect how much more dangerous a level makes a tank, and not eve
 | Entry fee | Mines, Shield, Piercing, Seeking, Splitting, Exploding | The first level buys a new ability. Later levels, where there are any, only improve it. |
 | Share of budget | Brain, Ballistics | Software multiplies the value of the hardware it drives: the same brain is worth more in a better tank. |
 | Prerequisite | Tracks, Mines, Shield, Seeking, Ballistics 2 and 3 | The stat is worthless alone, so the generator never buys it alone. |
-| Cap by sector | Muzzle | A sniper puts its points into its gun, and one enemy in eleven is a sniper. The cap decides how fast that gun is in each sector, and the price decides what else such a tank can afford. |
+| Cap by sector | Muzzle, Piercing, Seeking, Splitting, Exploding | A sniper puts its points into its gun, and one enemy in eight is a sniper, more in the first sectors. The cap decides how fast that gun is in each sector, and the price decides what else such a tank can afford. Each special bullet waits for a sector of its own, so the classes that fire them come one after another. |
 | Kept for a class | Piercing, Seeking, Splitting, Exploding, Ricochet above level 1, Ballistics 3 | The special bullets and the bullets that bounce twice are the hardest to read. Each belongs to a class, and the color of the tank announces it. |
 
 The prerequisites are: Tracks need Engine 1. On enemies, Mines and Shield need Brain 1. Ballistics 2 needs Ricochet 1, and Ballistics 3 needs Ricochet 2. Seeking needs Ricochet 1: a bullet that doesn't bounce never seeks.
 
-The four special bullets are priced by what they add. A piercing bullet and a seeking one cost the same, a splitting one costs more, and an exploding one the most.
+The four special bullets are priced by what they add. A piercing bullet costs the least, a splitting one more, and a seeking one and an exploding one the most.
 
 Prices are right when two enemy tanks of equal budget are about equally dangerous. The check is a headless build that runs many fights between random genomes and a reference bot, then compares the results per budget.
 
@@ -376,19 +377,21 @@ The garage opens on the tank that the player built last, which is the standard t
 
 An enemy has a class: the stats that it favors when it spends its points. The class gives the tank its color, so that it is read from afar, before the parts of the model are.
 
-| Class | Favors | Color |
-|---|---|---|
-| All-rounder | Nothing: a bit of everything | Gray |
-| Sniper | Muzzle and Turret | Teal |
-| Scout | Engine and Tracks | Yellow |
-| Tactician | Brain and Ballistics | Green |
-| Trickster | Ricochet | Purple |
-| Lancer | Piercing | Orange |
-| Seeker | Seeking and Ricochet | Dark magenta |
-| Flanker | Splitting | Dark blue |
-| Grenadier | Exploding | Brown, almost black |
-| Sapper | Mines and Shield | Pink |
-| Gunner | Magazine and Loader | Red |
+| Class | Favors | Color | Weight | From sector |
+|---|---|---|---|---|
+| All-rounder | Nothing: a bit of everything | Gray | 3 | 1 |
+| Sniper | Muzzle and Turret | Teal | 3 | 1 |
+| Scout | Engine and Tracks | Yellow | 3 | 1 |
+| Tactician | Brain and Ballistics | Green | 2 | 3 |
+| Trickster | Ricochet | Purple | 2 | 1 |
+| Lancer | Piercing | Orange | 2 | 9 |
+| Seeker | Seeking and Ricochet | Dark magenta | 1 | 19 |
+| Flanker | Splitting | Dark blue | 1 | 11 |
+| Grenadier | Exploding | Brown, almost black | 1 | 17 |
+| Sapper | Mines and Shield | Pink | 3 | 2 |
+| Gunner | Magazine and Loader | Red | 3 | 1 |
+
+A tank draws its class by these weights, among the classes that its sector has. A class waits for the sector that allows a first level of every stat that it favors, and of what those stats need: a tactician for the first brain and the first tier of ballistics, a sapper for the first brain, and each class that fires a special bullet for the sector of that bullet (see [Progression](#progression)). The sectors of normal mode decide whatever the difficulty, so a tank is of the same class in hard mode. Once every class has come, at sector 19, five tanks in 24 are of the four classes that fire a special bullet.
 
 The bright blue is the players'. The blue of a flanker is darker and of another hue. The seeker, the flanker and the grenadier are told from the other classes by how dark they are as much as by their hue: the wheel of hues had no room left for three more.
 
@@ -407,25 +410,25 @@ The enemies of a sector are generated together, from the seed, the sector and th
 
 1. Draw the group's budget: between 70% and 90% of the sector budget for each of its tanks.
 2. Give every tank 30% of the sector budget. Each tank then draws a weight of 1, 1, 2, 2, 3 or 8, and the rest of the group's budget is shared by weight.
-3. The heaviest tank is the leader, which can have up to 1.5 times the sector budget. No other tank has more than the sector budget. What a tank can't take goes to the others.
+3. The heaviest tank is the leader, which can have up to 1.25 times the sector budget. No other tank has more than the sector budget. What a tank can't take goes to the others.
 
-A tank that is alone in its sector has the whole budget of its group, which is less than the sector budget. In a group of six, the strongest tank has about 2.6 times the points of the weakest.
+A tank that is alone in its sector has the whole budget of its group, which is less than the sector budget. In a group of six, the strongest tank has about 2.3 times the points of the weakest.
 
 Each tank then spends its budget, from the seed, its sector and its index in the group:
 
-1. Draw its class, each of the eleven with the same chance.
+1. Draw its class by its weight, among the classes that its sector has (see [Classes](#classes)).
 2. Draw its software tiers within the sector's tier caps and what its class allows, and pay their shares. A Ballistics tier whose bounces the tank can't pay for drops until it can.
 3. Buy one level of each stat that its class favors.
-4. Spend the remaining points one level at a time, at random, respecting prerequisites, the sector's cap on Muzzle and what its class allows, until nothing affordable is left. The favorite stats weigh 20 together, and every other stat weighs 1.
+4. Spend the remaining points one level at a time, at random, respecting prerequisites, the sector's cap on Muzzle and what its class allows, until nothing affordable is left. The favorite stats weigh 15 together, and every other stat weighs 1.
 5. If points are left, raise its brain by a tier, or else its ballistics with the bounce that the tier needs, within the sector's tier caps and what its class allows, and go back to step 4: a first brain opens mines and a shield. The tank is done when what is left pays for neither.
 
-The last step is for the tanks that have more points than their hardware can take. A tank without a brain has neither mines nor a shield, and most classes have neither a special bullet nor a second bounce, which leaves it 89 points of hardware to buy. A leader of a late sector can have more than that, and in hard mode so can the others. What such a tank has left makes it smarter, and what stays unspent is less than a tier costs it.
+The last step is for the tanks that have more points than their hardware can take. A tank without a brain has neither mines nor a shield, and most classes have neither a special bullet nor a second bounce, which leaves it 100 points of hardware to buy. A leader can have more than that from sector 22 on and the other tanks from sector 34 on, and both sooner in hard mode. What such a tank has left makes it smarter, and what stays unspent is less than a tier costs it.
 
 Specialization matters more than balance. A tank with a few strong stats has a recognizable shape and asks the players a clear question. In a group of six, four or five classes stand side by side.
 
 ### Reference builds
 
-The price list can express the enemy roster of Tanks!, in roughly the order in which that game introduces it. This is a sanity check of the prices, not a list of tanks to ship. The guns of the Sniper and of the Banker are the fastest that their sectors allow. The names and the colors are those of Tanks!, not those of the classes. The roster is taken from the [StrategyWiki page on Tanks!](https://strategywiki.org/wiki/Wii_Play/Tanks!).
+The price list can express the enemy roster of Tanks!, in roughly the order in which that game introduces it. This is a sanity check of the prices, not a list of tanks to ship. The gun of the Sniper is the fastest that its sector allows. The names and the colors are those of Tanks!, not those of the classes. The roster is taken from the [StrategyWiki page on Tanks!](https://strategywiki.org/wiki/Wii_Play/Tanks!).
 
 | Build | Key stats | Budget | Possible from sector |
 |---|---|---|---|
@@ -433,12 +436,12 @@ The price list can express the enemy roster of Tanks!, in roughly the order in w
 | Rover (gray) | 2 m/s, same gun, brain 1 | 15 | 3 |
 | Sniper (teal) | 2 m/s, 11 m/s bullets without bounce, brain 2, ballistics 1 | 19 | 6 |
 | Burster (pink) | 4 m/s, 3 rounds, brain 2 | 34 | 6 |
-| Miner (yellow) | 6 m/s, 4 mines, brain 1 | 39 | 5 |
-| Banker (green) | Stationary, 13 m/s bullets with 2 bounces, ballistics 3 | 42 | 13 |
-| Raider (purple) | 6 m/s, 5 rounds, 2 mines, brain 3 | 72 | 11 |
-| Hunter (black) | 8 m/s, 17 m/s bullets, 2 mines, brain 4 | 96 | 19 |
+| Miner (yellow) | 6 m/s, 4 mines, brain 1 | 39 | 6 |
+| Banker (green) | Stationary, 13 m/s bullets with 2 bounces, ballistics 3 | 44 | 15 |
+| Raider (purple) | 6 m/s, 5 rounds, 2 mines, brain 3 | 72 | 14 |
+| Hunter (black) | 8 m/s, 17 m/s bullets, 2 mines, brain 4 | 109 | 26 |
 
-A build is possible in a sector whose caps allow its tiers and its gun, and where a tank of a solo group in a corridor can have as many points. The Miner, the Raider and the Hunter first come as the leader of their group: no other tank can have their budget before sectors 7, 19 and 46. The Banker is a trickster or a tactician, the two classes that have Ballistics 3.
+A build is possible in a sector whose caps allow its tiers and its gun, and where a tank of a solo group in a corridor can have as many points. The Burster, the Miner, the Raider and the Hunter first come as the leader of their group: no other tank can have their budget before sectors 7, 8, 18 and 40. The Banker is a trickster or a tactician, the two classes that have Ballistics 3.
 
 ### Appearance
 
@@ -472,7 +475,7 @@ A player's tank is assembled from its genome like an enemy's. The standard tank 
 
 ## Enemy brains
 
-A brain is the controller of one enemy tank. It observes the fight (its own state, the tanks, bullets and mines around it, the nearby walls) and issues the same commands a player has: move, aim, shoot, place a mine, shield. Brains don't cheat: their tanks obey the same hardware limits and the same rules as player tanks. Enemies in an active sector always know where the players are. What they do with that knowledge depends on their software. An enemy fights the nearest player in its sector whose tank still runs, and keeps that target until another player is clearly nearer.
+A brain is the controller of one enemy tank. It observes the fight (its own state, the tanks, bullets and mines around it, the nearby walls) and issues the same commands a player has: move, aim, shoot, place a mine, shield. Brains don't cheat: their tanks obey the same hardware limits and the same rules as player tanks. Enemies in an active sector always know where the players are. What they do with that knowledge depends on their software. An enemy fights the nearest player in its sector whose tank still runs, and keeps that target until another player is clearly nearer. It fires at a player who is within 30 m of its tank, which is its sight. Further than that, it holds its fire: it keeps its gun on the player and drives as its brain says, and it fires once the player is within its sight, after its reaction delay. It still shoots down a bullet that comes at it, wherever the player is.
 
 Two things make a brain better. Its tiers, bought with points, decide what it is able to do. Its experience, which depends only on the sector, decides how well it does it: experience shortens the reaction delay from 0.50 s to 0.12 s and shrinks the aiming error from 8° to 1°.
 
@@ -484,36 +487,41 @@ Brains are hand-written, one set of behavior per tier. In normal and hard mode t
 
 ## Progression
 
-Difficulty depends only on the sector number $n$, the mode and the number of players $P$. Six things grow with $n$: the enemies' budget, their number, their software tiers, the speed of their fastest bullets, their experience and the harshness of the terrain. In arena mode, the number of a group stands for the sector number.
+Difficulty depends only on the sector number $n$, the mode and the number of players $P$. Seven things grow with $n$: the enemies' budget, their number, their software tiers, the speed of their fastest bullets, the types of bullet that they fire, their experience and the harshness of the terrain. In arena mode, the number of a group stands for the sector number.
 
-The sector budget is the measure of an enemy's budget in sector $n$. No tank has more, except the leader of its group, which can have up to 1.5 times as much (see [Enemy generation](#enemy-generation)):
+The sector budget is the measure of an enemy's budget in sector $n$. No tank has more, except the leader of its group, which can have up to 1.25 times as much (see [Enemy generation](#enemy-generation)):
 
-$$B(n) = B_{\max} - (B_{\max} - B_0)\, e^{-(n-1)/15}$$
+$$B(n) = B_{\max} - (B_{\max} - B_0)\, e^{-(n-1)/25}$$
 
-with $B_0 = 10$ and $B_{\max} = 100$ in normal mode. It rises fast at first and flattens toward the cap. The cap stays below the 139 points of a fully equipped tank, so even late enemies must specialize. Only a leader can have more than the cap. A tank that has more points than its hardware can take raises its software with the rest (see [Enemy generation](#enemy-generation)). Every stat also stops at its own highest level.
+with $B_0 = 10$ and $B_{\max} = 135$ in normal mode. It rises fast at first and flattens toward the cap. The cap stays below the 152 points of a fully equipped tank, so even late enemies must specialize. Only a leader can have more than the cap. A tank that has more points than its hardware can take raises its software with the rest (see [Enemy generation](#enemy-generation)). Every stat also stops at its own highest level.
 
-The number of enemies in a sector is $N(n) = \min(6,\ 1 + \lfloor n/3 \rfloor)$ in solo and $\lceil N(n)\,(1 + 0.5\,(P - 1)) \rceil$ with $P$ players. Arenas hold 1.5 times as many, in three waves (see [Arenas](#arenas)). The group of a sector is set when the sector is loaded, one sector ahead of the players. A sector that is too small for its whole group holds as many enemies as fit. That happens in the smallest arenas: to about one in a thousand with four players, and almost never with fewer.
+The number of enemies in a sector is $N(n) = \min(6,\ 1 + \lfloor n/4 \rfloor)$ in solo and $\lceil N(n)\,(1 + 0.5\,(P - 1)) \rceil$ with $P$ players. Arenas hold 1.5 times as many, in three waves (see [Arenas](#arenas)). The group of a sector is set when the sector is loaded, one sector ahead of the players. A sector that is too small for its whole group holds as many enemies as fit. That happens in the smallest arenas: to about one in a thousand with four players, and almost never with fewer.
 
-Experience is $E(n) = 1 - e^{-(n-1)/20}$, where 0 is a novice and 1 a flawless brain. It keeps closing in on flawless play without ever reaching it. The highest brain tier allowed is $\min(4,\ 1 + \lfloor (n-1)/5 \rfloor)$ and the highest ballistics tier is $\min(3,\ \lfloor (n+2)/5 \rfloor)$.
+Experience is $E(n) = 1 - e^{-(n-1)/20}$, where 0 is a novice and 1 a flawless brain. It keeps closing in on flawless play without ever reaching it. The software tiers come by steps. The tank of sector 1 has no brain: the highest brain tier allowed is 0 there, and it goes up by one at sectors 2, 6, 14 and 22. The highest ballistics tier is 0 at first, and goes up by one at sectors 3, 10 and 15.
 
-The highest Muzzle level an enemy can have is $\min(7,\ 2 + \lfloor (n+1)/5 \rfloor)$: the level of the player tank in the first three sectors, then one more at sectors 4, 9, 14, 19 and 24, between the steps of the software tiers. The cap is for enemies only.
+The highest Muzzle level an enemy can have is the level of the player tank in the first four sectors, then one more at sectors 5, 7, 13, 18 and 25. The cap is for enemies only.
 
-The cap follows what a player can dodge. A player's tank that keeps moving needs about 0.55 s to react to a shot and move out of its way, which a bullet covers in 5 m at 9 m/s, 7.2 m at 13 m/s and 8.3 m at 15 m/s. Enemies with a brain keep 8 to 14 m away. Until sector 13, a player who keeps moving can therefore dodge every bullet at that distance. From sector 14, the fastest guns beat reaction at close range, and the players need distance, cover or the shield.
+The special bullets come one at a time: piercing from sector 9, splitting from sector 11, exploding from sector 17 and seeking from sector 19. The class that fires each of them comes with it (see [Classes](#classes)).
+
+No two of these steps fall on the same sector. From sector 2 to sector 20, every sector brings one thing more than the one before it: a tank, a tier, a faster gun or a type of bullet. The last tier of brain comes at sector 22 and the fastest gun at sector 25.
+
+The cap follows what a player can dodge. A player's tank that keeps moving needs about 0.55 s to react to a shot and move out of its way, which a bullet covers in 5 m at 9 m/s, 7.2 m at 13 m/s and 8.3 m at 15 m/s. Enemies with a brain keep 8 to 14 m away. Until sector 12, a player who keeps moving can therefore dodge every bullet at that distance. From sector 13, the fastest guns beat reaction at close range, and the players need distance, cover or the shield.
 
 | Sector | Sector budget | Most points of a tank in solo | Enemies in solo | Highest brain tier | Highest ballistics tier | Highest Muzzle level | Experience |
 |---|---|---|---|---|---|---|---|
-| 1 | 10 | 9 | 1 | 1 | 0 | 2 | 0.00 |
-| 3 | 21 | 29 | 2 | 1 | 1 | 2 | 0.10 |
-| 5 | 31 | 42 | 2 | 1 | 1 | 3 | 0.18 |
-| 10 | 51 | 76 | 4 | 2 | 2 | 4 | 0.36 |
-| 15 | 65 | 97 | 6 | 3 | 3 | 5 | 0.50 |
-| 20 | 75 | 112 | 6 | 4 | 3 | 6 | 0.61 |
-| 30 | 87 | 130 | 6 | 4 | 3 | 7 | 0.77 |
-| 50 | 97 | 145 | 6 | 4 | 3 | 7 | 0.91 |
+| 1 | 10 | 9 | 1 | 0 | 0 | 2 | 0.00 |
+| 3 | 20 | 18 | 1 | 1 | 1 | 2 | 0.10 |
+| 5 | 28 | 35 | 2 | 1 | 1 | 3 | 0.18 |
+| 10 | 48 | 60 | 3 | 2 | 2 | 4 | 0.36 |
+| 15 | 64 | 80 | 4 | 3 | 3 | 5 | 0.50 |
+| 20 | 77 | 96 | 6 | 3 | 3 | 6 | 0.61 |
+| 30 | 96 | 120 | 6 | 4 | 3 | 7 | 0.77 |
+| 50 | 117 | 146 | 6 | 4 | 3 | 7 | 0.91 |
+| 75 | 129 | 161 | 6 | 4 | 3 | 7 | 0.98 |
 
-The most points of a tank are those of the leader of a group in a corridor. The tank of sector 1 is alone and has no group to lead.
+The most points of a tank are those of the leader of a group in a corridor. A tank of the first three sectors is alone and has no group to lead.
 
-Every lever has a limit, so difficulty flattens after about sector 50. From there, a run is a test of endurance at full difficulty.
+Every lever has a limit, so difficulty flattens after about sector 75. From there, a run is a test of endurance at full difficulty.
 
 The terrain gets harsher along four levers:
 
@@ -751,8 +759,8 @@ Later, in no fixed order: controller support, local co-op on one screen (split s
 - How do internet games connect for hosts who can't open a port, before the official server exists?
 - In impossible mode, how exactly are enemies scored, and can brains learn fast enough within one run to matter?
 - Which exact shades do the hues of the classes take? The players' blue and the white of the bullets are settled.
-- Are four classes in eleven too many that fire a special bullet? Piercing alone was on one tank in eight. The classes could be drawn with weights.
-- Are the prices of the seeking, the splitting and the exploding bullets right? They were set by rank, before any trial: seeking as piercing, splitting above it, exploding the dearest.
+- Are the classes that fire a special bullet still too many? Piercing alone was on one tank in eight. The classes are now drawn with weights, and those four weigh less and come late: five tanks in 24 are of them once all have come, at sector 19.
+- Are the prices of the special bullets right? They were set by rank at first, and raised after the trials and after play: 6 points for piercing, 9 for splitting, 10 for seeking and for exploding.
 - Do the three dark classes read on the dark sheet? A dark body has a pale frame, and their outlines in dashes take a pale tint. Whether a dormant flanker in that tint is told from a teammate's wreck is to be checked in a game of several players.
 - How is the game distributed, at which secure address is its page published, and is the name free to use?
 - How do the players of an early access release update the game, and how do they report bugs and feedback?

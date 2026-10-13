@@ -93,7 +93,7 @@ tank    turret 720deg/s  speed-up 0.15s  pivot 45deg  hold-fire 0.5s
 gun     cooldown 0.25s  bullet 0.225m
 mine    arm 1s  fuse 10s  warn 0.6s  trigger 2m  every 0.5s
 blast   3m
-shield  lasts 0.5s  radius 1.4m
+shield  lasts 1.0s  radius 1.4m
 split   after 1s  angle 30deg
 mark    1.5s
 repair  within 3m  takes 2s  safe 1s
@@ -112,12 +112,16 @@ repair  within 3m  takes 2s  safe 1s
 ## Progression
 
 ```
-budget      10 to 100  every 15
+budget      10 to 135  every 25
 experience  every 20  reaction 0.5s to 0.12s  aim 8deg to 1deg
-step tanks       1  3 6 9 12 15
-step brain       1  6 11 16
-step ballistics  0  3 8 13
-step muzzle      2  4 9 14 19 24
+step tanks       1  4 8 12 16 20
+step brain       0  2 6 14 22
+step ballistics  0  3 10 15
+step muzzle      2  5 7 13 18 25
+step piercing    0  9
+step splitting   0  11
+step exploding   0  17
+step seeking     0  19
 team    +50%
 hard    budget +30  ahead 20
 ```
@@ -140,7 +144,7 @@ rounded to the nearest point. The compiler works the budgets of the first 256 se
 | `muzzle` | The highest level of Muzzle |
 | Any other stat, as `exploding` or `ricochet` | The highest level of that stat. This line is optional: a stat without one has every level from sector 1. |
 
-The first four lines are in every balance. A cap ends no higher than its stat goes, and it is for the enemies alone: a player's tank has what its points pay for. A cap of 0 keeps the stat out of a sector altogether, and with it the classes that favor it (see [Classes](#classes)). In hard mode, a cap of the hardware is the one of some sectors further, as the cap on Muzzle is.
+The first four lines are in every balance. The balance of the game has one more for each special bullet, which keeps its class for the sector of that line. A cap ends no higher than its stat goes, and it is for the enemies alone: a player's tank has what its points pay for. A cap of 0 keeps the stat out of a sector altogether, and with it the classes that favor it (see [Classes](#classes)). In hard mode, a cap of the hardware is the one of some sectors further, as the cap on Muzzle is.
 
 **`team`** is what each player after the first adds to the tanks of a group: $P$ players face $\lceil N\,(1 + t\,(P - 1)) \rceil$ tanks where one faces $N$.
 
@@ -149,7 +153,7 @@ The first four lines are in every balance. A cap ends no higher than its stat go
 ## Groups
 
 ```
-group   mean 70%..90%  least 30%  leader 150%  weights 1 1 2 2 3 8  favorite 20
+group   mean 70%..90%  least 30%  leader 125%  weights 1 1 2 2 3 8  favorite 15
 ```
 
 How a group shares its points. The shares are in percent of the budget of its sector.
@@ -165,7 +169,7 @@ How a group shares its points. The shares are in percent of the budget of its se
 ## Classes
 
 ```
-class all-rounder  1                      ricochet<=1  ballistics<=2
+class all-rounder  3                      ricochet<=1  ballistics<=2
 class seeker       1  ricochet seeking    ricochet<=3  ballistics<=1
 ```
 
@@ -177,7 +181,7 @@ A `class` line names a class, then says three things:
 
 Ballistics 2 needs a bounce and ballistics 3 needs two, so a class has no more ballistics than its ricochet and one. A class that favors `seeking` has a bounce.
 
-A class comes from the first sector that allows a level of every stat that it favors, and of what those stats need: mines and a shield need a brain, tracks an engine, and a bullet that seeks a bounce. A sapper therefore waits for the first brain. The `step` lines say which sectors those are: with `step brain 0  2 6 14 22` and `step ballistics 0  3 10 15`, the brain comes at sector 2 and ballistics at sector 3, so the first tactician is in sector 3. Until then its weight counts for nothing, and the other classes share the draw. Hard mode has every tier from its first sector, and still takes its classes from the sectors of normal mode: a tank is of the same class in both. Any stat can have a `step` line, so any class can be held back: `step exploding 0  8` keeps the grenadiers for sector 8, and `step splitting 0  5` the flankers for sector 5.
+A class comes from the first sector that allows a level of every stat that it favors, and of what those stats need: mines and a shield need a brain, tracks an engine, and a bullet that seeks a bounce. A sapper therefore waits for the first brain. The `step` lines say which sectors those are: with `step brain 0  2 6 14 22` and `step ballistics 0  3 10 15`, the brain comes at sector 2 and ballistics at sector 3, so the first tactician is in sector 3. Until then its weight counts for nothing, and the other classes share the draw. Hard mode has every tier from its first sector, and still takes its classes from the sectors of normal mode: a tank is of the same class in both. Any stat can have a `step` line, so any class can be held back: `step exploding 0  17` keeps the grenadiers for sector 17, and `step splitting 0  11` the flankers for sector 11.
 
 The classes are `all-rounder`, `sniper`, `scout`, `tactician`, `trickster`, `lancer`, `sapper`, `gunner`, `seeker`, `flanker` and `grenadier`. What else tells them apart is a rule: a tactician takes the best software that its sector allows, and a sapper has a brain.
 
@@ -210,7 +214,7 @@ The generator keeps its promises whatever these numbers are, as far as it can: i
 ## Arenas and arena mode
 
 ```
-arena   every 5..8  tanks 150%  waves 3  wait 2s  mark 1s  clear 4m  life 4m  reach 1.5m
+arena   every 5..8  tanks 150%  waves 3  wait 2s  mark 1.0s  clear 4m  life 4m  reach 1.5m
 room    at-once 50%  lull 3s  life-every 5  rise 2s  apart 2m  cover 150%  size 36m..42m 22m..24m
 ```
 
@@ -238,9 +242,10 @@ room    at-once 50%  lull 3s  life-every 5  rise 2s  apart 2m  cover 150%  size 
 ## Brains
 
 ```
-enemy keep   8m..14m  hold 1.25  foresight 1s  last-moment 0.2s  room 0.15m  parry 0.3m
+enemy keep   8m..14m  hold 1.25  foresight 0.7s  last-moment 0.2s  room 0.15m  parry 0.3m
 enemy mines  reflex 6m  range 20m  apart 5m  charge 3m/s
 enemy ace    bait 11m..14m  press 5m..8m  until 3  retreat 16m..22m  crossfire 90deg
+enemy sight  30m
 ```
 
 | Line | What it says |
@@ -248,21 +253,16 @@ enemy ace    bait 11m..14m  press 5m..8m  until 3  retreat 16m..22m  crossfire 9
 | `enemy keep` | The distances that a brain of tier 1 or more keeps from the player. `hold`: it keeps its target until another player is this many times nearer. `foresight`: how far ahead it sees a bullet coming. `last-moment`: how long before a bullet hits a soldier or a veteran raises its shield. `room`: the room that a veteran wants between its tank and a bullet to count on a miss. `parry`: a veteran fires at a bullet once its shot will pass this close to the middle of it. |
 | `enemy mines` | `reflex`: a brain lays a mine when the player is this close. `range`: a veteran lays mines in the way of a player who is no further than this. `apart`: it lays none this close to another one. `charge`: a player who comes at a tank this fast charges it. |
 | `enemy ace` | The distances that an ace keeps from a player who has rounds (`bait`) and from one who has none (`press`), until that player has so many rounds again (`until`), and those that it keeps when it is the last of its group (`retreat`). `crossfire`: the turn around the player that it wants between itself and the nearest ally. |
+| `enemy sight` | How far an enemy fires at a player. A file may leave this line out. |
 
-**`foresight`** is how long before a bullet arrives a brain starts to see it. A soldier sees a bullet that flies straight at its tank once the bullet is that long from hitting it. A veteran follows every bullet for that long, bounces included, and sees those that will pass over its tank. An ace also sees those that will pass where it can drive to in that time, which is how it gets out of the way of a shot that is aimed ahead of it. A brain acts on a bullet once it has seen it for the reaction of its sector, so what it has left to get out of the way is the foresight less that reaction. With `foresight 1s`, a shot of the standard tank, which flies at 9 m/s, is seen from 9 m away: a brain that keeps 8 to 14 m from the player sees it almost as it is fired, and any tank that has an engine has the time to move aside. A shorter foresight leaves the slow tanks too little time, and the fast ones still enough.
+**`foresight`** is how long before a bullet arrives a brain starts to see it. A soldier sees a bullet that flies straight at its tank once the bullet is that long from hitting it. A veteran follows every bullet for that long, bounces included, and sees those that will pass over its tank. An ace also sees those that will pass where it can drive to in that time, which is how it gets out of the way of a shot that is aimed ahead of it. A brain acts on a bullet once it has seen it for the reaction of its sector, so what it has left to get out of the way is the foresight less that reaction. With `foresight 0.7s`, a shot of the standard tank, which flies at 9 m/s, is seen from 6.3 m away. With a foresight of 1 s, which the game had first, it was seen from 9 m: a brain that keeps 8 to 14 m from the player then saw it almost as it was fired, and any tank that has an engine had the time to move aside. A shorter foresight leaves the slow tanks too little time, and the fast ones still enough.
 
-One more line of the brains is one that a file may leave out:
-
-```
-enemy sight  30m
-```
-
-With it, an enemy fires at a player who is no further from its tank than this. Further than that, it holds its fire: it still knows where the player is, keeps its gun on them and drives toward them as its brain says, and it fires once the player is within its sight, after the reaction of its sector. It still shoots down a bullet that comes at it, wherever the player is. Without the line, an enemy fires at a player that it has a line of fire on, however far. A sight is no shorter than the furthest that a brain keeps from the player in `enemy keep`, or the brains that keep that distance would never fire.
+**`sight`** is how far an enemy fires. With the line, an enemy fires at a player who is no further from its tank than this. Further than that, it holds its fire: it still knows where the player is, keeps its gun on them and drives toward them as its brain says, and it fires once the player is within its sight, after the reaction of its sector. It still shoots down a bullet that comes at it, wherever the player is. Without the line, an enemy fires at a player that it has a line of fire on, however far. A sight is no shorter than the furthest that a brain keeps from the player in `enemy keep`, or the brains that keep that distance would never fire.
 
 ## Unlocks
 
 ```
-unlock  arena 5  seed 10  free 20  hard 30  impossible 20
+unlock  arena 10  seed 15  free 20  hard 30  impossible 20
 ```
 
 The sector that a run must clear to unlock each mode. The last one is cleared in hard mode.
@@ -289,7 +289,7 @@ A change that is kept is written down in two more places:
 
 ## Tests
 
-The tests of the rules have a balance of their own, `tanku_core/test.balance`: the numbers that the game had at version 0.7.0, in the same notation. `tanku_core` is compiled with that file for its own tests and for those of the other crates, which ask for it with the feature `testing`. A test that says that group 9 has four tanks, or that a tank of 55 points fits the garage, holds numbers of that file. So a change to the balance of the game fails no test of a rule: it fails the one test that watches the file, and nothing else.
+The tests of the rules have a balance of their own, `tanku_core/test.balance`: the numbers that the game had at version 0.7.0, before its balance was tuned, in the same notation. `tanku_core` is compiled with that file for its own tests and for those of the other crates, which ask for it with the feature `testing`. A test that says that group 9 has four tanks, or that a tank of 55 points fits the garage, holds numbers of that file. So a change to the balance of the game fails no test of a rule: it fails the one test that watches the file, and nothing else.
 
 What the tests then don't say is that the rules hold with the numbers of the game. Three things say it:
 

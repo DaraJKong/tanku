@@ -4,7 +4,7 @@ A cooperative top-down tank game for one to four players, built with Rust and Be
 
 The solo game and co-op are playable, on Linux, on Windows and in a browser:
 
-- **Solo:** the corridor, the generated enemies with their classes and their brains, arenas and their waves, lives and checkpoints, the menus, the sound cues and the music. Runs unlock achievements. Clearing sector 5 unlocks arena mode, a run in one room against one group after another. Clearing sector 10 lets the player type the seed of a run. Clearing sector 20 unlocks free mode, in which the player spends the 59 points of their tank as they like, in a garage that draws the tank as they build it. Clearing sector 30 unlocks hard mode, whose enemies are stronger from the first sector.
+- **Solo:** the corridor, the generated enemies with their classes and their brains, arenas and their waves, lives and checkpoints, the menus, the sound cues and the music. Runs unlock achievements. Clearing sector 10 unlocks arena mode, a run in one room against one group after another. Clearing sector 15 lets the player type the seed of a run. Clearing sector 20 unlocks free mode, in which the player spends the 59 points of their tank as they like, in a garage that draws the tank as they build it. Clearing sector 30 unlocks hard mode, whose enemies are stronger from the first sector.
 - **Co-op:** up to four players. One of them hosts a game, which the others find on the local network or join by its address, from a desktop build or from a browser. A game can have a name and a password. The host sets the run in the lobby: its difficulty, its seed, arena mode, and free mode, in which each player has the tank of their own garage. Nothing is locked for a host who has company. The run starts once everyone has said that they are ready. A destroyed tank is a wreck that a teammate repairs.
 
 Co-op has been played by two players. With three or four, it is checked by tests and by scripted runs only. Arena mode is new and an experiment: its rules are still being set in play (see [Arena mode](#arena-mode)). The bullets that seek, split and explode are new too, with the three classes that fire them and their place in the garage: they are checked by tests and by scripted runs, and nobody has played against them yet. The build for Windows is checked under wine, not yet on Windows itself. The specification is in [docs/PROJECT.md](docs/PROJECT.md).
@@ -79,7 +79,7 @@ A browser only joins from a page that it loaded over HTTPS or from its own machi
 
 ### Arena mode
 
-Arena mode is an option of a run, as free mode is. A single player unlocks it by clearing sector 5 and turns it on on the solo screen, and the host of a game sets it in the lobby. A player who had earned an achievement before arena mode existed had cleared that sector already, and has it.
+Arena mode is an option of a run, as free mode is. A single player unlocks it by clearing sector 10 and turns it on on the solo screen, and the host of a game sets it in the lobby. A player who had earned an achievement before arena mode existed had cleared that sector already, and has it.
 
 A run in arena mode has no corridor. It is fought in one room, which the seed draws, against one group after another:
 
@@ -131,17 +131,17 @@ A tank is written as its stats with their levels, with commas between them. A st
 | Tank | What it spends its points on | Written as |
 |---|---|---|
 | Standard | A bit of everything | `engine=4,tracks=5,muzzle=2,magazine=4,loader=6,ricochet=1,mines=2,shield=2` |
-| Gun | Bullets at 19 m/s, and neither a bounce, mines nor a shield | `engine=4,tracks=5,muzzle=7,magazine=4,loader=6` |
-| Bouncer | Piercing bullets that bounce three times | `engine=4,tracks=4,muzzle=3,magazine=3,loader=5,ricochet=3,piercing=1` |
+| Gun | Bullets at 19 m/s, three rounds, and neither a bounce, mines nor a shield | `engine=4,tracks=4,muzzle=7,magazine=2,loader=5` |
+| Bouncer | Piercing bullets that bounce three times | `engine=4,tracks=3,muzzle=3,magazine=3,loader=5,ricochet=3,piercing=1` |
 | Runner | 8 m/s, and a shield every 6 s | `engine=7,tracks=6,muzzle=2,magazine=2,loader=5,shield=5` |
-| Seeker | Seeking bullets that bounce twice | `engine=4,tracks=5,muzzle=2,magazine=4,loader=6,ricochet=2,seeking=1` |
+| Seeker | Seeking bullets that bounce twice | `engine=4,tracks=4,muzzle=2,magazine=4,loader=6,ricochet=2,seeking=1` |
 | Flanker | Splitting bullets whose halves bounce once, and a mine | `engine=4,tracks=5,muzzle=2,magazine=4,loader=6,ricochet=1,splitting=1,mines=1` |
 | Grenadier | Exploding bullets, and a shield every 10 s | `engine=4,tracks=5,muzzle=2,magazine=4,loader=6,exploding=1,shield=1` |
 
 A tank fires one type of bullet: `piercing`, `seeking`, `splitting` and `exploding` are four stats of one level, and the game refuses a tank that has two of them.
 
 ```bash
-cargo run -p tanku_client -- --playtest --seed GARAGE --tank engine=4,tracks=5,muzzle=7,magazine=4,loader=6
+cargo run -p tanku_client -- --playtest --seed GARAGE --tank engine=4,tracks=4,muzzle=7,magazine=2,loader=5
 ```
 
 The main menu draws the tank and says how many of its points it spends. In a game of several players, the tank is the host's alone: the others keep the standard one, or the one of their garage if the host turns free mode on. A tank from the command line doesn't change the one of the garage.
@@ -672,7 +672,7 @@ error[E0080]: evaluation panicked: game.balance, line 11: a stat has a number fo
 A change of the balance is tried in four steps:
 
 1. Write the report of a trial as the game is: `cargo run --release -p tanku_trials -- skirmish --out target/trials/before`.
-2. Change a line of the file. A group that gets its sixth tank at sector 20 and not at 15 is `step tanks  1  4 8 12 16 20`.
+2. Change a line of the file. A group that gets its sixth tank at sector 24 and not at 20 is `step tanks  1  4 8 12 16 24`.
 3. Write the report again, to `target/trials/after`. The tool is compiled again first, which takes a quarter of a minute.
 4. Compare the two: `cargo run --release -p tanku_trials -- compare target/trials/before/skirmish.csv target/trials/after/skirmish.csv`.
 

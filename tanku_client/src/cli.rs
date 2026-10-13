@@ -15,8 +15,8 @@ Options:
                    Keep the journal of the runs in this file, not in the player's own.
   -h, --help       Show this help.";
 
-/// A tank as the command line takes it.
-const A_TANK: &str = "engine=4,tracks=5,muzzle=7,magazine=4,loader=6";
+/// A tank as the command line takes it: one that the points of the garage pay for.
+const A_TANK: &str = "engine=4,tracks=4,muzzle=7,magazine=2,loader=5";
 
 /// How a tank is written on the command line, and what the levels of its stats cost.
 fn tanks_explained() -> String {
@@ -198,17 +198,17 @@ mod tests {
 
     #[test]
     fn a_playtest_can_bring_a_tank_of_its_own() {
-        let options = parse("--playtest --tank engine=4,tracks=5,muzzle=7,magazine=4,loader=6");
+        let options = parse("--playtest --tank engine=4,tracks=4,muzzle=7,magazine=2,loader=5");
         let tank = options.unwrap().tank.unwrap();
         assert_eq!(super::tank(A_TANK), Ok(tank));
         assert_eq!((tank.top_speed(), tank.bullet_speed()), (5.0, 19.0));
-        assert_eq!((tank.magazine(), tank.reload_time()), (5, 1.0));
+        assert_eq!((tank.magazine(), tank.reload_time()), (3, 1.25));
         // What it doesn't name, it doesn't have.
         assert_eq!(
             (tank.bounces(), tank.mines(), tank.shield_cooldown()),
             (0, 0, None)
         );
-        assert_eq!((tank.cost(), tank.budget), (58, PLAYER_BUDGET));
+        assert_eq!((tank.cost(), tank.budget), (48, PLAYER_BUDGET));
         // It is the tank of the first seat of every run.
         let options = parse(&format!("--tank {A_TANK} --playtest --seed TANKU")).unwrap();
         assert_eq!(options.tanks(), [tank]);
