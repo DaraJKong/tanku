@@ -138,8 +138,9 @@ rounded to the nearest point. The compiler works the budgets of the first 256 se
 | `brain` | The highest tier of brain that an enemy can have |
 | `ballistics` | The highest tier of ballistics |
 | `muzzle` | The highest level of Muzzle |
+| Any other stat, as `exploding` or `ricochet` | The highest level of that stat. This line is optional: a stat without one has every level from sector 1. |
 
-A cap ends no higher than its stat goes.
+The first four lines are in every balance. A cap ends no higher than its stat goes, and it is for the enemies alone: a player's tank has what its points pay for. A cap of 0 keeps the stat out of a sector altogether, and with it the classes that favor it (see [Classes](#classes)). In hard mode, a cap of the hardware is the one of some sectors further, as the cap on Muzzle is.
 
 **`team`** is what each player after the first adds to the tanks of a group: $P$ players face $\lceil N\,(1 + t\,(P - 1)) \rceil$ tanks where one faces $N$.
 
@@ -176,7 +177,7 @@ A `class` line names a class, then says three things:
 
 Ballistics 2 needs a bounce and ballistics 3 needs two, so a class has no more ballistics than its ricochet and one. A class that favors `seeking` has a bounce.
 
-A class comes from the first sector that allows a level of every stat that it favors. The `step` lines say which sectors those are: with `step brain 0  2 6 14 22` and `step ballistics 0  3 10 15`, the brain comes at sector 2 and ballistics at sector 3, so the first tactician is in sector 3. Until then its weight counts for nothing, and the other classes share the draw. Hard mode has every tier from its first sector, and still takes its classes from the sectors of normal mode: a tank is of the same class in both. Today the steps are of the brain, of ballistics and of Muzzle, so the tactician is the class that they hold back, and the sniper if Muzzle starts at 0.
+A class comes from the first sector that allows a level of every stat that it favors. The `step` lines say which sectors those are: with `step brain 0  2 6 14 22` and `step ballistics 0  3 10 15`, the brain comes at sector 2 and ballistics at sector 3, so the first tactician is in sector 3. Until then its weight counts for nothing, and the other classes share the draw. Hard mode has every tier from its first sector, and still takes its classes from the sectors of normal mode: a tank is of the same class in both. Any stat can have a `step` line, so any class can be held back: `step exploding 0  8` keeps the grenadiers for sector 8, and `step splitting 0  5` the flankers for sector 5.
 
 The classes are `all-rounder`, `sniper`, `scout`, `tactician`, `trickster`, `lancer`, `sapper`, `gunner`, `seeker`, `flanker` and `grenadier`. What else tells them apart is a rule: a tactician takes the best software that its sector allows, and a sapper has a brain.
 

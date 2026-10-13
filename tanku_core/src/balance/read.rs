@@ -523,6 +523,7 @@ const EMPTY: Balance = Balance {
         brain: NO_STEP,
         ballistics: NO_STEP,
         muzzle: NO_STEP,
+        others: [None; Stat::COUNT],
     },
     team: 0,
     hard: Hard {
@@ -1116,16 +1117,23 @@ const fn step(
     found: &mut Found,
     words: &mut Words,
 ) -> Result<(), &'static str> {
-    const WHICH: &str = "`step` is followed by what grows: tanks, brain, ballistics or muzzle";
+    const WHICH: &str = "`step` is followed by what grows: tanks, or a stat";
     const WRONG: &str = "a step is its value in sector 1, then the sectors where it goes up by \
                          one, as in `1  3 6 9`";
-    let Some(index) = named(words.next(), &STEPS) else {
-        return Err(WHICH);
+    // The group and the three caps that every balance has, or a stat that this one holds
+    // back.
+    let word = words.next();
+    let (index, other) = match (named(word, &STEPS), stat_named(word)) {
+        (Some(index), _) => (index, None),
+        (None, Some(stat)) => (STEPS.len(), Some(stat)),
+        (None, None) => return Err(WHICH),
     };
-    if found.steps[index] {
-        return Err(TWICE);
+    match other {
+        Some(stat) if balance.steps.others[stat as usize].is_some() => return Err(TWICE),
+        None if found.steps[index] => return Err(TWICE),
+        Some(_) => {}
+        None => found.steps[index] = true,
     }
-    found.steps[index] = true;
     let mut step = Step {
         first: tried!(count(words, b"", WRONG)),
         ..NO_STEP
@@ -1146,10 +1154,11 @@ const fn step(
         last = sector;
     }
     // A cap ends no higher than its stat goes, and a group has a tank.
-    let highest = match index {
-        1 => Stat::Brain.levels() - 1,
-        2 => Stat::Ballistics.levels() - 1,
-        3 => Stat::Muzzle.levels() - 1,
+    let highest = match (index, other) {
+        (_, Some(stat)) => stat.levels() - 1,
+        (1, _) => Stat::Brain.levels() - 1,
+        (2, _) => Stat::Ballistics.levels() - 1,
+        (3, _) => Stat::Muzzle.levels() - 1,
         _ => usize::MAX,
     };
     if step.last() as usize > highest {
@@ -1160,7 +1169,12 @@ const fn step(
         0 => balance.steps.tanks = step,
         1 => balance.steps.brain = step,
         2 => balance.steps.ballistics = step,
-        _ => balance.steps.muzzle = step,
+        3 => balance.steps.muzzle = step,
+        _ => {
+            if let Some(stat) = other {
+                balance.steps.others[stat as usize] = Some(step);
+            }
+        }
     }
     Ok(())
 }
@@ -1547,6 +1561,41 @@ mod tests {
     }
 
     #[test]
+    fn any_stat_can_have_a_step() {
+        // No stat but the three has one unless the file says so.
+        let balance = read(FILE).unwrap();
+        assert!(balance.steps.of(Stat::Exploding).is_none());
+        assert_eq!(balance.steps.of(Stat::Brain), Some(balance.steps.brain));
+        // A stat that has one is held back until its sectors.
+        let line = "step muzzle      2  4 9 14 19 24\n";
+        let more = "step exploding   0  8\nstep ricochet 1 10 20\n";
+        let held = read(&FILE.replace(line, &format!("{line}{more}"))).unwrap();
+        let exploding = held.steps.of(Stat::Exploding).unwrap();
+        assert_eq!([exploding.at(7), exploding.at(8)], [0, 1]);
+        let ricochet = held.steps.of(Stat::Ricochet).unwrap();
+        assert_eq!(
+            [ricochet.at(1), ricochet.at(10), ricochet.at(99)],
+            [1, 2, 3]
+        );
+        assert!(held.steps.of(Stat::Engine).is_none());
+        assert_ne!(
+            fingerprint(FILE),
+            fingerprint(&FILE.replace(line, &format!("{line}{more}")))
+        );
+        // It is written once, ends no higher than its stat, and names something that grows.
+        for (more, why) in [
+            ("step exploding 0 8\nstep exploding 0 9\n", "twice"),
+            ("step brain 0 3\n", "twice"),
+            ("step exploding 0 8 12\n", "highest level"),
+            ("step ricochet 2 5 9\n", "highest level"),
+            ("step armor 0 3\n", "what grows"),
+        ] {
+            let fault = read(&FILE.replace(line, &format!("{line}{more}"))).expect_err(more);
+            assert!(fault.to_string().contains(why), "{more}: {fault}");
+        }
+    }
+
+    #[test]
     fn numbers_are_the_nearest_to_what_is_written() {
         // The reader must give the numbers that the code of the game wrote as literals.
         for (written, wanted) in [
@@ -1743,7 +1792,7 @@ mod tests {
                 "step brain",
                 "above the highest level",
             ),
-            ("step muzzle ", "step engine ", "step engine", "what grows"),
+            ("step muzzle ", "step armor ", "step armor", "what grows"),
             ("team    +50%", "team    50%", "team", "as in `+50%`"),
             (
                 "budget +30  ahead 20",

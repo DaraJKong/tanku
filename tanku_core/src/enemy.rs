@@ -66,13 +66,9 @@ fn draw_class(rng: &mut Stream, sector: u32) -> Class {
 
 /// The highest level of a stat that an enemy of a class can have in a sector.
 fn highest_level(stat: Stat, difficulty: Difficulty, sector: u32, class: Class) -> u8 {
-    let allowed = match stat {
-        // Fast bullets, good brains and good aim wait for later sectors, except in hard mode.
-        Stat::Muzzle => progression::muzzle_cap(sector, difficulty),
-        Stat::Brain => progression::brain_cap(sector, difficulty),
-        Stat::Ballistics => progression::ballistics_cap(sector, difficulty),
-        _ => stat.max_level(),
-    };
+    // Fast bullets, good brains and good aim wait for later sectors, and so does whatever
+    // else the balance holds back.
+    let allowed = progression::cap(stat, sector, difficulty);
     allowed.min(class.highest(stat))
 }
 

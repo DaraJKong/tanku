@@ -7,6 +7,7 @@ use crate::{
     balance::{BALANCE, Budget, Steps, Terrain},
     modes::Difficulty,
     rules::ROOM_AT_ONCE,
+    stats::Stat,
 };
 
 /// What hard mode adds to the budget of every sector.
@@ -132,6 +133,22 @@ pub fn ballistics_cap(sector: u32, difficulty: Difficulty) -> u8 {
     match difficulty {
         Difficulty::Normal => STEPS.ballistics.at(sector) as u8,
         Difficulty::Hard => STEPS.ballistics.last() as u8,
+    }
+}
+
+/// Highest level of a stat an enemy of this sector can have, whatever its class. The brain,
+/// ballistics and Muzzle have steps in every balance. Another stat has every level from the
+/// first sector unless the balance gives it steps, and hard mode then has the levels of some
+/// sectors further, as it has the guns.
+pub fn cap(stat: Stat, sector: u32, difficulty: Difficulty) -> u8 {
+    match stat {
+        Stat::Brain => brain_cap(sector, difficulty),
+        Stat::Ballistics => ballistics_cap(sector, difficulty),
+        Stat::Muzzle => muzzle_cap(sector, difficulty),
+        _ => match STEPS.of(stat) {
+            Some(step) => step.at(ahead(sector, difficulty)) as u8,
+            None => stat.max_level(),
+        },
     }
 }
 

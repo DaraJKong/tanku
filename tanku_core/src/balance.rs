@@ -241,6 +241,21 @@ pub struct Steps {
     pub ballistics: Step,
     /// The highest level of Muzzle.
     pub muzzle: Step,
+    /// The highest level of each other stat that has a step of its own, in the order of
+    /// [`Stat::ALL`]: a stat without one has every level from the first sector.
+    pub others: [Option<Step>; Stat::COUNT],
+}
+
+impl Steps {
+    /// The step of a stat, if the balance gives it one.
+    pub const fn of(&self, stat: Stat) -> Option<Step> {
+        match stat {
+            Stat::Brain => Some(self.brain),
+            Stat::Ballistics => Some(self.ballistics),
+            Stat::Muzzle => Some(self.muzzle),
+            _ => self.others[stat as usize],
+        }
+    }
 }
 
 /// What hard mode adds.
