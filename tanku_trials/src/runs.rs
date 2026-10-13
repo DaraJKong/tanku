@@ -99,6 +99,31 @@ fn barrier_of(world: &mut World, sector: u32) -> Option<Barrier> {
         .copied()
 }
 
+/// Where a player who has nobody to fight drives, to leave room to the tanks of an arena
+/// that wait for it: away from the places that are not marked yet and that the tank is too
+/// close to, all of them at once. Away from the nearest one alone, a tank between two places
+/// drives back and forth between them and leaves neither.
+fn off_the_marks(waiting: &[Vec2], me: Vec2) -> Option<Vec2> {
+    let near: Vec<Vec2> = waiting
+        .iter()
+        .copied()
+        .filter(|place| place.distance(me) < APPEAR_ROOM + 2.0)
+        .collect();
+    let first = *near.first()?;
+    let middle = near.iter().sum::<Vec2>() / near.len() as f32;
+    let away = me - middle;
+    if away.length() >= 0.5 {
+        return Some(away);
+    }
+    // In the middle of them, the way out is across the line that joins them.
+    let across = (first - middle).perp();
+    Some(if across.length() > 0.1 {
+        across
+    } else {
+        Vec2::X
+    })
+}
+
 /// Plays a run of a single player on a seed, in the hands of a reference player.
 pub fn journey(seed: &str, difficulty: Difficulty, player: Reference, asked: &Asked) -> Journey {
     let mut app = App::new();
@@ -202,17 +227,22 @@ pub fn journey(seed: &str, difficulty: Difficulty, player: Reference, asked: &As
                 let sight = Sight::of(world);
                 let mut order = pilot.order(world, &sight, entity, nearest);
                 // A tank of an arena waits for room: with nobody to fight and nothing to
-                // dodge, the player drives off the place that is marked nearest.
+                // dodge, the player drives off the places that wait for it.
                 let field = world.resource::<Field>();
-                let marks = field.arenas.get(&front).into_iter();
-                let marks = marks.flat_map(|arena| arena.incoming.iter().map(|(tank, _)| tank.at));
-                let mark = marks.min_by(|a, b| a.distance(me).total_cmp(&b.distance(me)));
-                if let Some(mark) = mark.filter(|mark| mark.distance(me) < APPEAR_ROOM + 2.0)
+                let waiting: Vec<Vec2> = field
+                    .arenas
+                    .get(&front)
+                    .into_iter()
+                    .flat_map(|arena| &arena.incoming)
+                    .filter(|(_, marked)| marked.is_none())
+                    .map(|(tank, _)| tank.at)
+                    .collect();
+                if let Some(away) = off_the_marks(&waiting, me)
                     && nearest.is_none()
                     && order.drive == Vec2::ZERO
                 {
                     let tank = world.get::<Tank>(entity).unwrap();
-                    order.drive = brain::steer(field, tank, me, me - mark);
+                    order.drive = brain::steer(field, tank, me, away);
                 }
                 *world.get_mut::<TankCommand>(entity).unwrap() = order;
             }
@@ -565,6 +595,34 @@ mod tests {
         // the run was stopped at the last one.
         assert!(run.entered() >= run.cleared);
         assert!(run.deaths.iter().all(|death| death.sector <= run.entered()));
+    }
+
+    #[test]
+    fn a_player_with_nobody_to_fight_leaves_room_to_the_tanks_that_wait() {
+        let reach = APPEAR_ROOM + 2.0;
+        // Nothing waits near: the player stays.
+        assert_eq!(off_the_marks(&[], Vec2::ZERO), None);
+        assert_eq!(off_the_marks(&[Vec2::X * (reach + 1.0)], Vec2::ZERO), None);
+        // Away from a place that waits, and from the middle of several.
+        let away = off_the_marks(&[Vec2::X * 2.0], Vec2::ZERO).unwrap();
+        assert!(away.normalize().dot(Vec2::NEG_X) > 0.99);
+        // Between two places, the way out is across the line that joins them, and it never
+        // turns back from one tick to the next: a tank that drove away from the nearer one
+        // would come back to it from the other.
+        let places = [Vec2::new(-2.5, 0.0), Vec2::new(2.5, 0.0)];
+        let mut me = Vec2::new(0.3, 0.1);
+        let first = off_the_marks(&places, me).unwrap().normalize();
+        assert!(first.x.abs() < 0.2, "{first:?}");
+        for _ in 0..120 {
+            let Some(away) = off_the_marks(&places, me) else {
+                break;
+            };
+            assert!(away.normalize().dot(first) > 0.5);
+            me += away.normalize() * 5.0 * TICK;
+        }
+        assert!(places.iter().all(|place| place.distance(me) > APPEAR_ROOM));
+        // On the one place that waits, any way is a way out.
+        assert!(off_the_marks(&[Vec2::ZERO], Vec2::ZERO).is_some());
     }
 
     #[test]

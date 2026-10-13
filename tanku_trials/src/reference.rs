@@ -15,7 +15,11 @@
 //!
 //! All three keep 8 to 14 m from the nearest enemy and drive around it, lead their shots,
 //! find a shot off a wall at an enemy that they don't see, and fire as fast as the gun does.
-//! They find their way around what hides an enemy. They hold a shot that would come back to
+//! They find their way around what hides an enemy, and around what stands between them and
+//! one that they see. When one or two enemies are left and none has fallen for twenty
+//! seconds, they close in to 3 to 5 m, as a player does on a tank that dodges every shot or
+//! shoots it down: from there a shot leaves it no time for either. Closing in costs them
+//! tanks, and ends fights that would not end. They hold a shot that would come back to
 //! their own tank off a wall, or go off within reach of it, and those who see bullets coming
 //! know where their own go. None lays a mine, takes cover or picks the moment of a fight. They use nothing of the
 //! brains of the enemies but how to aim and how to steer around a wall, so that a change to
@@ -51,8 +55,22 @@ const SHOT_AHEAD: usize = 180;
 const SHOT_ROOM: f32 = 1.0;
 /// How far around the tank and its enemy a way between them is looked for, in meters.
 const ROUTE_MARGIN: f32 = 25.0;
+/// How far a player keeps from the enemy that it fights, in meters: no closer than the first
+/// and no further than the second.
+const KEEP: (f32, f32) = (8.0, 14.0);
+/// How far it keeps from the last enemies of a fight that it can't end from afar: so close
+/// that a shot leaves its target no time to get out of the way, or to shoot the bullet down.
+const PRESS: (f32, f32) = (3.0, 5.0);
+/// How long a player fights from afar without any enemy falling, in seconds, before it
+/// closes in. A tank that falls to shots from afar falls sooner than that.
+const PATIENCE: f32 = 20.0;
+/// How many enemies are left, at most, when a player closes in. With more of them around,
+/// closing in on one is driving into the fire of the others.
+const LAST: usize = 2;
 /// A way ends this close to the enemy, in meters: in sight of it, as a rule.
 const ROUTE_REACH: f32 = 1.5;
+/// A tank has got to a place on its way when it is this close to it, in meters.
+const ROUTE_NEAR: f32 = 0.5;
 /// The ways that a player tries around the one that was meant, in degrees.
 const WAYS: [f32; 7] = [45.0, -45.0, 90.0, -90.0, 135.0, -135.0, 180.0];
 
@@ -119,6 +137,8 @@ pub struct Sight {
     pub bullets: Vec<(Entity, Bullet, Vec2)>,
     pub mines: Vec<(Mine, Vec2)>,
     pub quarry: Vec<Quarry>,
+    /// How many enemies are awake.
+    pub awake: usize,
 }
 
 impl Sight {
@@ -126,7 +146,9 @@ impl Sight {
         let mut bullets = world.query::<(Entity, &Bullet, &Position)>();
         let mut mines = world.query::<(&Mine, &Position)>();
         let mut tanks = world.query::<(&Tank, &Position, Option<&Enemy>, Has<Wreck>)>();
+        let mut enemies = world.query::<&Enemy>();
         Self {
+            awake: enemies.iter(world).filter(|enemy| enemy.awake).count(),
             bullets: bullets
                 .iter(world)
                 .map(|(entity, bullet, position)| (entity, *bullet, position.0))
@@ -274,6 +296,14 @@ struct Seen {
     since: f32,
 }
 
+/// A way that a player means to drive.
+enum Way {
+    /// A way that the player would like: a wall right ahead turns the tank from it.
+    Meant(Vec2),
+    /// The way to a place that the tank can drive straight to, as far as that place.
+    Found(Vec2),
+}
+
 /// The hands of a reference player on a tank, for one fight.
 pub struct Pilot {
     skill: Skill,
@@ -290,6 +320,10 @@ pub struct Pilot {
     waypoint: Option<Vec2>,
     route_timer: f32,
     seen: Vec<Seen>,
+    /// How many enemies were awake a tick ago, and for how long none of them has fallen
+    /// while there was one to fight.
+    awake: usize,
+    since_fall: f32,
 }
 
 impl Pilot {
@@ -305,6 +339,8 @@ impl Pilot {
             waypoint: None,
             route_timer: 0.0,
             seen: Vec::new(),
+            awake: 0,
+            since_fall: 0.0,
         }
     }
 
@@ -326,6 +362,12 @@ impl Pilot {
             ..default()
         };
         let mut meant = Vec2::ZERO;
+        // A fight that goes on without any enemy falling is one to fight another way.
+        if sight.awake != self.awake || enemy.is_none() {
+            (self.awake, self.since_fall) = (sight.awake, 0.0);
+        } else {
+            self.since_fall += TICK;
+        }
         if let Some(enemy) = enemy {
             let foe = world.get::<Position>(enemy).unwrap().0;
             let foe_velocity = world.get::<Motion>(enemy).unwrap().velocity;
@@ -337,7 +379,25 @@ impl Pilot {
                 && rounds > 0
                 && self.since_shot >= self.pace
                 && sound_shot(field, entity, tank, me, motion.turret, foe, &sight.quarry);
-            meant = brain::steer(field, tank, me, self.around(field, tank, me, foe));
+            let pressing = self.since_fall > PATIENCE && sight.awake <= LAST;
+            meant = match self.around(field, tank, me, foe, pressing) {
+                // The way around what hides the enemy is free as far as it was found: a
+                // tank that looked further ahead would turn back in front of the wall that
+                // the way runs along.
+                Way::Found(way) => way.normalize_or_zero(),
+                Way::Meant(way) => {
+                    let steered = brain::steer(field, tank, me, way);
+                    // An enemy that shows past what stands right in front of the tank is
+                    // not driven at: the tank would turn back from what is in its way. It
+                    // goes around, as it does when the enemy is hidden.
+                    let toward = (foe - me).normalize_or_zero();
+                    let turned_back = way.dot(toward) > 0.9 && steered.dot(toward) <= 0.0;
+                    match turned_back.then(|| self.way_around(field, tank, me, foe)) {
+                        Some(Way::Found(around)) => around.normalize_or_zero(),
+                        _ => steered,
+                    }
+                }
+            };
         }
         self.since_shot = if command.fire {
             0.0
@@ -397,7 +457,7 @@ impl Pilot {
 
     /// The way that it means to drive: toward an enemy that it doesn't see or that is far,
     /// away from one that is close, and around it otherwise, one way and then the other.
-    fn around(&mut self, field: &Field, tank: &Tank, me: Vec2, foe: Vec2) -> Vec2 {
+    fn around(&mut self, field: &Field, tank: &Tank, me: Vec2, foe: Vec2, pressing: bool) -> Way {
         self.turned += TICK;
         if self.turned >= 2.0 {
             self.turned = 0.0;
@@ -405,20 +465,31 @@ impl Pilot {
         }
         let distance = me.distance(foe);
         let toward = (foe - me) / distance.max(0.01);
+        let (near, far) = if pressing { PRESS } else { KEEP };
         if !field.sees(me, foe) {
-            // It goes around what hides the enemy, and looks for the way again now and then.
-            self.route_timer -= TICK;
-            if self.route_timer <= 0.0 {
-                self.route_timer = 0.5;
-                self.waypoint = route(field, tank, me, foe);
-            }
-            self.waypoint.map_or(toward, |waypoint| waypoint - me)
-        } else if distance > 14.0 {
-            toward
-        } else if distance < 8.0 {
-            -toward
+            self.way_around(field, tank, me, foe)
+        } else if distance > far {
+            Way::Meant(toward)
+        } else if distance < near {
+            Way::Meant(-toward)
         } else {
-            toward.perp() * self.strafe
+            Way::Meant(toward.perp() * self.strafe)
+        }
+    }
+
+    /// The way around what hides an enemy, or what stands between the tank and it. The way is
+    /// looked for again now and then.
+    fn way_around(&mut self, field: &Field, tank: &Tank, me: Vec2, foe: Vec2) -> Way {
+        self.route_timer -= TICK;
+        // A tank that has got to where it was going looks at once.
+        let there = |waypoint: Vec2| waypoint.distance(me) < ROUTE_NEAR;
+        if self.route_timer <= 0.0 || self.waypoint.is_some_and(there) {
+            self.route_timer = 0.5;
+            self.waypoint = route(field, tank, me, foe);
+        }
+        match self.waypoint {
+            Some(waypoint) => Way::Found(waypoint - me),
+            None => Way::Meant(foe - me),
         }
     }
 
@@ -688,6 +759,158 @@ mod tests {
             team: Team::Players,
             sector: 0,
         }
+    }
+
+    /// A world with the tank of a player at one place and an enemy at another, awake, on a
+    /// field that holds these walls and these blocks, each a square of 2 m from its lowest
+    /// corner.
+    fn fight(
+        walls: &[(Vec2, Vec2)],
+        blocks: &[Vec2],
+        me: Vec2,
+        foe: Vec2,
+    ) -> (World, Entity, Entity) {
+        let mut field = Field::new(1, 1, tanku_core::modes::Difficulty::Normal);
+        field.colliders.clear();
+        let mut wall = |a: Vec2, b: Vec2| {
+            let solid = Solid::Wall;
+            field.colliders.push(Collider { a, b, solid });
+        };
+        for &(a, b) in walls {
+            wall(a, b);
+        }
+        for &corner in blocks {
+            let corners = [Vec2::ZERO, Vec2::X * 2.0, Vec2::splat(2.0), Vec2::Y * 2.0];
+            for side in 0..4 {
+                wall(corner + corners[side], corner + corners[(side + 1) % 4]);
+            }
+        }
+        let mut world = World::new();
+        world.insert_resource(field);
+        let tank = player();
+        let gun = Gun::loaded(&tank.genome);
+        let place = |at: Vec2| (Position(at), Motion::default());
+        let player = world.spawn((tank, gun, place(me))).id();
+        let enemy = Tank {
+            genome: Genome::empty(40),
+            team: Team::Enemies,
+            sector: 0,
+        };
+        let enemy = world.spawn((enemy, Enemy { awake: true }, place(foe))).id();
+        (world, player, enemy)
+    }
+
+    /// What a player sees when nothing flies and nothing lies around, with so many enemies
+    /// awake.
+    fn quiet(awake: usize) -> Sight {
+        Sight {
+            bullets: Vec::new(),
+            mines: Vec::new(),
+            quarry: Vec::new(),
+            awake,
+        }
+    }
+
+    #[test]
+    fn a_player_closes_in_on_the_last_enemies_of_a_fight_that_does_not_end() {
+        // The enemy is 10 m north, in the open: a distance that a player keeps.
+        let (world, player, enemy) = fight(&[], &[], Vec2::ZERO, Vec2::new(0.0, 10.0));
+        let toward = Vec2::Y;
+        let drives = |pilot: &mut Pilot, awake: usize, seconds: f32| {
+            let mut drive = Vec2::ZERO;
+            for _ in 0..(seconds / TICK).round() as usize {
+                drive = pilot
+                    .order(&world, &quiet(awake), player, Some(enemy))
+                    .drive;
+            }
+            drive.normalize_or_zero().dot(toward)
+        };
+        // It drives around the enemy, for as long as tanks that fall to that do.
+        let mut pilot = Pilot::new(Reference::Regular);
+        assert!(drives(&mut pilot, 1, 1.0).abs() < 0.1);
+        assert!(drives(&mut pilot, 1, PATIENCE - 2.0).abs() < 0.1);
+        // Then it closes in on the one that didn't.
+        assert!(drives(&mut pilot, 1, 2.0) > 0.9);
+        // So it does on the last two, and not among more: that is driving into their fire.
+        let mut pilot = Pilot::new(Reference::Regular);
+        assert!(drives(&mut pilot, LAST, PATIENCE + 1.0) > 0.9);
+        let mut pilot = Pilot::new(Reference::Regular);
+        assert!(drives(&mut pilot, LAST + 1, 3.0 * PATIENCE).abs() < 0.1);
+        // An enemy that falls gives the others their time again, and so does one that comes.
+        assert!(drives(&mut pilot, LAST, 1.0).abs() < 0.1);
+        assert!(drives(&mut pilot, LAST, PATIENCE) > 0.9);
+        assert!(drives(&mut pilot, LAST + 1, 1.0).abs() < 0.1);
+        // Every player does, the one who dodges nothing too.
+        let mut pilot = Pilot::new(Reference::Novice);
+        assert!(drives(&mut pilot, 1, PATIENCE + 1.0) > 0.9);
+    }
+
+    #[test]
+    fn a_player_who_closes_in_stops_a_few_meters_from_its_enemy() {
+        let way = |distance: f32| {
+            let (world, player, enemy) = fight(&[], &[], Vec2::ZERO, Vec2::Y * distance);
+            let mut pilot = Pilot::new(Reference::Expert);
+            let mut drive = Vec2::ZERO;
+            for _ in 0..((PATIENCE + 1.0) / TICK) as usize {
+                drive = pilot.order(&world, &quiet(1), player, Some(enemy)).drive;
+            }
+            drive.normalize_or_zero().dot(Vec2::Y)
+        };
+        assert!(way(20.0) > 0.9);
+        assert!(way(PRESS.1 + 1.0) > 0.9);
+        assert!(way((PRESS.0 + PRESS.1) / 2.0).abs() < 0.1);
+        assert!(way(PRESS.0 - 1.0) < -0.9);
+    }
+
+    #[test]
+    fn a_player_drives_straight_to_where_its_way_around_leads() {
+        // A gap of 3 m between a wall to the south and a block: the way to an enemy that
+        // the block hides leads through it. A tank that looked 2.5 m ahead on that way would
+        // see the wall, and turn back.
+        let walls = [
+            (Vec2::new(28.0, 0.0), Vec2::new(0.0, 0.0)),
+            (Vec2::new(0.0, 0.0), Vec2::new(0.0, 4.0)),
+            (Vec2::new(0.0, 4.0), Vec2::new(-14.0, 4.0)),
+        ];
+        let blocks = [Vec2::new(4.0, 3.0), Vec2::new(4.0, 5.0)];
+        let (me, foe) = (Vec2::new(2.94, 2.91), Vec2::new(33.0, 4.0));
+        let (world, player, enemy) = fight(&walls, &blocks, me, foe);
+        let field = world.resource::<Field>();
+        assert!(!field.sees(me, foe));
+        let waypoint = route(field, &self::player(), me, foe).expect("a way through the gap");
+        assert!(waypoint.y < me.y && waypoint.y > 0.9, "{waypoint:?}");
+        let through = (waypoint - me).normalize();
+        let steered = brain::steer(field, &self::player(), me, through);
+        assert!(steered.dot(through) < 0.0, "{steered:?}");
+        let mut pilot = Pilot::new(Reference::Regular);
+        let drive = pilot.order(&world, &quiet(1), player, Some(enemy)).drive;
+        assert!(drive.dot(through) > 0.99, "{drive:?}");
+    }
+
+    #[test]
+    fn a_player_goes_around_what_stands_between_it_and_an_enemy_that_it_sees() {
+        // The tank stands in a corner, a block right in front of it, and the enemy shows
+        // past the edge of the block. Driving at the enemy is driving into the block, and
+        // every way that a tank turns to from there is walled in.
+        let walls = [
+            (Vec2::new(-1.5, -2.0), Vec2::new(-1.5, 6.0)),
+            (Vec2::new(-1.5, -2.0), Vec2::new(12.0, -2.0)),
+        ];
+        let blocks = [Vec2::new(0.05, 1.2)];
+        let (me, foe) = (Vec2::ZERO, Vec2::new(-0.5, 30.0));
+        let (world, player, enemy) = fight(&walls, &blocks, me, foe);
+        let field = world.resource::<Field>();
+        assert!(field.sees(me, foe));
+        let toward = (foe - me).normalize();
+        let steered = brain::steer(field, &self::player(), me, toward);
+        assert!(steered.dot(toward) <= 0.0, "{steered:?}");
+        // It goes around the block: east first, out of its corner.
+        let mut pilot = Pilot::new(Reference::Regular);
+        let mut drive = Vec2::ZERO;
+        for _ in 0..((PATIENCE + 1.0) / TICK) as usize {
+            drive = pilot.order(&world, &quiet(1), player, Some(enemy)).drive;
+        }
+        assert!(drive.x > 0.5, "{drive:?}");
     }
 
     #[test]
