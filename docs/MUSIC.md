@@ -213,7 +213,7 @@ The arrangement has a `play` line for each of the four scenes that it tells apar
 | `corridor` | A fight in a corridor |
 | `arena` | A fight in an arena, which is in the second mode of the key |
 
-The room of arena mode is an arena to the music: its lulls are `calm`, and its fights are those of an arena, from the first group to the last.
+The room of arena mode is an arena to the music: its lulls are `calm`, and its fights are those of an arena, from the first group to the last. A fight there lasts from the first tank of a group to its last, whether or not a tank is in the room at every moment of it.
 
 After its scene, a `play` line has the sections that play in turn, with a comma between two of them, then what the instruments play. An instrument is the `kick`, the `hat`, the `snare`, the `bass`, the `pluck` or the `lead`, and one that the line doesn't name is silent:
 
@@ -333,8 +333,8 @@ The context is all that the music knows about the game. The client writes it eve
 | Part | Values | Meaning |
 |---|---|---|
 | Place | Menu, bay, corridor, arena | The sector the run has reached. The main menu and the game over screen count as the menu, and so does a run from the moment it is over. A switchback is a corridor. |
-| Fight | On or off | On while at least one enemy is awake |
-| Threat | 0 to 4 | The highest brain tier among the enemies that are awake, and 0 when none is |
+| Fight | On or off | On while at least one enemy is awake. In an arena, and in the room of arena mode, a fight that has started stays on until the arena is cleared, or the group: between two waves, and while a tank of a group is on its way, nobody is awake and the fight is far from over. |
+| Threat | 0 to 4 | The highest brain tier among the enemies that are awake, and 0 when none is. While the fight of an arena goes on with nobody awake, the threat stays what it was. |
 | Down | On or off | In solo, the player's tank is destroyed and on its way back |
 | Muffled | On or off | The pause menu is open over the game. The settings leave the music clear, so that its volume is set by ear. |
 | Ducked | On or off | The warning of a mine sounds within hearing range |
@@ -352,7 +352,7 @@ The drums and the mode tell where the players are and whether they fight. The le
 | Fight in a corridor | Verse and chorus in turn | Dorian | Fight | Corridor | Silent | By threat | By threat | By threat |
 | Fight in an arena | Verse and chorus in turn | Aeolian | Fight | Arena | Arena | By threat | By threat | By threat |
 
-The mode is Aeolian only while the enemies of an arena are alive. The moment the last one is destroyed, the music turns back to Dorian, which makes clearing an arena heard as a relief.
+The mode is Aeolian for as long as the fight of an arena lasts, through all of its waves. The moment the last enemy of the last wave is destroyed, the music turns back to Dorian, which makes clearing an arena heard as a relief.
 
 During a fight, the threat sets the three instruments that have a pitch:
 
@@ -392,6 +392,8 @@ Three rules make the music answer fast and stay in time:
 | The warning of a mine sounds within hearing range | Within 0.02 s the music is half as loud, without waiting for a step | When the warning is over, 0.6 s later: the music comes back in 0.2 s |
 
 The fight sections are counted in phrases: the two of the verse, then the two of the chorus, then the verse again. A fight opens on the phrase after the one where the last fight ended. The first fight of a run opens the verse, so every run begins the same way, and the short fights of the first sectors walk through the whole piece instead of repeating its first bars.
+
+A fight of an arena starts with the first tanks of its first wave and ends with the last tank of its last one. Between two waves the music stays in the fight: the next wave appears two beats after the last tank of the one before it, with no roll, since nothing stopped. The fight stopped there once, for as long as nobody was awake, which sent the music to its connection and to the bridge between every two waves, and back through a roll a second later.
 
 A roll is heard within one step of its event, and the fight is in full swing one second later. A connection starts within half a second of the end of a fight, and the bridge one second after that: the sound cue of a cleared sector is what answers at once. Every other change is complete within one bar.
 

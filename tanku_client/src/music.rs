@@ -49,8 +49,8 @@ fn loudness(settings: &Settings) -> f32 {
 }
 
 /// What the music is told about the game: where the run has got to, given the kind of its
-/// sector if that sector is loaded, and how smart the enemies are, given the highest brain
-/// tier among those that are awake, if any is.
+/// sector if that sector is loaded, and how smart the enemies of its fight are, if anyone
+/// fights: [`fought`] says who does.
 fn context(
     screen: Screen,
     overlay: Overlay,
@@ -85,6 +85,34 @@ fn context(
     }
 }
 
+/// The fight that the music is told of: how smart its enemies are, if anyone fights.
+///
+/// In a corridor, a fight is on while an enemy is awake. An arena sends its group in waves,
+/// and the room of arena mode a tank for each one that is destroyed: between two of them,
+/// nobody is awake, and the fight is far from over. There, a fight that has started goes on
+/// until its sector is cleared, or its group, and the music is told meanwhile of the threat
+/// that it was last told of. `held` keeps that fight: where it is fought, and its threat.
+fn fought(
+    held: &mut Option<(u32, u8)>,
+    run: Option<&Run>,
+    kind: Option<SectorKind>,
+    smartest: Option<u8>,
+) -> Option<u8> {
+    let in_waves = matches!(kind, Some(SectorKind::Arena | SectorKind::Room));
+    // The run says when a sector is cleared, and a group of arena mode: its last tank is
+    // destroyed, and none is left to come.
+    let Some(run) = run.filter(|run| in_waves && run.cleared < run.sector) else {
+        *held = None;
+        return smartest;
+    };
+    *held = match smartest {
+        Some(threat) => Some((run.sector, threat)),
+        // Nothing has started in a sector that was only just entered.
+        None => held.filter(|(sector, _)| *sector == run.sector),
+    };
+    held.map(|(_, threat)| threat)
+}
+
 /// Tells the music what happens in the game.
 pub fn tell(
     baton: Res<Baton>,
@@ -95,6 +123,7 @@ pub fn tell(
     enemies: Query<(&Enemy, &Tank)>,
     time: Res<Time<Real>>,
     ducked: Res<DuckedUntil>,
+    mut held: Local<Option<(u32, u8)>>,
 ) {
     let run = run.as_deref();
     let reached = run.map_or(0, |run| run.sector);
@@ -104,6 +133,7 @@ pub fn tell(
     let kind = plans.find(here).map(|plan| plan.kind);
     let awake = enemies.iter().filter(|(enemy, _)| enemy.awake);
     let smartest = awake.map(|(_, tank)| tank.genome.brain()).max();
+    let smartest = fought(&mut held, run, kind, smartest);
     // A warning sounds whether or not the game is paused, so its time is that of the clock.
     let ducked = DUCKS_ITSELF && time.elapsed() < ducked.0;
     baton.0.set(context(
@@ -317,9 +347,86 @@ mod tests {
         app.update();
         assert_eq!(told(&app), (Place::Corridor, false, 0));
 
-        app.world_mut().resource_mut::<Run>().sector = arena;
+        // The players are in the arena before its first wave: nobody fights yet.
+        let mut state = app.world_mut().resource_mut::<Run>();
+        (state.sector, state.cleared) = (arena, arena - 1);
         app.update();
         assert_eq!(told(&app), (Place::Arena, false, 0));
+        // The first wave is there, and then destroyed. Until the next one appears, nobody is
+        // awake, and the fight goes on at the threat that it had.
+        let ace = app.world_mut().spawn(foe(4, arena, true)).id();
+        app.update();
+        assert_eq!(told(&app), (Place::Arena, true, 4));
+        app.world_mut().entity_mut(ace).despawn();
+        app.update();
+        assert_eq!(told(&app), (Place::Arena, true, 4));
+        // The next wave sets the threat, and leaves it when it is destroyed in its turn.
+        let grunt = app.world_mut().spawn(foe(1, arena, true)).id();
+        app.update();
+        assert_eq!(told(&app), (Place::Arena, true, 1));
+        app.world_mut().entity_mut(grunt).despawn();
+        app.update();
+        assert_eq!(told(&app), (Place::Arena, true, 1));
+        // The last tank of the last wave was that one: the arena is cleared.
+        app.world_mut().resource_mut::<Run>().cleared = arena;
+        app.update();
+        assert_eq!(told(&app), (Place::Arena, false, 0));
+    }
+
+    #[test]
+    fn the_fight_of_an_arena_lasts_until_the_arena_is_cleared() {
+        let arena = Some(SectorKind::Arena);
+        let in_sector = |sector: u32, cleared: u32| Run {
+            cleared,
+            ..run(sector, RunPhase::Playing)
+        };
+        let fighting = in_sector(9, 8);
+        let mut held = None;
+        // Nobody is awake in an arena that was just entered: no fight has started.
+        assert_eq!(fought(&mut held, Some(&fighting), arena, None), None);
+        // A wave is there, then none is: the fight goes on, at the threat that it had.
+        assert_eq!(fought(&mut held, Some(&fighting), arena, Some(3)), Some(3));
+        assert_eq!(fought(&mut held, Some(&fighting), arena, None), Some(3));
+        assert_eq!(fought(&mut held, Some(&fighting), arena, Some(0)), Some(0));
+        assert_eq!(fought(&mut held, Some(&fighting), arena, None), Some(0));
+        // The arena is cleared: the fight is over, and nothing is left of it.
+        assert_eq!(fought(&mut held, Some(&in_sector(9, 9)), arena, None), None);
+        assert_eq!(held, None);
+
+        // A corridor has no waves: a fight there is on while an enemy is awake, and no longer.
+        let corridor = Some(SectorKind::Corridor);
+        assert_eq!(
+            fought(&mut held, Some(&fighting), corridor, Some(2)),
+            Some(2)
+        );
+        assert_eq!(fought(&mut held, Some(&fighting), corridor, None), None);
+
+        // A single player who falls in an arena comes back in front of its barrier, in the
+        // sector before it: the fight that was on has stopped, and starts again with the wave
+        // that is sent again.
+        assert_eq!(fought(&mut held, Some(&fighting), arena, Some(4)), Some(4));
+        assert_eq!(
+            fought(&mut held, Some(&in_sector(8, 8)), corridor, None),
+            None
+        );
+        assert_eq!(fought(&mut held, Some(&fighting), arena, None), None);
+        // A fight of one arena says nothing of the next one.
+        assert_eq!(fought(&mut held, Some(&fighting), arena, Some(4)), Some(4));
+        assert_eq!(
+            fought(&mut held, Some(&in_sector(16, 15)), arena, None),
+            None
+        );
+
+        // The room of arena mode is fought the same way, group by group: its sector is the
+        // number of the group that is on, and a lull comes once that group is cleared.
+        let room = Some(SectorKind::Room);
+        let group = in_sector(4, 3);
+        assert_eq!(fought(&mut held, Some(&group), room, None), None);
+        assert_eq!(fought(&mut held, Some(&group), room, Some(1)), Some(1));
+        assert_eq!(fought(&mut held, Some(&group), room, None), Some(1));
+        assert_eq!(fought(&mut held, Some(&in_sector(4, 4)), room, None), None);
+        // Without a run, nobody fights.
+        assert_eq!(fought(&mut held, None, room, None), None);
     }
 
     #[test]
@@ -351,8 +458,18 @@ mod tests {
         let soldier = app.world_mut().spawn(foe(2, 7, true)).id();
         app.update();
         assert_eq!(told(&app), (Place::Arena, true, 2));
+        // The soldier is destroyed, and the tank that comes for it is still on its way: the
+        // room is empty for a moment, and the fight goes on.
         app.world_mut().entity_mut(soldier).despawn();
-        app.world_mut().resource_mut::<Run>().lull = Some(3);
+        app.update();
+        assert_eq!(told(&app), (Place::Arena, true, 2));
+        let grunt = app.world_mut().spawn(foe(1, 7, true)).id();
+        app.update();
+        assert_eq!(told(&app), (Place::Arena, true, 1));
+        // The last tank of the group is destroyed: the group is cleared, and the lull is calm.
+        app.world_mut().entity_mut(grunt).despawn();
+        let mut state = app.world_mut().resource_mut::<Run>();
+        (state.cleared, state.lull) = (7, Some(3));
         app.update();
         assert_eq!(told(&app), (Place::Arena, false, 0));
     }
