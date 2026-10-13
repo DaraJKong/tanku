@@ -11,6 +11,8 @@ Options:
                    pause menu skips to any sector. A playtest sets no record.
       --seed TEXT  With --playtest: start every run on this seed instead of a random one.
       --tank TANK  With --playtest: play in a tank of your own instead of the standard one.
+      --journal FILE
+                   Keep the journal of the runs in this file, not in the player's own.
   -h, --help       Show this help.";
 
 /// A tank as the command line takes it.
@@ -68,6 +70,8 @@ pub struct Options {
     pub seed: Option<String>,
     /// The tank of the player in every run of a playtest, in place of the standard one.
     pub tank: Option<Genome>,
+    /// The file that keeps the journal of the runs, in place of the player's own.
+    pub journal: Option<std::path::PathBuf>,
 }
 
 /// Why the game doesn't start.
@@ -79,6 +83,8 @@ enum Refusal {
     NoSeed,
     /// `--tank` came without a tank.
     NoTank,
+    /// `--journal` came without a file.
+    NoJournal,
     /// The tank that `--tank` asks for is none that a player may build: why.
     BadTank(String),
     /// An option that is a playtest's came without `--playtest`.
@@ -107,6 +113,13 @@ impl Options {
                         return Err(Refusal::NoTank);
                     }
                     options.tank = Some(tank(&written).map_err(Refusal::BadTank)?);
+                }
+                "--journal" => {
+                    let file = arguments.next().unwrap_or_default();
+                    if file.trim().is_empty() || file.starts_with("--") {
+                        return Err(Refusal::NoJournal);
+                    }
+                    options.journal = Some(file.into());
                 }
                 "-h" | "--help" => return Err(Refusal::Help),
                 _ => return Err(Refusal::Unknown(argument)),
@@ -142,6 +155,7 @@ impl Options {
             Err(Refusal::Unknown(argument)) => format!("Unknown option: {argument}"),
             Err(Refusal::NoSeed) => "The option --seed needs a seed after it.".to_string(),
             Err(Refusal::NoTank) => "The option --tank needs a tank after it.".to_string(),
+            Err(Refusal::NoJournal) => "The option --journal needs a file after it.".to_string(),
             Err(Refusal::BadTank(why)) => format!("No tank can be built as --tank asks: {why}."),
             Err(Refusal::NoPlaytest(option)) => format!("The option {option} needs --playtest."),
         };
@@ -165,6 +179,21 @@ mod tests {
         let playtest = parse("--playtest").unwrap();
         assert_eq!((playtest.tank, playtest.tanks()), (None, Vec::new()));
         assert_eq!((playtest.playtest, playtest.seed), (true, None));
+    }
+
+    #[test]
+    fn the_journal_can_be_kept_in_a_file_that_the_command_line_names() {
+        assert_eq!(Options::default().journal, None);
+        // Any game takes it, a playtest or not.
+        let named = parse("--journal runs/journal.txt").unwrap();
+        assert_eq!(named.journal, Some("runs/journal.txt".into()));
+        assert!(!named.playtest);
+        let playtest = parse("--playtest --journal journal.txt --seed TANKU").unwrap();
+        assert_eq!(playtest.journal, Some("journal.txt".into()));
+        assert_eq!(playtest.seed.as_deref(), Some("TANKU"));
+        // An option where the file should be means that the file was forgotten.
+        assert_eq!(parse("--journal"), Err(Refusal::NoJournal));
+        assert_eq!(parse("--journal --playtest"), Err(Refusal::NoJournal));
     }
 
     #[test]
@@ -248,6 +277,7 @@ mod tests {
             playtest: true,
             seed: Some("85GVTHQA".into()),
             tank: None,
+            journal: None,
         };
         assert_eq!(parse("--playtest --seed 85gvthqa"), Ok(wanted.clone()));
         assert_eq!(parse("--seed 85GVTHQA --playtest"), Ok(wanted));

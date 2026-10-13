@@ -3808,6 +3808,7 @@ mod tests {
                         playtest: true,
                         seed: Some("85GVTHQA".into()),
                         tank: None,
+                        journal: None,
                     });
                 build(app, main_menu);
             }),
@@ -3821,6 +3822,7 @@ mod tests {
                         playtest: true,
                         seed: Some("85GVTHQA".into()),
                         tank: Some(racer()),
+                        journal: None,
                     });
                 build(app, main_menu);
             }),
@@ -3904,6 +3906,7 @@ mod tests {
                         playtest: true,
                         seed: Some("85GVTHQA".into()),
                         tank: Some(racer()),
+                        journal: None,
                     });
                     build(app, solo_screen);
                 },
@@ -4439,6 +4442,7 @@ mod tests {
             playtest: true,
             seed: Some("85GVTHQA".into()),
             tank: None,
+            journal: None,
         };
         assert_eq!(new_seed(&chosen, 1), "85GVTHQA");
         assert_eq!(new_seed(&chosen, 2), "85GVTHQA");
@@ -5126,6 +5130,7 @@ mod tests {
                 playtest: true,
                 seed: None,
                 tank: None,
+                journal: None,
             });
             build(app, solo_screen);
         };
@@ -5926,6 +5931,7 @@ mod tests {
             playtest: true,
             seed: Some("85GVTHQA".into()),
             tank: None,
+            journal: None,
         };
         assert_eq!(
             seed(typed(Session::Host, given, "mine")),

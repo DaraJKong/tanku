@@ -3,7 +3,10 @@
 pub mod balance;
 pub mod discovery;
 pub mod enemy;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod files;
 pub mod geom;
+pub mod journal;
 pub mod lock;
 pub mod map;
 pub mod modes;

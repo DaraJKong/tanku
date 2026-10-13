@@ -21,21 +21,8 @@ pub fn keep_nothing() {
     KEEPS_NOTHING.store(true, Ordering::Relaxed);
 }
 
-/// The directory where the game keeps its files, if the platform has one.
 #[cfg(not(target_arch = "wasm32"))]
-fn directory() -> Option<std::path::PathBuf> {
-    use std::{env::var_os, path::PathBuf};
-    let base = if cfg!(target_os = "windows") {
-        var_os("APPDATA").map(PathBuf::from)
-    } else if cfg!(target_os = "macos") {
-        var_os("HOME").map(|home| PathBuf::from(home).join("Library/Application Support"))
-    } else {
-        var_os("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .or_else(|| var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
-    };
-    base.map(|base| base.join("tanku"))
-}
+use tanku_core::files::directory;
 
 /// Reads a file of pairs. A missing or unreadable file reads as empty.
 pub fn load(name: &str) -> BTreeMap<String, String> {
@@ -54,6 +41,28 @@ pub fn save(name: &str, pairs: &BTreeMap<String, String>) {
         .map(|(key, value)| format!("{key} = {value}\n"))
         .collect();
     write(name, &text);
+}
+
+/// Adds a line to a file of the player that is kept line by line, such as the journal of the
+/// runs. A file that is new starts with its heading. A page keeps no such file: nothing
+/// outside the browser could read it.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn append(name: &str, heading: &str, line: &str) {
+    if keeps_nothing() {
+        return;
+    }
+    if let Some(directory) = directory() {
+        append_to(&directory.join(name), heading, line);
+    }
+}
+
+/// Adds a line to a file that whoever started the game named. That file is not one of the
+/// player's own: a run that leaves those alone still writes it.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn append_to(path: &std::path::Path, heading: &str, line: &str) {
+    if let Err(error) = add_to(path, heading, line) {
+        bevy::log::warn!("could not add to {}: {error}", path.display());
+    }
 }
 
 fn parse(text: &str) -> BTreeMap<String, String> {
@@ -78,6 +87,25 @@ fn write(name: &str, text: &str) {
     if let Err(error) = written {
         bevy::log::warn!("could not save {name}: {error}");
     }
+}
+
+/// Adds a line at the end of a file, after its heading if the file is new or empty.
+#[cfg(not(target_arch = "wasm32"))]
+fn add_to(path: &std::path::Path, heading: &str, line: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    if let Some(directory) = path.parent() {
+        std::fs::create_dir_all(directory)?;
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    let text = match file.metadata()?.len() {
+        0 => format!("{heading}\n{line}\n"),
+        _ => format!("{line}\n"),
+    };
+    // One write, so that two games on a machine don't cut each other's lines.
+    file.write_all(text.as_bytes())
 }
 
 /// The local storage of the page, if the browser allows one.
@@ -107,6 +135,19 @@ mod tests {
     fn a_test_leaves_the_files_of_the_player_alone() {
         assert!(keeps_nothing());
         assert!(load("settings.txt").is_empty());
+    }
+
+    #[test]
+    fn a_line_is_added_at_the_end_of_a_file_that_starts_with_its_heading() {
+        // The test writes to a file of its own, since it leaves the player's files alone.
+        let path = std::env::temp_dir().join(format!("tanku-append-{}.txt", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        append("journal.txt", "heading", "never written");
+        add_to(&path, "heading 1", "first").unwrap();
+        add_to(&path, "heading 1", "second").unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(text, "heading 1\nfirst\nsecond\n");
     }
 
     #[test]
