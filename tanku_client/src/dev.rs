@@ -30,11 +30,14 @@
 //! tank, `pierce`, which sends a piercing bullet at a bullet of the players there,
 //! `showcase STAT`, which lines up in the start bay one tank for each level of a stat,
 //! `palette`, which lines up there three tanks of each class, from a weak one to a strong one,
-//! `doze`, which puts the tanks that are lined up to sleep, `canvas WIDTH HEIGHT SCALE`,
+//! `doze`, which puts the tanks that are lined up to sleep, `rouse`, which wakes them again,
+//! `canvas WIDTH HEIGHT SCALE`,
 //! which draws from there on as a window of that many pixels shows the game, on a screen
-//! that enlarges everything by that scale if one is given, and `tape PATH`, which keeps the
-//! music from there on. It is how the game is looked at, and listened to, without anyone at
-//! the keyboard.
+//! that enlarges everything by that scale if one is given, `tape PATH`, which keeps the
+//! music from there on, and `lift on`, `lift off` or `lift SECONDS`, which makes a sector that
+//! wakes take its time, as a playtest can have it, or wake at once, or holds everything that
+//! wakes at one moment of its rise, to look at it. It is how the game is looked at, and
+//! listened to, without anyone at the keyboard.
 //!
 //! A scripted run opens no window: it draws into an image, which `shot` saves. The image is
 //! 1920 by 1080 pixels until `canvas` gives it another size. The run makes no sound, starts
@@ -87,6 +90,7 @@ use crate::{
     session::{SessionRequest, Sign},
     storage,
     unlocks::Unlocks,
+    wake::Wake,
 };
 
 /// Size of the image that a scripted run draws into, until the script gives it another.
@@ -425,11 +429,12 @@ fn run_script(
         Res<Options>,
         ResMut<Garage>,
     ),
-    (mut session_requests, mut keys, mut port, mut web): (
+    (mut session_requests, mut keys, mut port, mut web, mut wake): (
         MessageWriter<SessionRequest>,
         MessageWriter<KeyboardInput>,
         ResMut<HostPort>,
         ResMut<WebPort>,
+        ResMut<Wake>,
     ),
     mut events: MessageWriter<SimEvent>,
     mut exit: MessageWriter<AppExit>,
@@ -556,6 +561,14 @@ fn run_script(
             }
         }
         "turn" => view.turns = number(1) as i32,
+        // Makes a sector that wakes take its time, or wake at once. With a number, everything
+        // that wakes stays at that moment of its rise, in seconds.
+        "lift" => {
+            *wake = Wake {
+                lift: word(1) != "off",
+                hold: word(1).parse().ok(),
+            };
+        }
         // Looks at the enemy with this number for a few seconds.
         "peek" => {
             if let Some((_, _, position)) = enemies.iter().nth(number(1) as usize) {
@@ -594,6 +607,12 @@ fn run_script(
         "doze" => {
             for exhibit in &exhibits {
                 commands.entity(exhibit).insert(Enemy { awake: false });
+            }
+        }
+        // Wakes the tanks on display again, as the enemies of a sector that a player enters.
+        "rouse" => {
+            for exhibit in &exhibits {
+                commands.entity(exhibit).insert(Enemy { awake: true });
             }
         }
         // Raises the shield of every tank that has one, for ten seconds.

@@ -6,7 +6,8 @@
 //! The corridor is drawn as a plan: a dark sheet with a grid, walls as bands between two lines,
 //! hatched blocks and crossed crates. Nothing is lit. In a sector that no player has entered
 //! yet, the blocks and the crates are plans, flat on the floor: they stand up when the first
-//! player comes in.
+//! player comes in. They do at once, or over a third of a second with the experiment of a
+//! playtest that [`wake`] describes.
 
 use bevy::{
     asset::RenderAssetUsages,
@@ -28,6 +29,7 @@ use tanku_core::{
 use crate::{
     draft::{self, Draft, LIFT},
     theme,
+    wake::{self, Wake},
 };
 
 pub const WALL_HEIGHT: f32 = 1.2;
@@ -42,6 +44,16 @@ const CROSS_WIDTH: f32 = 0.05;
 /// How strong the hatching of a block that is planned is over the floor, and the cross of a
 /// crate: a little fainter than on what will stand there.
 const PLANNED_STRENGTH: f32 = 0.7;
+/// How flat a block is when it starts to rise from its plan, as a share of its height: its
+/// lines still lie over its faces.
+const FLAT: f32 = 0.1;
+/// How much of a pale sheet lies over the top of a block whose ink is wet, and of a red one
+/// over a crate.
+const SHEEN: (f32, f32) = (0.35, 0.5);
+/// The marks at the corners of the foot of a block that has landed: how far from the foot
+/// they start and end, and how long each of their two arms is.
+const MARK_REACH: (f32, f32) = (0.08, 0.34);
+const MARK_ARM: f32 = 0.28;
 const MINE_HEIGHT: f32 = 0.12;
 const BARRIER_HEIGHT: f32 = 1.5;
 /// The chain line at the foot of a barrier: a long dash, a short one, and the gap after each.
@@ -109,6 +121,10 @@ pub struct Shapes {
     explosive: Handle<Mesh>,
     /// The plans of a block and of a crate that are on their way, flat on the floor.
     planned: [Handle<Mesh>; 2],
+    /// A square lying flat, 1 on each side.
+    plate: Handle<Mesh>,
+    /// The marks at the corners of the foot of a block that has landed, and of a crate.
+    marks: [Handle<Mesh>; 2],
     mine: Handle<Mesh>,
     /// The circles around a mine, at their real sizes.
     trigger: Handle<Mesh>,
@@ -136,6 +152,13 @@ pub struct Paints {
     /// The same two for a sector that no player has entered yet.
     ink_dormant: Handle<StandardMaterial>,
     floor_dormant: Handle<StandardMaterial>,
+    /// The same two while the light of a sector comes up, as a playtest can have it.
+    ink_waking: Handle<StandardMaterial>,
+    floor_waking: Handle<StandardMaterial>,
+    /// The sheet that lies over the top of a block whose ink is wet, and of a crate, and the
+    /// marks at the corners of their feet. They fade.
+    sheens: [Handle<StandardMaterial>; 2],
+    marks: [Handle<StandardMaterial>; 2],
     curtain_locked: Handle<StandardMaterial>,
     curtain_unlocked: Handle<StandardMaterial>,
     barrier_locked: Handle<StandardMaterial>,
@@ -170,6 +193,26 @@ struct Stands {
 /// The drawing of the walls of a sector, which is done again when its neighbors change.
 #[derive(Component)]
 struct Walls;
+
+/// A part of the ground that takes its time to wake, with the experiment of a playtest: for
+/// how long it has, and what a block or a crate has around it meanwhile.
+#[derive(Component, Default)]
+struct Waking {
+    age: f32,
+    extras: Option<Extras>,
+}
+
+/// What a block or a crate has around it while it rises: the sheet of wet ink over its top,
+/// and the marks at the corners of its foot.
+#[derive(Clone, Copy)]
+struct Extras {
+    sheen: Entity,
+    marks: Entity,
+}
+
+/// The marks at the corners of the foot of a block or of a crate.
+#[derive(Component)]
+struct Marks;
 
 /// The two parts of a barrier, which change color when it unlocks.
 #[derive(Component, Clone, Copy)]
@@ -228,6 +271,7 @@ pub fn plugin(app: &mut App) {
                 dress_bullets,
             ),
             (wake_sectors, paint_barriers, blink_mines, stripe_bullets),
+            rise,
             place,
             (roll_bullets, stretch_trails),
         )
@@ -260,6 +304,15 @@ pub fn paint(materials: &mut Assets<StandardMaterial>, color: Color) -> Handle<S
     })
 }
 
+/// A flat color that is seen through, and that fades as what it is on settles.
+fn fading(color: Color) -> StandardMaterial {
+    StandardMaterial {
+        base_color: color,
+        alpha_mode: AlphaMode::Blend,
+        ..ink()
+    }
+}
+
 pub fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -280,6 +333,8 @@ pub fn setup(
     disc.disc(Vec3::ZERO, 0.5, Color::WHITE);
     let mut trail = Draft::default();
     trail.line(Vec3::ZERO, Vec3::NEG_X, TRAIL.y, Color::WHITE);
+    let mut plate = Draft::default();
+    plate.plate(Vec3::ZERO, Vec2::ONE, Color::WHITE);
     let bounces = 0..=Stat::Ricochet.max_level();
     let mut bullets = |look: Look| -> Vec<Handle<Mesh>> {
         let bounces = bounces.clone();
@@ -300,6 +355,8 @@ pub fn setup(
         block: meshes.add(block_drawing().build()),
         explosive: meshes.add(crate_drawing().build()),
         planned: [false, true].map(|explosive| meshes.add(planned_drawing(explosive).build())),
+        plate: meshes.add(plate.build()),
+        marks: [false, true].map(|explosive| meshes.add(mark_drawing(explosive).build())),
         mine: meshes.add(mine_drawing().build()),
         trigger,
         blast,
@@ -326,6 +383,13 @@ pub fn setup(
             ..ink()
         }),
         floor_dormant: materials.add(sheet(theme::dormant())),
+        ink_waking: materials.add(StandardMaterial {
+            base_color: theme::dormant(),
+            ..ink()
+        }),
+        floor_waking: materials.add(sheet(theme::dormant())),
+        sheens: [theme::LINE, theme::DANGER].map(|color| materials.add(fading(color))),
+        marks: [theme::BLOCK_LINE, theme::DANGER].map(|color| materials.add(fading(color))),
         curtain_locked: paint(materials, theme::DANGER.with_alpha(0.2)),
         curtain_unlocked: paint(materials, theme::GOOD.with_alpha(0.12)),
         barrier_locked: paint(materials, theme::DANGER),
@@ -503,6 +567,15 @@ fn wall_drawing(walls: &[(Vec2, Vec2)], around: &[(Vec2, Vec2)]) -> Draft {
     draft
 }
 
+/// How high a block stands, or a crate.
+fn obstacle_height(explosive: bool) -> f32 {
+    if explosive {
+        CRATE_HEIGHT
+    } else {
+        BLOCK_HEIGHT
+    }
+}
+
 /// The drawing of a destructible block: hatched, as a wall that can be taken away.
 fn block_drawing() -> Draft {
     let mut draft = Draft::default();
@@ -602,6 +675,36 @@ fn planned_drawing(explosive: bool) -> Draft {
         hatch(&mut draft, 1.5 * LIFT, faint);
     }
     draft
+}
+
+/// The side of the square that a block stands on, or a crate.
+fn footprint(explosive: bool) -> f32 {
+    if explosive { CRATE_SIZE } else { BLOCK_SIZE }
+}
+
+/// The marks at the corners of the foot of a block that has landed, or of a crate, as they
+/// start: at each corner, two short lines along its sides, a little away from it. In white,
+/// to take the color of what they are drawn with.
+fn mark_drawing(explosive: bool) -> Draft {
+    let mut draft = Draft::default();
+    let reach = footprint(explosive) / 2.0 + MARK_REACH.0;
+    for (x, z) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
+        let corner = Vec3::new(x * reach, 2.0 * LIFT, z * reach);
+        // Each arm starts half a line past the corner, so that the two meet square.
+        for (along, side) in [(Vec3::X, x), (Vec3::Z, z)] {
+            let from = corner + along * side * draft::LINE / 2.0;
+            let to = corner - along * side * MARK_ARM;
+            draft.line(from, to, draft::LINE, Color::WHITE);
+        }
+    }
+    draft
+}
+
+/// How much larger the marks of a foot are when they have flicked out this far, from 0 to 1.
+fn mark_growth(explosive: bool, flicked: f32) -> f32 {
+    let foot = footprint(explosive) / 2.0;
+    let reach = MARK_REACH.0 + (MARK_REACH.1 - MARK_REACH.0) * wake::ease_out(flicked);
+    (foot + reach) / (foot + MARK_REACH.0)
 }
 
 /// The drawing of a mine, without its light: a dark disc with two rings.
@@ -1182,17 +1285,54 @@ pub fn is_dormant(sector: u32, run: Option<&Run>) -> bool {
 /// A sector is drawn dull until a player enters it, and its blocks and its crates are plans,
 /// flat on its floor and in full ink. Then the drawing comes to life, and they stand up. A
 /// sector that a single player comes back in front of is as it was before they entered it.
+///
+/// With the experiment of a playtest, a sector that wakes takes its time: [`rise`] draws it
+/// until it is at rest. What is loaded awake is drawn awake at once, and so is a sector that
+/// sleeps again.
 fn wake_sectors(
+    mut commands: Commands,
     run: Option<Res<Run>>,
+    wake: Option<Res<Wake>>,
     paints: Res<Paints>,
     mut grounds: Query<(
-        &Ground,
+        Entity,
+        Ref<Ground>,
         &mut MeshMaterial3d<StandardMaterial>,
         Option<(&Stands, &mut Mesh3d)>,
+        Option<&Waking>,
+        &mut Transform,
     )>,
 ) {
-    for (ground, mut material, stands) in &mut grounds {
+    let lift = wake.is_some_and(|wake| wake.lift);
+    for (entity, ground, mut material, mut stands, waking, mut transform) in &mut grounds {
         let dormant = is_dormant(ground.sector, run.as_deref());
+        if let Some(waking) = waking {
+            if !dormant {
+                continue;
+            }
+            // It sleeps again before it was up.
+            if let Some(extras) = waking.extras {
+                commands.entity(extras.sheen).despawn();
+                commands.entity(extras.marks).despawn();
+            }
+            commands.entity(entity).remove::<Waking>();
+            transform.scale = Vec3::ONE;
+        }
+        let planned = |stands: &Option<(&Stands, Mut<Mesh3d>)>| {
+            let shown = stands.as_ref();
+            shown.is_some_and(|(stands, mesh)| mesh.0 == stands.plan)
+        };
+        let asleep =
+            [&paints.floor_dormant, &paints.ink_dormant].contains(&&material.0) || planned(&stands);
+        if lift && !dormant && asleep && !ground.is_added() {
+            // It was drawn as asleep, and wakes: a block shows what stands, flat at first.
+            if let Some((stands, mesh)) = &mut stands {
+                mesh.0 = stands.built.clone();
+                transform.scale.y = FLAT;
+            }
+            commands.entity(entity).insert(Waking::default());
+            continue;
+        }
         let wanted = match (ground.floor, dormant) {
             (true, false) => &paints.floor,
             (true, true) => &paints.floor_dormant,
@@ -1209,6 +1349,127 @@ fn wake_sectors(
                 mesh.0 = wanted.clone();
             }
         }
+    }
+}
+
+/// Draws what takes its time to wake, moment by moment: the light of the floor and of the
+/// walls comes up, and each block and each crate is pulled up off its plan, a little past its
+/// height and back, under a sheet of wet ink that dries. Marks flick out from the corners of
+/// its foot when it lands. Everything of a sector wakes at the same moment, so one paint
+/// serves all that fades the same way.
+fn rise(
+    mut commands: Commands,
+    time: Res<Time>,
+    wake: Option<Res<Wake>>,
+    paints: Res<Paints>,
+    shapes: Res<Shapes>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut waking: Query<(
+        Entity,
+        &Ground,
+        &mut Waking,
+        &mut Transform,
+        &mut MeshMaterial3d<StandardMaterial>,
+        Has<Stands>,
+        Has<ExplosiveCrate>,
+    )>,
+    mut marks: Query<(&mut Transform, &mut Visibility), (With<Marks>, Without<Waking>)>,
+) {
+    let wake = wake.map_or_else(Wake::default, |wake| *wake);
+    let mut latest = None;
+    for (entity, ground, mut waking, mut transform, mut material, stands, explosive) in &mut waking
+    {
+        waking.age = wake.later(waking.age, time.delta_secs());
+        if wake.over(waking.age) {
+            // At rest: it is drawn as everything that is awake.
+            if let Some(extras) = waking.extras {
+                commands.entity(extras.sheen).despawn();
+                commands.entity(extras.marks).despawn();
+            }
+            commands.entity(entity).remove::<Waking>();
+            transform.scale = Vec3::ONE;
+            material.0 = if ground.floor {
+                paints.floor.clone()
+            } else {
+                paints.ink.clone()
+            };
+            continue;
+        }
+        latest = Some(waking.age);
+        if !stands {
+            let coming_up = if ground.floor {
+                &paints.floor_waking
+            } else {
+                &paints.ink_waking
+            };
+            if material.0 != *coming_up {
+                material.0 = coming_up.clone();
+            }
+            continue;
+        }
+        let kind = explosive as usize;
+        let now = wake::rise(waking.age, explosive);
+        transform.scale.y = now.height.max(FLAT);
+        let grown = now.marks.map(|flicked| mark_growth(explosive, flicked));
+        let size = grown.map_or(Vec3::ONE, |grown| Vec3::new(grown, 1.0, grown));
+        let shown = if grown.is_some() {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+        match waking.extras {
+            Some(extras) => {
+                if let Ok((mut placed, mut visibility)) = marks.get_mut(extras.marks) {
+                    placed.scale = size;
+                    visibility.set_if_neq(shown);
+                }
+            }
+            None => {
+                // The sheet lies over the top, and rises with it.
+                let (side, top) = (footprint(explosive), obstacle_height(explosive));
+                let sheen = (
+                    Mesh3d(shapes.plate.clone()),
+                    MeshMaterial3d(paints.sheens[kind].clone()),
+                    Transform::from_xyz(0.0, top + 2.0 * LIFT, 0.0)
+                        .with_scale(Vec3::new(side, 1.0, side)),
+                );
+                let flicking = (
+                    Marks,
+                    Mesh3d(shapes.marks[kind].clone()),
+                    MeshMaterial3d(paints.marks[kind].clone()),
+                    Transform::from_scale(size),
+                    shown,
+                );
+                let extras = Extras {
+                    sheen: commands.spawn(sheen).id(),
+                    marks: commands.spawn(flicking).id(),
+                };
+                commands
+                    .entity(entity)
+                    .add_children(&[extras.sheen, extras.marks]);
+                waking.extras = Some(extras);
+            }
+        }
+    }
+    let Some(age) = latest else {
+        return;
+    };
+    let mut paint = |handle: &Handle<StandardMaterial>, color: Color| {
+        if let Some(mut material) = materials.get_mut(handle) {
+            material.base_color = color;
+        }
+    };
+    let light = wake::light(age);
+    for handle in [&paints.floor_waking, &paints.ink_waking] {
+        paint(handle, LinearRgba::rgb(light, light, light).into());
+    }
+    for (kind, explosive) in [false, true].into_iter().enumerate() {
+        let now = wake::rise(age, explosive);
+        let (sheen, strength) = [(theme::LINE, SHEEN.0), (theme::DANGER, SHEEN.1)][kind];
+        paint(&paints.sheens[kind], sheen.with_alpha(strength * now.wet));
+        let mark = [theme::BLOCK_LINE, theme::DANGER][kind];
+        let left = now.marks.map_or(0.0, |flicked| 1.0 - flicked);
+        paint(&paints.marks[kind], mark.with_alpha(left));
     }
 }
 
@@ -1449,6 +1710,8 @@ fn stretch_trails(
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use bevy::mesh::VertexAttributeValues;
     use tanku_core::{map::Corridor, seed::seed_value};
 
@@ -1663,10 +1926,11 @@ mod tests {
         app.init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<StandardMaterial>>()
             .init_resource::<Assets<Image>>()
+            .init_resource::<Time>()
             .add_systems(PreStartup, setup)
             .add_systems(
                 Update,
-                (dress_sectors, dress_obstacles, wake_sectors).chain(),
+                (dress_sectors, dress_obstacles, wake_sectors, rise).chain(),
             );
         app
     }
@@ -1950,6 +2214,128 @@ mod tests {
         assert!(again.dull_walls && again.dull_floor);
         assert!(again.plans.iter().all(|plan| *plan));
         assert!(shown(&app, explosive) == crate_plan && shown(&app, block) == block_plan);
+    }
+
+    /// How many parts of the ground of a sector still take their time to wake, how tall each
+    /// of its blocks and of its crates is as a share of its height, and how many of them show
+    /// the marks at the corners of their feet.
+    fn waking(app: &mut App, sector: u32) -> (usize, Vec<f32>, usize) {
+        let world = app.world_mut();
+        let mut grounds = world.query::<(&Ground, Option<&Waking>, Has<Stands>, &Transform)>();
+        let of_sector = |(ground, ..): &(&Ground, _, _, _)| ground.sector == sector;
+        let found: Vec<_> = grounds.iter(world).filter(of_sector).collect();
+        let late = found.iter().filter(|(_, waking, ..)| waking.is_some());
+        let heights = found.iter().filter(|(.., stands, _)| *stands);
+        let heights = heights.map(|(.., placed)| placed.scale.y).collect();
+        let late = late.count();
+        let mut marks = world.query_filtered::<&Visibility, With<Marks>>();
+        let shown = marks
+            .iter(world)
+            .filter(|shown| **shown != Visibility::Hidden);
+        (late, heights, shown.count())
+    }
+
+    #[test]
+    fn with_the_experiment_of_a_playtest_a_sector_takes_its_time_to_wake() {
+        // The first sectors of this seed hold blocks.
+        let mut corridor = Corridor::new(seed_value("3ZXHW3M8"));
+        let mut app = dressing_world();
+        app.insert_resource(run_in(0)).insert_resource(Wake {
+            lift: true,
+            hold: None,
+        });
+        for index in 0..2 {
+            load(&mut app, &mut corridor, index);
+        }
+        let explosive = (ExplosiveCrate { sector: 1 }, Position(Vec2::new(1.0, 40.0)));
+        let explosive = app.world_mut().spawn(explosive).id();
+        let frame = |app: &mut App, seconds: f32| {
+            let time = Duration::from_secs_f32(seconds);
+            app.world_mut().resource_mut::<Time>().advance_by(time);
+            app.update();
+        };
+        frame(&mut app, 0.0);
+        // What is loaded awake is drawn awake at once, and what waits is a plan.
+        assert_eq!(waking(&mut app, 0), (0, vec![], 0));
+        let (late, heights, _) = waking(&mut app, 1);
+        assert!(late == 0 && heights.len() >= 2 && heights.iter().all(|high| *high == 1.0));
+        assert!(look_of(&mut app, 1).plans.iter().all(|plan| *plan));
+
+        // The first player crosses. A frame later, nothing of the sector is at rest: its
+        // floor and its walls are on their way to their light, and each block and the crate
+        // show what stands, low still, under ink that is wet.
+        app.world_mut().resource_mut::<Run>().sector = 1;
+        frame(&mut app, 1.0 / 60.0);
+        let (late, heights, marked) = waking(&mut app, 1);
+        assert_eq!((late, marked), (heights.len() + 2, 0));
+        assert!(heights.iter().all(|high| *high >= FLAT && *high < 0.5));
+        let world = app.world_mut();
+        let paints = world.resource::<Paints>();
+        let (coming_up, wet) = (paints.floor_waking.clone(), paints.sheens[1].clone());
+        let built = world.resource::<Shapes>().explosive.clone();
+        assert!(world.get::<Mesh3d>(explosive).unwrap().0 == built);
+        let mut floors = world.query::<(&Ground, &MeshMaterial3d<StandardMaterial>)>();
+        let mut floors = floors.iter(world).filter(|(ground, _)| ground.floor);
+        assert!(floors.any(|(ground, paint)| ground.sector == 1 && paint.0 == coming_up));
+        let light = |world: &World, paint: &Handle<StandardMaterial>| {
+            let paints = world.resource::<Assets<StandardMaterial>>();
+            paints.get(paint).unwrap().base_color.to_linear()
+        };
+        assert!(light(world, &coming_up).red > theme::DORMANT && light(world, &wet).alpha > 0.4);
+        // The bay sleeps no more than it did.
+        assert_eq!(waking(&mut app, 0).0, 0);
+
+        // A tenth of a second later, they are past their height, and marks have flicked out
+        // from the corners of their feet.
+        frame(&mut app, 0.1);
+        let (late, heights, marked) = waking(&mut app, 1);
+        assert_eq!((late, marked), (heights.len() + 2, heights.len()));
+        assert!(heights.iter().all(|high| *high > 1.0 && *high < 1.15));
+
+        // A third of a second after the crossing, the sector is drawn as any that is awake.
+        frame(&mut app, 0.25);
+        let (late, heights, _) = waking(&mut app, 1);
+        assert!(late == 0 && heights.iter().all(|high| *high == 1.0));
+        let entered = look_of(&mut app, 1);
+        assert!(!entered.dull_walls && !entered.dull_floor);
+        assert!(entered.plans.iter().all(|plan| !*plan));
+        let world = app.world_mut();
+        assert_eq!(world.query::<&Marks>().iter(world).count(), 0);
+        assert!(
+            world
+                .get::<Children>(explosive)
+                .is_none_or(|kept| kept.is_empty())
+        );
+
+        // A single player who falls while a sector wakes finds it asleep again, as it was.
+        app.world_mut().resource_mut::<Run>().sector = 0;
+        frame(&mut app, 1.0);
+        app.world_mut().resource_mut::<Run>().sector = 1;
+        frame(&mut app, 0.11);
+        assert!(waking(&mut app, 1).2 > 0);
+        app.world_mut().resource_mut::<Run>().sector = 0;
+        frame(&mut app, 1.0 / 60.0);
+        let (late, heights, _) = waking(&mut app, 1);
+        assert!(late == 0 && heights.iter().all(|high| *high == 1.0));
+        let again = look_of(&mut app, 1);
+        assert!(again.dull_walls && again.dull_floor && again.plans.iter().all(|plan| *plan));
+        let world = app.world_mut();
+        assert_eq!(world.query::<&Marks>().iter(world).count(), 0);
+    }
+
+    #[test]
+    fn the_marks_of_a_foot_start_next_to_it_and_flick_out() {
+        for explosive in [false, true] {
+            let (lowest, highest) = mark_drawing(explosive).bounds();
+            // They lie on the floor, around the square of the block or of the crate.
+            let foot = footprint(explosive) / 2.0;
+            assert!(highest.y < 0.05 && lowest.y > 0.0);
+            let reach = foot + MARK_REACH.0 + draft::LINE / 2.0;
+            assert!(close(highest.x, reach) && close(lowest.z, -reach));
+            assert!(close(mark_growth(explosive, 0.0), 1.0));
+            let grown = (foot + MARK_REACH.1) / (foot + MARK_REACH.0);
+            assert!(close(mark_growth(explosive, 1.0), grown));
+        }
     }
 
     #[test]

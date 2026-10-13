@@ -35,6 +35,7 @@ mod storage;
 mod tags;
 mod theme;
 mod unlocks;
+mod wake;
 
 use bevy::prelude::*;
 use tanku_core::{CorePlugin, sim::Playtest};
@@ -129,10 +130,16 @@ fn main() {
     // A page keeps no journal: nothing outside the browser could read it.
     #[cfg(not(target_arch = "wasm32"))]
     app.add_plugins(journal::plugin);
+    app.init_resource::<wake::Wake>();
     if options.playtest {
         // The lives count again once the pause menu says so.
         app.insert_resource(Playtest {
             infinite_lives: true,
+        });
+        // An experiment: a sector takes its time to wake, until the pause menu says otherwise.
+        app.insert_resource(wake::Wake {
+            lift: true,
+            hold: None,
         });
     }
     app.insert_resource(options);
