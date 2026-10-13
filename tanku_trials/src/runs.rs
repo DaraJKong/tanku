@@ -315,7 +315,7 @@ pub fn journey(seed: &str, difficulty: Difficulty, player: Reference, asked: &As
 }
 
 /// The value below which a share of some sorted values lies.
-fn quantile(sorted: &[u32], share: f64) -> String {
+pub fn quantile(sorted: &[u32], share: f64) -> String {
     match sorted.len() {
         0 => "-".to_string(),
         count => sorted[((count - 1) as f64 * share).round() as usize].to_string(),

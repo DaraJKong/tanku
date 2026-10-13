@@ -39,6 +39,8 @@ cargo run -p tanku_client
 
 Settings, records, what the player has unlocked and the tank of their garage are kept in the user's configuration directory, under `tanku`.
 
+The game keeps a journal there too, `journal.txt`: a line for each run that entered a sector, with its seed, its mode and its options, the sectors that it entered, each tank that was lost with its sector, the weapon and the class of the enemy behind it, the time, the kills and how the run ended. The records keep the best run of each kind, and the journal keeps all of them. Nothing in the game reads it: [the trials](#journal) set it next to their reference players, to tell where a person loses their tanks and which of those players plays as that person does. The machine that runs a run keeps its line, so a single player and the host of a game do, and a guest doesn't. The web build keeps none. A game that is started with `--journal FILE` keeps its journal in that file, and leaves the player's own alone.
+
 The interface is drawn for a window of 1600 by 900 pixels or more. A smaller window shows all of it smaller, so that every menu is whole from 1280 by 720 pixels on. The size that the settings give the interface comes on top of that.
 
 ### With friends
@@ -368,7 +370,7 @@ TANKU_DEV_SCRIPT="tape run.wav; wait 4; start TANKU; wait 4; play 0 1 0 0 4; wai
 
 ## Trials of the balance
 
-The trials measure what the rules of the game make, without anyone at the keyboard, and tell it in reports that can be compared from one change to the next. They are a tool of their own, `tanku_trials`, with a command for each kind of trial. The census counts what the seeds generate, the comparison of the reference players says what the yardstick of every fight is worth, the skirmishes say what each stretch of sectors costs and which tanks the cost comes from, the duels say what each level of a stat adds to the danger of a tank next to what it adds to its price, and the trial of the classes draws the curve of the danger of each class over its points, and the runs say how far a player gets with three lives. A comparison tells what a change to the game moved between two reports. The numbers that the trials are there to judge are in one file: see [Changing the balance](#changing-the-balance).
+The trials measure what the rules of the game make, without anyone at the keyboard, and tell it in reports that can be compared from one change to the next. They are a tool of their own, `tanku_trials`, with a command for each kind of trial. The census counts what the seeds generate, the comparison of the reference players says what the yardstick of every fight is worth, the skirmishes say what each stretch of sectors costs and which tanks the cost comes from, the duels say what each level of a stat adds to the danger of a tank next to what it adds to its price, the trial of the classes draws the curve of the danger of each class over its points, the runs say how far a player gets with three lives, and the journal sets the runs that a person played next to the reference players. A comparison tells what a change to the game moved between two reports. The numbers that the trials are there to judge are in one file: see [Changing the balance](#changing-the-balance).
 
 ### Census
 
@@ -542,6 +544,42 @@ The player fights and doesn't drive the corridor: once a sector is cleared, the 
 | `--patience 180` | How long a fight may last, in seconds, before its run is stopped |
 | `--threads N` | How many runs go side by side |
 | `--out DIRECTORY` | Writes the report there as `runs.md` and `runs.csv` |
+
+### Journal
+
+The reference players are a yardstick, and nothing says which of them a person is. The game keeps a journal of the runs that are played (see [Playing](#playing)), and this command sets it next to the three players. It takes about half a minute on 24 cores:
+
+```bash
+cargo run --release -p tanku_trials -- journal
+```
+
+The runs that compare with those of the trials are counted: a single player's, in the standard tank, in the corridor, at the difficulty asked for, played with this version of the game and with the balance that the tool is compiled with. The report says how many runs it left out, and why. A playtest is counted, with its infinite lives and its skips, because the score of a run is not what is compared: most of what is played is no whole run. What every run tells is the tanks that it lost for each sector that it entered.
+
+Each reference player therefore fights for every sector that the journal got to, as in the comparison of the players: on many seeds, with a tank that nothing destroys, and each tank that it would have lost is counted. The player that the journal is nearest to is the one whose losses make those of the journal the most likely. A few tanks seldom tell two players apart, and the report then names both.
+
+| Table | What it tells |
+|---|---|
+| What was read | The runs of the journal, those that are left out, each for the first reason that holds, and those that are counted |
+| Tanks lost in each sector | For each stretch of sectors: the corridors that the journal entered, the tanks that it lost there, what each reference player loses in a fight for such a corridor, and the nearest player. The arenas of the journal are a row of their own. |
+| Over the corridors of the journal | The tanks that the journal lost, those that each player would lose over the same corridors, and the player that the journal plays as |
+| What destroyed the player | The same tanks, by the weapon and the type of bullet |
+| Whose doing it was | The same tanks, by the class of the enemy behind it |
+| Whole runs | Only for a journal that has runs played as a record counts one, from the start bay with three lives until the last is lost: their scores next to those of the runs of each reference player |
+
+| Option | Effect |
+|---|---|
+| `FILE` | The journal to read. Without it, the player's own, in the user's configuration directory. |
+| `--seeds 40` | How many seeds each reference player fights on: `TRIAL0`, `TRIAL1` and so on |
+| `--difficulty normal` | `normal` or `hard`: the runs of the other one are left out |
+| `--since 2026-10-13` | Counts the runs that started at that moment or later, as the journal writes one: `2026-10-13`, or `2026-10-13T17:46Z` |
+| `--every-build` | Counts the runs of every version and of every balance |
+| `--last 60` | The furthest sector that the reference players fight in |
+| `--limit 60` | How long a fight lasts at most, in seconds |
+| `--patience 180` | How long a fight of a whole run may last, in seconds, before the run is stopped |
+| `--threads N` | How many fights run side by side |
+| `--out DIRECTORY` | Writes the report there as `journal.md` and `journal.csv` |
+
+The report is worth what the journal holds. A stretch of sectors says little before the journal has entered a few dozen of its corridors, and a journal that was played with several balances compares with none of them: `--every-build` counts all its runs against the balance of the tool. Three things are not compared at all. The reference players fight in no arena, so the arenas of the journal are counted and set next to nothing. A whole run stops at its third tank, in the middle of a fight that goes on for a reference player, so the last sector of such a run counts a little less than a fight of the trials does. And the journal tells which player loses as many tanks as a person does, not that it loses them the same way: the two tables of what destroyed the player are there to show the difference.
 
 ### Comparing two reports
 

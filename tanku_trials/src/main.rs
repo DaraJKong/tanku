@@ -28,6 +28,7 @@ mod classes;
 mod compare;
 mod duels;
 mod fight;
+mod journal;
 mod players;
 mod reference;
 mod report;
@@ -79,6 +80,10 @@ enum Command {
     /// of the game: how far each reference player gets, where the tanks are lost and to
     /// what. It takes minutes on every core of the machine.
     Runs(RunsArgs),
+    /// Sets the journal of the runs that were played next to the reference players: where
+    /// a person loses their tanks and to what, and which player they play as. It takes a
+    /// minute or two on every core of the machine.
+    Journal(JournalArgs),
     /// Tells what changed between two reports of the same trial, from their CSV files.
     Compare(CompareArgs),
 }
@@ -262,6 +267,43 @@ struct RunsArgs {
 }
 
 #[derive(Args)]
+struct JournalArgs {
+    /// The file of the journal. It is the player's own without it, where the game keeps it.
+    file: Option<PathBuf>,
+    /// How many seeds each reference player plays: TRIAL0, TRIAL1 and so on.
+    #[arg(long, default_value_t = 40, value_parser = clap::value_parser!(u32).range(1..))]
+    seeds: u32,
+    /// The difficulty of the runs to count: normal or hard.
+    #[arg(long, default_value = "normal", value_parser = difficulty)]
+    difficulty: Difficulty,
+    /// Count the runs that started at this moment or later, as the journal writes one:
+    /// 2026-10-13, or 2026-10-13T17:46Z.
+    #[arg(long)]
+    since: Option<String>,
+    /// Count the runs of every version of the game and of every balance, not only those
+    /// of the version and of the balance that this tool was compiled with.
+    #[arg(long)]
+    every_build: bool,
+    /// The furthest sector that the reference players fight in.
+    #[arg(long, default_value_t = 60, value_parser = clap::value_parser!(u32).range(1..=500))]
+    last: u32,
+    /// How long a fight of a reference player for a sector lasts at most, in seconds.
+    #[arg(long, default_value_t = 60.0)]
+    limit: f32,
+    /// How long a reference player may stay in a sector of a whole run without clearing it
+    /// or falling, in seconds.
+    #[arg(long, default_value_t = 180.0)]
+    patience: f32,
+    /// How many runs go side by side: as many as the machine has cores, unless told.
+    #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
+    threads: Option<u32>,
+    /// A directory to write the report to, as journal.md and journal.csv. It is printed
+    /// either way.
+    #[arg(long)]
+    out: Option<PathBuf>,
+}
+
+#[derive(Args)]
 struct CompareArgs {
     /// The CSV file of the report from before the change.
     before: PathBuf,
@@ -400,6 +442,32 @@ fn main() {
                 threads: threads(args.threads),
             };
             tell(&runs::runs(&asked), args.out, "runs");
+        }
+        Command::Journal(args) => {
+            let own = tanku_core::files::directory().map(|own| own.join(tanku_core::journal::FILE));
+            let Some(file) = args.file.or(own) else {
+                eprintln!("This machine has no place for the files of the game: name the journal.");
+                std::process::exit(1);
+            };
+            let text = match std::fs::read_to_string(&file) {
+                Ok(text) => text,
+                Err(error) => {
+                    eprintln!("The journal {} was not read: {error}", file.display());
+                    std::process::exit(1);
+                }
+            };
+            let asked = journal::Asked {
+                file,
+                difficulty: args.difficulty,
+                seeds: args.seeds,
+                since: args.since,
+                every_build: args.every_build,
+                last: args.last,
+                limit: args.limit,
+                patience: args.patience,
+                threads: threads(args.threads),
+            };
+            tell(&journal::journal(&asked, &text), args.out, "journal");
         }
         Command::Compare(args) => {
             let asked = compare::Asked {
