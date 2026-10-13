@@ -300,6 +300,12 @@ This prints what the groups of each mode are made of, by stretch of sectors: whi
 cargo test -p tanku_core what_the_groups_are_made_of -- --ignored --nocapture
 ```
 
+A game that is told to leave while it is still starting must leave without a crash. The engine compiles the pipelines of the graphics card in tasks of their own, and the game waits for them before it goes (`tanku_client/src/quit.rs`): without that, the process ended under a task that was still inside the driver of the card. After a change to how the game starts or leaves, this quits a tenth of a second after the start, where it used to crash every time. The number that it prints last is how the game left, and 0 is well:
+
+```bash
+TANKU_DEV_SCRIPT="wait 0.1; quit" cargo run -q -p tanku_client; echo $?
+```
+
 Benchmarks measure generation, the simulation and the music, and take under a minute:
 
 ```bash

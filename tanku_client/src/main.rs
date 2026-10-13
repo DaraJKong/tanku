@@ -1,3 +1,7 @@
+// The engine's cache of pipelines, which `quit` reads, is made of types that are nested
+// deeper than the compiler follows by default to tell that it may be shared between threads.
+#![recursion_limit = "256"]
+
 mod ahead;
 mod audio;
 mod camera;
@@ -23,6 +27,8 @@ mod mirror;
 mod models;
 mod music;
 mod net;
+#[cfg(not(target_arch = "wasm32"))]
+mod quit;
 mod repair;
 mod report;
 mod ruler;
@@ -127,9 +133,10 @@ fn main() {
         .add_plugins((audio::plugin, music::plugin));
     // A browser joins games and hosts none.
     app.add_plugins(net::NetPlugin);
-    // A page keeps no journal: nothing outside the browser could read it.
+    // A page keeps no journal: nothing outside the browser could read it. And a page is
+    // closed by its browser, which waits for nothing.
     #[cfg(not(target_arch = "wasm32"))]
-    app.add_plugins(journal::plugin);
+    app.add_plugins((journal::plugin, quit::plugin));
     app.init_resource::<wake::Hold>();
     if options.playtest {
         // The lives count again once the pause menu says so.
