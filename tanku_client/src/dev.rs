@@ -34,10 +34,9 @@
 //! `canvas WIDTH HEIGHT SCALE`,
 //! which draws from there on as a window of that many pixels shows the game, on a screen
 //! that enlarges everything by that scale if one is given, `tape PATH`, which keeps the
-//! music from there on, and `lift on`, `lift off` or `lift SECONDS`, which makes a sector that
-//! wakes take its time, as a playtest can have it, or wake at once, or holds everything that
-//! wakes at one moment of its rise, to look at it. It is how the game is looked at, and
-//! listened to, without anyone at the keyboard.
+//! music from there on, and `lift SECONDS`, which holds everything that wakes at one moment of
+//! its rise, in seconds since it woke, to look at it, until `lift` alone lets it go on. It is
+//! how the game is looked at, and listened to, without anyone at the keyboard.
 //!
 //! A scripted run opens no window: it draws into an image, which `shot` saves. The image is
 //! 1920 by 1080 pixels until `canvas` gives it another size. The run makes no sound, starts
@@ -90,7 +89,7 @@ use crate::{
     session::{SessionRequest, Sign},
     storage,
     unlocks::Unlocks,
-    wake::Wake,
+    wake::Hold,
 };
 
 /// Size of the image that a scripted run draws into, until the script gives it another.
@@ -429,12 +428,12 @@ fn run_script(
         Res<Options>,
         ResMut<Garage>,
     ),
-    (mut session_requests, mut keys, mut port, mut web, mut wake): (
+    (mut session_requests, mut keys, mut port, mut web, mut hold): (
         MessageWriter<SessionRequest>,
         MessageWriter<KeyboardInput>,
         ResMut<HostPort>,
         ResMut<WebPort>,
-        ResMut<Wake>,
+        ResMut<Hold>,
     ),
     mut events: MessageWriter<SimEvent>,
     mut exit: MessageWriter<AppExit>,
@@ -561,14 +560,9 @@ fn run_script(
             }
         }
         "turn" => view.turns = number(1) as i32,
-        // Makes a sector that wakes take its time, or wake at once. With a number, everything
-        // that wakes stays at that moment of its rise, in seconds.
-        "lift" => {
-            *wake = Wake {
-                lift: word(1) != "off",
-                hold: word(1).parse().ok(),
-            };
-        }
+        // Holds everything that wakes at one moment of its rise, in seconds since it woke.
+        // Without a number, what wakes takes its time again.
+        "lift" => *hold = Hold(word(1).parse().ok()),
         // Looks at the enemy with this number for a few seconds.
         "peek" => {
             if let Some((_, _, position)) = enemies.iter().nth(number(1) as usize) {

@@ -6,8 +6,7 @@
 //! The corridor is drawn as a plan: a dark sheet with a grid, walls as bands between two lines,
 //! hatched blocks and crossed crates. Nothing is lit. In a sector that no player has entered
 //! yet, the blocks and the crates are plans, flat on the floor: they stand up when the first
-//! player comes in. They do at once, or over a third of a second with the experiment of a
-//! playtest that [`wake`] describes.
+//! player comes in, over the third of a second that [`wake`] describes.
 
 use bevy::{
     asset::RenderAssetUsages,
@@ -29,7 +28,7 @@ use tanku_core::{
 use crate::{
     draft::{self, Draft, LIFT},
     theme,
-    wake::{self, Wake},
+    wake::{self, Hold},
 };
 
 pub const WALL_HEIGHT: f32 = 1.2;
@@ -194,8 +193,8 @@ struct Stands {
 #[derive(Component)]
 struct Walls;
 
-/// A part of the ground that takes its time to wake, with the experiment of a playtest: for
-/// how long it has, and what a block or a crate has around it meanwhile.
+/// A part of the ground of a sector that wakes: for how long it has, and what a block or a
+/// crate has around it meanwhile.
 #[derive(Component, Default)]
 struct Waking {
     age: f32,
@@ -1286,13 +1285,11 @@ pub fn is_dormant(sector: u32, run: Option<&Run>) -> bool {
 /// flat on its floor and in full ink. Then the drawing comes to life, and they stand up. A
 /// sector that a single player comes back in front of is as it was before they entered it.
 ///
-/// With the experiment of a playtest, a sector that wakes takes its time: [`rise`] draws it
-/// until it is at rest. What is loaded awake is drawn awake at once, and so is a sector that
-/// sleeps again.
+/// A sector that wakes takes its time: [`rise`] draws it until it is at rest. What is loaded
+/// awake is drawn awake at once, and so is a sector that sleeps again.
 fn wake_sectors(
     mut commands: Commands,
     run: Option<Res<Run>>,
-    wake: Option<Res<Wake>>,
     paints: Res<Paints>,
     mut grounds: Query<(
         Entity,
@@ -1303,7 +1300,6 @@ fn wake_sectors(
         &mut Transform,
     )>,
 ) {
-    let lift = wake.is_some_and(|wake| wake.lift);
     for (entity, ground, mut material, mut stands, waking, mut transform) in &mut grounds {
         let dormant = is_dormant(ground.sector, run.as_deref());
         if let Some(waking) = waking {
@@ -1324,7 +1320,7 @@ fn wake_sectors(
         };
         let asleep =
             [&paints.floor_dormant, &paints.ink_dormant].contains(&&material.0) || planned(&stands);
-        if lift && !dormant && asleep && !ground.is_added() {
+        if !dormant && asleep && !ground.is_added() {
             // It was drawn as asleep, and wakes: a block shows what stands, flat at first.
             if let Some((stands, mesh)) = &mut stands {
                 mesh.0 = stands.built.clone();
@@ -1360,7 +1356,7 @@ fn wake_sectors(
 fn rise(
     mut commands: Commands,
     time: Res<Time>,
-    wake: Option<Res<Wake>>,
+    hold: Option<Res<Hold>>,
     paints: Res<Paints>,
     shapes: Res<Shapes>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -1375,12 +1371,12 @@ fn rise(
     )>,
     mut marks: Query<(&mut Transform, &mut Visibility), (With<Marks>, Without<Waking>)>,
 ) {
-    let wake = wake.map_or_else(Wake::default, |wake| *wake);
+    let hold = hold.map_or_else(Hold::default, |hold| *hold);
     let mut latest = None;
     for (entity, ground, mut waking, mut transform, mut material, stands, explosive) in &mut waking
     {
-        waking.age = wake.later(waking.age, time.delta_secs());
-        if wake.over(waking.age) {
+        waking.age = hold.later(waking.age, time.delta_secs());
+        if hold.over(waking.age) {
             // At rest: it is drawn as everything that is awake.
             if let Some(extras) = waking.extras {
                 commands.entity(extras.sheen).despawn();
@@ -2195,8 +2191,12 @@ mod tests {
         assert!(walls.iter().all(|mesh| height(&app, mesh) > 1.0));
 
         // The first player crosses: the sector comes to life, and its blocks and its crate
-        // stand up. Its walls are the ones that stood there.
+        // stand up, which takes them a third of a second. Its walls are the ones that stood
+        // there.
         app.world_mut().resource_mut::<Run>().sector = 1;
+        app.update();
+        let time = Duration::from_secs_f32(wake::LENGTH);
+        app.world_mut().resource_mut::<Time>().advance_by(time);
         app.update();
         let entered = look_of(&mut app, 1);
         assert!(!entered.dull_walls && !entered.dull_floor);
@@ -2236,14 +2236,11 @@ mod tests {
     }
 
     #[test]
-    fn with_the_experiment_of_a_playtest_a_sector_takes_its_time_to_wake() {
+    fn a_sector_takes_its_time_to_wake() {
         // The first sectors of this seed hold blocks.
         let mut corridor = Corridor::new(seed_value("3ZXHW3M8"));
         let mut app = dressing_world();
-        app.insert_resource(run_in(0)).insert_resource(Wake {
-            lift: true,
-            hold: None,
-        });
+        app.insert_resource(run_in(0));
         for index in 0..2 {
             load(&mut app, &mut corridor, index);
         }

@@ -31,7 +31,6 @@ use crate::{
     settings::{Action, Binding, League, Records, Settings},
     theme,
     unlocks::{self, Unlocks},
-    wake::Wake,
 };
 
 /// Seconds between the end of a run and the game over screen.
@@ -126,8 +125,6 @@ enum Press {
     ResetBindings,
     /// In a playtest: turns the infinite lives on or off.
     InfiniteLives,
-    /// In a playtest: makes a sector that wakes take its time, or wake at once.
-    Lift,
     /// In a playtest: moves the sector to skip to by this many.
     Destination(i32),
     /// In a playtest: skips to that sector.
@@ -2795,7 +2792,6 @@ fn pause_menu(
     mut commands: Commands,
     run: Option<Res<Run>>,
     playtest: Option<Res<Playtest>>,
-    wake: Option<Res<Wake>>,
     destination: Res<Destination>,
     session: Res<Session>,
 ) {
@@ -2830,12 +2826,6 @@ fn pause_menu(
                     let state = on_off(playtest.infinite_lives);
                     small(row, state, 70.0, Press::InfiniteLives);
                 });
-                // An experiment, which the game on this machine draws: see `wake`.
-                if let Some(wake) = &wake {
-                    row(parent, "A sector rises as it wakes", |row| {
-                        small(row, on_off(wake.lift), 70.0, Press::Lift);
-                    });
-                }
                 // A run in arena mode skips to the lull before a group.
                 let in_a_room = run.as_ref().is_some_and(|run| run.arena);
                 let unit = if in_a_room { "group" } else { "sector" };
@@ -2863,19 +2853,17 @@ fn refresh_pause(
     mut commands: Commands,
     run: Option<Res<Run>>,
     playtest: Res<Playtest>,
-    wake: Option<Res<Wake>>,
     destination: Res<Destination>,
     session: Res<Session>,
     root: Query<Entity, With<PauseRoot>>,
 ) {
-    let switched = wake.as_ref().is_some_and(|wake| wake.is_changed());
-    if !playtest.is_changed() && !destination.is_changed() && !switched {
+    if !playtest.is_changed() && !destination.is_changed() {
         return;
     }
     for entity in &root {
         commands.entity(entity).despawn();
     }
-    pause_menu(commands, run, Some(playtest), wake, destination, session);
+    pause_menu(commands, run, Some(playtest), destination, session);
 }
 
 /// The seed of a new run: the one that the command line gave to a playtest, or else a random
@@ -3207,7 +3195,7 @@ fn press(
     mut next_overlay: ResMut<NextState<Overlay>>,
     mut settings: ResMut<Settings>,
     mut capture: ResMut<Capture>,
-    (mut playtest, mut wake): (Option<ResMut<Playtest>>, Option<ResMut<Wake>>),
+    mut playtest: Option<ResMut<Playtest>>,
     mut destination: ResMut<Destination>,
     (options, run, time, seat, unlocks): (
         Res<Options>,
@@ -3470,11 +3458,6 @@ fn press(
             Press::InfiniteLives => {
                 if let Some(playtest) = &mut playtest {
                     playtest.infinite_lives = !playtest.infinite_lives;
-                }
-            }
-            Press::Lift => {
-                if let Some(wake) = &mut wake {
-                    wake.lift = !wake.lift;
                 }
             }
             Press::Destination(change) => {
@@ -4189,10 +4172,6 @@ mod tests {
                     .insert_resource(Session::Host)
                     .insert_resource(Playtest {
                         infinite_lives: true,
-                    })
-                    .insert_resource(Wake {
-                        lift: true,
-                        hold: None,
                     });
                 build(app, pause_menu);
             }),
@@ -4210,10 +4189,6 @@ mod tests {
                         .insert_resource(Session::Host)
                         .insert_resource(Playtest {
                             infinite_lives: true,
-                        })
-                        .insert_resource(Wake {
-                            lift: true,
-                            hold: None,
                         });
                     build(app, pause_menu);
                 },

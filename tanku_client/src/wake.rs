@@ -1,19 +1,20 @@
-//! How a sector wakes: an experiment, behind a switch of a playtest.
+//! How a sector wakes.
 //!
-//! Without it, a sector wakes in one frame: its floor and its walls are lit, the plans of its
-//! blocks and of its crates give way to what stands, and the outlines of its enemies to the
-//! tanks. With it, that takes a third of a second, in the way that its design calls the Lift.
-//! The light comes up. A plan takes its face, pale at first, as wet ink, and is pulled up off
-//! the sheet, a little past its height and back, and marks flick out from the corners of its
-//! foot when it lands. A tank is inked in from under its turret while its tracks, its hull and
-//! its turret rise one after the other, and the beads of its antennas ride up their masts last.
+//! A sector that the first player enters takes a third of a second to wake, in the way that
+//! its design calls the Lift. The light comes up. A plan takes its face, pale at first, as wet
+//! ink, and is pulled up off the sheet, a little past its height and back, and marks flick out
+//! from the corners of its foot when it lands. A tank is inked in from under its turret while
+//! its tracks, its hull and its turret rise one after the other, and the beads of its antennas
+//! ride up their masts last.
 //!
 //! Everything of a sector starts at once, when the first player is through its barrier. The
 //! simulation knows nothing of it: the enemies are awake and the blocks are in the way from
-//! the first tick, as they are without the switch.
+//! the first tick. Only what was drawn asleep rises. A tank that appears later, in an arena or
+//! in the room of arena mode, is built as it stands, and so are the blocks and the crates of
+//! that room.
 //!
-//! This module holds the switch and the times. What is drawn at each moment is the doing of
-//! `scene`, for the ground and what stands on it, and of `models`, for the tanks.
+//! This module holds the times. What is drawn at each moment is the doing of `scene`, for the
+//! ground and what stands on it, and of `models`, for the tanks.
 
 use bevy::prelude::*;
 
@@ -43,26 +44,21 @@ const TANK_PAST: (f32, f32) = (0.04, 0.12);
 /// Seconds after which nothing of a sector that wakes still moves.
 pub const LENGTH: f32 = 0.32;
 
-/// The switch of the experiment. A playtest turns it on, and its pause menu turns it off and on.
+/// A moment at which everything that wakes stays, in seconds since it woke. A script sets
+/// it, to look at that moment. Without one, what wakes takes its time and is done.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
-pub struct Wake {
-    /// Whether a sector that wakes takes its time.
-    pub lift: bool,
-    /// A moment at which everything that wakes stays, in seconds since it woke. A script sets
-    /// it, to look at that moment.
-    pub hold: Option<f32>,
-}
+pub struct Hold(pub Option<f32>);
 
-impl Wake {
+impl Hold {
     /// For how long something has been waking, a frame of this many seconds after it had been
     /// for `age`.
     pub fn later(&self, age: f32, seconds: f32) -> f32 {
-        self.hold.unwrap_or(age + seconds)
+        self.0.unwrap_or(age + seconds)
     }
 
     /// Whether what has been waking for this long is done. What a script holds never is.
     pub fn over(&self, age: f32) -> bool {
-        self.hold.is_none() && age >= LENGTH
+        self.0.is_none() && age >= LENGTH
     }
 }
 
@@ -257,16 +253,10 @@ mod tests {
 
     #[test]
     fn a_script_holds_one_moment_of_a_wake() {
-        let running = Wake {
-            lift: true,
-            hold: None,
-        };
+        let running = Hold::default();
         assert!(close(running.later(0.1, 0.016), 0.116));
         assert!(!running.over(0.1) && running.over(LENGTH));
-        let held = Wake {
-            lift: true,
-            hold: Some(0.06),
-        };
+        let held = Hold(Some(0.06));
         assert!(close(held.later(0.1, 0.016), 0.06) && close(held.later(5.0, 0.016), 0.06));
         assert!(!held.over(LENGTH + 1.0));
     }

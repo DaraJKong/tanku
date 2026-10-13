@@ -465,6 +465,8 @@ A cue that plays a note plays A or E, taken from the table of pitches of the mus
 
 The four cues that played A and E already had their E a pure fifth above A, at 660 Hz. They now take the E of the music, which is 2 hundredths of a semitone lower: no ear tells the two apart.
 
+A sector of the corridor that wakes has a cue too, which takes its notes from the same table: a glide from A2 up to E4, with its octave, that swells for 0.3 s under a dull rush of noise, then a dry clack on E3 and E4. It ends on the fifth, which leaves the music waiting for its tonic, and less than 3% of it is above 7 kHz, where the roll of the hi-hat answers the same crossing. It sounds at every crossing and tells the players what they have just done, so it is one of the quietest cues: about as loud as a mine that is placed, and 4 to 5 dB under the cues of a sector that is cleared and of a barrier that unlocks. A group of arena mode keeps the sound that announces it, and has none of this.
+
 ## Same everywhere
 
 | What | Depends on | Guarantee |

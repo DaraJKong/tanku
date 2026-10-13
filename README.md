@@ -120,8 +120,6 @@ With a seed and a skip, a seed and a sector from a report are a few clicks away:
 cargo run -p tanku_client -- --playtest --seed 85GVTHQA
 ```
 
-A playtest also carries an experiment, which is on from the start: a sector takes a third of a second to wake. When the first player is through its barrier, its light comes up, its blocks and its crates are pulled up off their plans, a little past their height and back, and its enemies are inked in from under their turrets while their tracks, their hulls and their turrets rise one after the other. A cue sounds with it. "A sector rises as it wakes" in the pause menu turns the experiment off and on: off, a sector wakes in one frame and the music alone marks it, as in every run that is no playtest. The simulation is the same either way. The design, with two other ways to wake a sector and two other cues, is in [docs/IDEAS.md](docs/IDEAS.md), under "A sector that wakes".
-
 A playtest sets no record and earns no achievement. The web build has none, because a page has no command line.
 
 #### The garage check
@@ -363,6 +361,12 @@ It takes Firefox, Python 3 and the web build in `target/web-dist`. No window ope
 On a bad line, a host may log errors of `lightyear_debug::input` about an input for a tick that it has already simulated. They tell that the orders of a guest came late: its clock was behind, after the guest stalled for a moment or the line suddenly got slower. The host goes on with the last orders it had, the network library sets the clock of the guest anew within a second or two, and the errors stop. Nothing is lost: what the guest shows of its own tank is put right by what the host tells.
 
 A host also logs an error of `lightyear_udp::server` about a packet for an unknown entity when a guest leaves over a slow line. A guest says goodbye several times over, in case one is lost, and the later ones find it gone already. Nothing is wrong.
+
+A sector takes a third of a second to wake once the first player is through its barrier, which a screenshot seldom catches. The command `lift` holds everything that wakes at one moment of its rise, in seconds since it woke, and `lift` alone lets it go on. The simulation doesn't wait meanwhile: the enemies of the sector move and fire.
+
+```bash
+TANKU_DEV_SCRIPT="start TANKU; wait 1; warp 4; wait 3; lift 0.1; cross; wait 0.5; shot rising.png; lift; wait 0.5; shot awake.png; quit" cargo run -p tanku_client
+```
 
 The command `tape` keeps the music that the run would have played from there on. When the script quits, the music goes to a sound file, and the list of what the game told the music, with the time of each change, to a text file of the same name:
 

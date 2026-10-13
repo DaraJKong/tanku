@@ -7,9 +7,8 @@
 //! filled with it, and the others are dark shapes edged with the pale lines of the sheet.
 //!
 //! A tank that isn't there is an outline instead: its plan in dashes, flat on the sheet, in
-//! its color. A dormant enemy isn't there yet, and is inked in when it wakes up. It is at
-//! once, or part by part over a third of a second with the experiment of a playtest that
-//! [`wake`] describes.
+//! its color. A dormant enemy isn't there yet, and is inked in when it wakes up: part by part,
+//! over the third of a second that [`wake`] describes.
 
 use std::f32::consts::FRAC_PI_2;
 
@@ -24,7 +23,7 @@ use crate::{
     draft::{Draft, LIFT, LINE},
     scene::{self, Paints, Shapes},
     theme,
-    wake::{self, Wake},
+    wake::{self, Hold},
 };
 
 /// Height of the turret ring above the ground.
@@ -98,8 +97,8 @@ struct Turret;
 #[derive(Component)]
 struct Bubble;
 
-/// A tank that takes its time to stand up, with the experiment of a playtest: for how long it
-/// has. Its drawings are its parts, which rise one after the other.
+/// An enemy that wakes up and takes its time to stand: for how long it has. Its drawings are
+/// its parts, which rise one after the other.
 #[derive(Component)]
 struct Standing(f32);
 
@@ -1051,8 +1050,8 @@ fn hold_in_reserve(
 /// gives way to the tank itself. A player's tank that is destroyed among several players
 /// leaves its outline, and is inked in again once it is repaired.
 ///
-/// With the experiment of a playtest, an enemy that wakes up takes its time: it is drawn as
-/// the parts that [`stand_up`] raises one after the other.
+/// An enemy that wakes up takes its time: it is drawn as the parts that [`stand_up`] raises
+/// one after the other.
 fn ink_in(
     mut commands: Commands,
     mut tanks: Query<(
@@ -1067,11 +1066,9 @@ fn ink_in(
     )>,
     parts: Query<(), Or<(With<Hull>, With<Turret>)>>,
     run: Option<Res<Run>>,
-    wake: Option<Res<Wake>>,
     paints: Res<Paints>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
-    let lift = wake.is_some_and(|wake| wake.lift);
     for (entity, tank, motion, player, enemy, wreck, mut look, children) in &mut tanks {
         let wanted = look_of(enemy, wreck);
         if *look == wanted {
@@ -1081,7 +1078,7 @@ fn ink_in(
         for child in children.iter().filter(|child| parts.contains(*child)) {
             commands.entity(child).despawn();
         }
-        if lift && wanted == Look::Solid && enemy.is_some() {
+        if wanted == Look::Solid && enemy.is_some() {
             draw_standing(
                 &mut commands,
                 entity,
@@ -1169,16 +1166,16 @@ fn draw_standing(
 fn stand_up(
     mut commands: Commands,
     time: Res<Time>,
-    wake: Option<Res<Wake>>,
+    hold: Option<Res<Hold>>,
     mut tanks: Query<(Entity, &mut Standing, &Children)>,
     mut stages: Query<(&Stage, &mut Transform), Without<Veil>>,
     mut veils: Query<(&mut Veil, &mut Transform, &mut Mesh3d), Without<Stage>>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
-    let wake = wake.map_or_else(Wake::default, |wake| *wake);
+    let hold = hold.map_or_else(Hold::default, |hold| *hold);
     for (entity, mut standing, children) in &mut tanks {
-        standing.0 = wake.later(standing.0, time.delta_secs());
-        let over = wake.over(standing.0);
+        standing.0 = hold.later(standing.0, time.delta_secs());
+        let over = hold.over(standing.0);
         let now = wake::stand(standing.0);
         let risen = |share: f32| if over { 1.0 } else { share.max(FLAT) };
         let (deck, roof) = (
@@ -1696,10 +1693,15 @@ mod tests {
         app.update();
         assert_eq!(parts(&mut app, enemy), ((1, 1), flat));
 
+        // It is inked in when it wakes up. A third of a second later it stands as any tank
+        // does, in the parts that rose.
         app.world_mut().get_mut::<Enemy>(enemy).unwrap().awake = true;
         app.update();
         assert_eq!(app.world().get::<Look>(enemy), Some(&Look::Solid));
-        assert_eq!(parts(&mut app, enemy), ((1, 1), (0.0, TURRET_HEIGHT)));
+        let time = std::time::Duration::from_secs_f32(wake::LENGTH);
+        app.world_mut().resource_mut::<Time>().advance_by(time);
+        app.update();
+        assert_eq!(parts(&mut app, enemy), ((3, 1), (0.0, TURRET_HEIGHT)));
     }
 
     /// The parts of a tank that stands up: how tall each is, as a share of its height, how
@@ -1718,12 +1720,8 @@ mod tests {
     }
 
     #[test]
-    fn with_the_experiment_of_a_playtest_an_enemy_takes_its_time_to_stand_up() {
+    fn an_enemy_takes_its_time_to_stand_up() {
         let mut app = drawing_world();
-        app.insert_resource(Wake {
-            lift: true,
-            hold: None,
-        });
         let tank = Tank {
             genome: full(),
             team: tanku_core::sim::Team::Enemies,
@@ -1811,10 +1809,6 @@ mod tests {
         // At the pace of a screen, and of a faster one.
         for rate in [60.0, 144.0] {
             let mut app = drawing_world();
-            app.insert_resource(Wake {
-                lift: true,
-                hold: None,
-            });
             let tank = Tank {
                 genome: full(),
                 team: tanku_core::sim::Team::Enemies,
