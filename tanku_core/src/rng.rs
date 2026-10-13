@@ -16,6 +16,8 @@ pub enum Purpose {
     /// The room of arena mode: its walls, what stands in it for each group, and where the
     /// tanks of each group appear.
     Room = 7,
+    /// The tanks that are bred from others: which parent gives each level, and what changes.
+    Breed = 8,
 }
 
 /// A SplitMix64 generator, which starts from a state that depends on the seed and on its key.

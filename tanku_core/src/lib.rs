@@ -1,6 +1,7 @@
 //! Code shared by the Tanku client and server.
 
 pub mod balance;
+pub mod breed;
 pub mod discovery;
 pub mod enemy;
 #[cfg(not(target_arch = "wasm32"))]

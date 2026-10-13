@@ -42,7 +42,7 @@ const CLASS_WEIGHTS: [u32; Class::ALL.len()] = {
 
 /// What a tank must have before a level of a stat is of any use to it: another stat, and the
 /// level of it. An enemy without a brain can use neither mines nor a shield.
-fn needs(stat: Stat) -> Option<(Stat, u8)> {
+pub(crate) fn needs(stat: Stat) -> Option<(Stat, u8)> {
     match stat {
         Stat::Tracks => Some((Stat::Engine, 1)),
         Stat::Mines | Stat::Shield => Some((Stat::Brain, 1)),
@@ -86,7 +86,7 @@ fn draw_class(rng: &mut Stream, sector: u32) -> Class {
 }
 
 /// The highest level of a stat that an enemy of a class can have in a sector.
-fn highest_level(stat: Stat, difficulty: Difficulty, sector: u32, class: Class) -> u8 {
+pub(crate) fn highest_level(stat: Stat, difficulty: Difficulty, sector: u32, class: Class) -> u8 {
     // Fast bullets, good brains and good aim wait for later sectors, and so does whatever
     // else the balance holds back.
     let allowed = progression::cap(stat, sector, difficulty);
