@@ -71,7 +71,7 @@ Tanku has no player-versus-player mode, no loot, no upgrades during a run, no st
 
 ## Run structure
 
-A run starts in the start bay, an empty sector, and continues until game over. All progress of the run is then lost. Only unlocked modes and records persist. The score is the number of sectors cleared. A run in [arena mode](#arena-mode) has neither bay nor corridor, and its score is the number of groups cleared.
+A run starts in the start bay, an empty sector, and continues until game over. All progress of the run is then lost. Only unlocked modes, records and a line of the journal persist. The score is the number of sectors cleared. A run in [arena mode](#arena-mode) has neither bay nor corridor, and its score is the number of groups cleared.
 
 ### Sectors and barriers
 
