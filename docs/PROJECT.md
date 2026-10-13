@@ -476,7 +476,7 @@ A brain is the controller of one enemy tank. It observes the fight (its own stat
 
 Two things make a brain better. Its tiers, bought with points, decide what it is able to do. Its experience, which depends only on the sector, decides how well it does it: experience shortens the reaction delay from 0.50 s to 0.12 s and shrinks the aiming error from 8° to 1°.
 
-A bullet spares nobody either, so a brain that dodges minds the bullets of the other enemies as it minds the players': only its own don't count, until they have bounced. No brain holds its fire because another enemy stands in its line of fire.
+A bullet spares nobody either, so a brain that dodges minds the bullets of the other enemies as it minds the players': only its own don't count, until they have bounced. A tank holds its fire, whatever its tier, while another enemy stands in the way of its shot, between its gun and what it fires at, and it fires as soon as the way is clear. What a shot does once it has missed is for the others to get out of the way of. No brain lays a mine next to another enemy, and the best ballistics fire at no mine and no crate whose blast would reach one.
 
 A blast spares nobody, so the bullets that explode ask two things of the brains. A tank that fires them holds its fire, whatever its tier, while the blast of its shot would reach its own tank or another enemy. And from tier 1, a brain stays out of the circle that an exploding bullet marks, as it stays away from mines.
 
