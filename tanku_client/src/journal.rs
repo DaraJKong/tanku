@@ -21,7 +21,7 @@ use tanku_core::{
     journal::{self, End, Entry, Loss},
     map::SectorKind,
     seed::VERSION,
-    sim::{Playtest, Run, Sector, SimEvent, Team},
+    sim::{Playtest, Run, RunRequest, Sector, SimEvent, Team},
 };
 
 use crate::{cli::Options, session::Session, storage};
@@ -32,6 +32,9 @@ use crate::{cli::Options, session::Session, storage};
 struct Logbook {
     open: Option<Entry>,
     closed: Vec<Entry>,
+    /// Whether a playtest skipped since a sector was last entered. The sector that is entered
+    /// next is then fought from its start, even if it is the one that was entered last.
+    skipped: bool,
 }
 
 impl Logbook {
@@ -97,8 +100,14 @@ fn keep(
     playtest: Option<Res<Playtest>>,
     sectors: Query<&Sector>,
     mut events: MessageReader<SimEvent>,
+    mut requests: MessageReader<RunRequest>,
     mut logbook: ResMut<Logbook>,
 ) {
+    let logbook = &mut *logbook;
+    let skips = requests
+        .read()
+        .filter(|request| matches!(request, RunRequest::SkipTo { .. }));
+    let skipped = skips.count() > 0;
     if *session == Session::Guest {
         events.clear();
         logbook.open = None;
@@ -117,18 +126,27 @@ fn keep(
             SimEvent::RunStarted => {
                 logbook.close(End::Left);
                 logbook.open = run.map(|run| begin(run, now()));
+                logbook.skipped = false;
             }
             SimEvent::SectorEntered { sector } => {
                 let plans = sectors.iter().map(|sector| &sector.layout.plan);
                 let arena = plans
                     .into_iter()
                     .any(|plan| plan.index == sector && plan.kind == SectorKind::Arena);
-                if let Some(open) = &mut logbook.open {
+                // A single player who lost a tank comes back in front of the sector and
+                // crosses again: the fight goes on, and the sector is entered once. After a
+                // skip, the sector is as the seed makes it, and it is entered anew.
+                let again = |open: &Entry| open.entered.last() == Some(&sector);
+                let goes_on = !logbook.skipped;
+                if let Some(open) = &mut logbook.open
+                    && !(goes_on && again(open))
+                {
                     open.entered.push(sector);
                     if arena {
                         open.arenas.push(sector);
                     }
                 }
+                logbook.skipped = false;
             }
             SimEvent::TankDestroyed {
                 team: Team::Players,
@@ -148,6 +166,8 @@ fn keep(
         (None, Some(_)) => logbook.close(End::Left),
         _ => {}
     }
+    // A skip that is asked for now is done after everything that this frame told of.
+    logbook.skipped |= skipped;
 }
 
 /// Closes the run that is being played when the game is closed.
@@ -190,6 +210,7 @@ mod tests {
         app.init_resource::<Logbook>()
             .init_resource::<Session>()
             .add_message::<SimEvent>()
+            .add_message::<RunRequest>()
             .add_message::<AppExit>()
             .add_systems(Update, keep)
             .add_systems(Last, leave);
@@ -362,6 +383,49 @@ mod tests {
                 ("FOURTH".to_string(), vec![1], 0, End::Left),
             ]
         );
+    }
+
+    #[test]
+    fn a_sector_that_a_player_comes_back_to_is_entered_once() {
+        let mut app = world();
+        start(&mut app, "AGAIN");
+        // The player loses a tank in sector 2 and one in sector 3, and crosses again each
+        // time: the simulation tells of each crossing.
+        enter(&mut app, 1);
+        enter(&mut app, 2);
+        lose(&mut app, None);
+        enter(&mut app, 2);
+        enter(&mut app, 3);
+        lose(&mut app, None);
+        enter(&mut app, 3);
+        lose(&mut app, None);
+        app.world_mut().resource_mut::<Run>().cleared = 2;
+        tell(&mut app, SimEvent::RunOver);
+        app.update();
+        let lines = closed(&app);
+        assert_eq!(lines[0].entered, [1, 2, 3]);
+        assert_eq!(lines[0].losses.len(), 3);
+        // Such a run is a whole one: its score compares with those of other runs.
+        assert!(lines[0].whole());
+    }
+
+    #[test]
+    fn a_sector_that_a_playtest_skips_to_again_is_entered_anew() {
+        let mut app = world();
+        start(&mut app, "ANEW");
+        enter(&mut app, 1);
+        enter(&mut app, 2);
+        // The player skips to the sector that they are in: it is as the seed makes it again.
+        let skip = RunRequest::SkipTo { sector: 2 };
+        app.world_mut().write_message(skip);
+        app.update();
+        enter(&mut app, 2);
+        // Then loses a tank there, and comes back to the fight.
+        lose(&mut app, None);
+        enter(&mut app, 2);
+        app.world_mut().remove_resource::<Run>();
+        app.update();
+        assert_eq!(closed(&app)[0].entered, [1, 2, 2]);
     }
 
     #[test]

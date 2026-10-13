@@ -18,7 +18,7 @@
 //! | `mode` | `normal` or `hard` |
 //! | `players` | How many players the run started with |
 //! | `options` | `arena`, `free`, `playtest` and `endless` for infinite lives, with commas between them, or `-` |
-//! | `entered` | The sectors that the run entered, in the order it entered them: `1-17`, or `1-3,15-22` after a skip |
+//! | `entered` | The sectors that the run entered, in the order it entered them: `1-17`, or `1-3,15-22` after a skip. A sector that a single player comes back to after losing a tank is entered once. |
 //! | `arenas` | Those of them that are arenas, or `-` |
 //! | `cleared` | The score of the run |
 //! | `lost` | Each tank that the players lost, as `sector:weapon:whose`, or `-` |
@@ -186,7 +186,8 @@ pub struct Entry {
     /// Whether the lives were infinite at some time of the run.
     pub endless: bool,
     /// The sectors that the run entered, in the order it entered them. A playtest that
-    /// skips back enters a sector twice.
+    /// skips back enters a sector twice. A single player who lost a tank and crosses the
+    /// barrier again goes on with the fight of the sector, which is entered once.
     pub entered: Vec<u32>,
     /// Those of them that are arenas.
     pub arenas: Vec<u32>,
