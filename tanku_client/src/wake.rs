@@ -33,8 +33,8 @@ const MARKS: f32 = 0.16;
 const LIGHT: f32 = 0.2;
 /// When the ink starts to spread over a tank, and how long it takes.
 const INK: (f32, f32) = (0.015, 0.11);
-/// When each part of a tank starts to rise, and how long it takes: its tracks or its base,
-/// its hull, its turret, and its antennas.
+/// When each part of a tank starts to rise, and how long it takes: its tracks, its hull, its
+/// turret, and its antennas. The base of a tank that can't move rises with its hull.
 const GEAR: (f32, f32) = (0.04, 0.15);
 const BODY: (f32, f32) = (0.07, 0.15);
 const TURRET: (f32, f32) = (0.10, 0.15);
@@ -145,7 +145,7 @@ pub fn rise(age: f32, explosive: bool) -> Rise {
 pub struct Stand {
     /// How far the ink has spread from under the turret, from 0 to 1.
     pub ink: f32,
-    /// Its tracks, or the base of a tank that can't move.
+    /// Its tracks.
     pub gear: f32,
     pub body: f32,
     pub turret: f32,

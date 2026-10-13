@@ -105,8 +105,10 @@ struct Standing(f32);
 /// A part of a tank that stands up.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 enum Stage {
-    /// Its tracks, or the base of a tank that can't move.
+    /// Its tracks, which stand on each side of its hull.
     Gear,
+    /// The base of a tank that can't move, which lies under its hull.
+    Base,
     /// Its hull, with what lies on its deck.
     Body,
     /// Its antennas, which stand on its deck.
@@ -478,11 +480,15 @@ pub fn hull_drawing(genome: &Genome, color: Color) -> Draft {
     draft
 }
 
-/// The hull of a tank as the three parts that rise one after the other when it stands up:
-/// what it drives on, its body, and its antennas, which are drawn from the deck up.
+/// The hull of a tank as the three parts that rise when it stands up: what it drives on or
+/// sits on, its body, and its antennas, which are drawn from the deck up.
 fn hull_stages(genome: &Genome, color: Color) -> [(Stage, Draft); 3] {
-    let mut stages =
-        [Stage::Gear, Stage::Body, Stage::Masts].map(|stage| (stage, Draft::default()));
+    let under = if genome.level(Stat::Engine) == 0 {
+        Stage::Base
+    } else {
+        Stage::Gear
+    };
+    let mut stages = [under, Stage::Body, Stage::Masts].map(|stage| (stage, Draft::default()));
     gear(&mut stages[0].1, genome);
     body(&mut stages[1].1, genome, color);
     masts(&mut stages[2].1, genome, 0.0);
@@ -1186,7 +1192,10 @@ fn stand_up(
             if let Ok((stage, mut placed)) = stages.get_mut(child) {
                 let (height, share) = match stage {
                     Stage::Gear => (0.0, now.gear),
-                    Stage::Body => (0.0, now.body),
+                    // A base is wider than the hull that sits on it, and under it. It rises
+                    // with that hull and never ahead of it, as tracks do: it would stand
+                    // over the deck for a moment, and hide the ink that spreads there.
+                    Stage::Base | Stage::Body => (0.0, now.body),
                     Stage::Masts => (deck, now.masts),
                     Stage::Turret => (deck, now.turret),
                 };
@@ -1837,6 +1846,38 @@ mod tests {
             assert!(roofs > 0 && decks > roofs, "{roofs} and {decks}");
             assert!(veils(&mut app, enemy).is_empty());
             assert!(app.world().get::<Standing>(enemy).is_none());
+        }
+    }
+
+    #[test]
+    fn the_base_of_a_tank_never_stands_over_its_deck() {
+        for rate in [60.0, 144.0] {
+            let mut app = drawing_world();
+            // A tank without an engine sits on a base, which is wider than its hull.
+            let tank = Tank {
+                genome: Genome::empty(10),
+                team: tanku_core::sim::Team::Enemies,
+                sector: 3,
+            };
+            let enemy = app.world_mut().spawn((tank, Enemy { awake: false })).id();
+            app.update();
+            app.world_mut().get_mut::<Enemy>(enemy).unwrap().awake = true;
+            let mut rose = false;
+            for _ in 0..(wake::LENGTH * rate) as usize + 2 {
+                let time = std::time::Duration::from_secs_f32(1.0 / rate);
+                app.world_mut().resource_mut::<Time>().advance_by(time);
+                app.update();
+                let (stages, _) = standing(&mut app, enemy);
+                let of = |wanted: Stage| stages.iter().find(|(stage, ..)| *stage == wanted);
+                let (base, body) = (of(Stage::Base).unwrap(), of(Stage::Body).unwrap());
+                assert!(of(Stage::Gear).is_none());
+                // The top of the base is under the deck at every moment, as it is at rest.
+                let (top, deck) = (BASE_HEIGHT * base.1, TURRET_HEIGHT * body.1);
+                assert!(top < deck, "{top} over {deck} at {rate} frames a second");
+                rose |= base.1 > FLAT && base.1 < 1.0;
+            }
+            // It did rise meanwhile, and stands at the end.
+            assert!(rose && app.world().get::<Standing>(enemy).is_none());
         }
     }
 
