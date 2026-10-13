@@ -302,12 +302,15 @@ pub fn follow(
     {
         let at = scene::to_ground(player.translation);
         let ahead = ((view.aim - at) * LOOK_AHEAD.0).clamp_length_max(LOOK_AHEAD.1);
-        // The way out of the sector the tank is in, once the sector is quiet: no enemy is
-        // left there, and none of their bullets still flies.
+        // The way out of the sector the tank is in, once the sector is quiet: it is cleared,
+        // no enemy is left there, and none of their bullets still flies. An arena that has no
+        // tank between two of its waves is not cleared: the run says when a sector is.
         let sector = run.as_ref().map(|run| run.sector);
+        let cleared = run.as_ref().map_or(0, |run| run.cleared);
         let quiet = sector.filter(|sector| {
             let mut shots = bullets.iter().filter(|bullet| bullet.team == Team::Enemies);
-            enemies.iter().all(|tank| tank.sector != *sector)
+            cleared >= *sector
+                && enemies.iter().all(|tank| tank.sector != *sector)
                 && shots.all(|bullet| bullet.sector != *sector)
         });
         let way_out = quiet.and_then(|sector| {
@@ -424,7 +427,9 @@ mod tests {
     /// A world in which the tank waits at the barrier of its sector, which is quiet.
     fn world_at_a_barrier() -> App {
         let mut app = world_with_a_tank();
-        app.insert_resource(run_in(3));
+        let mut run = run_in(3);
+        run.cleared = 3;
+        app.insert_resource(run);
         // The cursor is on the tank, so that the view doesn't lean toward it.
         app.world_mut().resource_mut::<View>().aim = TANK;
         app.world_mut().spawn(barrier(3, TANK.y + 3.0));
@@ -664,6 +669,20 @@ mod tests {
         assert!(ahead(&app).abs() < 0.05);
         // Enemies of other sectors don't hold it back: the dormant ones are what it shows.
         app.world_mut().get_mut::<Tank>(enemy).unwrap().sector = 4;
+        wait(&mut app, A_WHILE);
+        assert!(near(ahead(&app), PAST_BARRIER));
+    }
+
+    #[test]
+    fn the_view_stays_on_a_tank_in_an_arena_between_two_of_its_waves() {
+        // No tank is there for a moment: the wave that was there is destroyed, and the next
+        // one has not appeared. The sector is not cleared, and its barrier stays closed.
+        let mut app = world_at_a_barrier();
+        app.world_mut().resource_mut::<Run>().cleared = 2;
+        wait(&mut app, A_WHILE);
+        assert!(ahead(&app).abs() < 0.05);
+        // Once the last wave is destroyed, the run says that the sector is cleared.
+        app.world_mut().resource_mut::<Run>().cleared = 3;
         wait(&mut app, A_WHILE);
         assert!(near(ahead(&app), PAST_BARRIER));
     }
