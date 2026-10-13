@@ -707,6 +707,8 @@ Every other run earns them, alone or as a team, and an achievement earned by a t
 
 The game stores settings, bindings, unlocks, records and the tank of the garage on the player's machine, or in the browser's storage on the web. It also keeps what a solo player and a host chose last: the difficulty, arena mode, free mode and the name of the game, and never the password. Records keep the most sectors cleared for each difficulty and number of players, with the seed and the version, and apart for the runs in free mode. The runs of arena mode have records of their own in the same way, which keep the most groups cleared. The number of players is the one at the start of the run, and each player keeps the record on their own machine.
 
+The game also keeps a journal on the player's machine: a line for each run that entered a sector, with its seed, its mode, the sectors that it entered, where each tank was lost and to what, and how it ended. The web build keeps none.
+
 ## Technical requirements
 
 | Topic | Requirement |
