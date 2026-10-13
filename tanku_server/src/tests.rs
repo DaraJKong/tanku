@@ -1942,6 +1942,35 @@ fn an_enemy_holds_its_fire_at_a_player_beyond_its_sight() {
     assert!(shots(&mut app) > 0);
 }
 
+#[test]
+fn the_best_ballistics_fire_at_a_crate_next_to_the_player() {
+    // A crate stands 2 m east of the player, who is within the reach of its blast. A sentry
+    // 8 m north of the player has a shot at both. What is left after three seconds: the
+    // crate, and the lives of the player.
+    let fares = |ballistics: u8, hidden: bool| {
+        let mut app = start("TEST");
+        let explosive = spawn_crate(&mut app, START + Vec2::X * 2.0);
+        if hidden {
+            // A block between the sentry and the crate: the crate is no target then.
+            spawn_block(&mut app, START + Vec2::new(2.0, 2.0));
+        }
+        let levels = [
+            (Stat::Turret, 6),
+            (Stat::Loader, 0),
+            (Stat::Ballistics, ballistics),
+        ];
+        spawn_awake(&mut app, Vec2::new(0.0, 13.0), &levels);
+        tick(&mut app, seconds(3.0));
+        (alive(&app, explosive), run(&app).lives)
+    };
+    // The tiers below fire at the player: one round in three seconds, which destroys the
+    // tank and leaves the crate.
+    assert_eq!(fares(2, false), (true, 2));
+    // The best one fires at the crate, whose blast destroys the tank as well.
+    assert_eq!(fares(3, false), (false, 2));
+    assert_eq!(fares(3, true), (true, 2));
+}
+
 /// Fires a player's bullet straight at an enemy from the north. Returns the enemy and the app
 /// a third of a second later, when even a slow brain has seen the bullet coming.
 fn shoot_at_enemy(levels: &[(Stat, u8)]) -> (App, Entity) {

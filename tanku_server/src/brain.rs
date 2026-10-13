@@ -12,7 +12,10 @@ use tanku_core::{
     modes::Difficulty,
     progression,
     rng::Stream,
-    rules::{BLAST_RADIUS, BULLET_RADIUS, MINE_TRIGGER_RADIUS, MUZZLE_DISTANCE, TANK_RADIUS, TICK},
+    rules::{
+        BLAST_RADIUS, BLOCK_SIZE, BULLET_RADIUS, MINE_TRIGGER_RADIUS, MUZZLE_DISTANCE, TANK_RADIUS,
+        TICK,
+    },
     sim::{
         Bullet, Enemy, ExplosiveCrate, Gun, Mine, Motion, Player, Position, Shield, ShieldState,
         Tank, TankCommand, Team, Wreck,
@@ -546,6 +549,14 @@ fn answer(field: &Field, me: Vec2, path: &Path, speed: f32) -> Option<Vec2> {
     intercept(me, path.at, path.velocity, speed).filter(|&meeting| field.sees(me, meeting))
 }
 
+/// Whether a tank has a shot at a mine or at a crate: nothing solid stands between its gun
+/// and that. A crate is solid itself, so the first thing that the shot meets is the crate.
+fn has_a_shot_at(field: &Field, me: Vec2, explosive: Vec2) -> bool {
+    let way = explosive - me;
+    let met = field.cast(me, way, BULLET_RADIUS);
+    met.is_none_or(|(hit, _)| (me + way * hit.t).distance(explosive) < BLOCK_SIZE)
+}
+
 /// Where the shot of a tank ends if it is fired now: on the first thing that is solid along
 /// the way that its turret points, or on the first tank of a player before that.
 fn shot_end(field: &Field, me: Vec2, turret: f32, players: impl Iterator<Item = Vec2>) -> Vec2 {
@@ -708,7 +719,7 @@ pub fn think(
                 .find(|&at| {
                     at.distance(player_at) < BLAST_RADIUS * 0.8
                         && at.distance(me) > BLAST_RADIUS + TANK_RADIUS
-                        && field.sees(me, at)
+                        && has_a_shot_at(&field, me, at)
                 });
             if let Some(at) = explosive {
                 aim = (at - me).to_angle();
