@@ -40,13 +40,34 @@ const CLASS_WEIGHTS: [u32; Class::ALL.len()] = {
     weights
 };
 
+/// What a tank must have before a level of a stat is of any use to it: another stat, and the
+/// level of it. An enemy without a brain can use neither mines nor a shield.
+fn needs(stat: Stat) -> Option<(Stat, u8)> {
+    match stat {
+        Stat::Tracks => Some((Stat::Engine, 1)),
+        Stat::Mines | Stat::Shield => Some((Stat::Brain, 1)),
+        Stat::Seeking => Some((Stat::Ricochet, 1)),
+        _ => None,
+    }
+}
+
+/// Whether a class can have what it favors where these are the highest levels of the stats:
+/// a first level of each stat that it favors, and of what that stat needs.
+fn has_its_favorites(class: Class, most: impl Fn(Stat) -> u8) -> bool {
+    class.favorites().iter().all(|&stat| {
+        most(stat) > 0 && needs(stat).is_none_or(|(other, level)| most(other) >= level)
+    })
+}
+
 /// Whether the tanks of a sector can be of a class: the sector must allow a first level of
-/// every stat that the class favors. A tactician waits for the sector that has a brain and
-/// ballistics to give it. The sectors of normal mode decide, whatever the difficulty, so that
-/// a tank has the same class in hard mode.
+/// every stat that the class favors, and of what those stats need. A tactician waits for the
+/// sector that has a brain and ballistics to give it, and a sapper for the first brain,
+/// without which it could use neither its mines nor its shield. The sectors of normal mode
+/// decide, whatever the difficulty, so that a tank has the same class in hard mode.
 pub fn comes(class: Class, sector: u32) -> bool {
-    let has = |stat: &Stat| highest_level(*stat, Difficulty::Normal, sector, class) > 0;
-    class.favorites().iter().all(has)
+    has_its_favorites(class, |stat| {
+        highest_level(stat, Difficulty::Normal, sector, class)
+    })
 }
 
 /// The class that a tank of a sector draws, among those that the sector has.
@@ -194,10 +215,14 @@ fn spend(
     let highest = |stat: Stat| highest_level(stat, difficulty, sector, class);
 
     // A tactician takes the best brain and the best aim that its sector allows. A sapper
-    // needs a brain for its mines and its shield. The others take what they draw.
+    // needs a brain for its mines and its shield. The others take what they draw. No class
+    // has a better brain than its sector allows: a sapper that is made for a sector without
+    // any, as the trials can ask for one, has none.
     let brain = match class {
         Class::Tactician => highest(Stat::Brain),
-        Class::Sapper => 1 + rng.below(highest(Stat::Brain) as u32) as u8,
+        Class::Sapper => {
+            (1 + rng.below(highest(Stat::Brain) as u32) as u8).min(highest(Stat::Brain))
+        }
         _ => rng.below(highest(Stat::Brain) as u32 + 1) as u8,
     };
     genome.set(Stat::Brain, brain);
@@ -727,6 +752,44 @@ mod tests {
         }
         let tacticians = sample(Normal).filter(|(_, tank)| tank.class == Class::Tactician);
         assert!(tacticians.count() > 0);
+    }
+
+    #[test]
+    fn a_class_waits_for_what_its_favorite_stats_need() {
+        // The highest level of every stat but these is the highest there is.
+        let with = |held: &'static [(Stat, u8)]| {
+            move |stat: Stat| {
+                let found = held.iter().find(|(other, _)| *other == stat);
+                found.map_or(stat.max_level(), |(_, level)| *level)
+            }
+        };
+        let comes =
+            |class: Class, held: &'static [(Stat, u8)]| has_its_favorites(class, with(held));
+        // Every class has what it favors where nothing is held back.
+        for class in Class::ALL {
+            assert!(comes(class, &[]), "{class:?}");
+        }
+        // A sapper favors mines and a shield, which an enemy without a brain can't use: it
+        // waits for the first brain, and so does no other class but the tactician, which
+        // favors the brain itself.
+        let brainless: &[(Stat, u8)] = &[(Stat::Brain, 0)];
+        for class in Class::ALL {
+            let waits = matches!(class, Class::Sapper | Class::Tactician);
+            assert_eq!(comes(class, brainless), !waits, "{class:?}");
+        }
+        assert!(comes(Class::Sapper, &[(Stat::Brain, 1)]));
+        // A scout waits for an engine, which its tracks need, and a seeker for a bounce,
+        // which a bullet that seeks needs.
+        assert!(!comes(Class::Scout, &[(Stat::Engine, 0)]));
+        assert!(!comes(Class::Seeker, &[(Stat::Ricochet, 0)]));
+        assert!(!comes(Class::Trickster, &[(Stat::Ricochet, 0)]));
+        assert!(comes(
+            Class::Gunner,
+            &[(Stat::Engine, 0), (Stat::Ricochet, 0)]
+        ));
+        // A stat that is held back holds back the class that favors it, and no other.
+        assert!(!comes(Class::Grenadier, &[(Stat::Exploding, 0)]));
+        assert!(comes(Class::Flanker, &[(Stat::Exploding, 0)]));
     }
 
     #[test]
