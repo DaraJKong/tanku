@@ -150,6 +150,7 @@ mod tests {
             free: false,
             arena: false,
             lull: None,
+            paused: false,
         }
     }
 
@@ -340,6 +341,7 @@ mod tests {
         app.insert_resource(Run {
             arena: true,
             lull: Some(3),
+            paused: false,
             ..run(0, RunPhase::Playing)
         });
         app.update();

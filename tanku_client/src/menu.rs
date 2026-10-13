@@ -368,6 +368,7 @@ pub fn plugin(app: &mut App) {
                 list_records.run_if(in_state(Screen::Menu)),
                 hover,
                 pause_time,
+                hold_run,
                 (watch_run, keep_records).chain(),
                 exhibit.run_if(before_a_run),
             ),
@@ -2794,8 +2795,9 @@ fn pause_menu(
     destination: Res<Destination>,
     session: Res<Session>,
 ) {
-    // Only a single player's run stands still while the menu is open.
-    let paused = run.as_ref().is_none_or(|run| run.solo);
+    // A single player's run stands still while the menu is open, and so does the run of a
+    // host, for everyone in it. A guest's menu holds nothing.
+    let paused = run.as_ref().is_none_or(|run| run.solo) || *session == Session::Host;
     panel(
         &mut commands,
         (PauseRoot, DespawnOnExit(Overlay::Pause)),
@@ -2804,6 +2806,8 @@ fn pause_menu(
             heading(parent, if paused { "Paused" } else { "Menu" });
             if !paused {
                 line(parent, "The run goes on meanwhile", theme::TEXT_DIM);
+            } else if *session == Session::Host && run.as_ref().is_some_and(|run| !run.solo) {
+                line(parent, "The run waits for everyone", theme::TEXT_DIM);
             }
             primary(parent, "Resume", Press::Resume);
             button(parent, "Settings", Press::OpenSettings);
@@ -3565,6 +3569,24 @@ fn pause_time(
     }
 }
 
+/// The menu of a host holds the run of several players, for everyone in it: the simulation
+/// stops, and the guests are told. The clock of the machine goes on, which the network counts
+/// on. A guest's menu holds nothing.
+fn hold_run(
+    screen: Res<State<Screen>>,
+    overlay: Res<State<Overlay>>,
+    session: Res<Session>,
+    run: Option<ResMut<Run>>,
+) {
+    let Some(mut run) = run.filter(|run| !run.solo && *session == Session::Host) else {
+        return;
+    };
+    let held = *screen.get() == Screen::Playing && *overlay.get() != Overlay::None;
+    if run.paused != held {
+        run.paused = held;
+    }
+}
+
 /// Shows the game over screen a moment after a run is lost, and keeps the record.
 fn watch_run(
     time: Res<Time<Real>>,
@@ -3674,6 +3696,7 @@ mod tests {
             free: false,
             arena: false,
             lull: None,
+            paused: false,
         }
     }
 
@@ -4098,6 +4121,7 @@ mod tests {
                     free: true,
                     arena: true,
                     lull: Some(3),
+                    paused: false,
                     ..lost_run(4)
                 };
                 app.insert_resource(run)
@@ -4861,6 +4885,7 @@ mod tests {
             sector,
             cleared: sector.saturating_sub(lull.is_none() as u32),
             lull,
+            paused: false,
             ..lost_run(1)
         };
         // The stamp says which group ended the run, or which one was about to come.
@@ -6204,6 +6229,7 @@ mod tests {
             free: false,
             arena: false,
             lull: None,
+            paused: false,
         };
         let mut records = Records::default();
         assert!(!keep_record(&mut records, &run));

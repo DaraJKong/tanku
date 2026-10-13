@@ -55,8 +55,10 @@ pub struct ServerPlugin;
 
 impl Plugin for ServerPlugin {
     fn build(&self, app: &mut App) {
-        let in_progress =
-            |run: Option<Res<Run>>| run.is_some_and(|run| run.phase != RunPhase::Over);
+        // Nothing moves while the host of a game holds it.
+        let in_progress = |run: Option<Res<Run>>| {
+            run.is_some_and(|run| run.phase != RunPhase::Over && !run.paused)
+        };
         // A run in arena mode never leaves its room: it has no sector to cross into.
         let in_a_room = |run: Option<Res<Run>>| run.is_some_and(|run| run.arena);
         app.init_resource::<Casualties>().add_systems(

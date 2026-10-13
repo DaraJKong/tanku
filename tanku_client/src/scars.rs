@@ -441,6 +441,7 @@ mod tests {
             free: false,
             arena,
             lull: None,
+            paused: false,
         }
     }
 

@@ -183,6 +183,7 @@ pub fn handle_requests(
                     free: *free,
                     arena: *arena,
                     lull: None,
+                    paused: false,
                 });
                 events.write(SimEvent::RunStarted);
             }

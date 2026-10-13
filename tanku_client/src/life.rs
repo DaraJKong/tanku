@@ -260,6 +260,7 @@ mod tests {
             free: false,
             arena: false,
             lull: None,
+            paused: false,
         };
         assert!(!within_reach(&run));
         assert_eq!(words(&run).0, "LIFE \u{b7} YOU HAVE ALL 3");

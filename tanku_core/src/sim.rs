@@ -371,6 +371,10 @@ pub struct Run {
     /// In arena mode, between two groups: the seconds until the next one is announced, in
     /// whole seconds.
     pub lull: Option<u8>,
+    /// Whether the host of a game of several players has its menu open: nothing moves until
+    /// it is closed. A guest's menu pauses nothing, and a single player's stops the clock of
+    /// their own machine instead.
+    pub paused: bool,
 }
 
 /// Present when the game was started as a playtest, which lets the player cheat. The runs of

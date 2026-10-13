@@ -314,6 +314,8 @@ fn heard(checkpoints: &ReplicationCheckpointMap, confirmed: &ConfirmHistory) -> 
 
 pub fn plugin(app: &mut App) {
     let guest = |session: Res<Session>| *session == Session::Guest;
+    // While the host holds the run, nothing moves there, and nothing moves here ahead of it.
+    let held = |run: Option<Res<Run>>| run.is_some_and(|run| run.paused);
     app.init_resource::<Past>()
         .init_resource::<Orders>()
         .init_resource::<Echoes>()
@@ -336,6 +338,7 @@ pub fn plugin(app: &mut App) {
             (foresee, fly)
                 .chain()
                 .run_if(guest)
+                .run_if(not(held))
                 .run_if(resource_exists::<Field>),
         )
         .add_systems(Update, ease.before(crate::scene::place));

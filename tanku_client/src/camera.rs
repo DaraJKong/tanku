@@ -405,6 +405,7 @@ mod tests {
             free: false,
             arena: false,
             lull: None,
+            paused: false,
         }
     }
 

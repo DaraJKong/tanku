@@ -163,6 +163,7 @@ mod tests {
                 free: false,
                 arena: false,
                 lull: None,
+                paused: false,
             })
             .add_message::<SimEvent>()
             .add_systems(Startup, setup)

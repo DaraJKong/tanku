@@ -1072,6 +1072,12 @@ fn toasts(
         toast.0 = TOAST_TIME;
         *shown = weight;
     }
+    // Nothing moves while the host of a game holds it, and everyone is told why.
+    if run.as_ref().is_some_and(|run| run.paused) {
+        text.0 = "Paused by the host".to_uppercase();
+        toast.0 = 0.5;
+        *shown = u8::MAX;
+    }
     toast.0 = (toast.0 - time.delta_secs()).max(0.0);
     color.0 = theme::TEXT.with_alpha((toast.0 / 0.5).min(1.0));
 }
@@ -1581,6 +1587,7 @@ mod tests {
             free,
             arena: false,
             lull: None,
+            paused: false,
         };
         assert_eq!(mode(&run(true, false, false)), "SOLO");
         assert_eq!(mode(&run(false, false, false)), "CO-OP");
@@ -1624,6 +1631,7 @@ mod tests {
             free: false,
             arena,
             lull,
+            paused: false,
         };
         let told = |run: &Run| {
             let (unit, number) = place(run);

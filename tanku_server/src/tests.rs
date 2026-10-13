@@ -572,6 +572,25 @@ fn a_bullet_destroys_any_tank_whoever_fired_it() {
 }
 
 #[test]
+fn nothing_moves_while_the_host_holds_the_run() {
+    let mut app = team("TEST", 2);
+    let at = Vec2::new(6.0, 5.0);
+    let bullet = spawn_bullet(&mut app, Team::Enemies, at, Vec2::X * 2.0, 0);
+    tick(&mut app, 5);
+    let (before, ticks) = (position(&mut app, bullet), run(&app).ticks);
+    assert!(before.x > at.x);
+    app.world_mut().resource_mut::<Run>().paused = true;
+    tick(&mut app, seconds(1.0));
+    assert_eq!(position(&mut app, bullet), before);
+    assert_eq!(run(&app).ticks, ticks);
+    // It goes on from where it was.
+    app.world_mut().resource_mut::<Run>().paused = false;
+    tick(&mut app, 5);
+    assert!(position(&mut app, bullet).x > before.x);
+    assert_eq!(run(&app).ticks, ticks + 5);
+}
+
+#[test]
 fn a_player_bullet_destroys_an_enemy() {
     let mut app = start("TEST");
     let enemy = spawn_enemy(&mut app, Vec2::new(0.0, 12.0), &[]);
