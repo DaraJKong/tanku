@@ -500,7 +500,8 @@ pub fn runs(asked: &Asked) -> Report {
     let classes = shares(
         "Whose doing it was",
         "The tanks that each player lost, by the class of the enemy that fired the bullet, \
-         laid the mine or set off the crate. Each class is one tank in eleven.",
+         laid the mine or set off the crate. The census tells how many of the tanks each \
+         class is, sector by sector.",
         "class",
         &class_names,
         &|death| match death.blow {
