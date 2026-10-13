@@ -77,6 +77,9 @@ pub struct Journey {
     pub deaths: Vec<Death>,
     /// Whether each sector that was entered is an arena, from sector 1.
     pub arenas: Vec<bool>,
+    /// What was left in the sector of a run that stalled: the fight that its player and
+    /// the enemies could not end.
+    pub held: Option<String>,
 }
 
 impl Journey {
@@ -97,6 +100,47 @@ fn barrier_of(world: &mut World, sector: u32) -> Option<Barrier> {
         .iter(world)
         .find(|barrier| barrier.sector == sector)
         .copied()
+}
+
+/// What is left in a sector that a run stalls in: each enemy with what makes it hard to end,
+/// and the tanks of an arena that wait for room.
+fn held(world: &mut World, sector: u32) -> String {
+    let mut players = world.query_filtered::<&Position, With<Player>>();
+    let me = players.iter(world).next().map(|at| at.0);
+    let mut foes = world.query_filtered::<(&Tank, &Position), With<Enemy>>();
+    let foes: Vec<(Genome, Vec2)> = foes
+        .iter(world)
+        .filter(|(tank, _)| tank.sector == sector)
+        .map(|(tank, at)| (tank.genome, at.0))
+        .collect();
+    let field = world.resource::<Field>();
+    let mut left: Vec<String> = foes
+        .iter()
+        .map(|(genome, at)| {
+            let engine = match genome.top_speed() {
+                0.0 => "no engine".to_string(),
+                speed => format!("{speed} m/s"),
+            };
+            let seen = match me {
+                Some(me) if field.sees(me, *at) => format!("{:.0} m away", me.distance(*at)),
+                Some(me) => format!("{:.0} m away and out of sight", me.distance(*at)),
+                None => "with the player away".to_string(),
+            };
+            let class = class_name(genome.class).to_lowercase();
+            format!("{class} with brain {}, {engine}, {seen}", genome.brain())
+        })
+        .collect();
+    let waiting = field
+        .arenas
+        .get(&sector)
+        .map_or(0, |arena| arena.incoming.len());
+    if waiting > 0 {
+        left.push(format!("{waiting} tanks of the arena that wait for room"));
+    }
+    match left.is_empty() {
+        true => "nothing".to_string(),
+        false => left.join("; "),
+    }
 }
 
 /// Where a player who has nobody to fight drives, to leave room to the tanks of an arena
@@ -150,6 +194,7 @@ pub fn journey(seed: &str, difficulty: Difficulty, player: Reference, asked: &As
         drive: 0.0,
         deaths: Vec::new(),
         arenas: Vec::new(),
+        held: None,
     };
     let mut pilot = Pilot::new(player);
     // How long the player has been in the sector that is fought.
@@ -166,6 +211,7 @@ pub fn journey(seed: &str, difficulty: Difficulty, player: Reference, asked: &As
         }
         if stayed > asked.patience {
             journey.end = End::Stalled;
+            journey.held = Some(held(app.world_mut(), run.sector));
             break;
         }
         let world = app.world_mut();
@@ -540,6 +586,22 @@ pub fn runs(asked: &Asked) -> Report {
         },
     );
 
+    let mut stalls = Table::new(
+        "Runs that stalled",
+        "Each run that was stopped in a fight that neither side could end: its sector, and \
+         what was left in it.",
+        &["player, seed", "sector", "left"],
+    );
+    for (job, journey) in jobs.iter().zip(&played) {
+        if let Some(left) = &journey.held {
+            stalls.row(vec![
+                format!("{}, {}", job.0.name(), seed_text(job.1)),
+                journey.entered().to_string(),
+                left.clone(),
+            ]);
+        }
+    }
+
     Report {
         title: "Runs".to_string(),
         asked: format!(
@@ -556,7 +618,7 @@ pub fn runs(asked: &Asked) -> Report {
             asked.patience,
         ),
         balance: Some(tanku_core::balance::FINGERPRINT),
-        tables: vec![scores, reached, places, kinds, weapons, classes],
+        tables: vec![scores, reached, places, kinds, weapons, classes, stalls],
     }
 }
 
@@ -626,6 +688,30 @@ mod tests {
     }
 
     #[test]
+    fn a_run_that_stalls_tells_what_held_it() {
+        // No fight ends within a twentieth of a second: the run stalls in its first sector.
+        let asked = Asked {
+            patience: 0.05,
+            ..asked()
+        };
+        let run = journey("TRIAL0", Difficulty::Normal, Reference::Regular, &asked);
+        assert_eq!((run.end, run.cleared), (End::Stalled, 0));
+        let held = run.held.expect("what held the run");
+        assert!(
+            held.contains("with brain") && held.contains("m away"),
+            "{held}"
+        );
+        // A run that ends another way was held by nothing.
+        let run = journey(
+            "TRIAL0",
+            Difficulty::Normal,
+            Reference::Regular,
+            &self::asked(),
+        );
+        assert!(run.end != End::Stalled && run.held.is_none());
+    }
+
+    #[test]
     fn the_report_has_a_row_for_each_player() {
         let report = runs(&asked());
         let titles: Vec<&str> = report
@@ -640,6 +726,7 @@ mod tests {
             "Corridors and arenas",
             "What destroyed the player",
             "Whose doing it was",
+            "Runs that stalled",
         ];
         assert_eq!(titles, wanted);
         assert_eq!(report.tables[0].rows.len(), 2);
