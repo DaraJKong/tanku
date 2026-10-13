@@ -249,6 +249,8 @@ enemy ace    bait 11m..14m  press 5m..8m  until 3  retreat 16m..22m  crossfire 9
 | `enemy mines` | `reflex`: a brain lays a mine when the player is this close. `range`: a veteran lays mines in the way of a player who is no further than this. `apart`: it lays none this close to another one. `charge`: a player who comes at a tank this fast charges it. |
 | `enemy ace` | The distances that an ace keeps from a player who has rounds (`bait`) and from one who has none (`press`), until that player has so many rounds again (`until`), and those that it keeps when it is the last of its group (`retreat`). `crossfire`: the turn around the player that it wants between itself and the nearest ally. |
 
+**`foresight`** is how long before a bullet arrives a brain starts to see it. A soldier sees a bullet that flies straight at its tank once the bullet is that long from hitting it. A veteran follows every bullet for that long, bounces included, and sees those that will pass over its tank. An ace also sees those that will pass where it can drive to in that time, which is how it gets out of the way of a shot that is aimed ahead of it. A brain acts on a bullet once it has seen it for the reaction of its sector, so what it has left to get out of the way is the foresight less that reaction. With `foresight 1s`, a shot of the standard tank, which flies at 9 m/s, is seen from 9 m away: a brain that keeps 8 to 14 m from the player sees it almost as it is fired, and any tank that has an engine has the time to move aside. A shorter foresight leaves the slow tanks too little time, and the fast ones still enough.
+
 ## Unlocks
 
 ```
