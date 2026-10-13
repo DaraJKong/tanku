@@ -11,7 +11,10 @@
 //! a level adds to the danger of a tank next to what it adds to its price. `classes` puts
 //! one of them against the tanks of each class alone, made as the game makes them with a
 //! budget that grows. `runs` plays whole runs, with their lives, their checkpoints and their
-//! arenas, and tells how far each player gets. `compare` tells what changed between two reports of the same trial.
+//! arenas, and tells how far each player gets. `journal` sets the runs that a person played
+//! next to those players. `breed` breeds the tank that costs a player the most for its
+//! points, to show which points are worth more than their price. `compare` tells what
+//! changed between two reports of the same trial.
 //!
 //! ```text
 //! cargo run --release -p tanku_trials -- census --sectors 1-30 --seeds 300 --out target/trials
@@ -20,9 +23,12 @@
 //! cargo run --release -p tanku_trials -- duels --stat muzzle --stat loader --out target/trials
 //! cargo run --release -p tanku_trials -- classes --budgets 20,40,60,80,100,120 --out target/trials
 //! cargo run --release -p tanku_trials -- runs --seeds 100 --out target/trials
+//! cargo run --release -p tanku_trials -- journal --out target/trials
+//! cargo run --release -p tanku_trials -- breed --budget 60 --out target/trials
 //! cargo run --release -p tanku_trials -- compare before/skirmish.csv after/skirmish.csv
 //! ```
 
+mod breed;
 mod census;
 mod classes;
 mod compare;
@@ -40,7 +46,7 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand};
 use tanku_core::{
     modes::Difficulty,
-    stats::{Genome, Stat},
+    stats::{Class, Genome, Stat},
 };
 
 use crate::{reference::Reference, report::Report};
@@ -84,6 +90,11 @@ enum Command {
     /// a person loses their tanks and to what, and which player they play as. It takes a
     /// minute or two on every core of the machine.
     Journal(JournalArgs),
+    /// Breeds the tank that costs a reference player the most for its points: generations
+    /// of tanks that fight, the best of which have children. It tells the best makes next
+    /// to the tanks that the game makes with the same points, and where their points go.
+    /// It takes minutes on every core of the machine.
+    Breed(BreedArgs),
     /// Tells what changed between two reports of the same trial, from their CSV files.
     Compare(CompareArgs),
 }
@@ -304,6 +315,61 @@ struct JournalArgs {
 }
 
 #[derive(Args)]
+struct BreedArgs {
+    /// The points of every tank of the trial.
+    #[arg(long, default_value_t = 60, value_parser = clap::value_parser!(u32).range(1..=1000))]
+    budget: u32,
+    /// The sectors that the tanks fight in, as FIRST-LAST, with their corridors and the
+    /// experience of their brains. The tanks are bred under the caps of the last one.
+    #[arg(long, default_value = "21-30", value_parser = sectors)]
+    sectors: (u32, u32),
+    /// How many tanks of one make the player fights at once.
+    #[arg(long, default_value_t = 3, value_parser = clap::value_parser!(u32).range(1..=6))]
+    count: u32,
+    /// The difficulty: normal or hard.
+    #[arg(long, default_value = "normal", value_parser = difficulty)]
+    difficulty: Difficulty,
+    /// The player who fights: novice, regular or expert.
+    #[arg(long, default_value = "regular", value_parser = player)]
+    player: Reference,
+    /// The one class that the makes are bred of, as the balance names it: all-rounder,
+    /// sniper and so on. Without it, they are bred of every class of the sector, and a
+    /// child may take another class than its parents.
+    #[arg(long, value_parser = class)]
+    class: Option<Class>,
+    /// How long a fight lasts at most, in seconds.
+    #[arg(long, default_value_t = 40.0)]
+    limit: f32,
+    /// How many makes a generation holds. The best quarter has the children of the next.
+    #[arg(long, default_value_t = 32, value_parser = clap::value_parser!(u32).range(4..=500))]
+    population: u32,
+    /// How many generations fight, the first one included, which the game makes.
+    #[arg(long, default_value_t = 20, value_parser = clap::value_parser!(u32).range(1..=500))]
+    generations: u32,
+    /// How many fights each make fights in each generation that it is in.
+    #[arg(long, default_value_t = 24, value_parser = clap::value_parser!(u32).range(1..=1000))]
+    fights: u32,
+    /// How many fights each of the best makes fights at the end, and each class of the
+    /// game with it.
+    #[arg(long, default_value_t = 200, value_parser = clap::value_parser!(u32).range(2..=5000))]
+    finals: u32,
+    /// How many of the best makes are fought again at the end, and told.
+    #[arg(long, default_value_t = 10, value_parser = clap::value_parser!(u32).range(1..=100))]
+    best: u32,
+    /// The text that decides what is drawn: the first tanks, the parents of each child and
+    /// what changes in it. Another text breeds other tanks.
+    #[arg(long, default_value = "BREED")]
+    seed: String,
+    /// How many fights run side by side: as many as the machine has cores, unless told.
+    #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
+    threads: Option<u32>,
+    /// A directory to write the report to, as breed.md and breed.csv. It is printed either
+    /// way.
+    #[arg(long)]
+    out: Option<PathBuf>,
+}
+
+#[derive(Args)]
 struct CompareArgs {
     /// The CSV file of the report from before the change.
     before: PathBuf,
@@ -340,6 +406,12 @@ fn sectors(text: &str) -> Result<(u32, u32), String> {
 
 fn difficulty(text: &str) -> Result<Difficulty, String> {
     Difficulty::of_key(&text.to_lowercase()).ok_or_else(|| format!("`{text}` is no difficulty"))
+}
+
+fn class(text: &str) -> Result<Class, String> {
+    let named = |class: &Class| class.name() == text.trim().to_lowercase();
+    let class = Class::ALL.into_iter().find(named);
+    class.ok_or_else(|| format!("`{text}` is no class"))
 }
 
 fn player(text: &str) -> Result<Reference, String> {
@@ -468,6 +540,25 @@ fn main() {
                 threads: threads(args.threads),
             };
             tell(&journal::journal(&asked, &text), args.out, "journal");
+        }
+        Command::Breed(args) => {
+            let asked = breed::Asked {
+                budget: args.budget,
+                sectors: args.sectors,
+                count: args.count as usize,
+                difficulty: args.difficulty,
+                player: args.player,
+                class: args.class,
+                limit: args.limit,
+                population: args.population,
+                generations: args.generations,
+                fights: args.fights,
+                finals: args.finals,
+                best: args.best,
+                seed: args.seed,
+                threads: threads(args.threads),
+            };
+            tell(&breed::breed(&asked), args.out, "breed");
         }
         Command::Compare(args) => {
             let asked = compare::Asked {

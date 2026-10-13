@@ -370,7 +370,7 @@ TANKU_DEV_SCRIPT="tape run.wav; wait 4; start TANKU; wait 4; play 0 1 0 0 4; wai
 
 ## Trials of the balance
 
-The trials measure what the rules of the game make, without anyone at the keyboard, and tell it in reports that can be compared from one change to the next. They are a tool of their own, `tanku_trials`, with a command for each kind of trial. The census counts what the seeds generate, the comparison of the reference players says what the yardstick of every fight is worth, the skirmishes say what each stretch of sectors costs and which tanks the cost comes from, the duels say what each level of a stat adds to the danger of a tank next to what it adds to its price, the trial of the classes draws the curve of the danger of each class over its points, the runs say how far a player gets with three lives, and the journal sets the runs that a person played next to the reference players. A comparison tells what a change to the game moved between two reports. The numbers that the trials are there to judge are in one file: see [Changing the balance](#changing-the-balance).
+The trials measure what the rules of the game make, without anyone at the keyboard, and tell it in reports that can be compared from one change to the next. They are a tool of their own, `tanku_trials`, with a command for each kind of trial. The census counts what the seeds generate, the comparison of the reference players says what the yardstick of every fight is worth, the skirmishes say what each stretch of sectors costs and which tanks the cost comes from, the duels say what each level of a stat adds to the danger of a tank next to what it adds to its price, the trial of the classes draws the curve of the danger of each class over its points, the runs say how far a player gets with three lives, the journal sets the runs that a person played next to the reference players, and the breeding looks for the tank that does the most with its points. A comparison tells what a change to the game moved between two reports. The numbers that the trials are there to judge are in one file: see [Changing the balance](#changing-the-balance).
 
 ### Census
 
@@ -580,6 +580,54 @@ Each reference player therefore fights for every sector that the journal got to,
 | `--out DIRECTORY` | Writes the report there as `journal.md` and `journal.csv` |
 
 The report is worth what the journal holds. A stretch of sectors says little before the journal has entered a few dozen of its corridors, and a journal that was played with several balances compares with none of them: `--every-build` counts all its runs against the balance of the tool. Three things are not compared at all. The reference players fight in no arena, so the arenas of the journal are counted and set next to nothing. A whole run stops at its third tank, in the middle of a fight that goes on for a reference player, so the last sector of such a run counts a little less than a fight of the trials does. And the journal tells which player loses as many tanks as a person does, not that it loses them the same way: the two tables of what destroyed the player are there to show the difference.
+
+### Breeding
+
+Prices are right when points buy as much danger wherever a tank spends them. The other trials can't say whether they do: the duels try one stat at a time, and the classes are tried as the generator makes them, which spends by the weights of each class. The breeding looks for the tank that costs a player the most for its points, and shows where that tank puts them. It takes about three minutes on 24 cores:
+
+```bash
+cargo run --release -p tanku_trials -- breed
+```
+
+A generation is 32 makes that have the same points. Each make fights a reference player, three tanks of it at once, in fights that are the same for every make of the generation. The first generation is made as the game makes its tanks, class after class. Each of the others is the best quarter of the one before it and children of theirs: a child has each of its levels from one parent or from the other, one thing about it is changed, and it is brought back under the caps of its class and of its sector and within its points. A make that is kept fights again in each generation, so the number that it is kept for gets surer. The makes that lead at the end then fight again, in fights that chose none of them, next to tanks of each class as the game makes them with the same points.
+
+The step from two tanks to a child is `tanku_core::breed`, which [impossible mode](docs/PROJECT.md#impossible-mode) will breed its enemies with. No run of the game breeds a tank yet.
+
+| Table | What it tells |
+|---|---|
+| The best makes | The makes that the breeding ended with: their stats, what the breeding knew of them, and what the fights of the end tell, as tanks lost in a fight and as that number for each tank that the game's own cost |
+| The tanks of the game | The same fights against tanks of each class as the game makes them with the same points, and against a tank of the game whatever its class |
+| Where the points go | For each stat: its level and the points spent on it, on the best makes and on the tanks of the game |
+| Generations | What a fight cost against a make of each generation, a new one, one that is kept and the one that leads |
+
+| Option | Effect |
+|---|---|
+| `--budget 60` | The points of every tank of the trial |
+| `--sectors 21-30` | The sectors that the tanks fight in, with their corridors and the experience of their brains. The tanks are bred under the caps of the last one. |
+| `--count 3` | How many tanks of one make the player fights at once |
+| `--difficulty normal` | `normal` or `hard` |
+| `--player regular` | The player who fights: `novice`, `regular` or `expert` |
+| `--class NAME` | Breeds the makes of one class alone: `all-rounder`, `sniper` and so on. Without it, they are bred of every class of the sector, and a child may take another class than its parents. |
+| `--limit 40` | How long a fight lasts at most, in seconds |
+| `--population 32` | How many makes a generation holds |
+| `--generations 20` | How many generations fight, the first one included |
+| `--fights 24` | How many fights each make fights in each generation that it is in |
+| `--finals 200` | How many fights each of the best makes fights at the end, and each class of the game with it |
+| `--best 10` | How many of the best makes are fought again at the end, and told |
+| `--seed BREED` | The text that decides what is drawn: the first tanks, the parents of each child and what changes in it. Another text breeds other tanks. |
+| `--threads N` | How many fights run side by side |
+| `--out DIRECTORY` | Writes the report there as `breed.md` and `breed.csv` |
+
+A make that does several times what the tanks of the game do with the same points has found points that are worth more than their price. The table of the points names the stats: those that the best makes spend far more on than the game does, and those that they leave out. It doesn't say which level of them carries the make. The duels do, started from the make itself: `duels --tank` followed by its stats, as the report writes them, and `--stat` for each stat to try.
+
+The trial has four limits to read it with:
+
+- **It finds what beats the player that it fights.** The regular player follows no bullet off a wall, so it is the easier prey of a make that seeks or banks its shots. `--player expert` shows what is left against a player who follows them.
+- **Three tanks of one make are no group of the game.** What is worth more in numbers, such as the crossfire of the aces, is worth more here than in a group that has one of them.
+- **It tells of one budget.** Every tank of it has the same points, so it says nothing of whether sixty points are worth twice thirty.
+- **Its best makes are close relatives.** They are what one breeding ended with. Another `--seed` says whether another one ends in the same place, and `--class` what the best make of one class is.
+
+A make is told by the first class that may have its levels, which is the all-rounder for a make that any class could have: a child keeps the class of a parent whatever it kept of that parent, and a class is no promise of what a bred tank favors.
 
 ### Comparing two reports
 
