@@ -28,6 +28,10 @@ const E6: u8 = A5 + 7;
 
 /// Seconds that the glide of a sector that is entered takes to climb, before its clack.
 const ENTERED_CLIMB: f32 = 0.3;
+/// How loud the cue of a sector that is entered is, next to its glide and its clack as they
+/// are written. It sounds at every crossing and tells the players what they have just done,
+/// so it is one of the quietest cues: about as loud as a mine that is placed.
+const ENTERED_LEVEL: f32 = 0.4;
 
 /// Something the game tells with a sound.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -178,15 +182,17 @@ impl Cue {
                 let swell = (t / ENTERED_CLIMB) * (t / ENTERED_CLIMB);
                 let climb =
                     |from: u8, to: u8| sweep(t, frequency(from), frequency(to), ENTERED_CLIMB);
-                swell * (0.34 * climb(A2, E4) + 0.14 * climb(A3, E5) + 0.5 * noise.dull(0.25))
+                let rush = 0.5 * noise.dull(0.25);
+                ENTERED_LEVEL * swell * (0.34 * climb(A2, E4) + 0.14 * climb(A3, E5) + rush)
             }
             // Then a dry clack on that fifth, an octave lower, which dies away: the music is
             // left waiting for its tonic. Nothing of it is as high as the roll of the hi-hat.
             Cue::Entered => {
                 let since = t - ENTERED_CLIMB;
-                0.42 * tone(since, frequency(E3)) * decay(since * 16.0)
-                    + 0.18 * tone(since, frequency(E4)) * decay(since * 24.0)
-                    + 0.55 * noise.dull(0.5) * decay(since * 45.0)
+                ENTERED_LEVEL
+                    * (0.42 * tone(since, frequency(E3)) * decay(since * 16.0)
+                        + 0.18 * tone(since, frequency(E4)) * decay(since * 24.0)
+                        + 0.55 * noise.dull(0.5) * decay(since * 45.0))
             }
         }
     }
@@ -322,6 +328,26 @@ mod tests {
         // It swells: its first tenth of a second is far quieter than its third.
         let tenth = (0.1 * RATE) as usize;
         assert!(loudness(&samples[..tenth]) * 20.0 < loudness(&samples[2 * tenth..3 * tenth]));
+    }
+
+    #[test]
+    fn a_sector_that_is_entered_sounds_quieter_than_a_barrier_that_unlocks() {
+        // How loud a cue is where it is loudest: its power over a twentieth of a second.
+        let loudest = |cue: Cue| {
+            let samples = cue.samples();
+            let window = (0.05 * RATE) as usize;
+            let power = |part: &[f32]| part.iter().map(|sample| sample * sample).sum::<f32>();
+            let parts = samples.windows(window).step_by(window / 4);
+            parts.map(power).fold(0.0, f32::max)
+        };
+        // It sounds at every crossing and tells nothing that the eyes miss, so it stays
+        // under the two cues that it comes between: a barrier that unlocks, and a sector
+        // that is cleared.
+        let entered = loudest(Cue::Entered);
+        assert!(entered > 0.0);
+        for cue in [Cue::Unlocked, Cue::Cleared] {
+            assert!(entered < loudest(cue), "{cue:?}");
+        }
     }
 
     #[test]
