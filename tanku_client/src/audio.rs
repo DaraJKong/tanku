@@ -9,11 +9,12 @@ use tanku_audio::{
     cues::{self, Cue},
     wav,
 };
-use tanku_core::sim::{SimEvent, Team};
+use tanku_core::sim::{Run, SimEvent, Team};
 
 use crate::{
     camera::View,
     music::{self, DuckedUntil},
+    wake::Wake,
 };
 
 /// Present when the game must stay silent, whatever the volume is set to.
@@ -55,7 +56,11 @@ fn play(
     view: Res<View>,
     time: Res<Time<Real>>,
     mut ducked: ResMut<DuckedUntil>,
+    (wake, run): (Option<Res<Wake>>, Option<Res<Run>>),
 ) {
+    // With the experiment of a playtest, a sector of the corridor wakes with a sound. A group
+    // of arena mode is announced by its own.
+    let wakes = wake.is_some_and(|wake| wake.lift) && run.is_some_and(|run| !run.arena);
     let mut appeared = false;
     for event in events.read() {
         let (cue, at) = match *event {
@@ -79,6 +84,7 @@ fn play(
             SimEvent::SectorCleared { sector } if sector > 0 => (Cue::Cleared, None),
             SimEvent::LifeTaken { .. } => (Cue::LifeTaken, None),
             SimEvent::BarrierUnlocked { sector } if sector > 0 => (Cue::Unlocked, None),
+            SimEvent::SectorEntered { .. } if wakes => (Cue::Entered, None),
             // A tank that comes back sounds the same, whatever brought it back.
             SimEvent::PlayerRespawned { .. } | SimEvent::TankRepaired { .. } => {
                 (Cue::Respawned, None)
@@ -127,7 +133,7 @@ fn click(
 #[cfg(test)]
 mod tests {
     use bevy::audio::Source;
-    use tanku_core::sim::{Run, RunPhase};
+    use tanku_core::sim::RunPhase;
 
     use super::*;
     use crate::{Overlay, Screen, music::Baton};
@@ -257,6 +263,27 @@ mod tests {
             app.update();
             assert_eq!(played(&mut app), [], "{event:?}");
         }
+    }
+
+    #[test]
+    fn with_the_experiment_of_a_playtest_a_sector_of_the_corridor_wakes_with_a_sound() {
+        let mut app = game();
+        let entered = SimEvent::SectorEntered { sector: 3 };
+        let heard = |app: &mut App| {
+            app.world_mut().write_message(entered);
+            app.update();
+            played(app)
+        };
+        // Without the experiment, the music alone marks that moment.
+        assert_eq!(heard(&mut app), []);
+        app.insert_resource(Wake::default());
+        assert_eq!(heard(&mut app), []);
+        // With it, the cue is as loud wherever the players are.
+        app.world_mut().resource_mut::<Wake>().lift = true;
+        assert_eq!(heard(&mut app), [(Cue::Entered, 1.0)]);
+        // A group of arena mode comes with a sound of its own.
+        app.world_mut().resource_mut::<Run>().arena = true;
+        assert_eq!(heard(&mut app), []);
     }
 
     #[test]

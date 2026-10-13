@@ -19,10 +19,15 @@ const FADE: f32 = 0.01;
 /// Where the noise of every cue starts.
 const SEED: u32 = 12_345;
 
+const A2: u8 = A3 - 12;
+const E3: u8 = A3 - 5;
 const E4: u8 = A4 - 5;
 const E5: u8 = A4 + 7;
 const A5: u8 = A4 + 12;
 const E6: u8 = A5 + 7;
+
+/// Seconds that the glide of a sector that is entered takes to climb, before its clack.
+const ENTERED_CLIMB: f32 = 0.3;
 
 /// Something the game tells with a sound.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -59,11 +64,14 @@ pub enum Cue {
     Wave,
     /// The tanks of a wave are there.
     Appeared,
+    /// The first player is through a barrier, and the sector behind it wakes. An experiment
+    /// of a playtest: the music marks that moment otherwise, with its roll.
+    Entered,
 }
 
 impl Cue {
     /// Every cue, in the order of their numbers.
-    pub const ALL: [Cue; 18] = [
+    pub const ALL: [Cue; 19] = [
         Cue::Shot,
         Cue::EnemyShot,
         Cue::Ricochet,
@@ -82,6 +90,7 @@ impl Cue {
         Cue::Click,
         Cue::Wave,
         Cue::Appeared,
+        Cue::Entered,
     ];
 
     /// How long the cue lasts.
@@ -105,6 +114,7 @@ impl Cue {
             Cue::Click => 0.04,
             Cue::Wave => 0.9,
             Cue::Appeared => 0.3,
+            Cue::Entered => 0.52,
         }
     }
 
@@ -112,7 +122,10 @@ impl Cue {
     pub fn samples(self) -> Vec<f32> {
         let seconds = self.seconds();
         let count = (seconds * RATE) as u32;
-        let mut noise = Noise(SEED);
+        let mut noise = Hiss {
+            noise: Noise(SEED),
+            dulled: 0.0,
+        };
         let sample = |index: u32| {
             let t = index as f32 / RATE;
             let fade = ((seconds - t) / FADE).min(1.0);
@@ -122,7 +135,7 @@ impl Cue {
     }
 
     /// The level of the cue after `t` seconds, before it fades out.
-    fn wave(self, t: f32, noise: &mut Noise) -> f32 {
+    fn wave(self, t: f32, noise: &mut Hiss) -> f32 {
         // What is left of a line that falls to nothing over the length of the cue.
         let left = 1.0 - t / self.seconds();
         let glide = |from: f32, to: f32| sweep(t, from, to, self.seconds());
@@ -159,7 +172,43 @@ impl Cue {
             Cue::Appeared => {
                 0.45 * glide(240.0, 70.0) * decay(t * 12.0) + 0.25 * noise.next() * decay(t * 30.0)
             }
+            // A sector powers up: a glide from the tonic up to its fifth, with its octave,
+            // that swells under a dull rush of noise.
+            Cue::Entered if t < ENTERED_CLIMB => {
+                let swell = (t / ENTERED_CLIMB) * (t / ENTERED_CLIMB);
+                let climb =
+                    |from: u8, to: u8| sweep(t, frequency(from), frequency(to), ENTERED_CLIMB);
+                swell * (0.34 * climb(A2, E4) + 0.14 * climb(A3, E5) + 0.5 * noise.dull(0.25))
+            }
+            // Then a dry clack on that fifth, an octave lower, which dies away: the music is
+            // left waiting for its tonic. Nothing of it is as high as the roll of the hi-hat.
+            Cue::Entered => {
+                let since = t - ENTERED_CLIMB;
+                0.42 * tone(since, frequency(E3)) * decay(since * 16.0)
+                    + 0.18 * tone(since, frequency(E4)) * decay(since * 24.0)
+                    + 0.55 * noise.dull(0.5) * decay(since * 45.0)
+            }
         }
+    }
+}
+
+/// The noise of a cue, as it is or with its top taken off.
+struct Hiss {
+    noise: Noise,
+    /// What the dull noise was at the last sample.
+    dulled: f32,
+}
+
+impl Hiss {
+    fn next(&mut self) -> f32 {
+        self.noise.next()
+    }
+
+    /// Noise that follows the noise by this share at each sample: a small share leaves a
+    /// dull rush, and a share of 1 leaves the noise as it is.
+    fn dull(&mut self, share: f32) -> f32 {
+        self.dulled += share * (self.noise.next() - self.dulled);
+        self.dulled
     }
 }
 
@@ -246,6 +295,33 @@ mod tests {
             // Each is an A or an E.
             assert!(notes.iter().all(|pitch| [9, 4].contains(&(pitch % 12))));
         }
+    }
+
+    #[test]
+    fn the_cue_of_a_sector_that_is_entered_ends_on_the_fifth_of_the_music() {
+        let samples = Cue::Entered.samples();
+        // Once its glide is over, it holds two Es: the strongest note of each of its two
+        // octaves.
+        let clack = &samples[(ENTERED_CLIMB * RATE) as usize..];
+        let strongest = |notes: std::ops::RangeInclusive<u8>| {
+            let strength = |pitch: &u8| amount(clack, frequency(*pitch));
+            notes.max_by(|a, b| strength(a).total_cmp(&strength(b)))
+        };
+        assert_eq!(strongest(A2..=A3), Some(E3));
+        assert_eq!(strongest(A3 + 1..=A4), Some(E4));
+        // It leaves the top to the roll of the hi-hat, which the music plays over it: what
+        // is above 7 kHz is a small part of it.
+        let power = |hz: f32| amount(&samples, hz).powi(2);
+        let steps = (1..=220).map(|step| step as f32 * 50.0);
+        let (high, all) = steps.fold((0.0, 0.0), |(high, all), hz| {
+            let power = power(hz);
+            (if hz > 7000.0 { high + power } else { high }, all + power)
+        });
+        assert!(high < 0.03 * all, "{}", high / all);
+        let loudness = |samples: &[f32]| samples.iter().map(|s| (s * s) as f64).sum::<f64>();
+        // It swells: its first tenth of a second is far quieter than its third.
+        let tenth = (0.1 * RATE) as usize;
+        assert!(loudness(&samples[..tenth]) * 20.0 < loudness(&samples[2 * tenth..3 * tenth]));
     }
 
     #[test]

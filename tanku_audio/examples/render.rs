@@ -201,6 +201,7 @@ fn told(cue: Cue) -> &'static str {
         Cue::Click => "A button is pressed",
         Cue::Wave => "A wave of an arena is on its way",
         Cue::Appeared => "The tanks of a wave are there",
+        Cue::Entered => "A sector is entered, in the experiment of a playtest",
     }
 }
 
