@@ -24,7 +24,7 @@ fn the_cues_are_stable() {
         0x15D6_CBBA_D225_A386,
         0xAFDD_CCC6_8F9D_E863,
         0x5C0A_1595_5DF7_25A9,
-        0xB904_489E_CF00_C10A,
+        0x75EA_D1CF_11A1_7097,
         0x336F_39FB_955E_ECF4,
         0x02B1_2B55_65ED_C940,
         0x5FDA_56E3_F03A_5A27,

@@ -28,6 +28,10 @@ const E6: u8 = A5 + 7;
 
 /// Seconds that the glide of a sector that is entered takes to climb, before its clack.
 const ENTERED_CLIMB: f32 = 0.3;
+/// How loud the cue of a cleared sector is, next to its notes as they are written. It is as
+/// loud as the two plucked notes that it took the place of, with the bass counted: its low A
+/// carries further than its level tells.
+const CLEARED_LEVEL: f32 = 0.75;
 /// How loud the cue of a sector that is entered is, next to its glide and its clack as they
 /// are written. It sounds at every crossing and tells the players what they have just done,
 /// so it is one of the quietest cues: about as loud as a mine that is placed.
@@ -110,7 +114,7 @@ impl Cue {
             Cue::ShieldRaised => 0.25,
             Cue::ShieldBlocked => 0.16,
             Cue::ShieldDropped => 0.45,
-            Cue::Cleared => 0.5,
+            Cue::Cleared => 0.9,
             Cue::LifeTaken => 0.6,
             Cue::Unlocked => 0.45,
             Cue::Respawned => 0.4,
@@ -165,7 +169,13 @@ impl Cue {
                 0.3 * (tone(t, frequency(A5)) + tone(t, frequency(E6))) * decay(t * 20.0)
             }
             Cue::ShieldDropped => (0.35 * glide(700.0, 120.0) + 0.15 * noise.next()) * left,
-            Cue::Cleared => 0.3 * (note(t, 0.0, E5) + note(t, 0.14, A5)),
+            // The end of a fight: an E then an A that ring on, over a low A and its octave
+            // that hold for most of a second. Nothing of it is noise: the blast was.
+            Cue::Cleared => {
+                let ground = 0.30 * tone(t, frequency(A2)) * decay(t * 5.0)
+                    + 0.14 * tone(t, frequency(A3)) * decay(t * 7.0);
+                CLEARED_LEVEL * (ground + 0.30 * (ring(t, 0.06, E5, 7.0) + ring(t, 0.24, A5, 6.0)))
+            }
             Cue::LifeTaken => 0.3 * (note(t, 0.0, E5) + note(t, 0.1, A5) + note(t, 0.2, E6)),
             Cue::Unlocked => 0.3 * (note(t, 0.0, A5) + note(t, 0.12, E6)),
             Cue::Respawned => 0.3 * glide(300.0, 900.0) * left,
@@ -233,6 +243,16 @@ fn turn(turns: f32) -> f32 {
     sine(turns - (turns as u32) as f32)
 }
 
+/// A note of the music that starts at some moment, from the middle of its wave, and dies
+/// away as fast as it is told to: it rings on where [`note`] is plucked.
+fn ring(t: f32, start: f32, pitch: u8, rate: f32) -> f32 {
+    if t < start {
+        0.0
+    } else {
+        tone(t - start, frequency(pitch)) * decay((t - start) * rate)
+    }
+}
+
 /// A note of the music that starts at some moment and dies away.
 fn note(t: f32, start: f32, pitch: u8) -> f32 {
     if t < start {
@@ -283,7 +303,7 @@ mod tests {
         let played: [(Cue, &[u8]); 6] = [
             (Cue::MinePlaced, &[E5]),
             (Cue::ShieldBlocked, &[A5, E6]),
-            (Cue::Cleared, &[E5, A5]),
+            (Cue::Cleared, &[A2, E5, A5]),
             (Cue::LifeTaken, &[E5, A5, E6]),
             (Cue::Unlocked, &[A5, E6]),
             (Cue::RunOver, &[A3, E4, A4]),
