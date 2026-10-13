@@ -12,7 +12,7 @@ use tanku_core::{
     },
     sim::{
         Bullet, Enemy, Gun, Mine, MineState, Motion, Player, Position, PreviousPosition, Shield,
-        ShieldState, SimEvent, Tank, TankCommand, Team, Wreck,
+        ShieldState, SimEvent, Tank, TankCommand, Wreck,
     },
     stats::Genome,
 };
@@ -355,20 +355,14 @@ pub fn idle(mut tanks: Query<(&mut TankCommand, &Enemy, &Position, &Motion)>) {
     }
 }
 
-/// Whether a bullet destroys a tank it touches. In a playtest that spares nobody, every
-/// bullet does what a player's does.
-pub fn hits(bullet: &Bullet, target: Entity, team: Team, indiscriminate: bool) -> bool {
-    match bullet.team {
-        // A player's bullet destroys any tank, its owner included once it has bounced.
-        Team::Players => target != bullet.owner || bullet.bounced,
-        Team::Enemies if indiscriminate => target != bullet.owner || bullet.bounced,
-        // An enemy's bullet destroys only players and passes through enemies.
-        Team::Enemies => team == Team::Players,
-    }
+/// Whether a bullet destroys a tank it touches. A bullet spares nobody, whoever fired it:
+/// only the tank that fired it, until it has bounced.
+pub fn hits(bullet: &Bullet, target: Entity) -> bool {
+    target != bullet.owner || bullet.bounced
 }
 
-/// Whether a tank that comes close to an armed mine sets it off: a tank of the other side,
-/// or any tank but the one that laid it in a playtest that spares nobody.
-pub fn sets_off(mine: &Mine, tank: Entity, team: Team, indiscriminate: bool) -> bool {
-    team != mine.team || (indiscriminate && tank != mine.owner)
+/// Whether a tank that comes close to an armed mine sets it off: any tank but the one that
+/// laid it.
+pub fn sets_off(mine: &Mine, tank: Entity) -> bool {
+    tank != mine.owner
 }

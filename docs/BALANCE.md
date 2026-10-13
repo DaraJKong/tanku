@@ -102,7 +102,7 @@ repair  within 3m  takes 2s  safe 1s
 | Line | What it says |
 |---|---|
 | `gun` | The time between two shots of any gun, and the radius of a bullet |
-| `mine` | How long a mine takes to arm, how long after it was laid it goes off by itself, how long it warns first, how close an opposing tank comes to set it off, and the time between two mines of a tank. The warning is no longer than the fuse. |
+| `mine` | How long a mine takes to arm, how long after it was laid it goes off by itself, how long it warns first, how close another tank than the one that laid it comes to set it off, and the time between two mines of a tank. The warning is no longer than the fuse. |
 | `blast` | How far the blast of a mine, of a crate and of an exploding bullet reaches |
 | `shield` | How long the bubble lasts, and its radius |
 | `split` | How long a splitting bullet flies before it becomes two, and how far to each side of its line of flight the two leave |

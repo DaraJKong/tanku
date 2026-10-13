@@ -107,7 +107,6 @@ cargo run -p tanku_client -- --playtest
 | Cheat | How |
 |---|---|
 | Infinite lives | On from the start. The pause menu turns them off and on. |
-| Anything destroys anyone | Off at the start. The pause menu turns it on: a bullet of the enemies then destroys an enemy that it touches, the tank that fired it included once it has bounced, and a mine goes off under any tank but the one that laid it. The brains don't know: they fire through each other as before. |
 | Skip to a sector | The pause menu picks any sector up to 999. The tank comes back at the end of the sector before it, in front of its barrier, as it does after clearing that sector. In arena mode, it picks a group: the run goes on with the lull before that group. |
 | Choose the seed | `--seed TEXT` after `--playtest` starts every run on that seed instead of a random one. |
 | Nothing locked | The solo screen takes a typed seed and offers hard mode, arena mode and free mode, whatever the player has unlocked. |

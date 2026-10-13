@@ -220,7 +220,7 @@ pub enum MineState {
     Arming(f32),
     /// Waiting, with this much fuse left.
     Armed(f32),
-    /// An opposing tank came close, or the fuse is about to run out: the mine warns, and blows
+    /// Another tank than the one that laid it came close, or the fuse is about to run out: the mine warns, and blows
     /// after this much longer.
     Triggered(f32),
 }
@@ -380,10 +380,6 @@ pub struct Run {
 pub struct Playtest {
     /// A destroyed player comes back without losing a life.
     pub infinite_lives: bool,
-    /// Anything destroys anyone: a bullet of the enemies destroys an enemy that it touches,
-    /// the tank that fired it included once it has bounced, and a mine goes off under any
-    /// tank but the one that laid it.
-    pub indiscriminate: bool,
 }
 
 /// What the client asks of the server.

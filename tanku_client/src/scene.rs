@@ -209,7 +209,7 @@ enum Look {
 enum MinePart {
     /// The light in its middle, which blinks.
     Light,
-    /// The circle inside which an opposing tank sets it off.
+    /// The circle inside which another tank than the one that laid it sets it off.
     Trigger,
     /// The circle that its blast reaches.
     Blast,

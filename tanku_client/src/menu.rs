@@ -125,8 +125,6 @@ enum Press {
     ResetBindings,
     /// In a playtest: turns the infinite lives on or off.
     InfiniteLives,
-    /// In a playtest: makes anything destroy anyone, or the sides count again.
-    Indiscriminate,
     /// In a playtest: moves the sector to skip to by this many.
     Destination(i32),
     /// In a playtest: skips to that sector.
@@ -2824,10 +2822,6 @@ fn pause_menu(
                     let state = on_off(playtest.infinite_lives);
                     small(row, state, 70.0, Press::InfiniteLives);
                 });
-                row(parent, "Anything destroys anyone", |row| {
-                    let state = on_off(playtest.indiscriminate);
-                    small(row, state, 70.0, Press::Indiscriminate);
-                });
                 // A run in arena mode skips to the lull before a group.
                 let in_a_room = run.as_ref().is_some_and(|run| run.arena);
                 let unit = if in_a_room { "group" } else { "sector" };
@@ -3462,11 +3456,6 @@ fn press(
                     playtest.infinite_lives = !playtest.infinite_lives;
                 }
             }
-            Press::Indiscriminate => {
-                if let Some(playtest) = &mut playtest {
-                    playtest.indiscriminate = !playtest.indiscriminate;
-                }
-            }
             Press::Destination(change) => {
                 let sector = destination.0.saturating_add_signed(change);
                 destination.0 = sector.clamp(1, PLAYTEST_LAST_SECTOR);
@@ -3791,7 +3780,6 @@ mod tests {
                 app.insert_resource(Records::of_every_team(128, "85GVTHQA"))
                     .insert_resource(Playtest {
                         infinite_lives: true,
-                        ..default()
                     })
                     .insert_resource(Options {
                         playtest: true,
@@ -3805,7 +3793,6 @@ mod tests {
                 app.insert_resource(Records::of_every_team(128, "85GVTHQA"))
                     .insert_resource(Playtest {
                         infinite_lives: true,
-                        ..default()
                     })
                     .insert_resource(Options {
                         playtest: true,
@@ -4158,7 +4145,6 @@ mod tests {
                     .insert_resource(Session::Host)
                     .insert_resource(Playtest {
                         infinite_lives: true,
-                        ..default()
                     });
                 build(app, pause_menu);
             }),
@@ -4176,7 +4162,6 @@ mod tests {
                         .insert_resource(Session::Host)
                         .insert_resource(Playtest {
                             infinite_lives: true,
-                            ..default()
                         });
                     build(app, pause_menu);
                 },

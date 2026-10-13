@@ -255,15 +255,16 @@ struct Threat {
     escape: Vec2,
 }
 
-/// The bullet of a player that flies straight at a tank and gets there first, if any.
+/// The bullet that flies straight at a tank and gets there first, if any. Any bullet destroys
+/// the tank, whoever fired it: only its own spares it, until it has bounced.
 fn oncoming<'a>(
     field: &Field,
-    me: Vec2,
+    (tank, me): (Entity, Vec2),
     bullets: impl Iterator<Item = (Entity, &'a Bullet, &'a Position)>,
 ) -> Option<Threat> {
     let mut incoming: Option<Threat> = None;
     for (entity, bullet, position) in bullets {
-        if bullet.team != Team::Players {
+        if !tanks::hits(bullet, tank) {
             continue;
         }
         let speed = bullet.velocity.length();
@@ -303,6 +304,8 @@ struct Leg {
 #[derive(Clone, Debug)]
 struct Path {
     bullet: Entity,
+    /// The tank that the bullet doesn't destroy: the one that fired it, until it has bounced.
+    spares: Option<Entity>,
     at: Vec2,
     velocity: Vec2,
     legs: Vec<Leg>,
@@ -342,6 +345,7 @@ impl Path {
         }
         Self {
             bullet: entity,
+            spares: (!bullet.bounced).then_some(bullet.owner),
             at,
             velocity: bullet.velocity,
             legs,
@@ -613,7 +617,7 @@ pub fn think(
         .collect();
     let paths: Vec<Path> = bullets
         .iter()
-        .filter(|(_, bullet, _)| followed && bullet.team == Team::Players)
+        .filter(|_| followed)
         .map(|(entity, bullet, position)| Path::of(&field, entity, bullet, position.0, &quarry))
         .collect();
     // The places where exploding bullets are about to go off, which are marked on the floor.
@@ -721,7 +725,7 @@ pub fn think(
         let incoming = if tier >= 3 {
             None
         } else {
-            oncoming(&field, me, bullets.iter())
+            oncoming(&field, (entity, me), bullets.iter())
         };
         brain.threat = incoming.map(|threat| match brain.threat {
             Some((watched, seen)) if watched == threat.bullet => (watched, seen + TICK),
@@ -835,8 +839,10 @@ pub fn think(
                 } else {
                     0.0
                 };
-                let passes =
-                    |path: &&Path| path.nears(me).is_some_and(|near| near < ahead + ON_COURSE);
+                let passes = |path: &&Path| {
+                    path.spares != Some(entity)
+                        && path.nears(me).is_some_and(|near| near < ahead + ON_COURSE)
+                };
                 let near: Vec<&Path> = paths.iter().filter(passes).collect();
                 let bullets: Vec<Entity> = near.iter().map(|path| path.bullet).collect();
                 brain.watch(&bullets);
@@ -1042,7 +1048,10 @@ mod tests {
         assert!(path.place(0.92).distance(me) < 0.1);
         // A brain that only looks straight ahead of a bullet sees nothing coming there.
         let straight_ahead = [(Entity::PLACEHOLDER, &flying, &from)].into_iter();
-        assert_eq!(oncoming(&room(), me, straight_ahead), None);
+        assert_eq!(
+            oncoming(&room(), (Entity::PLACEHOLDER, me), straight_ahead),
+            None
+        );
 
         // The bullet passes 2.1 m from this place before its bounce.
         let passed = path.nears(Vec2::new(5.0, 2.0)).unwrap();

@@ -148,7 +148,7 @@ pub struct Mine {
     pub fuse: f32,
     /// How long a mine warns before it goes off.
     pub warn: f32,
-    /// How close an opposing tank comes to set it off.
+    /// How close another tank than the one that laid it comes to set it off.
     pub trigger: f32,
     /// The time between two mines of a tank.
     pub every: f32,
