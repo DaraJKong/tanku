@@ -412,6 +412,8 @@ A fight of a trial is the real simulation, without a window, with a reference pl
 
 With the time that the standard tank takes to get out of the way, the regular player reacts in about the 0.55 s that the specification counts for a player who keeps moving. All three keep 8 to 14 m from the nearest enemy and drive around it, lead their shots, find a shot off a wall at an enemy that they don't see, and fire as fast as the gun does. They find their way around what hides an enemy, and they hold a shot that would come back to their own tank off a wall or go off within reach of it. Those who see bullets coming keep out of the reach of mines and of the blasts that are marked, and know where their own shots go. None lays a mine, takes cover or picks the moment of a fight.
 
+Three fights would never end from 8 to 14 m, and the players have a way through each. When two enemies or fewer are awake and none has fallen for 20 s, they close in to 3 to 5 m: a last ace that backs away and a tank that shoots down every bullet don't fall to shots from afar. When something stands between them and the place that they drive to, they take the way around it, where they used to turn back in front of it. And in an arena, they drive off the places where the tanks of the next wave wait for room. Closing in costs them tanks, as it costs a person: against a fast ace that is alone, the expert ends the duel in a third of the time and loses nearly three times as many tanks in it.
+
 Nothing destroys the tank of a reference player. What would have is counted as a loss, so that every fight lasts until the group has fallen or the time is up. The losses are the one measure of what a group costs. What hits the tank within 1.5 s of a loss is no other one, since a tank that is destroyed is gone for that long.
 
 This command puts each of them against the group of every sector that is a corridor, on the same seeds. It takes about half a minute on 24 cores:
@@ -519,7 +521,7 @@ The runs are whole runs of a single player: from the start bay, with three lives
 cargo run --release -p tanku_trials -- runs
 ```
 
-The player fights and doesn't drive the corridor: once a sector is cleared, the tank is put through its barrier, over the life of an arena if one is missing. The length of a run is therefore the time of its fights, and the drive between them is an estimate, the way from one barrier to the next in a straight line at the speed of the standard tank. A run whose fight lasts longer than the patience of the trial is stopped and counted apart: it is mostly a lone ace that retreats from a player who doesn't corner it, and its score is then a lower bound.
+The player fights and doesn't drive the corridor: once a sector is cleared, the tank is put through its barrier, over the life of an arena if one is missing. The length of a run is therefore the time of its fights, and the drive between them is an estimate, the way from one barrier to the next in a straight line at the speed of the standard tank. A run whose fight lasts longer than the patience of the trial is stopped and counted apart, and its score is then a lower bound. The report says what held each of them: the enemies that were left, how far they were and whether the player saw them, and the tanks of an arena that waited for room.
 
 | Table | What it tells |
 |---|---|
@@ -529,6 +531,7 @@ The player fights and doesn't drive the corridor: once a sector is cleared, the 
 | Corridors and arenas | The tanks lost for each sector entered, by the kind of the sector |
 | What destroyed the player | The tanks lost, by the weapon and the type of bullet |
 | Whose doing it was | The tanks lost, by the class of the enemy behind it |
+| Runs that stalled | Each run that was stopped in a fight that neither side could end: its sector, and what was left in it |
 
 | Option | Effect |
 |---|---|
