@@ -538,17 +538,17 @@ mod garage {
             "Gun: bullets at 19 m/s",
             &[
                 (Stat::Engine, 4),
-                (Stat::Tracks, 5),
+                (Stat::Tracks, 4),
                 (Stat::Muzzle, 7),
-                (Stat::Magazine, 4),
-                (Stat::Loader, 6),
+                (Stat::Magazine, 2),
+                (Stat::Loader, 5),
             ],
         ),
         (
             "Bouncer: 3 bounces, piercing",
             &[
                 (Stat::Engine, 4),
-                (Stat::Tracks, 4),
+                (Stat::Tracks, 3),
                 (Stat::Muzzle, 3),
                 (Stat::Magazine, 3),
                 (Stat::Loader, 5),
@@ -568,6 +568,18 @@ mod garage {
             ],
         ),
     ];
+
+    /// The trial below is only run on request, so this one says in every run of the tests
+    /// that its tanks are still ones that a player may build: each spends the points of the
+    /// garage, to the last.
+    #[test]
+    fn the_tanks_of_the_trial_are_ones_that_a_player_may_build() {
+        for (name, parts) in TANKS {
+            let tank = Genome::of_the_garage(parts);
+            let cost = tank.map(|tank| tank.cost());
+            assert_eq!(cost, Ok(tanku_core::stats::PLAYER_BUDGET as u32), "{name}");
+        }
+    }
 
     /// The bot in each of the tanks against the groups of two stretches of sectors, in
     /// normal mode. It fires bursts, raises its shield just before a bullet ends on its

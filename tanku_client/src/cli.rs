@@ -208,7 +208,7 @@ mod tests {
             (tank.bounces(), tank.mines(), tank.shield_cooldown()),
             (0, 0, None)
         );
-        assert_eq!((tank.cost(), tank.budget), (48, PLAYER_BUDGET));
+        assert_eq!((tank.cost(), tank.budget), (59, PLAYER_BUDGET));
         // It is the tank of the first seat of every run.
         let options = parse(&format!("--tank {A_TANK} --playtest --seed TANKU")).unwrap();
         assert_eq!(options.tanks(), [tank]);
@@ -232,7 +232,7 @@ mod tests {
             "it needs engine 1 at least, to reach the barriers"
         );
         assert_eq!(
-            refused("engine=7,muzzle=7,loader=7,magazine=2"),
+            refused("engine=7,muzzle=7,loader=4,magazine=1,tracks=2"),
             "it costs 60 points, and a player has 59"
         );
         assert_eq!(
@@ -263,10 +263,11 @@ mod tests {
         let told = tanks_explained();
         assert!(told.contains(A_TANK));
         assert!(told.contains("  engine    0 2 4 6 8 11 14 17"));
-        assert!(told.contains("  piercing  0 4"));
-        assert!(told.contains("  seeking   0 4"));
-        assert!(told.contains("  splitting 0 6"));
-        assert!(told.contains("  exploding 0 8"));
+        assert!(told.contains("  muzzle    0 1 3 6 11 17 24 32"));
+        assert!(told.contains("  piercing  0 6"));
+        assert!(told.contains("  seeking   0 10"));
+        assert!(told.contains("  splitting 0 9"));
+        assert!(told.contains("  exploding 0 10"));
         assert!(!told.contains("turret") && !told.contains("brain"));
         assert_eq!(told.lines().count(), 3 + Stat::GARAGE.len());
     }

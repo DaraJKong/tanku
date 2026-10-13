@@ -142,10 +142,10 @@ mod tests {
     fn a_run_earns_what_the_sectors_it_cleared_are_worth() {
         let earned = |cleared: u32, earns: bool| earned(&run(cleared, earns)).collect::<Vec<_>>();
         let (arena, seed, free) = (Unlock::ArenaMode, Unlock::ChosenSeed, Unlock::FreeMode);
-        assert_eq!(earned(4, true), []);
-        assert_eq!(earned(5, true), [arena]);
-        assert_eq!(earned(9, true), [arena]);
-        assert_eq!(earned(10, true), [arena, seed]);
+        assert_eq!(earned(9, true), []);
+        assert_eq!(earned(10, true), [arena]);
+        assert_eq!(earned(14, true), [arena]);
+        assert_eq!(earned(15, true), [arena, seed]);
         assert_eq!(earned(20, true), [arena, seed, free]);
         // The impossible mode takes a run in hard mode, however far a run in normal mode gets.
         let all_of_normal = [arena, seed, free, Unlock::HardMode];
@@ -165,9 +165,9 @@ mod tests {
             earned(&run).collect::<Vec<_>>()
         };
         let (arena, seed, free) = (Unlock::ArenaMode, Unlock::ChosenSeed, Unlock::FreeMode);
-        assert_eq!(earned(4, true), []);
-        assert_eq!(earned(9, true), [arena]);
-        assert_eq!(earned(10, true), [arena, seed]);
+        assert_eq!(earned(9, true), []);
+        assert_eq!(earned(14, true), [arena]);
+        assert_eq!(earned(15, true), [arena, seed]);
         assert_eq!(earned(19, true), [arena, seed]);
         // A team may get there before any of its members has unlocked hard mode.
         let at_twenty = [arena, seed, free, Unlock::ImpossibleMode];

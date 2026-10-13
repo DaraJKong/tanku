@@ -261,9 +261,9 @@ mod tests {
     #[test]
     fn budget_table_follows_the_formula() {
         // The budgets of a mode go from the first of them toward their cap.
-        for (difficulty, first, cap) in [(Normal, 10.0, 100.0), (Hard, 40.0, 130.0)] {
+        for (difficulty, first, cap) in [(Normal, 10.0, 135.0), (Hard, 40.0, 165.0)] {
             for sector in 1..=120u32 {
-                let exact = cap - (cap - first) * (-(sector as f64 - 1.0) / 15.0).exp();
+                let exact = cap - (cap - first) * (-(sector as f64 - 1.0) / 25.0).exp();
                 assert_eq!(
                     sector_budget(sector, difficulty),
                     exact.round() as u32,
@@ -276,7 +276,7 @@ mod tests {
     #[test]
     fn hard_mode_has_every_tier_at_once_and_what_comes_twenty_sectors_further() {
         assert_eq!(sector_budget(1, Hard), 40);
-        assert_eq!(sector_budget(1000, Hard), 130);
+        assert_eq!(sector_budget(1000, Hard), 165);
         for sector in 1..=100u32 {
             // The best brain and the best aim of normal mode, which stop growing there.
             assert_eq!(brain_cap(sector, Hard), brain_cap(1000, Normal));
@@ -291,23 +291,24 @@ mod tests {
         }
         // A brain of its first sector reacts about twice as fast as one of normal mode.
         assert!((experience(1, Hard) - 0.63).abs() < 0.006);
-        // Its guns are the fastest but one in the first three sectors, and the fastest then.
-        let muzzles: Vec<u8> = (1..=5).map(|sector| muzzle_cap(sector, Hard)).collect();
-        assert_eq!(muzzles, [6, 6, 6, 7, 7]);
+        // Its guns are the fastest but one in the first four sectors, and the fastest then.
+        let muzzles: Vec<u8> = (1..=6).map(|sector| muzzle_cap(sector, Hard)).collect();
+        assert_eq!(muzzles, [6, 6, 6, 6, 7, 7]);
     }
 
     #[test]
     fn progression_matches_the_specification_table() {
         // Sector, budget, enemies in solo, brain cap, ballistics cap, Muzzle cap, experience.
         let table = [
-            (1, 10, 1, 1, 0, 2, 0.00),
-            (3, 21, 2, 1, 1, 2, 0.10),
-            (5, 31, 2, 1, 1, 3, 0.18),
-            (10, 51, 4, 2, 2, 4, 0.36),
-            (15, 65, 6, 3, 3, 5, 0.50),
-            (20, 75, 6, 4, 3, 6, 0.61),
-            (30, 87, 6, 4, 3, 7, 0.77),
-            (50, 97, 6, 4, 3, 7, 0.91),
+            (1, 10, 1, 0, 0, 2, 0.00),
+            (3, 20, 1, 1, 1, 2, 0.10),
+            (5, 28, 2, 1, 1, 3, 0.18),
+            (10, 48, 3, 2, 2, 4, 0.36),
+            (15, 64, 4, 3, 3, 5, 0.50),
+            (20, 77, 6, 3, 3, 6, 0.61),
+            (30, 96, 6, 4, 3, 7, 0.77),
+            (50, 117, 6, 4, 3, 7, 0.91),
+            (75, 129, 6, 4, 3, 7, 0.98),
         ];
         for (sector, budget, enemies, brain, ballistics, muzzle, skill) in table {
             assert_eq!(sector_budget(sector, Normal), budget);
@@ -323,25 +324,25 @@ mod tests {
     }
 
     #[test]
-    fn the_fastest_gun_starts_at_the_players_own_and_gains_a_level_every_five_sectors() {
+    fn the_fastest_gun_starts_at_the_players_own_and_gains_a_level_at_each_of_its_steps() {
         use crate::stats::{Genome, Stat};
         assert_eq!(muzzle_cap(1, Normal), Genome::PLAYER.level(Stat::Muzzle));
         let steps: Vec<u32> = (2..=100)
             .filter(|&sector| muzzle_cap(sector, Normal) > muzzle_cap(sector - 1, Normal))
             .collect();
-        assert_eq!(steps, [4, 9, 14, 19, 24]);
-        assert_eq!(muzzle_cap(24, Normal), Stat::Muzzle.max_level());
+        assert_eq!(steps, [5, 7, 13, 18, 25]);
+        assert_eq!(muzzle_cap(25, Normal), Stat::Muzzle.max_level());
         assert_eq!(muzzle_cap(1000, Normal), Stat::Muzzle.max_level());
         assert_eq!(muzzle_cap(1000, Hard), Stat::Muzzle.max_level());
     }
 
     #[test]
     fn enemy_groups_grow_with_players_and_arenas() {
-        assert_eq!(enemy_count(15, 2, false), 9);
-        assert_eq!(enemy_count(15, 4, false), 15);
+        assert_eq!(enemy_count(20, 2, false), 9);
+        assert_eq!(enemy_count(20, 4, false), 15);
         assert_eq!(enemy_count(1, 2, false), 2);
-        assert_eq!(enemy_count(15, 1, true), 9);
-        assert_eq!(enemy_count(3, 1, true), 3);
+        assert_eq!(enemy_count(20, 1, true), 9);
+        assert_eq!(enemy_count(4, 1, true), 3);
     }
 
     #[test]

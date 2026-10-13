@@ -177,8 +177,8 @@ mod tests {
 
     #[test]
     fn whoever_earned_anything_before_arena_mode_existed_has_arena_mode() {
-        // A player who could type a seed had cleared sector 10, and so sector 5. They aren't
-        // told of arena mode as of something new when a run earns it again.
+        // A player who could type a seed had cleared the sector that unlocks arena mode, and
+        // more. They aren't told of arena mode as of something new when a run earns it again.
         let mut unlocks = Unlocks::of(&[Unlock::ChosenSeed]);
         assert!(unlocks.has(Unlock::ArenaMode));
         assert!(!unlocks.has(Unlock::FreeMode) && !unlocks.has(Unlock::HardMode));

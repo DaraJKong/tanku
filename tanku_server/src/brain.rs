@@ -1117,10 +1117,10 @@ mod tests {
         }
     }
 
-    /// The path of a bullet that flies south-east from the middle of the west half of the
-    /// room. It comes off the south wall at (9.775, 0.225), 6.753 m further.
+    /// The path of a bullet that flies south-east at 15 m/s from the middle of the west half
+    /// of the room. It comes off the south wall at (9.775, 0.225), 6.753 m further.
     fn path_off_the_south_wall(bounces_left: u8) -> (Path, Bullet, Position) {
-        let flying = bullet(Vec2::new(1.0, -1.0).normalize() * 10.0, bounces_left);
+        let flying = bullet(Vec2::new(1.0, -1.0).normalize() * 15.0, bounces_left);
         let from = Vec2::new(5.0, 5.0);
         let path = Path::of(&room(), Entity::PLACEHOLDER, &flying, from, &[]);
         (path, flying, Position(from))
@@ -1151,25 +1151,26 @@ mod tests {
         let (path, ..) = path_off_the_south_wall(1);
         assert_eq!(path.legs.len(), 2);
         assert!(path.legs[0].to.distance(Vec2::new(9.775, 0.225)) < 1e-3);
-        assert!((path.legs[1].start - 0.6753).abs() < 1e-3);
-        // It lasts as long as a brain sees ahead: one second, in which the bullet flies 10 m.
+        assert!((path.legs[1].start - 0.4502).abs() < 1e-3);
+        // It lasts as long as a brain sees ahead: 0.7 s, in which the bullet flies 10.5 m.
         assert!((path.over() - FORESIGHT).abs() < 1e-3);
+        assert!((FORESIGHT - 0.7).abs() < 1e-6);
         assert!(path.place(0.0).distance(Vec2::new(5.0, 5.0)) < 1e-3);
-        assert!(path.place(path.over()).distance(Vec2::new(12.071, 2.521)) < 1e-2);
+        assert!(path.place(path.over()).distance(Vec2::new(12.425, 2.875)) < 1e-2);
 
         // A bullet that has no bounce left ends on the wall.
         let (path, ..) = path_off_the_south_wall(0);
         assert_eq!(path.legs.len(), 1);
-        assert!((path.over() - 0.6753).abs() < 1e-3);
+        assert!((path.over() - 0.4502).abs() < 1e-3);
     }
 
     #[test]
     fn a_ricochet_is_seen_coming_by_a_brain_that_follows_the_bullet() {
         let (path, flying, from) = path_off_the_south_wall(1);
-        // The bullet comes over this place after its bounce, 0.92 s from now.
+        // The bullet comes over this place after its bounce, 0.61 s from now.
         let me = Vec2::new(11.5, 2.0);
         assert!(path.nears(me).unwrap() < 0.1);
-        assert!(path.place(0.92).distance(me) < 0.1);
+        assert!(path.place(0.613).distance(me) < 0.1);
         // A brain that only looks straight ahead of a bullet sees nothing coming there.
         let straight_ahead = [(Entity::PLACEHOLDER, &flying, &from)].into_iter();
         assert_eq!(
@@ -1180,8 +1181,8 @@ mod tests {
         // The bullet passes 2.1 m from this place before its bounce.
         let passed = path.nears(Vec2::new(5.0, 2.0)).unwrap();
         assert!((passed - 2.121).abs() < 1e-2);
-        // It is still on its way to the far end of the room when a second is over: too far
-        // to tell how close it will come.
+        // It is still on its way to the far end of the room when a brain sees no further: too
+        // far to tell how close it will come.
         assert_eq!(path.nears(Vec2::new(15.0, 8.0)), None);
         // A bullet that ends on the wall has come as close to a place as it ever will.
         let (ends, ..) = path_off_the_south_wall(0);
@@ -1205,7 +1206,7 @@ mod tests {
         assert!((room - (1.0 - TANK_RADIUS - BULLET_RADIUS)).abs() < 1e-4);
         assert_eq!(close, Some(TICK));
 
-        // A bullet that ends on the south wall after 0.68 s is in nobody's way afterward: a
+        // A bullet that ends on the south wall after 0.45 s is in nobody's way afterward: a
         // tank that is far away until then, and on that very place a moment later, has had
         // all the room it needs.
         let (ends, ..) = path_off_the_south_wall(0);
@@ -1286,8 +1287,9 @@ mod tests {
             let first = fare.first.map(|(path, time)| (path.at - MIDDLE, time));
             (fare.room, first)
         };
-        // A tank that drives north is out of the way of a bullet that comes from 9 m.
-        let (room, first) = fares(tank(5, 6), Vec2::Y, 9.0, None);
+        // A tank that drives north is out of the way of a bullet that comes from 6 m, which
+        // a brain sees all the way.
+        let (room, first) = fares(tank(5, 6), Vec2::Y, 6.0, None);
         assert!(room > DODGE_ROOM);
         assert_eq!(first, None);
         // From 3 m, the bullet is there first.
@@ -1295,11 +1297,11 @@ mod tests {
         assert!(room < 0.0);
         assert!(matches!(first, Some((_, time)) if time < 0.25));
         // A tank that stays is hit, and so is one without an engine, whichever way it is told.
-        assert!(fares(tank(5, 6), Vec2::ZERO, 9.0, None).0 < 0.0);
-        assert!(fares(tank(0, 0), Vec2::Y, 9.0, None).0 < 0.0);
+        assert!(fares(tank(5, 6), Vec2::ZERO, 6.0, None).0 < 0.0);
+        assert!(fares(tank(0, 0), Vec2::Y, 6.0, None).0 < 0.0);
         // Of two bullets, the one that gets to the tank first is told: the one from the
         // north here, which the tank drives into.
-        let (_, first) = fares(tank(5, 6), Vec2::Y, 9.0, Some(4.5));
+        let (_, first) = fares(tank(5, 6), Vec2::Y, 6.0, Some(4.5));
         assert!(matches!(first, Some((from, time)) if from == Vec2::Y * 4.5 && time < 0.4));
     }
 

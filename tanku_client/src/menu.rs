@@ -3708,14 +3708,14 @@ mod tests {
         }
     }
 
-    /// A tank that a playtest brings: the fastest engine, the fastest gun and the fastest
-    /// loader, with two points left over.
+    /// A tank that a playtest brings: the fastest engine and the fastest gun, with two
+    /// points left over.
     fn racer() -> Genome {
         let parts = [
             (Stat::Engine, 7),
             (Stat::Muzzle, 7),
-            (Stat::Loader, 7),
-            (Stat::Magazine, 1),
+            (Stat::Loader, 4),
+            (Stat::Tracks, 2),
         ];
         Genome::of_the_garage(&parts).unwrap()
     }
@@ -3917,8 +3917,8 @@ mod tests {
             ("the garage with points left", |app| {
                 let parts = [
                     (Stat::Engine, 6),
-                    (Stat::Tracks, 4),
-                    (Stat::Muzzle, 5),
+                    (Stat::Tracks, 5),
+                    (Stat::Muzzle, 4),
                     (Stat::Magazine, 1),
                     (Stat::Loader, 5),
                     (Stat::Ricochet, 2),
@@ -4940,7 +4940,7 @@ mod tests {
         // Locked: nothing to choose, and the screen says what unlocks it.
         let locked = |app: &mut App| build(app, solo_screen);
         assert_eq!(offers(locked), [] as [bool; 0]);
-        assert!(says(&texts(locked), "Clear sector 5"));
+        assert!(says(&texts(locked), "Clear sector 10"));
         // Unlocked and off: it can be turned on.
         let off = |app: &mut App| {
             app.insert_resource(Unlocks::of(&[Unlock::ArenaMode]));
@@ -5048,7 +5048,7 @@ mod tests {
         let options = Options::default();
         assert_eq!(
             held_back(&alone, &Unlocks::default(), &options),
-            Some("Locked for a single player: arena mode (clear sector 5).".to_string())
+            Some("Locked for a single player: arena mode (clear sector 10).".to_string())
         );
         assert_eq!(
             held_back(&alone, &Unlocks::of(&[Unlock::ArenaMode]), &options),
@@ -5504,23 +5504,31 @@ mod tests {
         let cheap = |app: &mut App| {
             let parts = [
                 (Stat::Engine, 1),
-                (Stat::Muzzle, 7),
+                (Stat::Muzzle, 6),
                 (Stat::Magazine, 5),
-                (Stat::Loader, 7),
+                (Stat::Loader, 6),
             ];
             let tank = Genome::of_the_garage(&parts).unwrap();
-            assert_eq!(tank.cost(), 54);
+            assert_eq!(tank.cost(), 53);
             app.insert_resource(Garage { tank });
             build(app, garage_screen);
         };
         let (down, up) = steps(cheap);
         assert_eq!(down, [Stat::Muzzle, Stat::Magazine, Stat::Loader]);
-        // Five points pay for a level of the engine, of the tracks needs an engine, which
-        // it has, a first bounce or a first mine, and not for a shield.
-        let affordable = [Stat::Engine, Stat::Tracks, Stat::Ricochet, Stat::Mines];
+        // Six points pay for a level of the engine, of the tracks, which need the engine
+        // that it has, of the loader, a first bounce, a first mine or a first shield, and
+        // not for the last level of its gun, which costs eight. Its magazine is full.
+        let affordable = [
+            Stat::Engine,
+            Stat::Tracks,
+            Stat::Loader,
+            Stat::Ricochet,
+            Stat::Mines,
+            Stat::Shield,
+        ];
         assert_eq!(up, affordable);
-        // They pay for bullets that pierce or seek, and not for those that split or explode.
-        assert_eq!(types(cheap), [Ammo::Piercing, Ammo::Seeking]);
+        // They pay for bullets that pierce, and not for those that seek, split or explode.
+        assert_eq!(types(cheap), [Ammo::Piercing]);
     }
 
     /// The types of bullet that the garage of a screen lets the player take, in the order
@@ -5561,10 +5569,10 @@ mod tests {
         let cost = |app: &App| app.world().resource::<Garage>().tank.cost();
         assert_eq!((fired(&app), cost(&app)), (Ammo::Normal, 12));
         for (ammo, price) in [
-            (Ammo::Seeking, 4),
-            (Ammo::Exploding, 8),
-            (Ammo::Splitting, 6),
-            (Ammo::Piercing, 4),
+            (Ammo::Seeking, 10),
+            (Ammo::Exploding, 10),
+            (Ammo::Splitting, 9),
+            (Ammo::Piercing, 6),
         ] {
             click(&mut app, Press::Ammo(ammo));
             assert_eq!((fired(&app), cost(&app)), (ammo, 12 + price));
@@ -5966,7 +5974,7 @@ mod tests {
                 Unlock::HardMode,
                 "hard mode (clear sector 30)",
             ),
-            (typed, Unlock::ChosenSeed, "chosen seed (clear sector 10)"),
+            (typed, Unlock::ChosenSeed, "chosen seed (clear sector 15)"),
             (free, Unlock::FreeMode, "free mode (clear sector 20)"),
         ];
         for (set, unlock, words) in locks {

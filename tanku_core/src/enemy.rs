@@ -343,7 +343,7 @@ mod tests {
         let tanks = group(crate::seed::seed_value("TANKU"), Normal, 20, 6);
         assert_eq!(
             format!("{:?}", tanks[0]),
-            "Genome { levels: [3, 6, 6, 6, 5, 4, 1, 0, 0, 0, 0, 0, 0, 0, 0], budget: 64, class: None }"
+            "Genome { levels: [5, 6, 6, 6, 5, 4, 1, 0, 0, 0, 0, 0, 0, 0, 0], budget: 77, class: None }"
         );
         let classes: Vec<Class> = tanks.iter().map(|tank| tank.class).collect();
         assert_eq!(format!("{classes:?}"), CLASSES);
@@ -358,11 +358,10 @@ mod tests {
         assert_eq!(format!("{budgets:?}"), HARD_BUDGETS);
     }
 
-    const CLASSES: &str = "[None, Lancer, Trickster, None, Sapper, Flanker]";
-    const BUDGETS: &str = "[64, 112, 35, 48, 35, 48]";
-    const HARD_TANK: &str =
-        "Genome { levels: [7, 6, 6, 7, 5, 7, 1, 0, 0, 0, 0, 0, 0, 0, 0], budget: 90, class: None }";
-    const HARD_BUDGETS: &str = "[90, 157, 49, 67, 49, 67]";
+    const CLASSES: &str = "[None, Trickster, Tactician, None, Sapper, Gunner]";
+    const BUDGETS: &str = "[77, 96, 44, 49, 36, 49]";
+    const HARD_TANK: &str = "Genome { levels: [7, 6, 6, 7, 5, 7, 1, 0, 0, 0, 0, 0, 0, 0, 1], budget: 107, class: None }";
+    const HARD_BUDGETS: &str = "[107, 133, 59, 69, 51, 69]";
 
     #[test]
     fn hard_mode_makes_the_same_group_stronger() {
@@ -504,7 +503,7 @@ mod tests {
                 "sector {sector}: {total} for {count} tanks"
             );
             // None is weaker than the least, one at most is stronger than the sector budget,
-            // and that one stops at one and a half times that budget.
+            // and that one stops at the share of that budget that a leader may have.
             let above = tanks.iter().filter(|tank| tank.budget as u32 > cap).count();
             assert!(above <= 1, "sector {sector}: {above} tanks above {cap}");
             for tank in &tanks {
@@ -614,7 +613,12 @@ mod tests {
         // Nothing is raised on credit. A tank of 50 points with 2 left can pay neither for
         // a brain, which costs it 4, nor for an aim, which costs it 3. With 3 left, it
         // takes the aim.
-        let parts = [(Stat::Engine, 7), (Stat::Muzzle, 7), (Stat::Turret, 6)];
+        let parts = [
+            (Stat::Engine, 7),
+            (Stat::Muzzle, 6),
+            (Stat::Turret, 4),
+            (Stat::Tracks, 2),
+        ];
         let spent = tank(Class::None, 50, &parts);
         assert_eq!(spent.cost(), 48);
         assert_eq!(raised(&spent), None);
@@ -628,19 +632,23 @@ mod tests {
         let everyone = || sample(Normal).chain(sample(Hard));
         let left = |tank: &Genome| tank.budget as u32 - tank.cost();
         // No tank is left with what a tier of a brain costs the richest of them, which is
-        // 8% of 195 points, and few are left with more than a few points.
+        // 8% of 206 points, and few are left with more than a few points.
         let most = everyone().map(|(_, tank)| left(&tank)).max();
-        assert!(most < Some(16), "{most:?}");
+        assert!(most < Some(17), "{most:?}");
         let (idle, all) = (
             everyone().filter(|(_, tank)| left(tank) > 4).count(),
             everyone().count(),
         );
         assert!(idle * 50 < all, "{idle} of {all}");
-        // A tank that has more points than all the hardware there is costs has a brain:
-        // without one, it could use neither mines nor a shield.
+        // A tank that has more points than everything that a tank without a brain may have
+        // has a brain: without one, it could use neither mines nor a shield. A trickster has
+        // the most without one, 114 points of hardware and the best aim, which is 15% of
+        // its budget: from 149 points on, what is left pays for a brain.
+        let rich = everyone().filter(|(_, tank)| tank.budget > 148);
+        assert!(rich.count() > 20);
         for (sector, tank) in everyone() {
             assert!(
-                tank.budget <= 135 || tank.brain() > 0,
+                tank.budget <= 148 || tank.brain() > 0,
                 "sector {sector}: {tank:?}"
             );
         }
@@ -651,20 +659,20 @@ mod tests {
             let count = progression::enemy_count(sector, 1, false);
             group(crate::seed::seed_value(seed), Normal, sector, count)[index]
         };
-        let scout = leader("BRAVO", 21, 3);
+        let scout = leader("GOLF", 38, 3);
         assert_eq!(
             (scout.class, scout.budget, scout.cost()),
-            (Class::Scout, 114, 114)
+            (Class::Scout, 133, 133)
         );
-        assert_eq!((scout.brain(), scout.mines()), (1, 3));
-        assert_eq!(scout.shield_cooldown(), Some(10.0));
-        // A seeker stops at the first tier of ballistics: its bullets need no bank shot.
-        let seeker = leader("ECHO", 20, 5);
+        assert_eq!((scout.brain(), scout.mines()), (1, 2));
+        assert_eq!(scout.shield_cooldown(), Some(9.0));
+        // An all-rounder stops at the second tier of ballistics, the best that its class has.
+        let plain = leader("ALPHA", 29, 0);
         assert_eq!(
-            (seeker.class, seeker.budget, seeker.cost()),
-            (Class::Seeker, 112, 108)
+            (plain.class, plain.budget, plain.cost()),
+            (Class::None, 117, 112)
         );
-        assert_eq!((seeker.brain(), seeker.ballistics()), (0, 1));
+        assert_eq!((plain.brain(), plain.ballistics()), (0, 2));
     }
 
     #[test]
@@ -697,8 +705,8 @@ mod tests {
     fn the_fastest_gun_of_a_stretch_of_sectors_is_the_one_its_cap_allows() {
         // Between two steps of the cap, some tank has the fastest gun allowed and none has
         // a faster one.
-        let stretches = [(1, 3), (4, 8), (9, 13), (14, 18), (19, 23), (24, 60)];
-        let hard_stretches = [(1, 3), (4, 60)];
+        let stretches = [(1, 4), (5, 6), (7, 12), (13, 17), (18, 24), (25, 60)];
+        let hard_stretches = [(1, 4), (5, 60)];
         let stretches = stretches.map(|stretch| (Normal, stretch));
         let hard_stretches = hard_stretches.map(|stretch| (Hard, stretch));
         for (difficulty, (from, to)) in stretches.into_iter().chain(hard_stretches) {
@@ -713,17 +721,27 @@ mod tests {
     }
 
     #[test]
-    fn every_class_is_about_as_common_as_the_others() {
-        // A tank has the same class whatever the difficulty.
-        let total = sample(Normal).count();
-        for class in Class::ALL {
-            let of_class = |(_, genome): &(u32, Genome)| genome.class == class;
-            let tanks = sample(Normal).filter(of_class).count();
+    fn a_class_is_as_common_as_its_weight_says() {
+        // Once every class has come: a class of weight 3 is three times as common as one of
+        // weight 1, give or take what so many tanks leave to chance.
+        let all_come = |sector: u32| Class::ALL.into_iter().all(|class| comes(class, sector));
+        let late = || sample(Normal).filter(|(sector, _)| all_come(*sector));
+        let total = late().count() as u32;
+        assert!(total > 1000, "{total}");
+        let weights: u32 = CLASS_WEIGHTS.iter().sum();
+        for (class, weight) in Class::ALL.into_iter().zip(CLASS_WEIGHTS) {
+            let tanks = late().filter(|(_, genome)| genome.class == class).count() as u32;
+            // Its share is between two thirds and one and a half times its weight's.
             assert!(
-                tanks * 16 > total && tanks * 8 < total,
+                tanks * weights * 3 > total * weight * 2
+                    && tanks * weights * 2 < total * weight * 3,
                 "{class:?}: {tanks} of {total}"
             );
         }
+        // The classes that fire a special bullet weigh less than the others.
+        let weight = |class: Class| CLASS_WEIGHTS[class as usize];
+        assert!(weight(Class::Seeker) < weight(Class::Lancer));
+        assert!(weight(Class::Lancer) < weight(Class::Sniper));
     }
 
     #[test]
@@ -736,11 +754,30 @@ mod tests {
         });
         assert_eq!(first(Class::Tactician), both);
         assert!(both > Some(1));
+        // A sapper waits for the first brain, and each class that fires a special bullet for
+        // the sector of that bullet.
+        let brain = (1..60).find(|sector| progression::brain_cap(*sector, Normal) > 0);
+        assert_eq!(first(Class::Sapper), brain);
+        assert!(brain > Some(1));
+        for (class, bullet) in [
+            (Class::Lancer, Stat::Piercing),
+            (Class::Seeker, Stat::Seeking),
+            (Class::Flanker, Stat::Splitting),
+            (Class::Grenadier, Stat::Exploding),
+        ] {
+            let with_it = (1..60).find(|sector| progression::cap(bullet, *sector, Normal) > 0);
+            assert_eq!(first(class), with_it, "{class:?}");
+            assert!(with_it > brain, "{class:?}");
+        }
         // What the other classes favor is there from the first sector.
-        for class in Class::ALL {
-            if class != Class::Tactician {
-                assert_eq!(first(class), Some(1), "{class:?}");
-            }
+        for class in [
+            Class::None,
+            Class::Sniper,
+            Class::Scout,
+            Class::Trickster,
+            Class::Gunner,
+        ] {
+            assert_eq!(first(class), Some(1), "{class:?}");
         }
         // No tank is of a class before its sector, in either mode, and tanks are of it after.
         for (sector, tank) in sample(Normal).chain(sample(Hard)) {

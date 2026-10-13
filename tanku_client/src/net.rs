@@ -1420,7 +1420,7 @@ pub(crate) mod tests {
 
     /// A tank that a player builds in their garage: a fast one with a fast gun.
     fn racer() -> Genome {
-        let parts = [(Stat::Engine, 7), (Stat::Muzzle, 7), (Stat::Loader, 6)];
+        let parts = [(Stat::Engine, 7), (Stat::Muzzle, 7), (Stat::Loader, 5)];
         Genome::of_the_garage(&parts).unwrap()
     }
 

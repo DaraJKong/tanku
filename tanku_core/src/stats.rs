@@ -572,36 +572,38 @@ mod tests {
         assert_eq!(Genome::of_the_garage(&standard), Ok(Genome::PLAYER));
         assert!(Genome::PLAYER.is_a_players());
         // What holds an enemy back doesn't hold a player: the fastest gun, piercing bullets
-        // and three bounces, mines and a shield without a brain, at their price. Points
-        // may be left over.
-        let parts = [
-            (Engine, 1),
-            (Muzzle, 7),
-            (Ricochet, 3),
-            (Piercing, 1),
-            (Mines, 1),
-            (Shield, 1),
-        ];
+        // and three bounces, at their price. Points may be left over.
+        let parts = [(Engine, 1), (Muzzle, 7), (Ricochet, 3), (Piercing, 1)];
         let gun = Genome::of_the_garage(&parts).unwrap();
         assert_eq!(
             (gun.bullet_speed(), gun.bounces(), gun.piercing()),
             (19.0, 3, 1)
         );
-        assert_eq!((gun.mines(), gun.shield_cooldown()), (1, Some(10.0)));
-        assert_eq!((gun.cost(), gun.budget), (55, PLAYER_BUDGET));
+        assert_eq!((gun.cost(), gun.budget), (58, PLAYER_BUDGET));
         assert_eq!((gun.class, gun.brain()), (Class::None, 0));
         assert!(gun.is_a_players());
+        // Nor does a player need a brain for mines and a shield.
+        let kit = Genome::of_the_garage(&[(Engine, 1), (Mines, 1), (Shield, 1)]).unwrap();
+        assert_eq!((kit.mines(), kit.shield_cooldown()), (1, Some(10.0)));
+        assert_eq!((kit.cost(), kit.brain()), (12, 0));
+        assert!(kit.is_a_players());
         // A tank that can't drive would never come within reach of a barrier.
         assert_eq!(Genome::of_the_garage(&[(Muzzle, 7)]), Err(Flaw::NoEngine));
         // No tank costs more than the standard one.
-        let dear = [(Engine, 7), (Muzzle, 7), (Loader, 7), (Magazine, 2)];
+        let dear = [
+            (Engine, 7),
+            (Muzzle, 7),
+            (Loader, 4),
+            (Magazine, 1),
+            (Tracks, 2),
+        ];
         assert_eq!(Genome::of_the_garage(&dear), Err(Flaw::TooDear(60)));
         let fits = [
             (Engine, 7),
             (Muzzle, 7),
-            (Loader, 7),
+            (Loader, 4),
             (Magazine, 1),
-            (Tracks, 2),
+            (Tracks, 1),
         ];
         assert_eq!(Genome::of_the_garage(&fits).map(|tank| tank.cost()), Ok(59));
         // The turret of a player's tank follows the cursor, and its player is its brain.
@@ -618,10 +620,10 @@ mod tests {
         // two of them.
         for (ammo, price) in [
             (Ammo::Normal, 0),
-            (Ammo::Piercing, 4),
-            (Ammo::Seeking, 4),
-            (Ammo::Splitting, 6),
-            (Ammo::Exploding, 8),
+            (Ammo::Piercing, 6),
+            (Ammo::Seeking, 10),
+            (Ammo::Splitting, 9),
+            (Ammo::Exploding, 10),
         ] {
             let mut tank = Genome::of_the_garage(&[(Engine, 1)]).unwrap();
             tank.load(ammo);
@@ -713,7 +715,7 @@ mod tests {
     }
 
     #[test]
-    fn full_hardware_costs_139_points() {
+    fn full_hardware_costs_152_points() {
         // Every stat at its highest level, with the dearest of the types of bullet: a tank
         // has one type.
         let plain: u32 = Stat::HARDWARE
@@ -722,15 +724,17 @@ mod tests {
             .map(|stat| stat.price(stat.max_level()))
             .sum();
         let dearest = Ammo::ALL.map(Ammo::price).into_iter().max();
-        assert_eq!((plain, dearest), (131, Some(8)));
+        assert_eq!((plain, dearest), (142, Some(10)));
     }
 
     #[test]
     fn the_special_bullets_are_priced_by_what_they_add() {
         let price = |ammo: Ammo| ammo.price();
-        assert_eq!(price(Ammo::Piercing), price(Ammo::Seeking));
-        assert!(price(Ammo::Seeking) < price(Ammo::Splitting));
-        assert!(price(Ammo::Splitting) < price(Ammo::Exploding));
+        // A piercing bullet costs the least, a splitting one more, and a seeking one and
+        // an exploding one the most.
+        assert!(price(Ammo::Piercing) < price(Ammo::Splitting));
+        assert!(price(Ammo::Splitting) < price(Ammo::Seeking));
+        assert_eq!(price(Ammo::Seeking), price(Ammo::Exploding));
         // Each is one class's alone, and no class has two.
         for class in Class::ALL {
             let own = Ammo::STATS
@@ -824,7 +828,7 @@ mod tests {
             (
                 "burster",
                 34,
-                6,
+                7,
                 &[
                     (Engine, 3),
                     (Tracks, 2),
@@ -839,7 +843,7 @@ mod tests {
             (
                 "miner",
                 39,
-                7,
+                8,
                 &[
                     (Engine, 5),
                     (Tracks, 3),
@@ -853,8 +857,8 @@ mod tests {
             ),
             (
                 "banker",
-                42,
-                13,
+                44,
+                15,
                 &[
                     (Turret, 4),
                     (Muzzle, 4),
@@ -868,7 +872,7 @@ mod tests {
             (
                 "raider",
                 72,
-                19,
+                18,
                 &[
                     (Engine, 5),
                     (Tracks, 3),
@@ -884,8 +888,8 @@ mod tests {
             ),
             (
                 "hunter",
-                96,
-                46,
+                109,
+                40,
                 &[
                     (Engine, 7),
                     (Tracks, 5),

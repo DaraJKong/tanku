@@ -1295,9 +1295,10 @@ fn destroy_player(app: &mut App) {
 #[test]
 fn a_destroyed_player_comes_back_where_the_sector_begins_and_finds_it_as_it_was_left() {
     let mut app = start("TEST");
-    advance_to(&mut app, 6);
+    // Sector 8 is the first that holds three tanks.
+    advance_to(&mut app, 8);
     shelter(&mut app);
-    let foes = enemies(&mut app, 6);
+    let foes = enemies(&mut app, 8);
     assert_eq!(foes.len(), 3);
     let home = |app: &App, foe: Entity| app.world().get::<Home>(foe).unwrap().at;
     let homes: Vec<Vec2> = foes.iter().map(|&foe| home(&app, foe)).collect();
@@ -1308,25 +1309,25 @@ fn a_destroyed_player_comes_back_where_the_sector_begins_and_finds_it_as_it_was_
     let block = {
         let world = app.world_mut();
         let mut blocks = world.query::<(Entity, &Block)>();
-        let found = blocks.iter(world).find(|(_, block)| block.sector == 6);
+        let found = blocks.iter(world).find(|(_, block)| block.sector == 8);
         found.unwrap().0
     };
     app.world_mut().despawn(block);
     // A bullet hangs in the air and a mine lies on the floor.
     let bullet = spawn_bullet(&mut app, Team::Enemies, homes[1], Vec2::X * 0.01, 0);
-    app.world_mut().entity_mut(bullet).insert(InSector(6));
+    app.world_mut().entity_mut(bullet).insert(InSector(8));
     let mine = Mine {
         owner: foes[1],
         team: Team::Enemies,
-        sector: 6,
+        sector: 8,
         state: MineState::Arming(60.0),
     };
-    let mine = (mine, Position(homes[2]), InSector(6));
+    let mine = (mine, Position(homes[2]), InSector(8));
     let mine = app.world_mut().spawn(mine).id();
     tick(&mut app, 1);
     assert!(alive(&app, bullet) && alive(&app, mine));
 
-    // The player is destroyed, and comes back in front of the barrier of sector 5.
+    // The player is destroyed, and comes back in front of the barrier of sector 7.
     let entity = player(&mut app).unwrap();
     app.world_mut().entity_mut(entity).remove::<Protected>();
     destroy_player(&mut app);
@@ -1335,19 +1336,19 @@ fn a_destroyed_player_comes_back_where_the_sector_begins_and_finds_it_as_it_was_
     let state = run(&app);
     assert_eq!(
         (state.sector, state.checkpoint, state.cleared, state.phase),
-        (5, 5, 5, RunPhase::Playing)
+        (7, 7, 7, RunPhase::Playing)
     );
-    let gate = barrier(&mut app, 5);
+    let gate = barrier(&mut app, 7);
     let entity = player(&mut app).unwrap();
     let at = position(&mut app, entity);
     let to_gate = tanku_core::geom::distance_to_segment(at, gate.from, gate.to);
     assert!(to_gate < 3.0, "{to_gate} m from the barrier");
-    assert_eq!(app.world().get::<Tank>(entity).unwrap().sector, 5);
+    assert_eq!(app.world().get::<Tank>(entity).unwrap().sector, 7);
 
     // The enemy that was destroyed stays destroyed. The two others are back where they
     // started, asleep, with their guns loaded.
     assert!(!alive(&app, foes[0]));
-    assert_eq!(enemies(&mut app, 6).len(), 2);
+    assert_eq!(enemies(&mut app, 8).len(), 2);
     for (index, &foe) in foes.iter().enumerate().skip(1) {
         assert_eq!(position(&mut app, foe), homes[index]);
         let world = app.world();
@@ -1364,7 +1365,7 @@ fn a_destroyed_player_comes_back_where_the_sector_begins_and_finds_it_as_it_was_
 
     // They wake again when the player crosses the barrier again.
     cross_barrier(&mut app);
-    assert_eq!(run(&app).sector, 6);
+    assert_eq!(run(&app).sector, 8);
     for &foe in &foes[1..] {
         assert!(app.world().get::<Enemy>(foe).unwrap().awake);
     }
@@ -2240,9 +2241,10 @@ fn a_veteran_shoots_down_a_bullet_that_it_can_not_dodge() {
     assert_eq!(fares(3, 60, &[close]), (true, 1, 2));
     assert_eq!(fares(3, 1, &[close]), (false, 0, 1));
     // Of two bullets, it takes the one that gets to it first: here the second one, which is
-    // fired from the east, from closer.
+    // fired from the east, from closer, and faster. It has the time to turn back to the
+    // first one, a slow one from the far end of the bay.
     let east = (Vec2::new(6.5, 6.0), Vec2::NEG_X * 9.0, 0);
-    let far_north = (Vec2::new(0.0, 15.5), Vec2::NEG_Y * 9.0, 0);
+    let far_north = (Vec2::new(0.0, 15.5), Vec2::NEG_Y * 6.0, 0);
     assert_eq!(fares(3, 60, &[far_north, east]), (true, 2, 4));
     // A bullet that is fired away from the tank, at the east wall of the bay, and comes back
     // at it. The veteran waits until it has bounced, and shoots it down then.
@@ -2540,14 +2542,13 @@ fn a_run_earns_achievements_on_a_seed_that_was_drawn_for_it_unless_it_is_a_playt
     assert!(!earns(true, false, true));
 }
 
-/// A tank that a player may build: a fast gun whose bullets pierce and bounce three times,
-/// and neither mines nor a shield.
+/// A tank that a player may build: a fast gun whose bullets pierce and bounce twice, and
+/// neither mines nor a shield.
 fn gun_tank() -> Genome {
     let parts = [
         (Stat::Engine, 4),
-        (Stat::Tracks, 4),
         (Stat::Muzzle, 7),
-        (Stat::Ricochet, 3),
+        (Stat::Ricochet, 2),
         (Stat::Piercing, 1),
         (Stat::Magazine, 1),
     ];
@@ -2577,7 +2578,7 @@ fn a_player_fights_in_the_tank_that_the_run_was_started_with() {
     assert_eq!(tank_of(&mut app, 0), tank);
     let rounds = |app: &App, entity: Entity| app.world().get::<Gun>(entity).unwrap().rounds;
     assert_eq!(rounds(&app, entity), 2);
-    // It fires what its gun makes: a bullet at 19 m/s that pierces and bounces three times.
+    // It fires what its gun makes: a bullet at 19 m/s that pierces and bounces twice.
     shoot_at(&mut app, START + Vec2::Y * 8.0);
     let world = app.world_mut();
     let bullets: Vec<Bullet> = world.query::<&Bullet>().iter(world).copied().collect();
@@ -2585,7 +2586,7 @@ fn a_player_fights_in_the_tank_that_the_run_was_started_with() {
         panic!("{} bullets", bullets.len());
     };
     assert!((bullet.velocity.length() - 19.0).abs() < 1e-3);
-    assert_eq!((bullet.bounces_left, bullet.pierces_left), (3, 1));
+    assert_eq!((bullet.bounces_left, bullet.pierces_left), (2, 1));
     assert_eq!(rounds(&app, entity), 1);
     // It has neither mines nor a shield, whatever its player asks.
     command(

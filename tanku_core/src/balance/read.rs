@@ -1551,7 +1551,7 @@ mod tests {
         assert_eq!(balance.standard[Stat::Loader as usize], 6);
         assert_eq!((balance.garage, balance.solo.lives), (59, 3));
         assert_eq!(balance.mine.warn, 0.6);
-        assert_eq!(balance.steps.tanks.sectors(), [3, 6, 9, 12, 15]);
+        assert_eq!(balance.steps.tanks.sectors(), [4, 8, 12, 16, 20]);
         assert_eq!(
             (balance.steps.muzzle.first, balance.steps.muzzle.last()),
             (2, 7)
@@ -1568,36 +1568,45 @@ mod tests {
             (seeker.weight, seeker.ricochet, seeker.ballistics),
             (1, 3, 1)
         );
-        assert!(balance.classes[Class::None as usize].favorites().is_empty());
+        let all_rounder = balance.classes[Class::None as usize];
+        assert!(all_rounder.favorites().is_empty());
+        assert_eq!(all_rounder.weight, 3);
+        assert_eq!(balance.enemy.sight, Some(30.0));
     }
 
     #[test]
     fn something_that_grows_by_steps_goes_up_at_its_sectors() {
         let tanks = read(FILE).unwrap().steps.tanks;
-        let told: Vec<u32> = [0, 1, 2, 3, 5, 6, 14, 15, 16, 1000]
+        let told: Vec<u32> = [0, 1, 3, 4, 7, 8, 19, 20, 21, 1000]
             .into_iter()
             .map(|sector| tanks.at(sector))
             .collect();
         assert_eq!(told, [1, 1, 1, 2, 2, 3, 5, 6, 6, 6]);
         assert_eq!(tanks.last(), 6);
         // One that never goes up keeps its first value.
-        let flat = read(&FILE.replace("step ballistics  0  3 8 13", "step ballistics  2")).unwrap();
+        let steps = "step ballistics  0  3 10 15";
+        assert_eq!(FILE.matches(steps).count(), 1);
+        let flat = read(&FILE.replace(steps, "step ballistics  2")).unwrap();
         assert_eq!(flat.steps.ballistics.at(1), 2);
         assert_eq!(flat.steps.ballistics.at(500), 2);
     }
 
     #[test]
     fn any_stat_can_have_a_step() {
-        // No stat but the three has one unless the file says so.
+        // No stat but the three has one unless the file says so. The file gives one to each
+        // special bullet, and none to the rest of the hardware.
         let balance = read(FILE).unwrap();
-        assert!(balance.steps.of(Stat::Exploding).is_none());
+        let exploding = balance.steps.of(Stat::Exploding).unwrap();
+        assert_eq!([exploding.at(16), exploding.at(17)], [0, 1]);
+        assert!(balance.steps.of(Stat::Mines).is_none());
         assert_eq!(balance.steps.of(Stat::Brain), Some(balance.steps.brain));
         // A stat that has one is held back until its sectors.
-        let line = "step muzzle      2  4 9 14 19 24\n";
-        let more = "step exploding   0  8\nstep ricochet 1 10 20\n";
+        let line = "step muzzle      2  5 7 13 18 25\n";
+        assert_eq!(FILE.matches(line).count(), 1);
+        let more = "step mines   0  8\nstep ricochet 1 10 20\n";
         let held = read(&FILE.replace(line, &format!("{line}{more}"))).unwrap();
-        let exploding = held.steps.of(Stat::Exploding).unwrap();
-        assert_eq!([exploding.at(7), exploding.at(8)], [0, 1]);
+        let mines = held.steps.of(Stat::Mines).unwrap();
+        assert_eq!([mines.at(7), mines.at(8)], [0, 1]);
         let ricochet = held.steps.of(Stat::Ricochet).unwrap();
         assert_eq!(
             [ricochet.at(1), ricochet.at(10), ricochet.at(99)],
@@ -1610,9 +1619,10 @@ mod tests {
         );
         // It is written once, ends no higher than its stat, and names something that grows.
         for (more, why) in [
-            ("step exploding 0 8\nstep exploding 0 9\n", "twice"),
+            ("step mines 0 8\nstep mines 0 9\n", "twice"),
+            ("step exploding 0 8\n", "twice"),
             ("step brain 0 3\n", "twice"),
-            ("step exploding 0 8 12\n", "highest level"),
+            ("step mines 3 8 12\n", "highest level"),
             ("step ricochet 2 5 9\n", "highest level"),
             ("step armor 0 3\n", "what grows"),
         ] {
@@ -1623,22 +1633,26 @@ mod tests {
 
     #[test]
     fn the_sight_of_the_enemies_is_a_line_that_a_file_may_leave_out() {
-        // Without the line, an enemy fires however far the player is.
-        let balance = read(FILE).unwrap();
+        // The file has the line. Without it, an enemy fires however far the player is.
+        let its_own = "enemy sight  30m\n";
+        assert_eq!(FILE.matches(its_own).count(), 1);
+        assert_eq!(read(FILE).unwrap().enemy.sight, Some(30.0));
+        let bare = FILE.replace(its_own, "");
+        let balance = read(&bare).unwrap();
         assert_eq!(balance.enemy.sight, None);
         // With it, the enemies see that far, and the rest of the file reads as it did. The
         // line is put before the distances that a brain keeps here, and after them below.
         let keep = "enemy keep ";
-        assert_eq!(FILE.matches(keep).count(), 1);
-        let with = |line: &str| FILE.replace(keep, &format!("{line}\n{keep}"));
+        assert_eq!(bare.matches(keep).count(), 1);
+        let with = |line: &str| bare.replace(keep, &format!("{line}\n{keep}"));
         let seen = read(&with("enemy sight 30m")).unwrap();
         assert_eq!(seen.enemy.sight, Some(30.0));
         let (mut blind, mut rest) = (seen.enemy, seen);
         blind.sight = None;
         rest.enemy = blind;
         assert_eq!(rest, balance);
-        assert_ne!(fingerprint(&with("enemy sight 30m")), fingerprint(FILE));
-        let last = format!("{FILE}enemy sight 22.5m\n");
+        assert_ne!(fingerprint(&with("enemy sight 30m")), fingerprint(&bare));
+        let last = format!("{bare}enemy sight 22.5m\n");
         assert_eq!(read(&last).unwrap().enemy.sight, Some(22.5));
         // It is written once, as a length.
         for (line, why) in [
@@ -1659,7 +1673,7 @@ mod tests {
         );
         for short in [
             with("enemy sight 13.5m"),
-            format!("{FILE}enemy sight 13.5m\n"),
+            format!("{bare}enemy sight 13.5m\n"),
         ] {
             let fault = read(&short).unwrap_err();
             assert!(
@@ -1824,20 +1838,20 @@ mod tests {
             ("warn 0.6s", "warn 12s", "mine", "last moments of its fuse"),
             ("blast   3m", "blast   3", "blast", "as in `3m`"),
             (
-                "10 to 100  every 15",
-                "100 to 10  every 15",
+                "10 to 135  every 25",
+                "135 to 10  every 25",
                 "budget",
                 "up from its first value",
             ),
             (
-                "10 to 100  every 15",
-                "10 to 100  every 0",
+                "10 to 135  every 25",
+                "10 to 135  every 0",
                 "budget",
                 "a sector at least",
             ),
             (
-                "10 to 100  every 15",
-                "10 100 15",
+                "10 to 135  every 25",
+                "10 135 25",
                 "budget",
                 "as in `10 to 100 every 15`",
             ),
@@ -1848,22 +1862,22 @@ mod tests {
                 "experience is written as",
             ),
             (
-                "1  3 6 9 12 15",
-                "1  3 6 6 12 15",
+                "1  4 8 12 16 20",
+                "1  4 8 8 16 20",
                 "step tanks",
                 "rising order",
             ),
-            ("1  3 6 9 12 15", "1  1 3", "step tanks", "after sector 1"),
-            ("1  3 6 9 12 15", "0  3", "step tanks", "one tank at least"),
+            ("1  4 8 12 16 20", "1  1 3", "step tanks", "after sector 1"),
+            ("1  4 8 12 16 20", "0  3", "step tanks", "one tank at least"),
             (
-                "1  3 6 9 12 15",
+                "1  4 8 12 16 20",
                 "1  2 3 4 5 6 7 8 9 10",
                 "step tanks",
                 "eight times",
             ),
             (
-                "1  6 11 16",
-                "2  6 11 16",
+                "0  2 6 14 22",
+                "1  2 6 14 22",
                 "step brain",
                 "above the highest level",
             ),
@@ -1887,7 +1901,7 @@ mod tests {
                 "group",
                 "no more than what a tank has on average",
             ),
-            ("leader 150%", "leader 90%", "group", "100%"),
+            ("leader 125%", "leader 90%", "group", "100%"),
             ("weights 1 1 2 2 3 8", "weights 0 0", "group", "isn't 0"),
             (
                 "weights 1 1 2 2 3 8",
@@ -1896,26 +1910,26 @@ mod tests {
                 "eight of them",
             ),
             (
-                "favorite 20",
-                "favourite 20",
+                "favorite 15",
+                "favourite 15",
                 "group",
                 "`favorite` is expected",
             ),
             (
-                "1  muzzle turret ",
+                "3  muzzle turret ",
                 "muzzle turret ",
                 "class sniper",
                 "its weight in the draw",
             ),
             (
-                "1  muzzle turret ",
-                "1  muzzle turret engine ",
+                "3  muzzle turret ",
+                "3  muzzle turret engine ",
                 "class sniper",
                 "two stats at most",
             ),
             (
-                "1  muzzle turret ",
-                "1  muzzle muzzle ",
+                "3  muzzle turret ",
+                "3  muzzle muzzle ",
                 "class sniper",
                 "a stat once",
             ),
@@ -2067,9 +2081,14 @@ mod tests {
         let classes = FILE.lines().filter(|text| starts(text, "class")).count();
         let weightless: Vec<String> = FILE
             .lines()
-            .map(|text| match text.split_once("  1  ") {
-                Some((class, rest)) if starts(text, "class") => format!("{class}  0  {rest}"),
-                _ => text.to_string(),
+            .map(|text| {
+                // The weight of a class is the word after its name.
+                let mut words: Vec<&str> = text.split_whitespace().collect();
+                if !starts(text, "class") {
+                    return text.to_string();
+                }
+                words[2] = "0";
+                words.join(" ")
             })
             .collect();
         assert_eq!(classes, Class::ALL.len());

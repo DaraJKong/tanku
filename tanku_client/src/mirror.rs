@@ -1654,8 +1654,12 @@ mod tests {
             .collect();
         assert!(ticks.len() > 70, "{} ticks to compare", ticks.len());
         assert!(wrong.is_empty(), "{wrong:?}");
+        // It was up for as long as a shield lasts: a second, to the tick or one more, since
+        // the fractions of a second that a tick takes away don't add up to a whole.
+        let lasts = (tanku_core::rules::SHIELD_DURATION / tanku_core::rules::TICK).round() as usize;
         let up_for = ticks.iter().filter(|(_, there, _)| there.is_active());
-        assert_eq!(up_for.count(), 30);
+        let up_for = up_for.count();
+        assert!((lasts..=lasts + 1).contains(&up_for), "{up_for} ticks");
         // It rose and fell once, in sound as in sight.
         assert_eq!((raised(&guest), dropped(&guest)), (1, 1));
     }

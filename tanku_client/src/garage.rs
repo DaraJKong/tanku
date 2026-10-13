@@ -150,26 +150,25 @@ mod tests {
         for stat in LISTED {
             assert_eq!(garage.changed(stat, 1), None, "{stat:?}");
         }
-        // Giving up the shield frees its 9 points, which pay for three levels of Muzzle.
+        // Giving up the shield frees its 9 points, which pay for two levels of Muzzle, with
+        // a point left.
         garage.change(Stat::Shield, -1);
         garage.change(Stat::Shield, -1);
         assert_eq!((garage.tank.shield_cooldown(), garage.left()), (None, 9));
         assert_eq!(garage.changed(Stat::Shield, -1), None);
         garage.change(Stat::Muzzle, 1);
         garage.change(Stat::Muzzle, 1);
-        garage.change(Stat::Muzzle, 1);
-        assert_eq!((garage.tank.bullet_speed(), garage.left()), (15.0, 0));
+        assert_eq!((garage.tank.bullet_speed(), garage.left()), (13.0, 1));
         // A level that costs more than what is left changes nothing, and neither does a
         // type of bullet.
         let before = garage;
         garage.change(Stat::Muzzle, 1);
         assert_eq!(garage, before);
         assert_eq!(garage.loaded(Ammo::Piercing), None);
-        // What holds an enemy back doesn't hold a player: piercing bullets and a third
-        // bounce, without a class.
+        // What holds an enemy back doesn't hold a player: piercing bullets, without a class.
         garage.change(Stat::Mines, -2);
         garage.tank = garage.loaded(Ammo::Piercing).unwrap();
-        assert_eq!((garage.tank.piercing(), garage.left()), (1, 2));
+        assert_eq!((garage.tank.piercing(), garage.left()), (1, 1));
     }
 
     #[test]
@@ -180,10 +179,10 @@ mod tests {
         garage.change(Stat::Mines, -1);
         assert_eq!((garage.tank.ammo(), garage.left()), (Ammo::Normal, 11));
         for (ammo, left) in [
-            (Ammo::Piercing, 7),
-            (Ammo::Seeking, 7),
-            (Ammo::Splitting, 5),
-            (Ammo::Exploding, 3),
+            (Ammo::Piercing, 5),
+            (Ammo::Seeking, 1),
+            (Ammo::Splitting, 2),
+            (Ammo::Exploding, 1),
             (Ammo::Normal, 11),
         ] {
             // A type takes the place of the one before it, which gives its points back.
@@ -195,14 +194,13 @@ mod tests {
             // The type that the tank fires is always its to keep.
             assert_eq!(garage.loaded(ammo), Some(garage.tank));
         }
-        // What is left pays for a type, less what the type of the tank cost: a tank with 2
-        // points left and piercing bullets has 6 for another type.
+        // What is left pays for a type, less what the type of the tank cost: a tank with 3
+        // points left and piercing bullets has 9 for another type.
         garage.tank = garage.loaded(Ammo::Piercing).unwrap();
         garage.change(Stat::Mines, 1);
-        garage.change(Stat::Engine, 1);
-        assert_eq!(garage.left(), 2);
-        assert!(garage.loaded(Ammo::Seeking).is_some());
+        assert_eq!(garage.left(), 3);
         assert!(garage.loaded(Ammo::Splitting).is_some());
+        assert_eq!(garage.loaded(Ammo::Seeking), None);
         assert_eq!(garage.loaded(Ammo::Exploding), None);
         assert!(garage.loaded(Ammo::Normal).is_some());
         // The tank is kept with its type, and comes back with it.
@@ -215,8 +213,10 @@ mod tests {
 
     #[test]
     fn the_garage_tells_what_a_tank_paid_for_and_can_not_use() {
+        // A tank with 11 points left, which pay for any type.
         let mut garage = Garage::default();
         garage.change(Stat::Shield, -2);
+        garage.change(Stat::Mines, -1);
         // The standard tank has a bounce: seeking bullets use it, and exploding ones can't.
         assert_eq!(garage.wasted(), None);
         for ammo in [Ammo::Piercing, Ammo::Seeking, Ammo::Splitting] {

@@ -289,7 +289,7 @@ A change that is kept is written down in two more places:
 
 ## Tests
 
-The tests of the rules have a balance of their own, `tanku_core/test.balance`: the numbers that the game had at version 0.7.0, before its balance was tuned, in the same notation. `tanku_core` is compiled with that file for its own tests and for those of the other crates, which ask for it with the feature `testing`. A test that says that group 9 has four tanks, or that a tank of 55 points fits the garage, holds numbers of that file. So a change to the balance of the game fails no test of a rule: it fails the one test that watches the file, and nothing else.
+The tests of the rules have a balance of their own, `tanku_core/test.balance`: the numbers that the game had at version 0.8.0, in the same notation. `tanku_core` is compiled with that file for its own tests and for those of the other crates, which ask for it with the feature `testing`. A test that says that group 12 has four tanks, or that a tank of 58 points fits the garage, holds numbers of that file. So a change to the balance of the game fails no test of a rule: it fails the one test that watches the file, and nothing else.
 
 What the tests then don't say is that the rules hold with the numbers of the game. Three things say it:
 
@@ -305,5 +305,5 @@ There, a test that holds a number fails where the two files differ, and the othe
 
 The benchmarks are built as the tests are, so they measure the balance of the tests unless they are given the same feature: `cargo bench -p tanku_core -p tanku_server -p tanku_audio --features tanku_core/game-balance` measures the game. Whatever `cargo run` starts, the game and the trials, is compiled with the balance of the game.
 
-The balance of the tests doesn't follow the one of the game. Bringing it up to date is a change of its own, with every test that holds one of its numbers: it is worth it when the two have grown so far apart that the tests no longer look like the game.
+The balance of the tests doesn't follow the one of the game. Bringing it up to date is a change of its own, with every test that holds one of its numbers: it is worth it when the two have grown so far apart that the tests no longer look like the game. It was done once, when the balance of version 0.8.0 became the game's: 55 tests held a number of the file of before.
 

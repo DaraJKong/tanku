@@ -208,23 +208,26 @@ fn a_run_in_arena_mode_starts_in_its_room_with_the_first_group_in_reserve() {
 
 #[test]
 fn half_of_a_group_comes_after_the_lull_and_a_tank_for_each_one_that_is_destroyed() {
-    // Group 9 has four tanks against a single player.
-    let mut app = before_group("TEST", 1, 9);
+    // Group 12 has four tanks against a single player.
+    let mut app = before_group("TEST", 1, 12);
     shelter(&mut app);
     stand_aside(&mut app);
     let state = run(&app);
-    assert_eq!((state.sector, state.cleared, state.checkpoint), (8, 8, 8));
+    assert_eq!(
+        (state.sector, state.cleared, state.checkpoint),
+        (11, 11, 11)
+    );
     // During the lull, the whole group is in reserve, in a row, and the room is empty.
     assert_eq!(numbers(&mut app), [0, 1, 2, 3]);
     let row: Vec<f32> = reserves(&mut app).iter().map(|(_, at)| at.x).collect();
     assert!(row.windows(2).all(|pair| pair[1] - pair[0] >= 2.5));
     // A gap parts the tanks that come first from those that wait.
     assert!(row[2] - row[1] > 1.5 * (row[1] - row[0]));
-    assert!(enemies(&mut app, 9).is_empty());
+    assert!(enemies(&mut app, 12).is_empty());
 
     // Nothing comes before the lull is over.
     tick(&mut app, seconds(LULL) - 12);
-    assert_eq!(run(&app).sector, 8);
+    assert_eq!(run(&app).sector, 11);
     let early = |event: &SimEvent| {
         let entered = matches!(event, SimEvent::SectorEntered { .. });
         entered || matches!(event, SimEvent::WaveIncoming { .. }) || incoming(event)
@@ -233,25 +236,25 @@ fn half_of_a_group_comes_after_the_lull_and_a_tank_for_each_one_that_is_destroye
     // Then the group is on: it is announced, and the places of half of its tanks are marked.
     tick(&mut app, 14);
     let news = events(&mut app);
-    let entered = SimEvent::SectorEntered { sector: 9 };
+    let entered = SimEvent::SectorEntered { sector: 12 };
     assert_eq!(count(&news, |event| *event == entered), 1);
     assert_eq!(count(&news, announced), 1);
     assert_eq!(count(&news, incoming), 2);
     let state = run(&app);
-    assert_eq!((state.sector, state.lull, state.cleared), (9, None, 8));
+    assert_eq!((state.sector, state.lull, state.cleared), (12, None, 11));
     // A tank whose place is marked has left the reserve. The others wait there.
     assert_eq!(numbers(&mut app), [2, 3]);
-    assert!(enemies(&mut app, 9).is_empty());
+    assert!(enemies(&mut app, 12).is_empty());
 
     // The tanks appear after their marks: awake, and the player is theirs to fight.
     tick(&mut app, seconds(APPEAR_TIME) + 2);
-    let first = enemies(&mut app, 9);
-    assert_eq!(there(&mut app, 9), [0, 1]);
+    let first = enemies(&mut app, 12);
+    assert_eq!(there(&mut app, 12), [0, 1]);
     let awake = |app: &App, tank: Entity| app.world().get::<Enemy>(tank).unwrap().awake;
     assert!(first.iter().all(|&tank| awake(&app, tank)));
     let own = player(&mut app).unwrap();
-    assert_eq!(app.world().get::<Tank>(own).unwrap().sector, 9);
-    let genomes = enemy::group(seed_value("TEST"), Difficulty::Normal, 9, 4);
+    assert_eq!(app.world().get::<Tank>(own).unwrap().sector, 12);
+    let genomes = enemy::group(seed_value("TEST"), Difficulty::Normal, 12, 4);
     for &tank in &first {
         let genome = app.world().get::<Tank>(tank).unwrap().genome;
         assert_eq!(genome, genomes[number(&app, tank) as usize]);
@@ -271,12 +274,12 @@ fn half_of_a_group_comes_after_the_lull_and_a_tank_for_each_one_that_is_destroye
     let wave = |event: &SimEvent| matches!(event, SimEvent::WaveIncoming { .. });
     assert_eq!(count(&news, wave), 0);
     assert_eq!(numbers(&mut app), [3]);
-    assert_eq!(there(&mut app, 9), [stays]);
+    assert_eq!(there(&mut app, 12), [stays]);
     // It appears after its mark, awake, and the room is as full as it was.
     tick(&mut app, seconds(APPEAR_TIME) + 2);
-    assert_eq!(there(&mut app, 9), [stays, 2]);
-    assert!(!there(&mut app, 9).contains(&gone));
-    let all = enemies(&mut app, 9);
+    assert_eq!(there(&mut app, 12), [stays, 2]);
+    assert!(!there(&mut app, 12).contains(&gone));
+    let all = enemies(&mut app, 12);
     assert!(all.iter().all(|&tank| awake(&app, tank)));
     for &tank in &all {
         let genome = app.world().get::<Tank>(tank).unwrap().genome;
@@ -285,30 +288,33 @@ fn half_of_a_group_comes_after_the_lull_and_a_tank_for_each_one_that_is_destroye
     assert_eq!(told(&mut app, incoming), 0);
 
     // Two tanks fall together, and one is left to come: the room is no longer full.
-    destroy_enemies(&mut app, 9);
+    destroy_enemies(&mut app, 12);
     tick(&mut app, 2);
     let news = events(&mut app);
     assert_eq!(count(&news, incoming), 1);
     assert_eq!(count(&news, cleared), 0);
     assert!(numbers(&mut app).is_empty());
-    assert_eq!(run(&app).cleared, 8);
+    assert_eq!(run(&app).cleared, 11);
     tick(&mut app, seconds(APPEAR_TIME) + 2);
-    assert_eq!(there(&mut app, 9), [3]);
+    assert_eq!(there(&mut app, 12), [3]);
 
     // The group is cleared with its last tank. That scores, and the next group goes into
     // reserve for the lull.
-    destroy_enemies(&mut app, 9);
+    destroy_enemies(&mut app, 12);
     tick(&mut app, 1);
     let news = events(&mut app);
-    let over = SimEvent::SectorCleared { sector: 9 };
+    let over = SimEvent::SectorCleared { sector: 12 };
     assert_eq!(count(&news, |event| *event == over), 1);
     assert_eq!(count(&news, wave), 0);
     let state = run(&app);
-    assert_eq!((state.sector, state.cleared, state.checkpoint), (9, 9, 9));
+    assert_eq!(
+        (state.sector, state.cleared, state.checkpoint),
+        (12, 12, 12)
+    );
     assert_eq!(state.lull, Some(LULL as u8));
     let waiting = reserves(&mut app);
     assert_eq!(waiting.len(), 4);
-    assert!(waiting.iter().all(|(reserve, _)| reserve.group == 10));
+    assert!(waiting.iter().all(|(reserve, _)| reserve.group == 13));
 }
 
 /// Puts the tanks of a group that are in the room to sleep, so that a test counts them
@@ -370,7 +376,7 @@ fn the_room_holds_half_of_a_group_for_as_long_as_a_tank_waits_in_reserve() {
 
 #[test]
 fn a_tank_does_not_appear_on_another_tank_of_its_group() {
-    let mut app = before_group("TEST", 1, 9);
+    let mut app = before_group("TEST", 1, 12);
     shelter(&mut app);
     stand_aside(&mut app);
     // The third tank of the group is the first to wait for another one to be destroyed.
@@ -381,8 +387,8 @@ fn a_tank_does_not_appear_on_another_tank_of_its_group() {
     };
     wait_for_the_group(&mut app);
     tick(&mut app, seconds(APPEAR_TIME) + 2);
-    put_to_sleep(&mut app, 9);
-    let first = enemies(&mut app, 9);
+    put_to_sleep(&mut app, 12);
+    let first = enemies(&mut app, 12);
     assert_eq!(first.len(), 2);
     // One of the two that are there stands on its place when the other is destroyed.
     let squatter = first[1];
@@ -416,15 +422,15 @@ fn a_tank_does_not_appear_on_another_tank_of_its_group() {
     assert_eq!(came, told);
     let mut wanted = vec![number(&app, squatter), 2];
     wanted.sort();
-    assert_eq!(there(&mut app, 9), wanted);
-    let third = enemies(&mut app, 9)
+    assert_eq!(there(&mut app, 12), wanted);
+    let third = enemies(&mut app, 12)
         .into_iter()
         .find(|&tank| number(&app, tank) == 2);
     // It appears there, awake: it may have driven for a tick or two since.
     assert!(position(&mut app, third.unwrap()).distance(marks[0]) < 0.3);
 
     // A group that has no place to spare waits for the tank to move on.
-    let mut app = before_group("TEST", 1, 9);
+    let mut app = before_group("TEST", 1, 12);
     shelter(&mut app);
     stand_aside(&mut app);
     let mut field = app.world_mut().resource_mut::<Field>();
@@ -433,23 +439,23 @@ fn a_tank_does_not_appear_on_another_tank_of_its_group() {
     let place = state.next[1][0].at;
     wait_for_the_group(&mut app);
     tick(&mut app, seconds(APPEAR_TIME) + 2);
-    put_to_sleep(&mut app, 9);
-    let first = enemies(&mut app, 9);
+    put_to_sleep(&mut app, 12);
+    let first = enemies(&mut app, 12);
     let home = position(&mut app, first[1]);
     teleport(&mut app, first[1], place + Vec2::X * 0.5);
     destroy(&mut app, first[0]);
     tick(&mut app, seconds(APPEAR_TIME) + 4);
-    assert_eq!(enemies(&mut app, 9).len(), 1);
+    assert_eq!(enemies(&mut app, 12).len(), 1);
     assert_eq!(numbers(&mut app), [2, 3]);
     teleport(&mut app, first[1], home);
     tick(&mut app, seconds(APPEAR_TIME) + 4);
-    assert_eq!(enemies(&mut app, 9).len(), 2);
+    assert_eq!(enemies(&mut app, 12).len(), 2);
     assert_eq!(numbers(&mut app), [3]);
 }
 
 #[test]
 fn a_tank_whose_place_a_player_stands_on_takes_another_place_of_its_group() {
-    let mut app = before_group("TEST", 1, 9);
+    let mut app = before_group("TEST", 1, 12);
     shelter(&mut app);
     // The player stands on the place of the first tank of the group, and stays there.
     let (place, spare) = {
@@ -479,7 +485,7 @@ fn a_tank_whose_place_a_player_stands_on_takes_another_place_of_its_group() {
     assert_eq!(taken.len(), 1);
     assert!(taken[0].distance(place + Vec2::X) > APPEAR_ROOM);
     tick(&mut app, seconds(APPEAR_TIME) + 2);
-    let there = enemies(&mut app, 9);
+    let there = enemies(&mut app, 12);
     assert_eq!(there.len(), 2);
     for tank in there {
         assert!(position(&mut app, tank).distance(place + Vec2::X) > APPEAR_ROOM);
@@ -491,7 +497,7 @@ fn a_tank_whose_place_a_player_stands_on_takes_another_place_of_its_group() {
 
     // A group that has no place to spare waits for room, as a wave of an arena does. The
     // tank that waits counts as one of those that the room holds.
-    let mut app = before_group("TEST", 1, 9);
+    let mut app = before_group("TEST", 1, 12);
     shelter(&mut app);
     let mut field = app.world_mut().resource_mut::<Field>();
     let state = field.room.as_mut().unwrap();
@@ -501,11 +507,11 @@ fn a_tank_whose_place_a_player_stands_on_takes_another_place_of_its_group() {
     teleport(&mut app, own, place + Vec2::X);
     wait_for_the_group(&mut app);
     tick(&mut app, seconds(APPEAR_TIME) + 3);
-    assert_eq!(enemies(&mut app, 9).len(), 1);
+    assert_eq!(enemies(&mut app, 12).len(), 1);
     assert_eq!(numbers(&mut app), [0, 2, 3]);
     teleport(&mut app, own, place + Vec2::X * (APPEAR_ROOM + 1.0));
     tick(&mut app, seconds(APPEAR_TIME) + 3);
-    assert_eq!(enemies(&mut app, 9).len(), 2);
+    assert_eq!(enemies(&mut app, 12).len(), 2);
 }
 
 #[test]
@@ -661,11 +667,11 @@ fn a_single_player_gets_a_life_back_every_few_groups() {
 
 #[test]
 fn a_single_player_who_falls_comes_back_in_the_middle_of_the_room_to_the_same_group() {
-    let mut app = before_group("TEST", 1, 9);
+    let mut app = before_group("TEST", 1, 12);
     stand_aside(&mut app);
     wait_for_the_group(&mut app);
     tick(&mut app, seconds(APPEAR_TIME) + 2);
-    let first = enemies(&mut app, 9);
+    let first = enemies(&mut app, 12);
     assert_eq!(first.len(), 2);
     let kept = app.world().get::<Tank>(first[1]).unwrap().genome;
     let own = player(&mut app).unwrap();
@@ -686,7 +692,7 @@ fn a_single_player_who_falls_comes_back_in_the_middle_of_the_room_to_the_same_gr
     tick(&mut app, seconds(RESPAWN_DELAY) - 2);
     assert_eq!(told(&mut app, incoming), 0);
     assert_eq!(numbers(&mut app), [2, 3]);
-    assert_eq!(enemies(&mut app, 9).len(), 1);
+    assert_eq!(enemies(&mut app, 12).len(), 1);
     tick(&mut app, 3);
     let state = run(&app);
     assert_eq!(
@@ -696,16 +702,16 @@ fn a_single_player_who_falls_comes_back_in_the_middle_of_the_room_to_the_same_gr
     // The run is where it was: the same group is on, and what was destroyed stays so.
     assert_eq!(
         (state.sector, state.cleared, state.kills),
-        (9, 8, kills + 1)
+        (12, 11, kills + 1)
     );
     assert_eq!(state.lull, None);
     let own = player(&mut app).unwrap();
     assert_eq!(position(&mut app, own), room_of("TEST").start().as_vec2());
-    assert_eq!(app.world().get::<Tank>(own).unwrap().sector, 9);
+    assert_eq!(app.world().get::<Tank>(own).unwrap().sector, 12);
     assert_eq!(standing(&mut app), blocks_before);
     assert_eq!(bullets(&mut app), 0);
     // The tank that was left went back into reserve, with the two that had not come.
-    assert!(enemies(&mut app, 9).is_empty());
+    assert!(enemies(&mut app, 12).is_empty());
     tick(&mut app, 1);
     let waiting = reserves(&mut app);
     assert_eq!(waiting.len(), 3);
@@ -713,7 +719,7 @@ fn a_single_player_who_falls_comes_back_in_the_middle_of_the_room_to_the_same_gr
 
     // The group comes again as it did the first time: after a moment, announced, and as
     // many tanks at once, each after its mark. The tank that was there is the first of them.
-    stand_aside_of_the_wave(&mut app, 9);
+    stand_aside_of_the_wave(&mut app, 12);
     events(&mut app);
     tick(&mut app, seconds(ARENA_DELAY) - 4);
     assert_eq!(told(&mut app, incoming), 0);
@@ -722,18 +728,18 @@ fn a_single_player_who_falls_comes_back_in_the_middle_of_the_room_to_the_same_gr
     assert_eq!(count(&news, announced), 1);
     assert_eq!(count(&news, incoming), 2);
     tick(&mut app, seconds(APPEAR_TIME) + 2);
-    let again = enemies(&mut app, 9);
+    let again = enemies(&mut app, 12);
     assert_eq!(again.len(), 2);
     let genome = |app: &App, tank: Entity| app.world().get::<Tank>(tank).unwrap().genome;
     assert!(again.iter().any(|&tank| genome(&app, tank) == kept));
     assert_eq!(numbers(&mut app).len(), 1);
     // Then the last one, and the group is cleared as if nothing had happened.
-    destroy_enemies(&mut app, 9);
+    destroy_enemies(&mut app, 12);
     tick(&mut app, seconds(APPEAR_TIME) + 3);
-    assert_eq!(enemies(&mut app, 9).len(), 1);
-    destroy_enemies(&mut app, 9);
+    assert_eq!(enemies(&mut app, 12).len(), 1);
+    destroy_enemies(&mut app, 12);
     tick(&mut app, 1);
-    assert_eq!(run(&app).cleared, 9);
+    assert_eq!(run(&app).cleared, 12);
 }
 
 /// Moves the player out of the way of the tanks that the group that is on still holds back.

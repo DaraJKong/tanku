@@ -617,17 +617,18 @@ mod tests {
         }
         // The levers are those of the specification.
         let levers = table("Levers");
-        assert_eq!(levers.rows[0][..5], ["1-2", "10 to 16", "1", "1", "0"]);
-        assert_eq!(levers.rows[4][..3], ["16-20", "67 to 75", "6"]);
+        assert_eq!(levers.rows[0][..5], ["1-2", "10 to 15", "1", "0 to 1", "0"]);
+        assert_eq!(levers.rows[4][..3], ["16-20", "66 to 77", "5 to 6"]);
         // Every seed gives a group for every sector, of as many tanks as the rules say:
-        // six from sector 15 on, and half as many again in an arena.
+        // five from sector 16 on, six from sector 20 on, and half as many again in an arena.
         let groups = table("Groups");
         assert_eq!(groups.rows[0][1], "24");
         assert_eq!(groups.rows[0][3], "1.0");
-        assert!(number(&groups.rows[4][3]) >= 6.0);
+        assert!(number(&groups.rows[4][3]) >= 5.0);
         // No tank has more points than the leader of its sector may.
+        let leader = tanku_core::balance::BALANCE.group.leader;
         for (row, stretch) in groups.rows.iter().zip(STRETCHES) {
-            let most = progression::sector_budget(stretch.1, Difficulty::Normal) * 3 / 2;
+            let most = progression::sector_budget(stretch.1, Difficulty::Normal) * leader / 100;
             assert!(number(&row[7]) <= most as f64, "{row:?}");
             assert!(number(&row[5]) <= number(&row[6]) && number(&row[6]) <= number(&row[7]));
         }
@@ -668,9 +669,10 @@ mod tests {
 
     #[test]
     fn groups_grow_with_the_players() {
+        // A group of a single player has six tanks from sector 20 on, and fifteen with four.
         let four = Asked {
             players: 4,
-            ..asked((16, 20), false)
+            ..asked((21, 25), false)
         };
         let report = census(&four);
         let groups = &report.tables[1];
