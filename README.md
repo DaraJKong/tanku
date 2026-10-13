@@ -368,6 +368,12 @@ A sector takes a third of a second to wake once the first player is through its 
 TANKU_DEV_SCRIPT="start TANKU; wait 1; warp 4; wait 3; lift 0.1; cross; wait 0.5; shot rising.png; lift; wait 0.5; shot awake.png; quit" cargo run -p tanku_client
 ```
 
+A scripted run is silent, and its log can list the cues that it would have played, each with its time and how loud: the module that plays them tells of each one to a game that logs what is for debugging.
+
+```bash
+RUST_LOG=info,tanku_client::audio=debug TANKU_DEV_SCRIPT="start TANKU; wait 1; warp 4; wait 3; cross; wait 2; clear; wait 4; quit" cargo run -p tanku_client
+```
+
 The command `tape` keeps the music that the run would have played from there on. When the script quits, the music goes to a sound file, and the list of what the game told the music, with the time of each change, to a text file of the same name:
 
 ```bash

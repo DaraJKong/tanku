@@ -393,7 +393,7 @@ Three rules make the music answer fast and stay in time:
 
 The fight sections are counted in phrases: the two of the verse, then the two of the chorus, then the verse again. A fight opens on the phrase after the one where the last fight ended. The first fight of a run opens the verse, so every run begins the same way, and the short fights of the first sectors walk through the whole piece instead of repeating its first bars.
 
-A roll is heard within one step of its event, and the fight is in full swing one second later. A connection starts within half a second of the end of a fight, and the bridge one second after that: the sound cue of a cleared sector is what answers at once. Every other change is complete within one bar.
+A roll is heard within one step of its event, and the fight is in full swing one second later. A connection starts within half a second of the end of a fight, and the bridge one second after that. For the music, a fight ends with its last enemy. The cue of a cleared sector answers the blast of that enemy 0.35 s later, or once none of the bullets of those enemies is left in flight, if that comes later, and 0.35 s after the blast of a shell that was the last of them: the music may be in its connection by then. Every other change is complete within one bar.
 
 ## Instruments
 
