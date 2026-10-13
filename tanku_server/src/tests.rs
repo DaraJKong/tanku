@@ -1904,6 +1904,44 @@ fn a_sentry_shoots_the_player_it_sees() {
     assert!(shots > 0);
 }
 
+#[test]
+fn an_enemy_holds_its_fire_at_a_player_beyond_its_sight() {
+    let shots = |app: &mut App| {
+        let fired = |event: &SimEvent| {
+            let team = Team::Enemies;
+            matches!(event, SimEvent::Shot { team: by, .. } if *by == team)
+        };
+        count(&events(app), fired)
+    };
+    // The sentry of the test above, 8 m north of the player, which now sees 5 m.
+    let mut app = start("TEST");
+    let at = Vec2::new(0.0, 13.0);
+    let sentry = spawn_awake(&mut app, at, &[(Stat::Turret, 6), (Stat::Muzzle, 4)]);
+    app.world_mut().get_mut::<Brain>(sentry).unwrap().sight = Some(5.0);
+    tick(&mut app, seconds(6.0));
+    assert_eq!(shots(&mut app), 0);
+    assert_eq!(run(&app).lives, 3);
+    // It knows where the player is all the same: its gun is on them.
+    let turret = app.world().get::<Motion>(sentry).unwrap().turret;
+    let wanted = (START - at).to_angle();
+    assert!(tanku_core::geom::angle_difference(turret, wanted).abs() < 0.1);
+    // The player comes within its sight. It fires, after the delay of its brain and no
+    // sooner: its gun was ready, and its brain has just found its shot.
+    let entity = player(&mut app).unwrap();
+    teleport(&mut app, entity, Vec2::new(0.0, 9.0));
+    tick(&mut app, 3);
+    assert_eq!(shots(&mut app), 0);
+    tick(&mut app, seconds(1.0));
+    assert!(shots(&mut app) > 0);
+
+    // A sight that reaches the player holds nothing back.
+    let mut app = start("TEST");
+    let sentry = spawn_awake(&mut app, at, &[(Stat::Turret, 6), (Stat::Muzzle, 4)]);
+    app.world_mut().get_mut::<Brain>(sentry).unwrap().sight = Some(8.5);
+    tick(&mut app, seconds(6.0));
+    assert!(shots(&mut app) > 0);
+}
+
 /// Fires a player's bullet straight at an enemy from the north. Returns the enemy and the app
 /// a third of a second later, when even a slow brain has seen the bullet coming.
 fn shoot_at_enemy(levels: &[(Stat, u8)]) -> (App, Entity) {

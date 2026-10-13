@@ -251,6 +251,14 @@ enemy ace    bait 11m..14m  press 5m..8m  until 3  retreat 16m..22m  crossfire 9
 
 **`foresight`** is how long before a bullet arrives a brain starts to see it. A soldier sees a bullet that flies straight at its tank once the bullet is that long from hitting it. A veteran follows every bullet for that long, bounces included, and sees those that will pass over its tank. An ace also sees those that will pass where it can drive to in that time, which is how it gets out of the way of a shot that is aimed ahead of it. A brain acts on a bullet once it has seen it for the reaction of its sector, so what it has left to get out of the way is the foresight less that reaction. With `foresight 1s`, a shot of the standard tank, which flies at 9 m/s, is seen from 9 m away: a brain that keeps 8 to 14 m from the player sees it almost as it is fired, and any tank that has an engine has the time to move aside. A shorter foresight leaves the slow tanks too little time, and the fast ones still enough.
 
+One more line of the brains is one that a file may leave out:
+
+```
+enemy sight  30m
+```
+
+With it, an enemy fires at a player who is no further from its tank than this. Further than that, it holds its fire: it still knows where the player is, keeps its gun on them and drives toward them as its brain says, and it fires once the player is within its sight, after the reaction of its sector. It still shoots down a bullet that comes at it, wherever the player is. Without the line, an enemy fires at a player that it has a line of fire on, however far. A sight is no shorter than the furthest that a brain keeps from the player in `enemy keep`, or the brains that keep that distance would never fire.
+
 ## Unlocks
 
 ```

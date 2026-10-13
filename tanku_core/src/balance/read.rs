@@ -448,6 +448,8 @@ struct Found {
     /// The line of the standard tank, for the fault that only shows once the prices are
     /// read.
     player: u32,
+    /// The line of the sight of the enemies, if the file has one: 0 otherwise.
+    sight: u32,
 }
 
 const NO_STEP: Step = Step {
@@ -585,6 +587,7 @@ const EMPTY: Balance = Balance {
         until: 0,
         retreat: (0.0, 0.0),
         crossfire: 0.0,
+        sight: None,
     },
     unlock: Unlock {
         arena: 0,
@@ -608,6 +611,7 @@ pub const fn read(text: &str) -> Result<Balance, Fault> {
         terrain: [false; TERRAIN.len()],
         enemy: [false; ENEMY.len()],
         player: 0,
+        sight: 0,
     };
     let (mut at, mut line) = (0, 0);
     while at < text.len() {
@@ -638,6 +642,14 @@ pub const fn read(text: &str) -> Result<Balance, Fault> {
     }
     if let Err(what) = affordable(&balance) {
         let (line, about) = (found.player, "");
+        return Err(Fault { line, what, about });
+    }
+    // A brain that keeps its distance fires from there, or it would never fire.
+    if let Some(sight) = balance.enemy.sight
+        && sight < balance.enemy.keep.1
+    {
+        let what = "an enemy sees as far as a brain keeps from a player, at least";
+        let (line, about) = (found.sight, "");
         return Err(Fault { line, what, about });
     }
     // A tank draws its class by the weights of the classes.
@@ -785,7 +797,7 @@ const fn record(
         return terrain(&mut balance.terrain, found, words);
     }
     if same(kind, b"enemy") {
-        return enemy(&mut balance.enemy, found, words);
+        return enemy(&mut balance.enemy, found, words, line);
     }
     let Some(index) = named(Some(kind), Single::NAMES) else {
         return Err(UNKNOWN);
@@ -1440,9 +1452,23 @@ const fn enemy(
     enemy: &mut Enemy,
     found: &mut Found,
     words: &mut Words,
+    line: u32,
 ) -> Result<(), &'static str> {
-    const WHICH: &str = "`enemy` is followed by what it says: keep, mines or ace";
-    let Some(index) = named(words.next(), &ENEMY) else {
+    const WHICH: &str = "`enemy` is followed by what it says: keep, mines, ace or sight";
+    let word = words.next();
+    // How far an enemy fires is a line that a file may leave out: it then fires however far.
+    if let Some(word) = word
+        && same(word, b"sight")
+    {
+        if found.sight != 0 {
+            return Err(TWICE);
+        }
+        found.sight = line;
+        let sight = tried!(measure(words, b"m", "a sight is a length, as in `30m`"));
+        enemy.sight = Some(sight);
+        return Ok(());
+    }
+    let Some(index) = named(word, &ENEMY) else {
         return Err(WHICH);
     };
     if found.enemy[index] {
@@ -1592,6 +1618,55 @@ mod tests {
         ] {
             let fault = read(&FILE.replace(line, &format!("{line}{more}"))).expect_err(more);
             assert!(fault.to_string().contains(why), "{more}: {fault}");
+        }
+    }
+
+    #[test]
+    fn the_sight_of_the_enemies_is_a_line_that_a_file_may_leave_out() {
+        // Without the line, an enemy fires however far the player is.
+        let balance = read(FILE).unwrap();
+        assert_eq!(balance.enemy.sight, None);
+        // With it, the enemies see that far, and the rest of the file reads as it did. The
+        // line is put before the distances that a brain keeps here, and after them below.
+        let keep = "enemy keep ";
+        assert_eq!(FILE.matches(keep).count(), 1);
+        let with = |line: &str| FILE.replace(keep, &format!("{line}\n{keep}"));
+        let seen = read(&with("enemy sight 30m")).unwrap();
+        assert_eq!(seen.enemy.sight, Some(30.0));
+        let (mut blind, mut rest) = (seen.enemy, seen);
+        blind.sight = None;
+        rest.enemy = blind;
+        assert_eq!(rest, balance);
+        assert_ne!(fingerprint(&with("enemy sight 30m")), fingerprint(FILE));
+        let last = format!("{FILE}enemy sight 22.5m\n");
+        assert_eq!(read(&last).unwrap().enemy.sight, Some(22.5));
+        // It is written once, as a length.
+        for (line, why) in [
+            ("enemy sight 30m\nenemy sight 40m", "twice"),
+            ("enemy sight 30", "a length"),
+            ("enemy sight", "a length"),
+            ("enemy sight 30m 40m", "a word too many"),
+            ("enemy view 30m", "keep, mines, ace or sight"),
+        ] {
+            let fault = read(&with(line)).expect_err(line);
+            assert!(fault.to_string().contains(why), "{line}: {fault}");
+        }
+        // A brain keeps up to 14 m from a player, and fires from there: a sight that is
+        // shorter is refused on its own line, wherever that line is in the file.
+        assert_eq!(
+            read(&with("enemy sight 14m")).unwrap().enemy.sight,
+            Some(14.0)
+        );
+        for short in [
+            with("enemy sight 13.5m"),
+            format!("{FILE}enemy sight 13.5m\n"),
+        ] {
+            let fault = read(&short).unwrap_err();
+            assert!(
+                fault.to_string().contains("as far as a brain keeps"),
+                "{fault}"
+            );
+            assert_eq!(fault.line, line_of(&short, "enemy sight"));
         }
     }
 
@@ -1952,7 +2027,7 @@ mod tests {
                 "enemy ace ",
                 "enemy king ",
                 "enemy king",
-                "keep, mines or ace",
+                "keep, mines, ace or sight",
             ),
             (
                 "hard 30  impossible 20",

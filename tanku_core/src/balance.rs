@@ -417,6 +417,9 @@ pub struct Enemy {
     /// The turn around the player that an ace wants between itself and the nearest ally, in
     /// radians.
     pub crossfire: f32,
+    /// How far an enemy fires at a player, if the balance says: further than that, it holds
+    /// its fire, and still knows where the player is. Without it, it fires however far.
+    pub sight: Option<f32>,
 }
 
 /// The sector that a run must clear to unlock each mode.

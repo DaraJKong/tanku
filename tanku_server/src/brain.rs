@@ -74,6 +74,8 @@ const RETREAT: (f32, f32) = ENEMY.retreat;
 /// An ace wants at least this much of a turn around the player between itself and the
 /// nearest ally, so that their fire crosses.
 const CROSSFIRE: f32 = ENEMY.crossfire;
+/// How far an enemy fires at a player, if the balance limits it.
+const SIGHT: Option<f32> = ENEMY.sight;
 /// How far a shot is followed to find where it ends.
 const SHOT_RANGE: f32 = 80.0;
 /// A tank whose bullets explode holds its fire while its own tank or an ally is this close to
@@ -106,6 +108,9 @@ pub struct Brain {
     watched: Vec<Watch>,
     /// Whether an ace presses the player it fights, who has run out of rounds.
     pressing: bool,
+    /// How far the tank fires at a player, if the balance limits it: further than that, it
+    /// holds its fire.
+    pub(crate) sight: Option<f32>,
 }
 
 /// A bullet that a veteran watches.
@@ -136,6 +141,7 @@ impl Brain {
             target: None,
             watched: Vec::new(),
             pressing: false,
+            sight: SIGHT,
         }
     }
 
@@ -672,8 +678,14 @@ pub fn think(
             player_at
         };
         let mut aim = (target - me).to_angle();
-        let mut solution = field.sees(me, target);
-        if !solution && ballistics >= 2 {
+        // A tank fires at a player within its sight, where the balance gives it one. Further
+        // than that, it knows where the player is and holds its fire: its shot is one that
+        // it finds when the player comes into sight, after the delay of its brain.
+        let in_sight = brain
+            .sight
+            .is_none_or(|sight| me.distance(player_at) <= sight);
+        let mut solution = in_sight && field.sees(me, target);
+        if !solution && in_sight && ballistics >= 2 {
             brain.bank_shot_timer -= TICK;
             if brain.bank_shot_timer <= 0.0 {
                 brain.bank_shot_timer = 0.3 + 0.1 * brain.rng.unit();
@@ -687,7 +699,7 @@ pub fn think(
         } else {
             brain.bank_shot = None;
         }
-        if ballistics >= 3 {
+        if in_sight && ballistics >= 3 {
             // A mine or a crate next to the player is a bigger target than the player.
             let explosive = mines
                 .iter()
