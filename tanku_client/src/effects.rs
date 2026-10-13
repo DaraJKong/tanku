@@ -10,9 +10,10 @@ use bevy::prelude::*;
 use tanku_core::{
     rules::{APPEAR_TIME, BLAST_RADIUS, TANK_RADIUS},
     sim::SimEvent,
+    stats::Genome,
 };
 
-use crate::{camera::View, draft::Draft, scene, theme};
+use crate::{camera::View, draft::Draft, models, scene, theme};
 
 /// How much of the radius of a burst its line takes, and how see-through its inside is.
 const LINE_SHARE: f32 = 0.12;
@@ -73,7 +74,7 @@ struct Glows {
     spark: Glow,
     cold: Glow,
     good: Glow,
-    /// The warning of a tank that is about to appear.
+    /// The warning of a tank that is about to appear, where nothing tells which tank it is.
     alarm: Glow,
     /// The strokes of a destroyed bullet, from the first drawing to the last.
     strokes: Vec<Handle<Mesh>>,
@@ -111,24 +112,30 @@ fn strokes(progress: f32) -> Draft {
     draft
 }
 
+/// What the effects are drawn with: a color that nothing lights, seen through.
+fn paint(color: Color) -> StandardMaterial {
+    StandardMaterial {
+        base_color: color,
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        cull_mode: None,
+        ..default()
+    }
+}
+
+fn glow_of(materials: &mut Assets<StandardMaterial>, color: Color) -> Glow {
+    Glow {
+        line: materials.add(paint(color.with_alpha(0.9))),
+        fill: materials.add(paint(color.with_alpha(FILL))),
+    }
+}
+
 fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let mut paint = |color: Color| {
-        materials.add(StandardMaterial {
-            base_color: color,
-            alpha_mode: AlphaMode::Blend,
-            unlit: true,
-            cull_mode: None,
-            ..default()
-        })
-    };
-    let mut glow = |color: Color| Glow {
-        line: paint(color.with_alpha(0.9)),
-        fill: paint(color.with_alpha(FILL)),
-    };
+    let mut glow = |color: Color| glow_of(&mut materials, color);
     let (fire, spark, cold, good, alarm) = (
         glow(theme::FIRE),
         glow(Color::WHITE),
@@ -136,7 +143,7 @@ fn setup(
         glow(theme::GOOD),
         glow(theme::DANGER),
     );
-    let stroke_paint = paint(theme::BULLET);
+    let stroke_paint = materials.add(paint(theme::BULLET));
     // Each drawing stands for the middle of its share of the life of the strokes.
     let frames = (0..STROKE_FRAMES).map(|frame| (frame as f32 + 0.5) / STROKE_FRAMES as f32);
     let strokes = frames
@@ -164,12 +171,24 @@ fn setup(
     });
 }
 
+/// The color of what announces a tank: the color of its outline in reserve, so that the mark
+/// is read as the tank that leaves it, or the red of a warning where no tank is told.
+fn told_color(tank: Option<Genome>) -> Color {
+    match tank {
+        Some(genome) => models::outline_color(&genome),
+        None => theme::DANGER,
+    }
+}
+
 fn spawn(
     mut commands: Commands,
     mut events: MessageReader<SimEvent>,
     mut view: ResMut<View>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
     glows: Res<Glows>,
 ) {
+    // A tank that is told has a mark and a flash in its own color, made for it.
+    let mut own = |tank: Option<Genome>| tank.map(|_| glow_of(&mut materials, told_color(tank)));
     for event in events.read() {
         if let SimEvent::BulletDestroyed { at, .. } = *event {
             commands.spawn((
@@ -180,7 +199,9 @@ fn spawn(
             ));
             continue;
         }
-        if let SimEvent::TankIncoming { at } = *event {
+        if let SimEvent::TankIncoming { at, tank } = *event {
+            let made = own(tank);
+            let glow = made.as_ref().unwrap_or(&glows.alarm);
             commands.spawn((
                 Mark { age: 0.0 },
                 Transform::from_translation(scene::to_world(at, MARK_HEIGHT))
@@ -189,19 +210,23 @@ fn spawn(
                 children![
                     (
                         Mesh3d(glows.circle.clone()),
-                        MeshMaterial3d(glows.alarm.line.clone())
+                        MeshMaterial3d(glow.line.clone())
                     ),
                     (
                         Mesh3d(glows.disc.clone()),
-                        MeshMaterial3d(glows.alarm.fill.clone())
+                        MeshMaterial3d(glow.fill.clone())
                     ),
                 ],
             ));
             continue;
         }
+        let made = match *event {
+            SimEvent::TankAppeared { tank, .. } => own(tank),
+            _ => None,
+        };
         let (at, height, size, life, glow) = match *event {
             SimEvent::Blast { at } => (at, 0.6, 2.0 * BLAST_RADIUS, 0.45, &glows.fire),
-            SimEvent::TankAppeared { at } => (at, 0.6, 3.6, 0.35, &glows.alarm),
+            SimEvent::TankAppeared { at, .. } => (at, 0.6, 3.6, 0.35, &glows.alarm),
             SimEvent::TankDestroyed { at, .. } => (at, 0.6, 3.2, 0.5, &glows.fire),
             SimEvent::BlockDestroyed { at } => (at, 0.5, 2.4, 0.3, &glows.spark),
             SimEvent::Shot { at, .. } => (at, 0.8, 0.7, 0.1, &glows.spark),
@@ -222,6 +247,7 @@ fn spawn(
             let distance = at.distance(view.focus());
             view.shake(0.8 * (1.0 - distance / 40.0).clamp(0.0, 1.0));
         }
+        let glow = made.as_ref().unwrap_or(glow);
         commands.spawn((
             Burst {
                 age: 0.0,
@@ -313,7 +339,7 @@ fn fly_apart(
 
 #[cfg(test)]
 mod tests {
-    use tanku_core::sim::Team;
+    use tanku_core::{sim::Team, stats::Class};
 
     use super::*;
 
@@ -369,6 +395,47 @@ mod tests {
     }
 
     #[test]
+    fn the_mark_of_a_tank_that_is_told_has_the_color_of_its_outline() {
+        let mut app = world_of_effects();
+        app.update();
+        let of = |class: Class| {
+            let mut genome = Genome::empty(60);
+            genome.class = class;
+            genome
+        };
+        let (lancer, grenadier) = (of(Class::Lancer), of(Class::Grenadier));
+        // The color of the line of the one mark that lies on the floor.
+        let line = |app: &mut App, tank: Option<Genome>| {
+            let at = Vec2::ZERO;
+            app.world_mut()
+                .write_message(SimEvent::TankIncoming { at, tank });
+            app.update();
+            let world = app.world_mut();
+            let mut marks = world.query_filtered::<(Entity, &Children), With<Mark>>();
+            let (mark, parts) = marks.single(world).unwrap();
+            let paint = world
+                .get::<MeshMaterial3d<StandardMaterial>>(parts[0])
+                .unwrap();
+            let color = world.resource::<Assets<StandardMaterial>>().get(&paint.0);
+            let color = color.unwrap().base_color.with_alpha(1.0);
+            world.despawn(mark);
+            color
+        };
+        // Where no tank is told, as in an arena of the corridor, the mark is a warning.
+        assert_eq!(line(&mut app, None), theme::DANGER.with_alpha(1.0));
+        for tank in [lancer, grenadier] {
+            let told = line(&mut app, Some(tank));
+            assert_eq!(told, models::outline_color(&tank).with_alpha(1.0));
+            assert_ne!(told, theme::DANGER.with_alpha(1.0));
+        }
+        // The color of a grenadier is too dark for the sheet: its mark is in its pale tint.
+        assert_ne!(
+            line(&mut app, Some(grenadier)),
+            models::enemy_color(&grenadier).with_alpha(1.0)
+        );
+    }
+
+    #[test]
     fn the_mark_of_a_tank_that_is_about_to_appear_closes_in_on_its_place() {
         assert_eq!(mark_size(0.0), MARK_SIZE.0);
         assert!(close(mark_size(APPEAR_TIME), 2.0 * TANK_RADIUS));
@@ -377,7 +444,9 @@ mod tests {
         let mut app = world_of_effects();
         app.update();
         let at = Vec2::new(3.0, 4.0);
-        app.world_mut().write_message(SimEvent::TankIncoming { at });
+        let tank = None;
+        app.world_mut()
+            .write_message(SimEvent::TankIncoming { at, tank });
         app.update();
         let world = app.world_mut();
         let mut marks = world.query::<(&Mark, &Transform)>();
@@ -393,7 +462,7 @@ mod tests {
         assert_eq!(world.query::<&Mark>().iter(world).count(), 0);
         let moment = std::time::Duration::from_secs_f32(0.01);
         world.resource_mut::<Time>().advance_by(moment);
-        world.write_message(SimEvent::TankAppeared { at });
+        world.write_message(SimEvent::TankAppeared { at, tank });
         app.update();
         let world = app.world_mut();
         assert_eq!(world.query::<&Burst>().iter(world).count(), 1);

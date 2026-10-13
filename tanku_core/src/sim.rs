@@ -484,13 +484,18 @@ pub enum SimEvent {
         wave: u32,
         of: u32,
     },
-    /// The place where a tank of an arena is about to appear is marked.
+    /// The place where a tank of an arena is about to appear is marked. In arena mode, where
+    /// the tank was shown in reserve, the mark tells which tank it is. An arena of the
+    /// corridor shows nothing of its group beforehand, and tells none.
     TankIncoming {
         at: Vec2,
+        tank: Option<Genome>,
     },
-    /// A tank of an arena appeared where its place was marked.
+    /// A tank of an arena appeared where its place was marked: the tank that the mark told,
+    /// if it told one.
     TankAppeared {
         at: Vec2,
+        tank: Option<Genome>,
     },
     /// A splitting bullet became two.
     BulletSplit {

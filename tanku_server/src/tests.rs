@@ -1471,8 +1471,9 @@ fn the_enemies_of_an_arena_come_in_waves_after_a_warning() {
     let (mut app, arena, sizes) = enter_arena("TEST");
     shelter(&mut app);
     assert_eq!(sizes.len(), ARENA_WAVES as usize);
-    let incoming = |event: &SimEvent| matches!(event, SimEvent::TankIncoming { .. });
-    let appeared = |event: &SimEvent| matches!(event, SimEvent::TankAppeared { .. });
+    // An arena of the corridor shows nothing of its group beforehand: no mark tells its tank.
+    let incoming = |event: &SimEvent| matches!(event, SimEvent::TankIncoming { tank: None, .. });
+    let appeared = |event: &SimEvent| matches!(event, SimEvent::TankAppeared { tank: None, .. });
 
     // Nothing happens for a moment after the player comes in.
     events(&mut app);
@@ -1544,7 +1545,8 @@ fn a_tank_of_an_arena_waits_for_room_to_appear() {
     tick(&mut app, seconds(ARENA_DELAY + APPEAR_TIME) + 6);
     // The others are there. That one isn't, and its place was never marked.
     assert_eq!(enemies(&mut app, arena).len(), sizes[0] as usize - 1);
-    let marked = |event: &SimEvent| matches!(event, SimEvent::TankIncoming { at } if *at == place);
+    let marked =
+        |event: &SimEvent| matches!(event, SimEvent::TankIncoming { at, .. } if *at == place);
     assert_eq!(told(&mut app, marked), 0);
     // It comes once the player has moved away, and the wave isn't over before.
     destroy_enemies(&mut app, arena);

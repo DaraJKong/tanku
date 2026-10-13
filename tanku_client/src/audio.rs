@@ -86,7 +86,7 @@ fn play(
             SimEvent::RunOver => (Cue::RunOver, None),
             SimEvent::WaveIncoming { .. } => (Cue::Wave, None),
             // The tanks of a wave appear together, and sound as one.
-            SimEvent::TankAppeared { at } if !appeared => {
+            SimEvent::TankAppeared { at, .. } if !appeared => {
                 appeared = true;
                 (Cue::Appeared, Some(at))
             }

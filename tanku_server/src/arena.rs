@@ -73,6 +73,8 @@ pub fn waves(
             }
         }
         let toward = field.way_in(front);
+        // In arena mode, the tanks were shown in reserve, and a mark tells which one comes.
+        let told = field.room.is_some();
         // In arena mode, a group has places to spare.
         let mut spare = match field.room.as_mut() {
             Some(state) => std::mem::take(&mut state.spare),
@@ -97,7 +99,10 @@ pub fn waves(
                     }
                     if has_room(recruit.at) {
                         *left = Some(APPEAR_TIME);
-                        events.write(SimEvent::TankIncoming { at: recruit.at });
+                        events.write(SimEvent::TankIncoming {
+                            at: recruit.at,
+                            tank: told.then_some(recruit.genome),
+                        });
                     }
                     true
                 }
@@ -107,7 +112,10 @@ pub fn waves(
                 }
                 Some(_) => {
                     field.enlist(&mut commands, (front, toward), *recruit, true);
-                    events.write(SimEvent::TankAppeared { at: recruit.at });
+                    events.write(SimEvent::TankAppeared {
+                        at: recruit.at,
+                        tank: told.then_some(recruit.genome),
+                    });
                     false
                 }
             }

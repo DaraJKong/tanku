@@ -395,14 +395,25 @@ fn a_tank_does_not_appear_on_another_tank_of_its_group() {
     let marks: Vec<Vec2> = news
         .iter()
         .filter_map(|event| match event {
-            SimEvent::TankIncoming { at } => Some(*at),
+            SimEvent::TankIncoming { at, .. } => Some(*at),
             _ => None,
         })
         .collect();
     assert_eq!(marks.len(), 1);
     assert!(spare.contains(&marks[0]) && marks[0] != place);
     assert!(marks[0].distance(place + Vec2::X * 0.5) >= APPEAR_APART);
+    // The mark tells which tank comes: it was shown in reserve.
+    let told = news.iter().find_map(|event| match event {
+        SimEvent::TankIncoming { tank, .. } => Some(*tank),
+        _ => None,
+    });
+    assert!(told.unwrap().is_some());
     tick(&mut app, seconds(APPEAR_TIME) + 2);
+    let came = events(&mut app).into_iter().find_map(|event| match event {
+        SimEvent::TankAppeared { tank, .. } => Some(tank),
+        _ => None,
+    });
+    assert_eq!(came, told);
     let mut wanted = vec![number(&app, squatter), 2];
     wanted.sort();
     assert_eq!(there(&mut app, 9), wanted);
@@ -457,7 +468,7 @@ fn a_tank_whose_place_a_player_stands_on_takes_another_place_of_its_group() {
     let marks: Vec<Vec2> = news
         .iter()
         .filter_map(|event| match event {
-            SimEvent::TankIncoming { at } => Some(*at),
+            SimEvent::TankIncoming { at, .. } => Some(*at),
             _ => None,
         })
         .collect();
