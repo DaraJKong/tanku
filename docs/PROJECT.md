@@ -697,7 +697,7 @@ The game opens in full screen the first time. After that, it opens the way the p
 
 ### Audio
 
-Sound carries information the eyes can miss: a shot fired off screen, a ricochet, a mine about to blow, a shield coming down, a wave on its way, a tank that appears. A few cues answer what the players do instead, and are among the quietest: a mine that is placed, and a sector of the corridor that wakes when the first of them crosses its barrier. A basic set of such cues arrives with the solo loop (M4), in time for the first real playtest. The full sound pass comes later.
+Sound carries information the eyes can miss: a shot fired off screen, a ricochet, a mine about to blow, a shield coming down, a wave on its way, a tank that appears. A few cues answer what the players do instead, and are among the quietest: a mine that is placed, and a sector of the corridor that wakes when the first of them crosses its barrier. The end of a fight is told once it is over: its cue waits until no bullet of the enemies of the sector is left in flight, as the view does before it runs ahead of a tank at a barrier, and it answers the last blast a moment later at the soonest: that of the last enemy, or that of a shell that goes off after it. A basic set of such cues arrives with the solo loop (M4), in time for the first real playtest. The full sound pass comes later.
 
 The music is one piece that never stops, made by the game as it plays, the same for every seed and on every platform. Its drums and its mode follow the place and the fight, and its melody follows the highest brain tier awake. It never covers a cue. Its specification is in [MUSIC.md](MUSIC.md).
 
