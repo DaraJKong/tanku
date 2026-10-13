@@ -5,8 +5,8 @@ use tanku_core::{
     geom,
     rules::{BULLET_RADIUS, MARK_TIME, MINE_RADIUS, SHIELD_RADIUS, SPLIT_ANGLE, TANK_RADIUS, TICK},
     sim::{
-        Blow, Bullet, Enemy, Kind, Mine, Position, PreviousPosition, Protected, Shield, SimEvent,
-        Tank, Team, Weapon, Wreck,
+        Blow, Bullet, Enemy, Kind, Mine, Playtest, Position, PreviousPosition, Protected, Shield,
+        SimEvent, Tank, Team, Weapon, Wreck,
     },
     stats::Genome,
 };
@@ -195,8 +195,10 @@ pub fn fly(
         Without<Bullet>,
     >,
     mines: Query<(Entity, &Position), (With<Mine>, Without<Bullet>)>,
+    playtest: Option<Res<Playtest>>,
     mut events: MessageWriter<SimEvent>,
 ) {
+    let indiscriminate = playtest.is_some_and(|playtest| playtest.indiscriminate);
     let sought = quarry(
         tanks
             .iter()
@@ -277,7 +279,7 @@ pub fn fly(
                 // A tank's own shot leaves its bubble, but doesn't come back through it.
                 if shield.is_active() && (tank_entity != flying.owner || flying.bounced) {
                     consider(reach(SHIELD_RADIUS), Target::Shield(tank_position.0));
-                } else if tanks::hits(&flying, tank_entity, tank.team) {
+                } else if tanks::hits(&flying, tank_entity, tank.team, indiscriminate) {
                     let target = if safe {
                         Target::Hulk
                     } else {

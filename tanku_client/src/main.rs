@@ -128,6 +128,7 @@ fn main() {
         // The lives count again once the pause menu says so.
         app.insert_resource(Playtest {
             infinite_lives: true,
+            ..default()
         });
     }
     app.insert_resource(options);

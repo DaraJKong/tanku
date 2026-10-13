@@ -6,13 +6,13 @@ use bevy::prelude::*;
 use tanku_core::{
     rules::{BLAST_RADIUS, BLOCK_SIZE, MINE_FUSE, MINE_TRIGGER_RADIUS, MINE_WARNING, TICK},
     sim::{
-        Block, Blow, Bullet, Enemy, ExplosiveCrate, Kind, Mine, MineState, Position, Protected,
-        Shield, SimEvent, Tank, Team, Weapon, Wreck,
+        Block, Blow, Bullet, Enemy, ExplosiveCrate, Kind, Mine, MineState, Playtest, Position,
+        Protected, Shield, SimEvent, Tank, Team, Weapon, Wreck,
     },
     stats::Genome,
 };
 
-use crate::{Casualties, Maker, field::Field};
+use crate::{Casualties, Maker, field::Field, tanks};
 
 /// Arms the mines, burns their fuses and triggers them when an opposing tank comes close.
 ///
@@ -22,19 +22,23 @@ use crate::{Casualties, Maker, field::Field};
 pub fn tick(
     mut casualties: ResMut<Casualties>,
     mut mines: Query<(Entity, &mut Mine, &Position)>,
-    tanks: Query<(&Tank, &Position, Option<&Enemy>), Without<Wreck>>,
+    tanks: Query<(Entity, &Tank, &Position, Option<&Enemy>), Without<Wreck>>,
+    playtest: Option<Res<Playtest>>,
     mut events: MessageWriter<SimEvent>,
 ) {
+    let indiscriminate = playtest.is_some_and(|playtest| playtest.indiscriminate);
     for (entity, mut mine, position) in &mut mines {
         mine.state = match mine.state {
             MineState::Arming(left) if left > TICK => MineState::Arming(left - TICK),
             MineState::Arming(_) => MineState::Armed(MINE_FUSE),
             MineState::Armed(fuse) => {
-                let approached = tanks.iter().any(|(tank, tank_position, enemy)| {
-                    tank.team != mine.team
-                        && enemy.is_none_or(|enemy| enemy.awake)
-                        && tank_position.0.distance(position.0) <= MINE_TRIGGER_RADIUS
-                });
+                let approached = tanks
+                    .iter()
+                    .any(|(tank_entity, tank, tank_position, enemy)| {
+                        tanks::sets_off(&mine, tank_entity, tank.team, indiscriminate)
+                            && enemy.is_none_or(|enemy| enemy.awake)
+                            && tank_position.0.distance(position.0) <= MINE_TRIGGER_RADIUS
+                    });
                 if approached || fuse <= MINE_WARNING {
                     events.write(SimEvent::MineTriggered { at: position.0 });
                     // A fuse keeps the time it has left, so that it lasts as long as it says.

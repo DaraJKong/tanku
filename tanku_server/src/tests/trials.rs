@@ -234,6 +234,7 @@ fn fight(
     let mut app = begin(seed);
     app.insert_resource(Playtest {
         infinite_lives: true,
+        ..default()
     });
     skip_to(&mut app, sector);
     let mut field = app.world_mut().resource_mut::<Field>();
@@ -301,6 +302,7 @@ fn skirmish_in(
     let mut app = begin_as(seed, 1, difficulty, tank.into_iter().collect());
     app.insert_resource(Playtest {
         infinite_lives: true,
+        ..default()
     });
     skip_to(&mut app, sector);
     let mut field = app.world_mut().resource_mut::<Field>();
@@ -619,6 +621,7 @@ mod arena {
         app.add_plugins((MinimalPlugins, CorePlugin, ServerPlugin));
         app.insert_resource(Playtest {
             infinite_lives: true,
+            ..default()
         });
         app.world_mut().write_message(RunRequest::Start {
             seed: seed.into(),

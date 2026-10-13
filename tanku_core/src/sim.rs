@@ -380,6 +380,10 @@ pub struct Run {
 pub struct Playtest {
     /// A destroyed player comes back without losing a life.
     pub infinite_lives: bool,
+    /// Anything destroys anyone: a bullet of the enemies destroys an enemy that it touches,
+    /// the tank that fired it included once it has bounced, and a mine goes off under any
+    /// tank but the one that laid it.
+    pub indiscriminate: bool,
 }
 
 /// What the client asks of the server.

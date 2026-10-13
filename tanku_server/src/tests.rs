@@ -541,6 +541,59 @@ fn an_enemy_bullet_passes_through_enemies_and_destroys_the_player() {
 }
 
 #[test]
+fn a_playtest_that_spares_nobody_lets_anything_destroy_anyone() {
+    // A bullet of the enemies destroys the enemy in its way, and then nothing is left of it
+    // to reach the player.
+    let shot_at_an_enemy = |indiscriminate: bool| {
+        let mut app = start("TEST");
+        app.insert_resource(Playtest {
+            infinite_lives: false,
+            indiscriminate,
+        });
+        let enemy = spawn_enemy(&mut app, Vec2::new(3.0, 5.0), &[]);
+        let from = Vec2::new(6.0, 5.0);
+        spawn_bullet(&mut app, Team::Enemies, from, Vec2::NEG_X * 10.0, 0);
+        tick(&mut app, seconds(1.0));
+        (alive(&app, enemy), run(&app).lives)
+    };
+    assert_eq!(shot_at_an_enemy(false), (true, 2));
+    assert_eq!(shot_at_an_enemy(true), (false, 3));
+
+    // A bullet spares the tank that fired it until it has bounced, as a player's does.
+    let mut world = World::new();
+    let (owner, other) = (world.spawn_empty().id(), world.spawn_empty().id());
+    let mut bullet = Bullet {
+        owner,
+        team: Team::Enemies,
+        sector: 0,
+        velocity: Vec2::X,
+        bounces_left: 1,
+        pierces_left: 0,
+        bounced: false,
+        kind: Kind::Plain,
+    };
+    assert!(!crate::tanks::hits(&bullet, owner, Team::Enemies, true));
+    assert!(crate::tanks::hits(&bullet, other, Team::Enemies, true));
+    assert!(!crate::tanks::hits(&bullet, other, Team::Enemies, false));
+    assert!(crate::tanks::hits(&bullet, other, Team::Players, false));
+    bullet.bounced = true;
+    assert!(crate::tanks::hits(&bullet, owner, Team::Enemies, true));
+    assert!(!crate::tanks::hits(&bullet, owner, Team::Enemies, false));
+
+    // A mine goes off under any tank but the one that laid it.
+    let mine = Mine {
+        owner,
+        team: Team::Enemies,
+        sector: 0,
+        state: MineState::Armed(5.0),
+    };
+    assert!(crate::tanks::sets_off(&mine, other, Team::Players, false));
+    assert!(!crate::tanks::sets_off(&mine, other, Team::Enemies, false));
+    assert!(crate::tanks::sets_off(&mine, other, Team::Enemies, true));
+    assert!(!crate::tanks::sets_off(&mine, owner, Team::Enemies, true));
+}
+
+#[test]
 fn a_player_bullet_destroys_an_enemy() {
     let mut app = start("TEST");
     let enemy = spawn_enemy(&mut app, Vec2::new(0.0, 12.0), &[]);
@@ -1400,6 +1453,7 @@ fn a_life_that_is_left_on_the_floor_is_lost_when_the_player_moves_on() {
     // A player who is destroyed in the next sector comes back in the arena, and finds nothing.
     app.insert_resource(Playtest {
         infinite_lives: false,
+        ..default()
     });
     destroy_player(&mut app);
     tick(&mut app, seconds(RESPAWN_DELAY) + 1);
@@ -1412,6 +1466,7 @@ fn several_players_are_left_no_life() {
     let mut app = team("TEST", 2);
     app.insert_resource(Playtest {
         infinite_lives: true,
+        ..default()
     });
     let arena = first_arena(&mut app);
     skip_to(&mut app, arena);
@@ -1442,6 +1497,7 @@ fn enter_arena(seed: &str) -> (App, u32, Vec<u32>) {
     let mut app = start(seed);
     app.insert_resource(Playtest {
         infinite_lives: true,
+        ..default()
     });
     let arena = first_arena(&mut app);
     skip_to(&mut app, arena);
@@ -1615,6 +1671,7 @@ fn an_arena_holds_the_group_that_its_players_call_for() {
     let mut app = team("TEST", 4);
     app.insert_resource(Playtest {
         infinite_lives: true,
+        ..default()
     });
     let arena = first_arena(&mut app);
     skip_to(&mut app, arena);
@@ -1657,6 +1714,7 @@ fn a_playtest_skips_to_a_sector_and_comes_back() {
     let mut app = start("TEST");
     app.insert_resource(Playtest {
         infinite_lives: false,
+        ..default()
     });
     skip_to(&mut app, 7);
     let state = run(&app);
@@ -1710,6 +1768,7 @@ fn a_skip_goes_no_further_than_the_last_sector_and_the_last_one_asked_wins() {
     let mut app = start("TEST");
     app.insert_resource(Playtest {
         infinite_lives: true,
+        ..default()
     });
     skip_to(&mut app, u32::MAX);
     assert_eq!(run(&app).sector, PLAYTEST_LAST_SECTOR - 1);
@@ -1736,6 +1795,7 @@ fn a_skip_asked_with_the_start_of_a_run_applies_to_that_run() {
     app.add_plugins((MinimalPlugins, CorePlugin, ServerPlugin))
         .insert_resource(Playtest {
             infinite_lives: true,
+            ..default()
         });
     app.world_mut().write_message(RunRequest::Start {
         seed: "TEST".into(),
@@ -1767,6 +1827,7 @@ fn infinite_lives_keep_a_playtest_going() {
     let mut app = start("TEST");
     app.insert_resource(Playtest {
         infinite_lives: true,
+        ..default()
     });
     for _ in 0..5 {
         destroy_player(&mut app);
@@ -1789,6 +1850,7 @@ fn infinite_lives_keep_a_playtest_going() {
     // Turned off, the lives count again.
     app.insert_resource(Playtest {
         infinite_lives: false,
+        ..default()
     });
     destroy_player(&mut app);
     assert_eq!(run(&app).lives, 2);
@@ -2256,6 +2318,7 @@ fn a_run_earns_achievements_on_a_seed_that_was_drawn_for_it_unless_it_is_a_playt
         if playtest {
             app.insert_resource(Playtest {
                 infinite_lives: true,
+                ..default()
             });
         }
         app.world_mut().write_message(RunRequest::Start {
@@ -3180,6 +3243,7 @@ fn a_playtest_brings_several_players_back_together() {
     let mut app = team("TEST", 3);
     app.insert_resource(Playtest {
         infinite_lives: true,
+        ..default()
     });
     let wrecked = seat(&mut app, 2);
     destroy(&mut app, wrecked);
