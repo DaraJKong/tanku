@@ -25,6 +25,18 @@ const HEARING_RANGE: f32 = 50.0;
 /// Seconds between the last enemy of a sector and the cue that tells the end of the fight, at
 /// the least: the cue answers the blast, and is no part of it.
 const ENDING_PAUSE: f32 = 0.35;
+/// How fast what still sounds of a blast falls, each second: as the blast itself dies away.
+const BLAST_FALL: f32 = 7.0;
+/// The share of a blast under which one more adds nothing that is heard.
+const BLAST_FAINT: f32 = 0.2;
+
+/// What still sounds of the blasts that went off: how loud the last one was made, with what
+/// was left of those before it, and when.
+#[derive(Default)]
+struct Rumble {
+    level: f32,
+    at: Duration,
+}
 
 /// Every cue as a sound that is ready to play, in the order of the cues.
 #[derive(Resource)]
@@ -69,11 +81,12 @@ fn play(
     time: Res<Time<Real>>,
     mut ducked: ResMut<DuckedUntil>,
     run: Option<Res<Run>>,
+    mut rumble: Local<Rumble>,
 ) {
     // A sector of the corridor wakes with a sound. A group of arena mode is announced by its
     // own.
     let wakes = run.is_some_and(|run| !run.arena);
-    let mut appeared = false;
+    let (mut appeared, mut blast) = (false, None::<f32>);
     for event in events.read() {
         let (cue, at) = match *event {
             SimEvent::Shot {
@@ -117,7 +130,34 @@ fn play(
         if cue == Cue::MineTriggered && nearness > 0.0 {
             ducked.0 = time.elapsed() + Duration::from_secs_f32(cue.seconds());
         }
-        start(&mut commands, &cues, cue, nearness.clamp(0.25, 1.0));
+        let volume = nearness.clamp(0.25, 1.0);
+        if cue == Cue::Blast {
+            blast = Some(blast.map_or(volume, |loudest| loudest.max(volume)));
+        } else {
+            start(&mut commands, &cues, cue, volume);
+        }
+    }
+    // Blasts that go off together sound as one, as loud as the nearest of them. A mine that
+    // takes a tank with it is a blast and a tank that is destroyed, and a sound that is
+    // started twice at once is twice as loud: three of them are past what a loudspeaker
+    // takes. One that follows while another still sounds adds what that one has lost, and
+    // no more, so however many go off, they are never louder than one.
+    if let Some(wanted) = blast {
+        let now = time.elapsed();
+        let since = now.saturating_sub(rumble.at).as_secs_f32();
+        // Nothing is left of a blast that has ended.
+        let left = if since < Cue::Blast.seconds() {
+            rumble.level * (-BLAST_FALL * since).exp()
+        } else {
+            0.0
+        };
+        if wanted - left > BLAST_FAINT * wanted {
+            start(&mut commands, &cues, Cue::Blast, wanted - left);
+            *rumble = Rumble {
+                level: wanted,
+                at: now,
+            };
+        }
     }
 }
 
@@ -293,17 +333,21 @@ mod tests {
                 (SimEvent::ShieldDropped { at }, Cue::ShieldDropped),
             ]
         };
+        // Each of them is alone: a second after the one before it.
+        let alone = |app: &mut App, event: SimEvent| {
+            let mut clock = app.world_mut().resource_mut::<Time<Real>>();
+            clock.update_with_duration(Duration::from_secs(1));
+            app.world_mut().write_message(event);
+            app.update();
+            played(app)
+        };
         // What happens somewhere is at its loudest next to the middle of the screen, and a
         // quarter as loud far from it: never silent.
         for (event, cue) in sounds(near) {
-            app.world_mut().write_message(event);
-            app.update();
-            assert_eq!(played(&mut app), [(cue, 0.9)], "{event:?}");
+            assert_eq!(alone(&mut app, event), [(cue, 0.9)], "{event:?}");
         }
         for (event, cue) in sounds(far) {
-            app.world_mut().write_message(event);
-            app.update();
-            assert_eq!(played(&mut app), [(cue, 0.25)], "{event:?}");
+            assert_eq!(alone(&mut app, event), [(cue, 0.25)], "{event:?}");
         }
         // What happens to the run is as loud wherever the players are.
         let told = [
@@ -350,11 +394,73 @@ mod tests {
     }
 
     #[test]
+    fn blasts_that_go_off_together_sound_as_one() {
+        let mut app = game();
+        // What happens in a frame, this long after the frame before it.
+        let frame = |app: &mut App, events: &[SimEvent], seconds: f32| {
+            let mut clock = app.world_mut().resource_mut::<Time<Real>>();
+            clock.update_with_duration(Duration::from_secs_f32(seconds));
+            for event in events {
+                app.world_mut().write_message(*event);
+            }
+            app.update();
+            played(app)
+        };
+        let (near, far) = (Vec2::new(3.0, 4.0), Vec2::new(0.0, 80.0));
+        let lost = |at: Vec2| SimEvent::TankDestroyed {
+            at,
+            team: Team::Enemies,
+        };
+        let (mine, tank) = (SimEvent::Blast { at: near }, lost(near));
+        let (shell, wreck) = (SimEvent::Blast { at: far }, lost(far));
+        let one = |volume: f32| vec![(Cue::Blast, volume)];
+
+        // A mine takes a tank with it, or two: one blast is heard, as loud as one alone, and
+        // not two or three on top of each other.
+        assert_eq!(frame(&mut app, &[mine, tank], 1.0), one(0.9));
+        assert_eq!(frame(&mut app, &[mine, tank, tank], 1.0), one(0.9));
+        // It is as loud as the nearest of them, whichever is told first.
+        assert_eq!(frame(&mut app, &[shell, mine, wreck], 1.0), one(0.9));
+        assert_eq!(frame(&mut app, &[shell, wreck], 1.0), one(0.25));
+
+        // A blast in the next frame, as when a mine sets off the crate next to it, is heard
+        // in the one that sounds, and so is one far away while that one is louder than it.
+        assert_eq!(frame(&mut app, &[mine], 1.0), one(0.9));
+        assert_eq!(frame(&mut app, &[mine, tank], 1.0 / 60.0), []);
+        assert_eq!(frame(&mut app, &[shell], 0.05), []);
+
+        // One that follows a tenth of a second later adds what the first has lost by then,
+        // which is half of it: the two are never louder than one.
+        assert_eq!(frame(&mut app, &[mine], 1.0), one(0.9));
+        let more = frame(&mut app, &[mine], 0.1);
+        assert!(matches!(more[..], [(Cue::Blast, more)] if (more - 0.453).abs() < 0.005));
+        // And a blast that comes once the last has ended is alone.
+        assert_eq!(frame(&mut app, &[tank], 0.8), one(0.9));
+
+        // The other cues are as they were: two shots in a frame are two shots.
+        let shot = SimEvent::Shot {
+            at: near,
+            team: Team::Enemies,
+        };
+        let shots = frame(&mut app, &[shot, shot, mine], 1.0);
+        assert_eq!(shots.len(), 3);
+        assert_eq!(
+            shots
+                .iter()
+                .filter(|(cue, _)| *cue == Cue::EnemyShot)
+                .count(),
+            2
+        );
+    }
+
+    #[test]
     fn the_end_of_a_fight_is_told_once_it_is_over() {
         let mut app = game();
         let frame = |app: &mut App, event: Option<SimEvent>, seconds: f32| {
             let time = Duration::from_secs_f32(seconds);
             app.world_mut().resource_mut::<Time>().advance_by(time);
+            let mut clock = app.world_mut().resource_mut::<Time<Real>>();
+            clock.update_with_duration(time);
             if let Some(event) = event {
                 app.world_mut().write_message(event);
             }
