@@ -558,14 +558,58 @@ fn has_a_shot_at(field: &Field, me: Vec2, explosive: Vec2) -> bool {
 }
 
 /// Where the shot of a tank ends if it is fired now: on the first thing that is solid along
-/// the way that its turret points, or on the first tank of a player before that.
-fn shot_end(field: &Field, me: Vec2, turret: f32, players: impl Iterator<Item = Vec2>) -> Vec2 {
+/// the way that its turret points, or on the first of the other tanks before that.
+fn shot_end(field: &Field, me: Vec2, turret: f32, tanks: impl Iterator<Item = Vec2>) -> Vec2 {
     let delta = Vec2::from_angle(turret) * SHOT_RANGE;
     let wall = field.cast(me, delta, BULLET_RADIUS).map(|(hit, _)| hit.t);
     let reach = TANK_RADIUS + BULLET_RADIUS;
-    let tanks = players.filter_map(|at| geom::sweep_circle_point(me, delta, at, reach));
+    let tanks = tanks.filter_map(|at| geom::sweep_circle_point(me, delta, at, reach));
     let first = tanks.chain(wall).fold(1.0, f32::min);
     me + delta * first
+}
+
+/// The way of a shot that is fired now from a place, where a gun points, as far as what it
+/// is fired at: its stretches, which are one for a straight shot and more for a shot that
+/// counts on so many bounces. A shot that never comes near what it is fired at is followed
+/// to its end.
+fn way_of_shot(
+    field: &Field,
+    from: Vec2,
+    heading: f32,
+    bounces: u8,
+    goal: Vec2,
+) -> Vec<(Vec2, Vec2)> {
+    let mut way = Vec::new();
+    let (mut at, mut direction) = (from, Vec2::from_angle(heading));
+    for bounce in 0..=bounces {
+        let delta = direction * SHOT_RANGE;
+        let hit = field.cast(at, delta, BULLET_RADIUS);
+        let to = at + delta * hit.map_or(1.0, |(hit, _)| hit.t);
+        // The shot is as close to its goal as it gets on this stretch: it ends there.
+        let nearest = geom::closest_point_on_segment(goal, at, to);
+        if nearest.distance(goal) < ON_COURSE {
+            way.push((at, nearest));
+            break;
+        }
+        way.push((at, to));
+        match hit {
+            Some((hit, solid)) if solid.bounces() && bounce < bounces => {
+                direction = geom::reflect(direction, hit.normal);
+                at = to;
+            }
+            _ => break,
+        }
+    }
+    way
+}
+
+/// Whether one of some tanks is in the way of a shot: on course to be hit by it, as a brain
+/// tells of a bullet that comes at its own tank.
+fn in_the_way(way: &[(Vec2, Vec2)], mut tanks: impl Iterator<Item = Vec2>) -> bool {
+    tanks.any(|at| {
+        let near = |&(from, to): &(Vec2, Vec2)| geom::distance_to_segment(at, from, to) < ON_COURSE;
+        way.iter().any(near)
+    })
 }
 
 /// Whether a place lies between two walls or blocks that are so close that no tank gets
@@ -622,7 +666,8 @@ pub fn think(
         })
         .collect();
     rivals.sort_by_key(|rival| rival.0);
-    // Where the bullets of the players go, bounces included, for the brains that follow them.
+    // Where the bullets go, bounces included, for the brains that follow them: any bullet
+    // destroys a tank, whoever fired it.
     let followed = enemies
         .iter()
         .any(|(_, tank, .., enemy, _, _)| enemy.awake && tank.genome.brain() >= 3);
@@ -689,6 +734,8 @@ pub fn think(
             player_at
         };
         let mut aim = (target - me).to_angle();
+        // What its shot is fired at, and the bounces that it counts on to get there.
+        let (mut goal, mut banked) = (target, 0);
         // A tank fires at a player within its sight, where the balance gives it one. Further
         // than that, it knows where the player is and holds its fire: its shot is one that
         // it finds when the player comes into sight, after the delay of its brain.
@@ -706,12 +753,19 @@ pub fn think(
             if let Some(angle) = brain.bank_shot {
                 aim = angle;
                 solution = true;
+                banked = genome.bounces().min(ballistics - 1);
             }
         } else {
             brain.bank_shot = None;
         }
+        // The other enemies, which a bullet and a blast destroy as they destroy a player.
+        let others = || {
+            let other = |ally: &&(Entity, Vec2, Option<u32>)| ally.0 != entity;
+            allies.iter().filter(other).map(|ally| ally.1)
+        };
         if in_sight && ballistics >= 3 {
-            // A mine or a crate next to the player is a bigger target than the player.
+            // A mine or a crate next to the player is a bigger target than the player, unless
+            // its blast would reach another enemy.
             let explosive = mines
                 .iter()
                 .chain(&crates)
@@ -719,11 +773,13 @@ pub fn think(
                 .find(|&at| {
                     at.distance(player_at) < BLAST_RADIUS * 0.8
                         && at.distance(me) > BLAST_RADIUS + TANK_RADIUS
+                        && others().all(|other| other.distance(at) > BLAST_CLEARANCE)
                         && has_a_shot_at(&field, me, at)
                 });
             if let Some(at) = explosive {
                 aim = (at - me).to_angle();
                 solution = true;
+                (goal, banked) = (at, 0);
             }
         }
         brain.aim_timer -= TICK;
@@ -740,8 +796,15 @@ pub fn think(
         brain.reaction = (brain.reaction - TICK).max(0.0);
         let aligned = geom::angle_difference(motion.turret, aim).abs() < 2.0f32.to_radians();
         let mut fire = solution && aligned && brain.reaction == 0.0 && gun.rounds > 0;
+        // A bullet spares nobody. A tank holds its fire, whatever its tier, while another
+        // enemy is in the way of its shot, between its gun and what it fires at. Its shot
+        // is found all the while: it fires as soon as the way is clear.
+        if fire {
+            let way = way_of_shot(&field, me, motion.turret, banked, goal);
+            fire = !in_the_way(&way, others());
+        }
 
-        // A soldier sees the player bullet that is about to hit first, once it flies straight
+        // A soldier sees the bullet that is about to hit first, once it flies straight
         // at its tank, and for how long the brain has seen it. A veteran looks further: see
         // below.
         let delay = brain.reaction_delay();
@@ -922,7 +985,9 @@ pub fn think(
             aim = (meeting - me).to_angle() + brain.aim_error;
             let cone = (PARRY_AIM / me.distance(meeting)).min(1.0).asin();
             let off = geom::angle_difference(motion.turret, aim).abs();
-            fire = gun.rounds > 0 && off < cone.max(2.0f32.to_radians());
+            // The bullet gets to an ally that stands between the two before it gets here.
+            let clear = !in_the_way(&[(me, meeting)], others());
+            fire = gun.rounds > 0 && off < cone.max(2.0f32.to_radians()) && clear;
             if let (true, Some(watch)) = (fire && gun.cooldown <= TICK, brain.watching(bullet)) {
                 watch.answered = true;
             }
@@ -930,25 +995,24 @@ pub fn think(
 
         // Mines are dropped by reflex when the player comes close. A veteran also lays one
         // where a player is likely to come: in a narrow place, and in the way of a player who
-        // charges it. It leaves room between two mines, and lays none next to an ally.
-        let mut lay = tier >= 1 && distance < MINE_REFLEX;
+        // charges it, and it leaves room between two mines. No brain lays a mine next to an
+        // ally, which would set it off as a player does.
+        let alone = others().all(|other| other.distance(me) > BLAST_RADIUS + 1.0);
+        let mut lay = tier >= 1 && distance < MINE_REFLEX && alone;
         let spare = gun.mines < genome.mines() && gun.mine_cooldown <= TICK;
         if tier >= 3 && !lay && spare && genome.top_speed() > 0.0 && distance < MINING_RANGE {
             let closing = player_velocity.dot(-toward);
             let charged =
                 sees_player && closing > CHARGE_SPEED && closing > 0.94 * player_velocity.length();
             let apart = mines.iter().all(|mine| mine.0.distance(me) > MINE_SPACING);
-            let alone = allies
-                .iter()
-                .all(|&(ally, at, _)| ally == entity || at.distance(me) > BLAST_RADIUS + 1.0);
             lay = apart && alone && (charged || narrow(&field, me));
         }
 
         // A blast spares nobody. A tank whose bullets explode holds its fire while the blast
         // of its shot would reach its own tank or another enemy.
         if fire && genome.ammo() == Ammo::Exploding {
-            let players = rivals.iter().map(|rival| rival.3);
-            let end = shot_end(&field, me, motion.turret, players);
+            let tanks = rivals.iter().map(|rival| rival.3).chain(others());
+            let end = shot_end(&field, me, motion.turret, tanks);
             let clear = |ally: &(Entity, Vec2, Option<u32>)| ally.1.distance(end) > BLAST_CLEARANCE;
             fire = allies.iter().all(clear);
         }
@@ -1000,6 +1064,43 @@ mod tests {
         let mut field = room();
         field.colliders.push(wall((10.0, 0.0), (10.0, 6.0)));
         field
+    }
+
+    #[test]
+    fn the_way_of_a_shot_ends_at_what_it_is_fired_at() {
+        // The room is 20 m wide and 10 m deep. A gun 2 m from its west wall points east.
+        let (field, from) = (room(), Vec2::new(2.0, 5.0));
+        let goal = Vec2::new(10.0, 5.0);
+        let way = way_of_shot(&field, from, 0.0, 0, goal);
+        assert_eq!(way.len(), 1);
+        assert!(way[0].0 == from && way[0].1.distance(goal) < 1e-3);
+        // A tank on that way is in the way. One that stands beside it is not, and neither
+        // is one that stands further than the goal.
+        let among = |way: &[(Vec2, Vec2)], tanks: &[Vec2]| in_the_way(way, tanks.iter().copied());
+        assert!(among(&way, &[Vec2::new(6.0, 5.5)]));
+        assert!(among(&way, &[Vec2::new(14.0, 9.0), Vec2::new(4.0, 4.0)]));
+        assert!(!among(&way, &[Vec2::new(6.0, 7.0), Vec2::new(13.0, 5.0)]));
+        assert!(!among(&way, &[]));
+
+        // A shot that counts on a bounce off the east wall, where the middle of a bullet
+        // turns back at x = 19.775, to get to a goal that it has no straight way to.
+        let goal = Vec2::new(12.0, 9.0);
+        let mirrored = Vec2::new(2.0 * 19.775 - goal.x, goal.y);
+        let heading = (mirrored - from).to_angle();
+        let way = way_of_shot(&field, from, heading, 1, goal);
+        assert_eq!(way.len(), 2);
+        assert!((way[0].1.x - 19.775).abs() < 1e-2);
+        assert!(way[1].1.distance(goal) < 0.05);
+        // A tank is in its way before the bounce and after it, and not behind the goal.
+        let after = (way[1].0 + way[1].1) / 2.0;
+        assert!(among(&way, &[Vec2::new(11.0, 6.4)]));
+        assert!(among(&way, &[after]));
+        assert!(!among(&way, &[goal + (goal - way[1].0).normalize() * 3.0]));
+        // The same shot without a bounce to count on never comes near its goal: it is
+        // followed to the wall where it ends.
+        let straight = way_of_shot(&field, from, heading, 0, goal);
+        assert_eq!(straight.len(), 1);
+        assert!((straight[0].1.x - 19.775).abs() < 1e-2);
     }
 
     /// A player's bullet that flies so, with this many bounces left.

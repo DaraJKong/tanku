@@ -219,6 +219,22 @@ fn spawn_thinker(app: &mut App, at: Vec2, levels: &[(Stat, u8)], sector: u32) ->
     enemy
 }
 
+/// How many shots the enemies have fired since the events were last read.
+fn enemy_shots(app: &mut App) -> usize {
+    let fired = |event: &SimEvent| {
+        let team = Team::Enemies;
+        matches!(event, SimEvent::Shot { team: by, .. } if *by == team)
+    };
+    count(&events(app), fired)
+}
+
+/// An enemy that stands at a place, asleep: it does nothing, and the others know of it.
+fn spawn_asleep(app: &mut App, at: Vec2) -> Entity {
+    let enemy = spawn_awake(app, at, &[]);
+    app.world_mut().get_mut::<Enemy>(enemy).unwrap().awake = false;
+    enemy
+}
+
 /// Destroys the enemies that are in a sector, as a player would.
 fn destroy_enemies(app: &mut App, sector: u32) {
     let destroyed = enemies(app, sector);
@@ -1947,12 +1963,15 @@ fn the_best_ballistics_fire_at_a_crate_next_to_the_player() {
     // A crate stands 2 m east of the player, who is within the reach of its blast. A sentry
     // 8 m north of the player has a shot at both. What is left after three seconds: the
     // crate, and the lives of the player.
-    let fares = |ballistics: u8, hidden: bool| {
+    let fares_among = |ballistics: u8, hidden: bool, ally: Option<Vec2>| {
         let mut app = start("TEST");
         let explosive = spawn_crate(&mut app, START + Vec2::X * 2.0);
         if hidden {
             // A block between the sentry and the crate: the crate is no target then.
             spawn_block(&mut app, START + Vec2::new(2.0, 2.0));
+        }
+        if let Some(ally) = ally {
+            spawn_asleep(&mut app, ally);
         }
         let levels = [
             (Stat::Turret, 6),
@@ -1963,31 +1982,155 @@ fn the_best_ballistics_fire_at_a_crate_next_to_the_player() {
         tick(&mut app, seconds(3.0));
         (alive(&app, explosive), run(&app).lives)
     };
+    let fares = |ballistics: u8, hidden: bool| fares_among(ballistics, hidden, None);
     // The tiers below fire at the player: one round in three seconds, which destroys the
     // tank and leaves the crate.
     assert_eq!(fares(2, false), (true, 2));
     // The best one fires at the crate, whose blast destroys the tank as well.
     assert_eq!(fares(3, false), (false, 2));
     assert_eq!(fares(3, true), (true, 2));
+    // A blast spares nobody: the crate is no target while another enemy stands within its
+    // reach, and it is one again when that enemy stands further.
+    let (near, far) = (START + Vec2::new(4.5, 0.0), START + Vec2::new(6.0, 0.0));
+    assert_eq!(fares_among(3, false, Some(near)), (true, 2));
+    assert_eq!(fares_among(3, false, Some(far)), (false, 2));
+}
+
+#[test]
+fn a_tank_holds_its_fire_while_another_enemy_is_in_the_way_of_its_shot() {
+    // The sentry of the tests above, 8 m north of the player, and another enemy that stands
+    // somewhere, asleep.
+    let scene = |ally: Vec2| {
+        let mut app = start("TEST");
+        let levels = [(Stat::Turret, 6), (Stat::Muzzle, 4)];
+        spawn_awake(&mut app, Vec2::new(0.0, 13.0), &levels);
+        let ally = spawn_asleep(&mut app, ally);
+        (app, ally)
+    };
+    // Between the two, it is in the way: the sentry holds its fire, and no harm comes to
+    // the ally or to the player.
+    let (mut app, ally) = scene(Vec2::new(0.0, 9.0));
+    tick(&mut app, seconds(4.0));
+    assert_eq!(enemy_shots(&mut app), 0);
+    assert!(alive(&app, ally));
+    assert_eq!(run(&app).lives, 3);
+    // Its shot is found all the while: it fires as soon as the way is clear.
+    app.world_mut().despawn(ally);
+    tick(&mut app, 4);
+    assert!(enemy_shots(&mut app) > 0);
+    // An ally that stands beside the way holds nothing back, and neither does one that
+    // stands behind the player: what a shot does once it has missed is for the others to
+    // get out of the way of.
+    for aside in [Vec2::new(2.5, 9.0), Vec2::new(0.0, 1.5)] {
+        let (mut app, _) = scene(aside);
+        tick(&mut app, seconds(4.0));
+        assert!(enemy_shots(&mut app) > 0, "an ally at {aside}");
+    }
+}
+
+#[test]
+fn no_brain_lays_a_mine_next_to_another_enemy() {
+    // A grunt that has mines, 4 m north of the player: within the reach of its reflex.
+    // Another enemy may stand somewhere, asleep. Tells the mines that it lays.
+    let at = START + Vec2::Y * 4.0;
+    let lays = |ally: Option<Vec2>| {
+        let mut app = start("TEST");
+        spawn_awake(&mut app, at, &[(Stat::Mines, 2), (Stat::Brain, 1)]);
+        if let Some(ally) = ally {
+            spawn_asleep(&mut app, ally);
+        }
+        tick(&mut app, seconds(0.8));
+        count(&events(&mut app), |event| {
+            matches!(event, SimEvent::MinePlaced { .. })
+        })
+    };
+    assert!(lays(None) > 0);
+    // The ally would set the mine off as a player does, and the blast would reach both.
+    assert_eq!(lays(Some(at + Vec2::X * 2.5)), 0);
+    assert!(lays(Some(at + Vec2::X * 5.0)) > 0);
+}
+
+#[test]
+fn a_veteran_leaves_a_bullet_to_the_ally_that_stands_in_its_way() {
+    // A veteran without an engine, which shoots down the bullet that it can't get out of the
+    // way of, and a bullet that flies straight at it from the north. Tells its shots, and
+    // whether it is still there.
+    let fares = |ally: Option<Vec2>| {
+        let mut app = start("TEST");
+        let entity = player(&mut app).unwrap();
+        teleport(&mut app, entity, Vec2::new(-3.0, 14.5));
+        spawn_block(&mut app, Vec2::new(-1.8, 10.25));
+        let levels = [(Stat::Turret, 6), (Stat::Magazine, 2), (Stat::Brain, 3)];
+        let veteran = spawn_awake(&mut app, Vec2::new(0.0, 6.0), &levels);
+        let ally = ally.map(|at| spawn_asleep(&mut app, at));
+        tick(&mut app, seconds(1.0));
+        events(&mut app);
+        spawn_bullet(
+            &mut app,
+            Team::Players,
+            Vec2::new(0.0, 15.0),
+            Vec2::NEG_Y * 9.0,
+            0,
+        );
+        tick(&mut app, seconds(1.75));
+        let stands = ally.is_none_or(|ally| alive(&app, ally));
+        (enemy_shots(&mut app), alive(&app, veteran), stands)
+    };
+    // Alone, it fires once, and the two bullets destroy each other.
+    assert_eq!(fares(None), (1, true, true));
+    // An ally stands between the two: the bullet ends on it, and a shot would too. The
+    // veteran keeps its round.
+    assert_eq!(fares(Some(Vec2::new(0.0, 9.5))), (0, true, false));
 }
 
 /// Fires a player's bullet straight at an enemy from the north. Returns the enemy and the app
 /// a third of a second later, when even a slow brain has seen the bullet coming.
 fn shoot_at_enemy(levels: &[(Stat, u8)]) -> (App, Entity) {
+    shoot_at_enemy_as(Team::Players, levels)
+}
+
+/// The same with a bullet of either side.
+fn shoot_at_enemy_as(team: Team, levels: &[(Stat, u8)]) -> (App, Entity) {
     let mut app = start("TEST");
     let entity = player(&mut app).unwrap();
     // The player waits out of the way, where no mine reflex is triggered.
     teleport(&mut app, entity, Vec2::new(-5.0, 2.0));
     let enemy = spawn_awake(&mut app, Vec2::new(0.0, 8.0), levels);
-    spawn_bullet(
-        &mut app,
-        Team::Players,
-        Vec2::new(0.0, 15.5),
-        Vec2::NEG_Y * 10.0,
-        0,
-    );
+    spawn_bullet(&mut app, team, Vec2::new(0.0, 15.5), Vec2::NEG_Y * 10.0, 0);
     tick(&mut app, seconds(0.33));
     (app, enemy)
+}
+
+#[test]
+fn a_brain_minds_the_bullet_of_another_enemy_as_it_minds_a_player_s() {
+    // A bullet spares nobody, so a brain does about any bullet what its tier does about a
+    // player's: a grunt raises its shield, a soldier gets out of the way, and a veteran
+    // that can do neither shoots it down.
+    for team in [Team::Players, Team::Enemies] {
+        let (mut app, grunt) = shoot_at_enemy_as(team, &[(Stat::Shield, 3), (Stat::Brain, 1)]);
+        tick(&mut app, seconds(1.2));
+        assert!(alive(&app, grunt), "a grunt and a bullet of the {team:?}");
+
+        let soldier = [(Stat::Engine, 5), (Stat::Tracks, 6), (Stat::Brain, 2)];
+        let (mut app, soldier) = shoot_at_enemy_as(team, &soldier);
+        let drive = app.world().get::<TankCommand>(soldier).unwrap().drive;
+        assert!(
+            drive.x.abs() > 0.9,
+            "a soldier and a bullet of the {team:?}"
+        );
+        tick(&mut app, seconds(1.2));
+        assert!(alive(&app, soldier));
+
+        let veteran = [(Stat::Turret, 6), (Stat::Brain, 3)];
+        let (mut app, veteran) = shoot_at_enemy_as(team, &veteran);
+        events(&mut app);
+        tick(&mut app, seconds(1.2));
+        assert!(
+            alive(&app, veteran),
+            "a veteran and a bullet of the {team:?}"
+        );
+        assert_eq!(enemy_shots(&mut app), 1);
+    }
 }
 
 #[test]
