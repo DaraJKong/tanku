@@ -123,7 +123,7 @@ Enemy groups grow with the number of players (see [Progression](#progression)). 
 
 A run in arena mode has no corridor. It is fought in one room, a closed arena that the seed draws, against one group after another, without end. What this document says of a run holds there, with what follows in place of sectors and barriers.
 
-**Groups.** The groups come in the order of their numbers. Group $n$ is the group of sector $n$ for as many players: its tanks, their budgets and their brains are those of that sector (see [Progression](#progression)), and it has the number of tanks of a corridor, not the 1.5 times of an arena. It doesn't come in waves. Half of its tanks, rounded up, come when the lull is over, and the group is announced then, by a message and a sound. From then on, a tank of the group comes for each one that is destroyed: the room holds as many tanks as that half for as long as any waits in reserve, which is as many as a wave of an arena of the corridor has. The place of each tank is marked for 1 s before the tank appears, awake, as in an arena, and the tanks that come later are told by their marks alone. No tank appears within 4 m of a player's tank, or within 2 m of a tank of its group. In an arena of the corridor, a mark waits for the player to move. In the room, where nobody could tell why a tank doesn't come, the tank takes another place that has room, and waits only if there is none.
+**Groups.** The groups come in the order of their numbers. Group $n$ is the group of sector $n$ for as many players: its tanks, their budgets and their brains are those of that sector (see [Progression](#progression)), and it has the number of tanks of a corridor, not the 1.5 times of an arena. It doesn't come in waves. Half of its tanks, rounded up, come when the lull is over, and the group is announced then, by a message and a sound. From then on, a tank of the group comes for each one that is destroyed: the room holds as many tanks as that half for as long as any waits in reserve, which is as many as a wave of an arena of the corridor has. The place of each tank is marked for 1 s before the tank appears, awake, as in an arena, and the tanks that come later are told by their marks alone. A mark there is in the color that its tank has in reserve, so it tells which tank comes. No tank appears within 4 m of a player's tank, or within 2 m of a tank of its group. In an arena of the corridor, a mark waits for the player to move. In the room, where nobody could tell why a tank doesn't come, the tank takes another place that has room, and waits only if there is none.
 
 **The lull and the reserve.** A lull of 3 s comes before the first group and after each group that is cleared. It is short on purpose: arena mode is meant to be fast before it is readable. The tanks that have not come yet wait in reserve: they stand outside the south wall of the room, as outlines in dashes with every part that tells a stat, and nothing reaches them there. During a lull, the reserve holds the whole next group, with a gap between the tanks that come first and the others. During a fight, it holds the tanks that each wait for one to be destroyed, and they leave it in the order they stand in. A tank leaves it when its place in the room is marked. A group is shown there as one is through a barrier, and the places of its tanks are not told before their marks.
 
@@ -174,7 +174,7 @@ A playtest says on screen that it is one. It sets no record and earns no achieve
 | Shield | Space | |
 | Repair | Hold Left Shift next to a wreck | Multiplayer only |
 | Rotate the view | Q and E | A quarter turn each way |
-| Menu | Esc | Pauses the game in solo only |
+| Menu | Esc | Pauses the game in solo, and for everyone when the host of a game opens it |
 
 All bindings can be changed in the settings. Controller support comes later.
 
@@ -199,16 +199,15 @@ Firing takes one round from the magazine. Rounds reload one at a time, automatic
 | Hits → | Player tank | Enemy tank | Player bullet | Enemy bullet | Mine or crate | Block or wall | Barrier |
 |---|---|---|---|---|---|---|---|
 | **Player bullet** | Destroys it | Destroys it | Both destroyed | Both destroyed | Detonates it | Bounces | Absorbed |
-| **Enemy bullet** | Destroys it | Passes through | Both destroyed | Both destroyed | Detonates it | Bounces | Absorbed |
+| **Enemy bullet** | Destroys it | Destroys it | Both destroyed | Both destroyed | Detonates it | Bounces | Absorbed |
 | **Blast** | Destroys it | Destroys it | Destroys it | Destroys it | Detonates it | Destroys blocks, stopped by walls | Stopped |
 
-Three rules sum up the bullets:
+Two rules sum up the bullets, and neither asks who fired:
 
-1. A player's bullet destroys any tank: enemies, teammates and, after a ricochet, the player who fired it.
-2. An enemy's bullet destroys only player tanks and passes through enemy tanks.
-3. Any two bullets that touch destroy each other, whoever fired them.
+1. A bullet destroys any tank that it touches: a player's destroys enemies and teammates, and an enemy's destroys players and other enemies. It spares only the tank that fired it, and only until it has bounced.
+2. Any two bullets that touch destroy each other.
 
-Piercing is the exception to the third rule. A tank with the Piercing stat fires piercing bullets. A piercing bullet destroys the first normal bullet it touches and flies on, but it is a normal bullet from then on, so it takes two bullets to stop it. Two piercing bullets destroy each other.
+Piercing is the exception to the second rule. A tank with the Piercing stat fires piercing bullets. A piercing bullet destroys the first normal bullet it touches and flies on, but it is a normal bullet from then on, so it takes two bullets to stop it. Two piercing bullets destroy each other.
 
 Blasts are neutral. They destroy every unshielded tank in range, whoever caused them. A tank is in range when its center is within the radius of the blast and no wall or barrier stands between them.
 
@@ -219,7 +218,7 @@ A tank fires one type of bullet. A normal bullet does what the rules above say. 
 - **Piercing.** It destroys the first normal bullet that it touches and flies on, as said above.
 - **Seeking.** It flies straight, and it seeks when it bounces. Off a wall or a block, it doesn't leave at the mirror angle: it leaves toward the nearest tank in sight of that place that its side fights. A player's bullet seeks the enemies, never a teammate or the tank that fired it, and an enemy's bullet seeks the players' tanks that run. It aims at where that tank is then, not ahead of it. With no such tank in sight, it bounces as a normal bullet does. It seeks at each bounce that its tank's Ricochet gives it, and never without Ricochet.
 - **Splitting.** After 1 s of flight, it becomes two normal bullets that leave from where it is, 30° to each side of its line of flight. The two don't destroy each other as they part. The bullet itself doesn't bounce: a wall or a block that it meets before it splits ends it. The two bullets have the bounces of their tank's Ricochet.
-- **Exploding.** It never bounces, and it goes off wherever it ends: on a wall, a block, a crate, a barrier, a tank, a shield, a mine or another bullet, and in a blast that reaches it. Its blast is that of a mine, with a radius of 3 m, and it is the doing of the tank that fired the bullet. Like every blast, it is neutral: a tank that fires at a wall within 3 m destroys itself, and an enemy's bullet destroys the enemies around the place where it ends.
+- **Exploding.** It never bounces, and it goes off wherever it ends: on a wall, a block, a crate, a barrier, a tank, a shield, a mine or another bullet, and in a blast that reaches it. Its blast is that of a mine, with a radius of 3 m, and it is the doing of the tank that fired the bullet. Like every blast, it is neutral: a tank that fires at a wall within 3 m destroys itself.
 
 Each of the last three says what it is about to do, in dashes (see [Visual style](#visual-style)):
 
@@ -231,7 +230,7 @@ A time gives every gun the same warning, whatever its Muzzle: 1.5 s is 13.5 m at
 
 ### Mines
 
-A tank drops a mine at its own position, at most one every 0.5 s, and can have as many armed mines as its Mines stat allows. A mine arms after 1 s. It then detonates when an opposing tank comes within 2 m or when its 10 s fuse runs out, and it warns for 0.6 s first either way: the last 0.6 s of the fuse are that warning. A bullet or a blast detonates it at any time, without a warning, even before it is armed. A shot passes over a mine that lies under the barrel of the tank that fires it. The blast has a radius of 3 m. An armed mine shows the circle within which an opposing tank sets it off. A mine that warns shows the circle that its blast will reach instead. Blasts are the only way to remove destructible blocks.
+A tank drops a mine at its own position, at most one every 0.5 s, and can have as many armed mines as its Mines stat allows. A mine arms after 1 s. It then detonates when another tank than the one that laid it comes within 2 m, whichever side that tank is on, or when its 10 s fuse runs out, and it warns for 0.6 s first either way: the last 0.6 s of the fuse are that warning. A bullet or a blast detonates it at any time, without a warning, even before it is armed. A shot passes over a mine that lies under the barrel of the tank that fires it. The blast has a radius of 3 m. An armed mine shows the circle within which another tank sets it off. A mine that warns shows the circle that its blast will reach instead. Blasts are the only way to remove destructible blocks.
 
 ### Shield
 
@@ -260,7 +259,7 @@ A wreck lies in a circle in dashes and keeps the number of its player over it: a
 | Time without shooting after a player's tank appears | 0.5 s |
 | Mine arming time and fuse | 1 s and 10 s |
 | Time between two mines of a tank | 0.5 s |
-| Mine trigger | Opposing tank within 2 m |
+| Mine trigger | Another tank than the one that laid it within 2 m |
 | Mine warning | 0.6 s before the blast, after a tank sets the mine off and at the end of its fuse |
 | Blast radius of mines, crates and exploding bullets | 3 m |
 | Seeking bullet | At each bounce, toward the nearest tank in sight that its side fights. Its bounce is marked from 1.5 s before. |
@@ -313,7 +312,7 @@ Software is the enemy's controller. Its price is a share of the tank's total bud
 |---|---|---|---|
 | Brain | 0, Sentry | 0% | Fires when a player is in its line of fire. Wanders if it has an engine. |
 | Brain | 1, Grunt | 8% | Keeps its distance, avoids walls and mines, uses mines and shield by reflex. |
-| Brain | 2, Soldier | 16% | Dodges bullets flying straight at it, reloads behind cover, spreads out from its allies. |
+| Brain | 2, Soldier | 16% | Dodges bullets flying straight at it, whoever fired them, reloads behind cover, spreads out from its allies. |
 | Brain | 3, Veteran | 24% | Dodges ricochets, shoots down a bullet that it can't dodge, mines the players' routes, shields only when it can't dodge. |
 | Brain | 4, Ace | 32% | Dodges shots that are aimed ahead of it, coordinates with allies for crossfire, baits shots, retreats when alone. |
 | Ballistics | 0 | 0% | Aims at where the target is. |
@@ -477,6 +476,8 @@ A brain is the controller of one enemy tank. It observes the fight (its own stat
 
 Two things make a brain better. Its tiers, bought with points, decide what it is able to do. Its experience, which depends only on the sector, decides how well it does it: experience shortens the reaction delay from 0.50 s to 0.12 s and shrinks the aiming error from 8° to 1°.
 
+A bullet spares nobody either, so a brain that dodges minds the bullets of the other enemies as it minds the players': only its own don't count, until they have bounced. No brain holds its fire because another enemy stands in its line of fire.
+
 A blast spares nobody, so the bullets that explode ask two things of the brains. A tank that fires them holds its fire, whatever its tier, while the blast of its shot would reach its own tank or another enemy. And from tier 1, a brain stays out of the circle that an exploding bullet marks, as it stays away from mines.
 
 Brains are hand-written, one set of behavior per tier. In normal and hard mode they never learn during play, because that would break the promise that a seed always gives the same challenge. Brains that learn belong to [impossible mode](#impossible-mode).
@@ -612,6 +613,8 @@ A host whom the others have left by then would go on alone, in a solo run. The l
 
 ### Connection and latency
 
+The menu of the host pauses the run for everyone: nothing moves until the host closes it, and every player is told on screen that the host paused. The menu of another player pauses nothing.
+
 A player who disconnects loses their tank, and later sectors are generated for the remaining number of players. A player whose machine stays silent for 5 s has disconnected. If the host leaves, the run ends, and the other players are back at their main menu. All players must run the same game version, compiled with the same balance (see [BALANCE.md](BALANCE.md)): a game of another one doesn't answer, and the join screen lists it as one of another version.
 
 The game must stay playable up to a round trip of 120 ms. What the host tells comes late, so a player who joined a game is shown three things in three ways:
@@ -659,7 +662,7 @@ A line in dashes stands for what isn't there. A dormant enemy is the outline of 
 
 A block or a crate that is not in play yet lies flat, as its plan: the outline of a block with its hatching, the outline of a crate with its red cross. The plans are drawn as sharply as what stands, and the darker floor under them says that their sector waits. They stand up at once when the first player crosses the barrier, and they are plans again in a sector that a single player comes back in front of. The walls of the corridor are no plans: they stand in a sector that waits as in any other, drawn darker. In the room of arena mode, the blocks and the crates of the next group are planned the same way before they stand.
 
-The floor of an arena bears two circles in dashes around its middle, in a dull red. The place where a tank is about to appear is marked by a red circle that closes in on it. A life on the floor is a square in the players' blue, like those that count the lives on the display, inside the circle within which it is taken. The room of arena mode bears no circles: nothing else is there to tell it from.
+The floor of an arena bears two circles in dashes around its middle, in a dull red. The place where a tank is about to appear is marked by a circle that closes in on it: a red one in an arena of the corridor, which tells nothing of the tank, and in arena mode one in the color of the tank's outline in reserve. The tank appears with a flash of the same color. A life on the floor is a square in the players' blue, like those that count the lives on the display, inside the circle within which it is taken. The room of arena mode bears no circles: nothing else is there to tell it from.
 
 A fight leaves marks on the floor: a scalloped outline where a blast went off, a square in dashes where it took a block away, and a cross where a tank was destroyed. They last as long as their sector is loaded.
 
