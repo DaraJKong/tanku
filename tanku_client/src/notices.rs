@@ -78,6 +78,33 @@ const STAMP_STEP: f32 = 0.25;
 /// bullet through it.
 const STAMP_FILL: f32 = 0.5;
 
+/// What an alert says, in these faces and sizes: its headline, its second line, the tag of a
+/// player and the distance to a wreck.
+const HEADLINE: (Face, f32) = (Face::Title, 30.0);
+const LINE: (Face, f32) = (Face::Title, 16.0);
+const TAG: f32 = 22.0;
+const DISTANCE: f32 = 17.0;
+/// What a stamp says: what it is for, large or in brief, what it is about, and what more.
+const EARNED: (Face, f32) = (Face::Title, 40.0);
+const EARNED_BRIEF: (Face, f32) = (Face::Title, 26.0);
+const ABOUT: (Face, f32) = (Face::Label, 13.0);
+const MORE: (Face, f32) = (Face::Label, 15.0);
+/// Every face and size that a notice says something in, and the messages of the display: see
+/// `rehearse`. Words are in capitals in the lettering, and figures in their own face.
+const SAID: [(Face, f32); 9] = [
+    HEADLINE,
+    LINE,
+    (Face::Title, TAG),
+    (Face::Figure, DISTANCE),
+    EARNED,
+    EARNED_BRIEF,
+    ABOUT,
+    MORE,
+    (Face::Title, hud::TOAST_SIZE),
+];
+const CAPITALS: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,:;!?'-+%/()";
+const FIGURES: &str = "0123456789.,:-+%/() abcdefghijklmnopqrstuvwxyz";
+
 /// The losses that the display tells for a moment: how long ago the tank of each seat was
 /// destroyed, and which life of a single player was lost, with how long ago. And the life
 /// that a single player took back, with how long ago.
@@ -278,6 +305,7 @@ pub fn plugin(app: &mut App) {
         .init_resource::<Stamps>()
         .init_resource::<Best>()
         .add_systems(Startup, setup)
+        .add_systems(Update, rehearse)
         .add_systems(OnEnter(Screen::Playing), (build, forget))
         .add_systems(
             Update,
@@ -325,6 +353,33 @@ fn build(mut commands: Commands) {
         BorderColor::all(Color::NONE),
         Pickable::IGNORE,
     ));
+}
+
+/// Lays out what a notice can say ahead of the first one, one face and size in a frame and
+/// out of sight, from the main menu on. The engine draws the letters of a face at a size the
+/// first time that it lays them out, and the first alert of a run, in the frame of a loss,
+/// took 3 ms more for it (measured 2026-10-14). The words stay laid out where nothing shows,
+/// and are laid out again when the interface changes size, for its new size.
+fn rehearse(mut commands: Commands, mut rehearsed: Local<(usize, Option<Entity>)>) {
+    let (done, root) = &mut *rehearsed;
+    let Some(&(face, size)) = SAID.get(*done) else {
+        return;
+    };
+    let root = *root.get_or_insert_with(|| {
+        let aside = Node {
+            position_type: PositionType::Absolute,
+            left: px(-10_000),
+            flex_direction: FlexDirection::Column,
+            ..default()
+        };
+        commands.spawn((aside, Visibility::Hidden)).id()
+    });
+    let said = match face {
+        Face::Figure => FIGURES,
+        Face::Label | Face::Title => CAPITALS,
+    };
+    commands.spawn((ChildOf(root), face.set(said.to_string(), size, theme::TEXT)));
+    *done += 1;
 }
 
 /// A run that starts has nothing to tell yet.
@@ -677,7 +732,7 @@ fn tag(commands: &mut Commands, (parent, root): (Entity, Entity), seat: u8) {
     commands.spawn((
         ChildOf(tag),
         Inked::text(root, theme::TEXT),
-        theme::title(named(seat), 22.0, theme::TEXT),
+        theme::title(named(seat), TAG, theme::TEXT),
     ));
 }
 
@@ -812,8 +867,7 @@ fn spawn(commands: &mut Commands, told: &Told) -> Entity {
         },
         BackgroundColor(rule),
     ));
-    let big = (Face::Title, 30.0);
-    let line = (Face::Title, 16.0);
+    let (big, line) = (HEADLINE, LINE);
     let first = row(commands, column, 12.0);
     match told {
         Told::Lost { seats, last, .. } => {
@@ -827,7 +881,7 @@ fn spawn(commands: &mut Commands, told: &Told) -> Entity {
                 (Distance, Inked::text(root, theme::TEXT)),
                 Face::Figure,
                 "",
-                17.0,
+                DISTANCE,
                 theme::TEXT,
             );
             commands.spawn((ChildOf(second), distance));
@@ -1242,37 +1296,13 @@ fn card(commands: &mut Commands, column: Entity, said: &StampWords, delay: f32, 
     });
     let parts = (card, card);
     if let Some(brief) = brief {
-        words(
-            commands,
-            parts,
-            (Face::Title, 26.0),
-            &said.earned,
-            theme::GOOD,
-        );
-        words(commands, parts, (Face::Label, 15.0), brief, theme::TEXT);
+        words(commands, parts, EARNED_BRIEF, &said.earned, theme::GOOD);
+        words(commands, parts, MORE, brief, theme::TEXT);
         return;
     }
-    words(
-        commands,
-        parts,
-        (Face::Label, 13.0),
-        &said.about,
-        theme::GOOD,
-    );
-    words(
-        commands,
-        parts,
-        (Face::Title, 40.0),
-        &said.earned,
-        theme::GOOD,
-    );
-    words(
-        commands,
-        parts,
-        (Face::Label, 15.0),
-        &said.more,
-        theme::TEXT,
-    );
+    words(commands, parts, ABOUT, &said.about, theme::GOOD);
+    words(commands, parts, EARNED, &said.earned, theme::GOOD);
+    words(commands, parts, MORE, &said.more, theme::TEXT);
 }
 
 /// Brings the stamps down: what waits comes once the stamps on the screen are gone, all of it

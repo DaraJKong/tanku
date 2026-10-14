@@ -27,8 +27,9 @@ use crate::{
     unlocks::{self, Fair, Unlocks},
 };
 
-/// Seconds a message stays on screen.
+/// Seconds a message stays on screen, and the size of its words.
 const TOAST_TIME: f32 = 2.5;
+pub const TOAST_SIZE: f32 = 20.0;
 /// The last seconds of a lull of arena mode that a message counts down. The first one is left
 /// to the message that says that a group is cleared.
 const LULL_COUNTED: u8 = 2;
@@ -696,7 +697,7 @@ fn build(mut commands: Commands) {
                     Toast(0.0),
                     theme::Face::Title,
                     "",
-                    20.0,
+                    TOAST_SIZE,
                     theme::TEXT
                 )],
             ),

@@ -194,7 +194,7 @@ pub enum Face {
 }
 
 impl Face {
-    fn set(self, content: String, size: f32, color: Color) -> impl Bundle {
+    pub fn set(self, content: String, size: f32, color: Color) -> impl Bundle {
         let (face, tracking) = match self {
             Face::Label => ((LETTERING, PLAIN), TRACKING),
             Face::Title => ((LETTERING, HEAVY), TRACKING),
