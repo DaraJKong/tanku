@@ -86,23 +86,23 @@ pub fn rules(right: bool, below: bool) -> UiRect {
 }
 
 /// A row of a table or of a block, ruled under it unless it is the last.
-pub fn row(
-    parent: &mut ChildSpawnerCommands,
+pub fn row<'a>(
+    parent: &'a mut ChildSpawnerCommands,
     height: f32,
     below: bool,
     cells: impl FnOnce(&mut ChildSpawnerCommands),
-) {
-    parent
-        .spawn((
-            Node {
-                height: px(height),
-                flex_shrink: 0.0,
-                border: rules(false, below),
-                ..default()
-            },
-            BorderColor::all(theme::RULE_DIM),
-        ))
-        .with_children(cells);
+) -> EntityCommands<'a> {
+    let mut row = parent.spawn((
+        Node {
+            height: px(height),
+            flex_shrink: 0.0,
+            border: rules(false, below),
+            ..default()
+        },
+        BorderColor::all(theme::RULE_DIM),
+    ));
+    row.with_children(cells);
+    row
 }
 
 /// A cell of a row, this wide, ruled on its right unless it is the last, with what it holds in
@@ -342,7 +342,6 @@ pub fn choice(
 
 /// A button of a form that isn't a row of a list, as wide as given and 56 px high, filled if
 /// it is the one that the player most likely wants.
-#[expect(dead_code, reason = "the screens take it as they are drawn again")]
 pub fn key_button(
     parent: &mut ChildSpawnerCommands,
     word: impl Into<String>,

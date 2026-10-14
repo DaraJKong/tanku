@@ -207,10 +207,19 @@ fn cost(genome: &Genome, stat: Stat) -> u32 {
     }
 }
 
-/// The parts of the tank behind a blow that the drawing points at, in the order of their
-/// numbers.
-fn anchors(blow: &Blow) -> Vec<models::Anchor> {
-    named_parts(&blow.genome, blow.team)
+/// The parts that a drawing names, each with the number of its balloon: the numbers of a parts
+/// list, in its order.
+pub fn numbered(anchors: Vec<models::Anchor>) -> Vec<(usize, models::Anchor)> {
+    anchors
+        .into_iter()
+        .enumerate()
+        .map(|(index, anchor)| (index + 1, anchor))
+        .collect()
+}
+
+/// The parts of the tank behind a blow that the drawing points at, with their numbers.
+fn anchors(blow: &Blow) -> Vec<(usize, models::Anchor)> {
+    numbered(named_parts(&blow.genome, blow.team))
 }
 
 /// The name of a class, as the players read it.

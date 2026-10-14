@@ -29,7 +29,7 @@ use crate::{
     exhibit::{self, Exhibit, Show},
     garage::{self, Garage},
     hud::SHEET_EDGE,
-    net, report,
+    models, net, report,
     scene::Paints,
     session::{Asked, Drawn, Found, Game, Invitation, Notice, Session, SessionRequest, Shut, Sign},
     settings::{Action, Binding, League, Records, Settings},
@@ -49,9 +49,20 @@ const EXHIBIT_SPANS: (f32, f32) = (6.0, 14.0);
 const ADDRESS_LENGTH: usize = 64;
 /// The longest seed that a player types: as many letters as the screens have room for.
 const SEED_LENGTH: usize = 10;
-/// How wide the columns of the table of the garage are: the stat, its level between the two
-/// buttons that change it, what the level gives, its price and the price of one more.
-const GARAGE_COLUMNS: [f32; 5] = [104.0, 106.0, 134.0, 52.0, 44.0];
+/// How wide the columns of the table of the garage are: the item, the stat, its level between
+/// the two steps that change it, what the level gives, its price and the price of one more.
+/// The five types of bullet share the last four.
+const GARAGE_COLUMNS: [f32; 6] = [64.0, 152.0, 152.0, 334.0, 72.0, 68.0];
+/// The rows of the table of the garage: a stat, as a row of a list, and the type of the
+/// bullets, whose choices hold their prices under their names.
+const BULLETS_ROW: f32 = 76.0;
+const PICK_HEIGHT: f32 = 56.0;
+/// The box of the level of a stat, between its steps.
+const LEVEL_FIGURE: f32 = 28.0;
+/// The block of the points spent and left, under the table, and the room between it and the
+/// keys that close the garage.
+const SPENT_WIDTH: f32 = 226.0;
+const KEY_GAP: f32 = 12.0;
 /// What the solo screen says of hard mode when it is chosen.
 const HARD_MODE: &str = "In hard mode, enemies have more points, every brain from the first \
                          sector, and the guns and the experience of twenty sectors further.";
@@ -370,7 +381,9 @@ pub fn plugin(app: &mut App) {
                 )
                     .chain(),
                 solo_screen.run_if(in_state(Screen::Solo)),
-                garage_screen.run_if(in_state(Screen::Garage)),
+                (garage_screen, light_garage_row)
+                    .chain()
+                    .run_if(in_state(Screen::Garage)),
                 refresh_pause
                     .run_if(in_state(Overlay::Pause).and_then(resource_exists::<Playtest>)),
                 refresh_settings.run_if(in_state(Overlay::Settings)),
@@ -424,9 +437,15 @@ const MENU_WIDTH: f32 = 500.0;
 /// How wide the forms of the other screens are: their rows, their choices and their notes.
 const FORM_WIDTH: f32 = 640.0;
 
-/// How wide the table of the garage is, with the room around it.
+/// How wide the table of the garage is, its edges included.
 fn garage_width() -> f32 {
-    GARAGE_COLUMNS.iter().sum::<f32>() + 60.0
+    drawing::title_width_of(&GARAGE_COLUMNS)
+}
+
+/// How wide each of the two keys under the table of the garage is: they fill its width with
+/// the block of the points.
+fn garage_key_width() -> f32 {
+    (garage_width() - SPENT_WIDTH - 2.0 * KEY_GAP) / 2.0
 }
 
 /// A box with a ruled edge.
@@ -635,29 +654,6 @@ fn choice(
         },
         BorderColor::all(theme::ACCENT),
         children![theme::old::text(content, 16.0, theme::ACCENT)],
-    ));
-}
-
-/// A figure of a run with its name above it, in a row of figures.
-fn figure(parent: &mut ChildSpawnerCommands, name: &str, value: String, last: bool) {
-    parent.spawn((
-        Node {
-            flex_grow: 1.0,
-            flex_direction: FlexDirection::Column,
-            row_gap: px(4),
-            padding: UiRect::axes(px(12), px(8)),
-            border: if last {
-                UiRect::ZERO
-            } else {
-                UiRect::right(px(1))
-            },
-            ..default()
-        },
-        BorderColor::all(theme::RULE),
-        children![
-            theme::old::label(name, 12.0, theme::TEXT_DIM),
-            theme::old::figure(value, 36.0, theme::TEXT),
-        ],
     ));
 }
 
@@ -1095,6 +1091,14 @@ fn exhibit(
     *shown = Some(wanted);
     let sheet = camera.logical_viewport_size().unwrap_or(sheet::LEAST) / ui_scale.0;
     let named = report::named_parts(&genome, tanku_core::sim::Team::Players);
+    // The balloons of the garage carry the numbers of its rows, which stay as the tank
+    // changes. Those of a parts list count its items.
+    let named = if wanted.0 == Screen::Garage {
+        let row = |anchor: models::Anchor| (garage_number(anchor.stat), anchor);
+        named.into_iter().map(row).collect()
+    } else {
+        report::numbered(named)
+    };
     let (span, place, room) = staging(wanted.0, sheet, named.len());
     let show = Show {
         genome,
@@ -1135,7 +1139,7 @@ fn staging(screen: Screen, sheet: Vec2, parts: usize) -> (f32, Vec2, Rect) {
     };
     let left = match screen {
         Screen::Menu => drawing::LEFT + MENU_WIDTH,
-        Screen::Garage => drawing::LEFT + garage_width(),
+        Screen::Garage => drawing::LEFT + garage_width() + 24.0,
         _ => drawing::LEFT + FORM_WIDTH,
     };
     let room = Rect::new(left, edge, sheet.x - edge, sheet.y - SHEET_EDGE - below);
@@ -1746,33 +1750,48 @@ fn garage_opened_from(session: Session) -> Screen {
     }
 }
 
-/// A cell of the table of the garage: a box of a width that holds what a column tells of a
-/// stat.
-fn cell(parent: &mut ChildSpawnerCommands, width: f32, content: impl Bundle) {
-    parent.spawn((
-        Node {
-            width: px(width),
-            ..default()
-        },
-        children![content],
-    ));
+/// A row of the table of the garage, by its number: the stats in their order, then the type of
+/// the bullets. The row under the pointer is lit, and so is the balloon of its part.
+#[derive(Component)]
+struct GarageRow(usize);
+
+/// The number of the row of the garage that a part is on, which its balloon carries: the
+/// stats in the order of the table, then the type of the bullets, which the part of a special
+/// bullet tells. The numbers stay as the tank changes, so that a balloon keeps its row.
+fn garage_number(stat: Stat) -> usize {
+    let listed = garage::LISTED.iter().position(|listed| *listed == stat);
+    listed.map_or(garage::LISTED.len() + 1, |index| index + 1)
 }
 
-/// The button that gives the tank of the garage a level more or less of a stat. Where the
-/// garage lets no such level be, a dim box of the same size stands in its place.
+/// The step that gives the tank of the garage a level more or less of a stat: a square of
+/// 44 px. Where the garage lets no such level be, a dim square stands in its place.
 fn step(parent: &mut ChildSpawnerCommands, garage: &Garage, stat: Stat, by: i8) {
-    let sign = if by > 0 { "+" } else { "-" };
+    let sign = if by > 0 { "+" } else { "\u{2212}" };
+    let node = Node {
+        width: px(drawing::CONTROL),
+        height: px(drawing::CONTROL),
+        flex_shrink: 0.0,
+        justify_content: JustifyContent::Center,
+        align_items: AlignItems::Center,
+        border: UiRect::all(px(1)),
+        ..default()
+    };
     if garage.changed(stat, by).is_some() {
-        return small(parent, sign, 34.0, Press::Level(stat, by));
+        parent.spawn((
+            Button,
+            Press::Level(stat, by),
+            node,
+            BackgroundColor(theme::SURFACE_RAISED),
+            BorderColor::all(theme::RULE),
+            children![theme::figure(sign, theme::VALUE, theme::TEXT)],
+        ));
+    } else {
+        parent.spawn((
+            node,
+            BorderColor::all(theme::RULE_DIM),
+            children![theme::figure(sign, theme::VALUE, theme::RULE)],
+        ));
     }
-    parent.spawn((
-        Node {
-            padding: UiRect::axes(px(6), px(5)),
-            ..button_node(px(34.0))
-        },
-        BorderColor::all(theme::RULE_DIM),
-        children![theme::old::text(sign, 16.0, theme::RULE)],
-    ));
 }
 
 /// What the level of a stat gives the tank of the garage. A stat that a tank does without
@@ -1796,55 +1815,217 @@ fn ammo_name(ammo: Ammo) -> &'static str {
     }
 }
 
-/// What the bullets of a type do, besides what every bullet does.
-fn ammo_gives(ammo: Ammo) -> &'static str {
+/// What the bullets of a type do, as a note of the garage says it.
+fn ammo_note(ammo: Ammo) -> &'static str {
     match ammo {
-        Ammo::Normal => "Nothing more",
-        Ammo::Piercing => "Pierce a bullet and fly on",
-        Ammo::Seeking => "Seek a tank at each bounce",
-        Ammo::Splitting => "Split in two after 1 s",
-        Ammo::Exploding => "Go off in a blast of 3 m",
+        Ammo::Normal => "A normal bullet flies straight and bounces as Ricochet lets it.",
+        Ammo::Piercing => "A piercing bullet destroys the first bullet it touches and flies on.",
+        Ammo::Seeking => "A seeking bullet leaves each bounce toward the nearest enemy in sight.",
+        Ammo::Splitting => "A splitting bullet becomes two after 1 s, 30\u{b0} to each side.",
+        Ammo::Exploding => "An exploding bullet goes off where it ends, in a blast of 3 m.",
     }
 }
 
-/// One of the types of bullet that the garage offers, with its price: the one that the tank
-/// fires stands in the accent and takes no press, each of the others that the points pay for
-/// is a button, and a dim box stands for one that they don't pay for. A tank fires one type,
-/// so a press on a type takes it in place of the other.
+/// One of the types of bullet that the garage offers, with its price under its name: the one
+/// that the tank fires is edged in the accent and takes no press, each of the others that the
+/// points pay for is a button, and a dim box stands for one that they don't pay for. A tank
+/// fires one type, so a press on a type takes it in place of the other.
 fn ammo_choice(parent: &mut ChildSpawnerCommands, garage: &Garage, ammo: Ammo) {
     let chosen = garage.tank.ammo() == ammo;
-    let (words, price, edge) = match (chosen, garage.loaded(ammo).is_some()) {
-        (true, _) => (theme::ACCENT, theme::ACCENT, theme::ACCENT),
-        (false, true) => (theme::TEXT, theme::TEXT_DIM, theme::RULE),
-        (false, false) => (theme::RULE, theme::RULE, theme::RULE_DIM),
+    let open = !chosen && garage.loaded(ammo).is_some();
+    let (words, price, edge, ground) = match (chosen, open) {
+        (true, _) => (
+            theme::ACCENT,
+            theme::ACCENT,
+            theme::ACCENT,
+            theme::ACCENT.with_alpha(0.12),
+        ),
+        (false, true) => (
+            theme::TEXT,
+            theme::TEXT_DIM,
+            theme::RULE,
+            theme::SURFACE_RAISED,
+        ),
+        (false, false) => (theme::RULE, theme::RULE, theme::RULE_DIM, Color::NONE),
     };
     let node = Node {
         flex_grow: 1.0,
-        column_gap: px(5),
-        padding: UiRect::axes(px(5), px(5)),
-        ..button_node(Val::Auto)
+        flex_basis: px(0),
+        height: px(PICK_HEIGHT),
+        flex_direction: FlexDirection::Column,
+        justify_content: JustifyContent::Center,
+        align_items: AlignItems::Center,
+        row_gap: px(2),
+        border: UiRect::all(px(1)),
+        ..default()
     };
     let content = children![
-        theme::old::text(ammo_name(ammo), 16.0, words),
-        theme::old::figure(ammo.price().to_string(), 16.0, price),
+        theme::label(ammo_name(ammo), theme::LABEL, words),
+        theme::figure(ammo.price().to_string(), theme::LABEL, price),
     ];
-    let mut choice = parent.spawn((node, BorderColor::all(edge), content));
-    if !chosen && garage.loaded(ammo).is_some() {
-        choice.insert((
-            Button,
-            Press::Ammo(ammo),
-            BackgroundColor(theme::SURFACE_RAISED),
-        ));
+    let mut choice = parent.spawn((
+        node,
+        BorderColor::all(edge),
+        BackgroundColor(ground),
+        content,
+    ));
+    if open {
+        choice.insert((Button, Press::Ammo(ammo)));
     }
 }
 
-/// The garage: where a player spends the points of their tank for free mode. Every stat has
-/// its level, what that level gives, what it costs and what one more level would cost. The
-/// type of the bullets is one choice among five, under the stats. The tank is drawn next to
-/// the list as it will look, and follows every change.
+/// The row of the table of the garage for a stat: its item, its name, its level between the
+/// steps that change it, what that level gives, its price and the price of one more level.
+fn stat_row(table: &mut ChildSpawnerCommands, garage: &Garage, stat: Stat) {
+    let tank = garage.tank;
+    let level = tank.level(stat);
+    // What one more level would cost, where there is one.
+    let next = (level < stat.max_level()).then(|| stat.price(level + 1) - stat.price(level));
+    let next = next.map_or(String::new(), |price| format!("+{price}"));
+    let number = garage_number(stat);
+    drawing::row(table, drawing::ROW, true, |row| {
+        drawing::cell(row, GARAGE_COLUMNS[0], true, |cell| {
+            cell.spawn(theme::figure(number.to_string(), theme::VALUE, theme::TEXT));
+        });
+        drawing::cell(row, GARAGE_COLUMNS[1], true, |cell| {
+            cell.spawn(drawing::value(report::stat_name(stat), theme::TEXT));
+        });
+        drawing::cell(row, GARAGE_COLUMNS[2], true, |cell| {
+            step(cell, garage, stat, -1);
+            cell.spawn((
+                Node {
+                    width: px(LEVEL_FIGURE),
+                    flex_shrink: 0.0,
+                    justify_content: JustifyContent::Center,
+                    ..default()
+                },
+                children![theme::figure(level.to_string(), theme::VALUE, theme::TEXT)],
+            ));
+            step(cell, garage, stat, 1);
+        });
+        drawing::cell(row, GARAGE_COLUMNS[3], true, |cell| {
+            cell.spawn(drawing::value(gives(&tank, stat), theme::TEXT));
+        });
+        drawing::cell(row, GARAGE_COLUMNS[4], true, |cell| {
+            let price = stat.price(level).to_string();
+            cell.spawn(theme::figure(price, theme::VALUE, theme::TEXT));
+        });
+        drawing::cell(row, GARAGE_COLUMNS[5], false, |cell| {
+            cell.spawn(theme::figure(next, theme::VALUE, theme::TEXT_DIM));
+        });
+    })
+    .insert((
+        GarageRow(number),
+        Interaction::default(),
+        BackgroundColor(Color::NONE),
+    ));
+}
+
+/// The last row of the table of the garage: the type of the bullets, one choice among five
+/// across the columns of the level, what it gives and its prices.
+fn bullets_row(table: &mut ChildSpawnerCommands, garage: &Garage) {
+    let number = garage::LISTED.len() + 1;
+    drawing::row(table, BULLETS_ROW, false, |row| {
+        drawing::cell(row, GARAGE_COLUMNS[0], true, |cell| {
+            cell.spawn(theme::figure(number.to_string(), theme::VALUE, theme::TEXT));
+        });
+        drawing::cell(row, GARAGE_COLUMNS[1], true, |cell| {
+            cell.spawn(drawing::value("Bullets", theme::TEXT));
+        });
+        let across: f32 = GARAGE_COLUMNS[2..].iter().sum();
+        row.spawn(Node {
+            width: px(across),
+            flex_shrink: 0.0,
+            align_items: AlignItems::Center,
+            column_gap: px(6),
+            padding: UiRect::horizontal(px(8)),
+            ..default()
+        })
+        .with_children(|picks| {
+            for offered in Ammo::ALL {
+                ammo_choice(picks, garage, offered);
+            }
+        });
+    })
+    .insert((
+        GarageRow(number),
+        Interaction::default(),
+        BackgroundColor(Color::NONE),
+    ));
+}
+
+/// The points that the tank of the garage spends and those that it leaves, in a ruled block.
+fn spent_and_left(parent: &mut ChildSpawnerCommands, spent: u32, left: u32) {
+    parent
+        .spawn(drawing::block(Node {
+            width: px(SPENT_WIDTH),
+            height: px(drawing::ROW),
+            flex_shrink: 0.0,
+            justify_content: JustifyContent::Center,
+            ..default()
+        }))
+        .with_children(|block| {
+            block
+                .spawn(Node {
+                    align_items: AlignItems::Center,
+                    column_gap: px(12),
+                    padding: UiRect::horizontal(px(12)),
+                    ..default()
+                })
+                .with_children(|line| {
+                    line.spawn(drawing::key("Spent"));
+                    line.spawn(theme::figure(spent.to_string(), theme::VALUE, theme::TEXT));
+                    line.spawn(drawing::key("Left"));
+                    line.spawn(theme::figure(left.to_string(), theme::VALUE, theme::TEXT));
+                });
+        });
+}
+
+/// The fields of the upper row of the title block of the garage.
+const GARAGE_TITLE: [f32; 4] = [156.0, 200.0, 140.0, 100.0];
+
+/// The title block of the garage: the tank of the player who builds it, for free mode.
+fn garage_title_block(parent: &mut ChildSpawnerCommands, seat: u8) {
+    let [owner, title, creator, budget] = GARAGE_TITLE;
+    let upper = vec![
+        drawing::Field::new(owner, "Legal owner", Holds::Owner(None)),
+        drawing::Field::new(
+            title,
+            "Title",
+            Holds::Titled("Your tank".to_string(), "Free mode".to_string()),
+        ),
+        drawing::Field::new(creator, "Created by", Holds::Balloon(seat)),
+        drawing::Field::new(
+            budget,
+            "Budget",
+            Holds::Value(PLAYER_BUDGET.to_string(), theme::TEXT),
+        ),
+    ];
+    let lower = vec![
+        drawing::Field::new(
+            owner,
+            "Scale",
+            Holds::Value("1:25".to_string(), theme::TEXT),
+        ),
+        drawing::Field::new(
+            title + creator + budget,
+            "Date of issue",
+            Holds::Value(sheet::day_of_issue(), theme::TEXT),
+        ),
+    ];
+    drawing::title_block(parent, upper, lower);
+}
+
+/// The garage: where a player spends the points of their tank for free mode, as the parts list
+/// of the tank, edited. Each stat is an item with its level between the steps that change it,
+/// what that level gives, its price and the price of one more level, and the type of the
+/// bullets is the last item, one choice among five. Under the list stand the points spent and
+/// left, and what closes the garage. The tank is drawn right of the list as it will look, and
+/// follows every change: the row under the pointer lights the balloon of its part.
 fn garage_screen(
     mut commands: Commands,
     garage: Res<Garage>,
+    seat: Res<LocalSeat>,
     roots: Query<Entity, With<GarageRoot>>,
 ) {
     if !roots.is_empty() && !garage.is_changed() {
@@ -1867,132 +2048,83 @@ fn garage_screen(
             children![sheet::frame()],
         ))
         .with_children(|root| {
-            margin(root, 500.0, |parent| {
-                parent.spawn(theme::old::label(
-                    "Tank of free mode",
-                    13.0,
-                    theme::TEXT_DIM,
-                ));
-                parent.spawn(theme::old::title("Garage", 84.0, theme::TEXT));
-                let table = Node {
-                    flex_direction: FlexDirection::Column,
-                    row_gap: px(4),
-                    padding: UiRect::axes(px(12), px(8)),
-                    ..default()
-                };
-                parent.spawn(ruled(table)).with_children(|table| {
-                    let line = Node {
-                        column_gap: px(6),
-                        align_items: AlignItems::Center,
-                        ..default()
-                    };
-                    let head = |name: &'static str| theme::old::label(name, 12.0, theme::TEXT_DIM);
-                    table.spawn(line.clone()).with_children(|names| {
-                        cell(names, GARAGE_COLUMNS[0], head("Stat"));
-                        cell(names, GARAGE_COLUMNS[1], head("Level"));
-                        cell(names, GARAGE_COLUMNS[2], head("Gives"));
-                        cell(names, GARAGE_COLUMNS[3], head("Price"));
-                        cell(names, GARAGE_COLUMNS[4], head("Next"));
-                    });
-                    for stat in garage::LISTED {
-                        let level = tank.level(stat);
-                        // What one more level would cost, where there is one.
-                        let next = (level < stat.max_level())
-                            .then(|| stat.price(level + 1) - stat.price(level));
-                        let next = next.map_or(String::new(), |price| format!("+{price}"));
-                        let name = report::stat_name(stat);
-                        table.spawn(line.clone()).with_children(|row| {
-                            cell(
-                                row,
-                                GARAGE_COLUMNS[0],
-                                theme::old::text(name, 16.0, theme::TEXT),
-                            );
-                            let steps = Node {
-                                width: px(GARAGE_COLUMNS[1]),
-                                column_gap: px(6),
-                                align_items: AlignItems::Center,
-                                ..default()
-                            };
-                            row.spawn(steps).with_children(|steps| {
-                                step(steps, &garage, stat, -1);
-                                let figure =
-                                    theme::old::figure(level.to_string(), 16.0, theme::TEXT);
-                                steps.spawn((
-                                    Node {
-                                        width: px(20),
-                                        justify_content: JustifyContent::Center,
-                                        ..default()
-                                    },
-                                    children![figure],
-                                ));
-                                step(steps, &garage, stat, 1);
-                            });
-                            let gives = gives(&tank, stat);
-                            cell(
-                                row,
-                                GARAGE_COLUMNS[2],
-                                theme::old::text(gives, 16.0, theme::TEXT),
-                            );
-                            let price = stat.price(level).to_string();
-                            cell(
-                                row,
-                                GARAGE_COLUMNS[3],
-                                theme::old::figure(price, 16.0, theme::TEXT),
-                            );
-                            cell(
-                                row,
-                                GARAGE_COLUMNS[4],
-                                theme::old::figure(next, 16.0, theme::TEXT_DIM),
-                            );
-                        });
-                    }
-                    // The type of the bullets, under a rule: what the bullets of the tank
-                    // do and what that costs, then the five types to choose among.
-                    let ammo = tank.ammo();
-                    let fired = Node {
-                        margin: UiRect::top(px(4)),
-                        padding: UiRect::top(px(8)),
-                        border: UiRect::top(px(1)),
-                        ..line.clone()
-                    };
-                    table
-                        .spawn((fired, BorderColor::all(theme::RULE_DIM)))
-                        .with_children(|row| {
-                            let name = theme::old::text("Bullets", 16.0, theme::TEXT);
-                            cell(row, GARAGE_COLUMNS[0], name);
-                            let wide = GARAGE_COLUMNS[1] + GARAGE_COLUMNS[2] + 6.0;
-                            let does = theme::old::text(ammo_gives(ammo), 16.0, theme::TEXT);
-                            cell(row, wide, does);
-                            let price = ammo.price().to_string();
-                            cell(
-                                row,
-                                GARAGE_COLUMNS[3],
-                                theme::old::figure(price, 16.0, theme::TEXT),
-                            );
-                        });
-                    table.spawn(line.clone()).with_children(|types| {
-                        for offered in Ammo::ALL {
-                            ammo_choice(types, &garage, offered);
-                        }
-                    });
-                    if let Some(why) = garage.wasted() {
-                        table.spawn(theme::old::text(why, 16.0, theme::DANGER));
-                    }
-                });
+            margin(root, garage_width(), |parent| {
+                parent.spawn(drawing::key("Tank of free mode"));
+                parent.spawn(theme::label("Garage", theme::HEADING, theme::TEXT));
                 parent
-                    .spawn(ruled(Node {
-                        align_self: AlignSelf::Stretch,
+                    .spawn(drawing::block(Node {
+                        align_self: AlignSelf::Start,
                         ..default()
                     }))
-                    .with_children(|figures| {
-                        let (spent, left) = (tank.cost(), garage.left());
-                        figure(figures, "POINTS SPENT", spent.to_string(), false);
-                        figure(figures, "POINTS LEFT", left.to_string(), true);
+                    .with_children(|table| {
+                        let names = ["Item", "Stat", "Level", "Gives", "Price", "Next"];
+                        let columns: Vec<(f32, &str)> =
+                            GARAGE_COLUMNS.iter().copied().zip(names).collect();
+                        drawing::header(table, &columns, false);
+                        for stat in garage::LISTED {
+                            stat_row(table, &garage, stat);
+                        }
+                        bullets_row(table, &garage);
                     });
-                primary(parent, "Done", Press::CloseGarage);
-                button(parent, "Standard tank", Press::Standard);
+                parent
+                    .spawn(Node {
+                        column_gap: px(KEY_GAP),
+                        margin: UiRect::top(px(4)),
+                        ..default()
+                    })
+                    .with_children(|keys| {
+                        spent_and_left(keys, tank.cost(), garage.left());
+                        let width = px(garage_key_width());
+                        let done = (Press::CloseGarage, Primary);
+                        drawing::key_button(keys, "Done", width, done, true);
+                        drawing::key_button(keys, "Standard tank", width, Press::Standard, false);
+                    });
             });
+            // What the bullets do, as the notes of a drawing stand near its title block, or
+            // what the tank paid for and can't use, which says what its bullets don't do.
+            let right = SHEET_EDGE + drawing::title_width_of(&GARAGE_TITLE) + 24.0;
+            let (said, ink) = match garage.wasted() {
+                Some(why) => (why, theme::DANGER),
+                None => (ammo_note(tank.ammo()), theme::TEXT_DIM),
+            };
+            root.spawn(drawing::notes(drawing::LEFT, right))
+                .with_children(|notes| note(notes, said, ink));
+            garage_title_block(root, seat.0);
         });
+}
+
+/// Lights the row of the garage under the pointer, or the one whose step or choice is under
+/// it, and the balloon of its part on the drawing.
+fn light_garage_row(
+    mut rows: Query<(&GarageRow, &Interaction, &mut BackgroundColor)>,
+    presses: Query<(&Press, &Interaction)>,
+    callouts: Option<ResMut<exhibit::Callouts>>,
+) {
+    let on = |interaction: &Interaction| *interaction != Interaction::None;
+    let by_row = rows
+        .iter()
+        .find(|(_, interaction, _)| on(interaction))
+        .map(|(row, _, _)| row.0);
+    let by_press = presses
+        .iter()
+        .filter(|(_, interaction)| on(interaction))
+        .find_map(|(press, _)| match press {
+            Press::Level(stat, _) => Some(garage_number(*stat)),
+            Press::Ammo(_) => Some(garage::LISTED.len() + 1),
+            _ => None,
+        });
+    let lit = by_press.or(by_row);
+    for (row, _, mut ground) in &mut rows {
+        let wanted = if Some(row.0) == lit {
+            theme::ACCENT.with_alpha(0.16)
+        } else {
+            Color::NONE
+        };
+        ground.set_if_neq(BackgroundColor(wanted));
+    }
+    if let Some(mut callouts) = callouts {
+        callouts.light(lit);
+    }
 }
 
 /// The screen that lists what runs unlock for solo, and what those of the player have.
@@ -6310,17 +6442,15 @@ mod tests {
             "9 s cooldown",
         ];
         assert_eq!(standard.to_vec(), wanted);
-        // The type of the bullets is told in words of its own, with its price next to its
-        // name where the five are offered.
-        let does = Ammo::ALL.map(ammo_gives);
-        let wanted = [
-            "Nothing more",
-            "Pierce a bullet and fly on",
-            "Seek a tank at each bounce",
-            "Split in two after 1 s",
-            "Go off in a blast of 3 m",
-        ];
-        assert_eq!(does, wanted);
+        // The type of the bullets is told by a note of its own, which names it, with its price
+        // under its name where the five are offered.
+        for ammo in Ammo::ALL {
+            let name = ammo_name(ammo).to_lowercase();
+            assert!(
+                ammo_note(ammo).contains(&format!(" {name} bullet ")),
+                "{name}"
+            );
+        }
         let mut app = stage(
             |app| {
                 let parts = [(Stat::Engine, 1), (Stat::Shield, 1), (Stat::Piercing, 1)];
@@ -6333,13 +6463,13 @@ mod tests {
         let world = app.world_mut();
         let mut texts = world.query::<&Text>();
         let shown: Vec<String> = texts.iter(world).map(|text| text.0.clone()).collect();
-        for words in ["Bullets", "Pierce a bullet and fly on"] {
+        for words in ["BULLETS", ammo_note(Ammo::Piercing)] {
             assert!(shown.iter().any(|text| text == words), "{words}");
         }
         for ammo in Ammo::ALL {
-            let name = ammo_name(ammo);
+            let name = ammo_name(ammo).to_uppercase();
             assert_eq!(
-                shown.iter().filter(|text| *text == name).count(),
+                shown.iter().filter(|text| **text == name).count(),
                 1,
                 "{name}"
             );

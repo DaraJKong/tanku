@@ -29,7 +29,9 @@
 //! at a point relative to itself, `aim AX AY`, which turns the turret to such a point without
 //! firing, `press LABEL`, which presses the button of a menu that bears
 //! this label, in capitals or not, or `press ROW: LABEL` for the button of one row of a
-//! menu, as `press Arena mode: On`, `lineup`, which lays out one bullet of each kind next to the
+//! menu, as `press Arena mode: On`, `hover LABEL`, which keeps the pointer from then on over
+//! what bears this label and answers it, a button or a row, as `hover Muzzle` in the garage,
+//! and `hover` alone, which takes it away, `lineup`, which lays out one bullet of each kind next to the
 //! tank, `pierce`, which sends a piercing bullet at a bullet of the players there,
 //! `showcase STAT`, which lines up in the start bay one tank for each level of a stat,
 //! `palette`, which lines up there three tanks of each class, from a weak one to a strong one,
@@ -115,6 +117,8 @@ struct Script {
     shield: f32,
     /// The label of the button that the script presses.
     press: Option<String>,
+    /// The label of what the script keeps the pointer over.
+    hover: Option<String>,
     /// The password of the game that the script hosts next.
     password: String,
 }
@@ -281,6 +285,7 @@ pub fn plugin(app: &mut App) {
         repair: 0.0,
         shield: 0.0,
         press: None,
+        hover: None,
         password: String::new(),
     })
     .init_resource::<Bare>()
@@ -296,6 +301,7 @@ pub fn plugin(app: &mut App) {
         (
             play.after(input::command_player),
             press.after(UiSystems::Focus),
+            hover.after(UiSystems::Focus),
         ),
     );
 }
@@ -445,6 +451,37 @@ fn press(
     match found.next() {
         Some((_, mut interaction)) => *interaction = Interaction::Pressed,
         None => warn!("no button bears the label: {asked}"),
+    }
+}
+
+/// Keeps the pointer over what the script asked for, as if it stood there: what bears its
+/// label and answers the pointer, the nearest such thing to the label.
+fn hover(
+    script: Res<Script>,
+    mut answering: Query<(Entity, &mut Interaction)>,
+    inside: Query<&Children>,
+    labels: Query<&Text>,
+) {
+    let Some(asked) = &script.hover else {
+        return;
+    };
+    let bears = |piece: Entity| {
+        let mut texts = inside
+            .iter_descendants(piece)
+            .filter_map(|piece| labels.get(piece).ok());
+        texts.any(|text| text.0.eq_ignore_ascii_case(asked))
+    };
+    // What holds the label the closest has the fewest pieces under it.
+    let pieces = |piece: Entity| inside.iter_descendants(piece).count();
+    let nearest = answering
+        .iter()
+        .filter(|(piece, _)| bears(*piece))
+        .min_by_key(|(piece, _)| pieces(*piece))
+        .map(|(piece, _)| piece);
+    if let Some(piece) = nearest
+        && let Ok((_, mut interaction)) = answering.get_mut(piece)
+    {
+        interaction.set_if_neq(Interaction::Hovered);
     }
 }
 
@@ -692,6 +729,7 @@ fn run_script(
             }
         }
         "press" => script.press = Some(words[1..].join(" ")),
+        "hover" => script.hover = Some(words[1..].join(" ")).filter(|label| !label.is_empty()),
         // Holds the repair key for this long, or the shield key.
         "repair" => script.repair = number(1),
         "shield" => script.shield = number(1),

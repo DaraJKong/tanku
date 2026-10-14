@@ -41,14 +41,26 @@ const ROOM_EDGE: f32 = CALLOUT / 2.0 + 4.0;
 const CROWDED: f32 = 1.25;
 
 /// What points at the parts of the tank on show: where the tank stands, where each part is in
-/// the world, the room of the screen that the balloons keep inside, in the pixels of the
-/// interface, and the part whose balloon is lit, if one is, by its place in the list.
+/// the world and the number of its balloon, the room of the screen that the balloons keep
+/// inside, in the pixels of the interface, and the part whose balloon is lit, if one is, by
+/// its place in the list.
 #[derive(Resource)]
 pub struct Callouts {
     stand: Stand,
     parts: Vec<Vec3>,
+    numbers: Vec<usize>,
     room: Rect,
-    pub lit: Option<usize>,
+    lit: Option<usize>,
+}
+
+impl Callouts {
+    /// Lights the balloon of this number, or none.
+    pub fn light(&mut self, number: Option<usize>) {
+        let lit = number.and_then(|number| self.numbers.iter().position(|own| *own == number));
+        if self.lit != lit {
+            self.lit = lit;
+        }
+    }
 }
 
 /// A piece of the balloon of a part: the line to the part, the dot on it and the ring with its
@@ -123,20 +135,22 @@ pub fn plugin(app: &mut App) {
 }
 
 /// Names the parts of the tank on show, until `screen` is left: a balloon on each one that the
-/// list of anchors gives, numbered in their order, inside the room of the screen.
+/// list of anchors gives, with the number that goes with it, inside the room of the screen.
 pub fn call_out(
     commands: &mut Commands,
     (stand, room): (Stand, Rect),
-    anchors: &[models::Anchor],
+    anchors: &[(usize, models::Anchor)],
     screen: Screen,
 ) {
     let parts = anchors
         .iter()
-        .map(|anchor| stand.point(anchor.on_turret, anchor.at))
+        .map(|(_, anchor)| stand.point(anchor.on_turret, anchor.at))
         .collect();
+    let numbers: Vec<usize> = anchors.iter().map(|(number, _)| *number).collect();
     commands.insert_resource(Callouts {
         stand,
         parts,
+        numbers: numbers.clone(),
         room,
         lit: None,
     });
@@ -185,7 +199,7 @@ pub fn call_out(
                     BackgroundColor(theme::LINE),
                 ));
             }
-            for index in 0..anchors.len() {
+            for (index, number) in numbers.into_iter().enumerate() {
                 let ring = Node {
                     width: px(CALLOUT),
                     height: px(CALLOUT),
@@ -199,11 +213,7 @@ pub fn call_out(
                     piece(Callout::Ring(index), ring),
                     BorderColor::all(theme::LINE),
                     BackgroundColor(theme::VOID),
-                    children![theme::figure(
-                        (index + 1).to_string(),
-                        theme::VALUE,
-                        theme::TEXT
-                    )],
+                    children![theme::figure(number.to_string(), theme::VALUE, theme::TEXT)],
                 ));
             }
         });
