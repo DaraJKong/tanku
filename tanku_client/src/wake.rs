@@ -9,9 +9,9 @@
 //!
 //! Everything of a sector starts at once, when the first player is through its barrier. The
 //! simulation knows nothing of it: the enemies are awake and the blocks are in the way from
-//! the first tick. Only what was drawn asleep rises. A tank that appears later, in an arena or
-//! in the room of arena mode, is built as it stands, and so are the blocks and the crates of
-//! that room.
+//! the first tick. Only what was drawn asleep rises. The blocks and the crates of the room of
+//! arena mode are plans too before they stand, and each rises in the same way when its plan is
+//! over. A tank that appears later, in an arena or in that room, is built as it stands.
 //!
 //! This module holds the times. What is drawn at each moment is the doing of `scene`, for the
 //! ground and what stands on it, and of `models`, for the tanks.

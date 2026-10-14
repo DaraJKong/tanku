@@ -393,6 +393,12 @@ A sector takes a third of a second to wake once the first player is through its 
 TANKU_DEV_SCRIPT="start TANKU; wait 1; warp 4; wait 3; lift 0.1; cross; wait 0.5; shot rising.png; lift; wait 0.5; shot awake.png; quit" cargo run -p tanku_client
 ```
 
+In the room of arena mode, the blocks and the crates of the next group rise off their plans in the same way, two seconds after a group is cleared. The command `rout` sets off a mine under each enemy that is in the room, which clears the first group of a single player:
+
+```bash
+TANKU_DEV_SCRIPT="start TANKU 1 normal arena; wait 4.5; rout; wait 1; lift 0.1; wait 2; shot rising.png; lift; wait 0.5; shot standing.png; quit" cargo run -p tanku_client
+```
+
 A scripted run is silent, and its log can list the cues that it would have played, each with its time and how loud: the module that plays them tells of each one to a game that logs what is for debugging.
 
 ```bash

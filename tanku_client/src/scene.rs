@@ -46,6 +46,9 @@ const PLANNED_STRENGTH: f32 = 0.7;
 /// How flat a block is when it starts to rise from its plan, as a share of its height: its
 /// lines still lie over its faces.
 const FLAT: f32 = 0.1;
+/// Seconds for which the place of a plan of the room that ended waits for what stands there:
+/// a guest may learn of the block a moment after it learned that the plan was over.
+const PLAN_KEPT: f32 = 0.5;
 /// How much of a pale sheet lies over the top of a block whose ink is wet, and of a red one
 /// over a crate.
 const SHEEN: (f32, f32) = (0.35, 0.5);
@@ -213,6 +216,29 @@ struct Extras {
 #[derive(Component)]
 struct Marks;
 
+/// The plans of the blocks and the crates of the room of arena mode: those that are drawn,
+/// and the places of those that just ended. What stands on such a place rises off its plan, as
+/// what stands in a sector that wakes.
+#[derive(Resource, Default)]
+struct Plans {
+    drawn: Vec<(Entity, Vec2)>,
+    /// Each with the seconds since its plan ended.
+    ended: Vec<(Vec2, f32)>,
+}
+
+impl Plans {
+    /// Whether what stands at this place stands where a plan is or just was. The place of a
+    /// plan that ended serves once.
+    fn take(&mut self, at: Vec2) -> bool {
+        let here = |place: &Vec2| place.distance_squared(at) < 0.01;
+        if let Some(index) = self.ended.iter().position(|(place, _)| here(place)) {
+            self.ended.swap_remove(index);
+            return true;
+        }
+        self.drawn.iter().any(|(_, place)| here(place))
+    }
+}
+
 /// The two parts of a barrier, which change color when it unlocks.
 #[derive(Component, Clone, Copy)]
 enum BarrierPart {
@@ -258,6 +284,7 @@ enum MinePart {
 }
 
 pub fn plugin(app: &mut App) {
+    app.init_resource::<Plans>();
     app.add_systems(PreStartup, setup).add_systems(
         Update,
         (
@@ -1228,11 +1255,26 @@ fn paint_barriers(
 
 fn dress_obstacles(
     mut commands: Commands,
+    time: Res<Time>,
+    mut plans: ResMut<Plans>,
+    mut over: RemovedComponents<Planned>,
     blocks: Query<(Entity, &Block, &Position), Added<Block>>,
     crates: Query<(Entity, &ExplosiveCrate, &Position), Added<ExplosiveCrate>>,
     shapes: Res<Shapes>,
     paints: Res<Paints>,
 ) {
+    // The place of a plan that ended waits a moment for what stands there.
+    let seconds = time.delta_secs();
+    plans.ended.retain_mut(|(_, since)| {
+        *since += seconds;
+        *since < PLAN_KEPT
+    });
+    for entity in over.read() {
+        if let Some(index) = plans.drawn.iter().position(|(drawn, _)| *drawn == entity) {
+            let (_, at) = plans.drawn.swap_remove(index);
+            plans.ended.push((at, 0.0));
+        }
+    }
     let stands = |built: &Handle<Mesh>, explosive: bool| Stands {
         built: built.clone(),
         plan: shapes.planned[explosive as usize].clone(),
@@ -1244,17 +1286,26 @@ fn dress_obstacles(
         let stands = stands(&shapes.explosive, true);
         (entity, explosive.sector, position, stands)
     });
-    // Which of its two drawings each one shows is for `wake_sectors` to say.
+    // Which of its two drawings each one shows is for `wake_sectors` to say, but for what
+    // stands where a plan of the room was: it rises off that plan from the first frame.
     for (entity, sector, position, stands) in blocks.chain(crates) {
+        let mut placed = Transform::from_translation(to_world(position.0, 0.0));
+        let shown = if plans.take(position.0) {
+            placed.scale.y = FLAT;
+            commands.entity(entity).insert(Waking::default());
+            stands.built.clone()
+        } else {
+            stands.plan.clone()
+        };
         commands.entity(entity).insert((
             Ground {
                 sector,
                 floor: false,
             },
-            Mesh3d(stands.plan.clone()),
+            Mesh3d(shown),
             stands,
             MeshMaterial3d(paints.ink.clone()),
-            Transform::from_translation(to_world(position.0, 0.0)),
+            placed,
         ));
     }
 }
@@ -1262,11 +1313,13 @@ fn dress_obstacles(
 /// Draws the plan of a block or of a crate that is on its way.
 fn dress_planned(
     mut commands: Commands,
+    mut plans: ResMut<Plans>,
     planned: Query<(Entity, &Planned, &Position), Added<Planned>>,
     shapes: Res<Shapes>,
     paints: Res<Paints>,
 ) {
     for (entity, plan, position) in &planned {
+        plans.drawn.push((entity, position.0));
         let shape = &shapes.planned[plan.explosive as usize];
         commands.entity(entity).insert((
             Mesh3d(shape.clone()),
@@ -1352,7 +1405,9 @@ fn wake_sectors(
 /// walls comes up, and each block and each crate is pulled up off its plan, a little past its
 /// height and back, under a sheet of wet ink that dries. Marks flick out from the corners of
 /// its foot when it lands. Everything of a sector wakes at the same moment, so one paint
-/// serves all that fades the same way.
+/// serves all that fades the same way. The blocks and the crates of the room of arena mode
+/// rise together too, but for one whose place was taken when its plan ended: the paint then
+/// follows the last of them to rise.
 fn rise(
     mut commands: Commands,
     time: Res<Time>,
@@ -1372,7 +1427,7 @@ fn rise(
     mut marks: Query<(&mut Transform, &mut Visibility), (With<Marks>, Without<Waking>)>,
 ) {
     let hold = hold.map_or_else(Hold::default, |hold| *hold);
-    let mut latest = None;
+    let mut youngest: Option<f32> = None;
     for (entity, ground, mut waking, mut transform, mut material, stands, explosive) in &mut waking
     {
         waking.age = hold.later(waking.age, time.delta_secs());
@@ -1391,7 +1446,7 @@ fn rise(
             };
             continue;
         }
-        latest = Some(waking.age);
+        youngest = Some(youngest.map_or(waking.age, |young| young.min(waking.age)));
         if !stands {
             let coming_up = if ground.floor {
                 &paints.floor_waking
@@ -1447,7 +1502,7 @@ fn rise(
             }
         }
     }
-    let Some(age) = latest else {
+    let Some(age) = youngest else {
         return;
     };
     let mut paint = |handle: &Handle<StandardMaterial>, color: Color| {
@@ -1773,6 +1828,7 @@ mod tests {
         app.init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<StandardMaterial>>()
             .init_resource::<Assets<Image>>()
+            .init_resource::<Plans>()
             .add_systems(PreStartup, setup)
             .add_systems(Update, dress_planned);
         let at = Vec2::new(5.0, 9.0);
@@ -1923,10 +1979,18 @@ mod tests {
             .init_resource::<Assets<StandardMaterial>>()
             .init_resource::<Assets<Image>>()
             .init_resource::<Time>()
+            .init_resource::<Plans>()
             .add_systems(PreStartup, setup)
             .add_systems(
                 Update,
-                (dress_sectors, dress_obstacles, wake_sectors, rise).chain(),
+                (
+                    dress_sectors,
+                    dress_planned,
+                    dress_obstacles,
+                    wake_sectors,
+                    rise,
+                )
+                    .chain(),
             );
         app
     }
@@ -2318,6 +2382,82 @@ mod tests {
         assert!(again.dull_walls && again.dull_floor && again.plans.iter().all(|plan| *plan));
         let world = app.world_mut();
         assert_eq!(world.query::<&Marks>().iter(world).count(), 0);
+    }
+
+    #[test]
+    fn what_stands_on_a_plan_of_the_room_rises_off_it() {
+        // The room of arena mode is the sector 0 of its run.
+        let mut app = dressing_world();
+        app.insert_resource(run_in(0));
+        let frame = |app: &mut App, seconds: f32| {
+            let time = Duration::from_secs_f32(seconds);
+            app.world_mut().resource_mut::<Time>().advance_by(time);
+            app.update();
+        };
+        let block = |app: &mut App, at: Vec2| {
+            let world = app.world_mut();
+            world.spawn((Block { sector: 0 }, Position(at))).id()
+        };
+        let plan = |app: &mut App, at: Vec2, explosive: bool| {
+            let world = app.world_mut();
+            world.spawn((Planned { explosive }, Position(at))).id()
+        };
+        let places = [3.0, 7.0, 11.0, 15.0, 19.0].map(|x| Vec2::new(x, 3.0));
+        // What the room holds when a run opens it stands at once: it had no plan.
+        block(&mut app, places[0]);
+        // What the next group is fought among is planned.
+        let plans: Vec<Entity> = (1..4)
+            .map(|index| plan(&mut app, places[index], index == 2))
+            .collect();
+        frame(&mut app, 0.0);
+        assert_eq!(waking(&mut app, 0), (0, vec![1.0], 0));
+
+        // Their time comes: the server takes a plan away and stands a block or a crate in its
+        // place, in one tick. They rise off their plans.
+        for &planned in &plans[..2] {
+            app.world_mut().despawn(planned);
+        }
+        let risen = block(&mut app, places[1]);
+        let explosive = (ExplosiveCrate { sector: 0 }, Position(places[2]));
+        app.world_mut().spawn(explosive);
+        frame(&mut app, 1.0 / 60.0);
+        let (late, heights, _) = waking(&mut app, 0);
+        assert_eq!(late, 2);
+        assert_eq!(heights.iter().filter(|high| **high == 1.0).count(), 1);
+        assert!(heights.iter().all(|high| *high == 1.0 || *high < 0.5));
+        let built = app.world().resource::<Shapes>().block.clone();
+        assert!(app.world().get::<Mesh3d>(risen).unwrap().0 == built);
+        // A tenth of a second later, they are past their height, and their feet are marked.
+        frame(&mut app, 0.1);
+        let (_, heights, marked) = waking(&mut app, 0);
+        assert_eq!(heights.iter().filter(|high| **high > 1.0).count(), 2);
+        assert_eq!(marked, 2);
+
+        // A guest may learn of a block a moment after it learned that its plan was over. It
+        // rises all the same.
+        app.world_mut().despawn(plans[2]);
+        frame(&mut app, 1.0 / 60.0);
+        let later = block(&mut app, places[3]);
+        frame(&mut app, 1.0 / 60.0);
+        assert!(app.world().get::<Waking>(later).is_some());
+
+        // A third of a second after they stood, all of it is at rest.
+        frame(&mut app, wake::LENGTH);
+        let (late, heights, marked) = waking(&mut app, 0);
+        assert_eq!((late, marked), (0, 0));
+        assert!(heights.len() == 4 && heights.iter().all(|high| *high == 1.0));
+
+        // A place whose plan ended long before is no plan anymore: a block that comes there
+        // stands at once.
+        let gone = plan(&mut app, places[4], false);
+        frame(&mut app, 0.0);
+        app.world_mut().despawn(gone);
+        frame(&mut app, 1.0 / 60.0);
+        frame(&mut app, 2.0 * PLAN_KEPT);
+        block(&mut app, places[4]);
+        frame(&mut app, 1.0 / 60.0);
+        let (late, heights, _) = waking(&mut app, 0);
+        assert!(late == 0 && heights.iter().all(|high| *high == 1.0));
     }
 
     #[test]
