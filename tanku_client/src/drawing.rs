@@ -304,7 +304,6 @@ pub const NOTED_ROW: f32 = 70.0;
 
 /// One of the choices of a row, 44 px high: the chosen one is edged in the accent and takes no
 /// press, each of the others is a button.
-#[expect(dead_code, reason = "the screens take it as they are drawn again")]
 pub fn choice(
     parent: &mut ChildSpawnerCommands,
     word: impl Into<String>,

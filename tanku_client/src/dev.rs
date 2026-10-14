@@ -438,17 +438,31 @@ fn press(
             .filter_map(|piece| labels.get(piece).ok());
         texts.any(|text| text.0.eq_ignore_ascii_case(wanted))
     };
-    // The row of a button is what holds it: further up, the whole menu bears every label.
-    let in_its_row = |button: Entity| {
-        row.is_none_or(|row| {
-            let held_by = holders.get(button).map(ChildOf::parent);
-            held_by.is_ok_and(|holder| bears(holder, row))
-        })
+    // The row of a button is the nearest of what holds it that bears the row's name: further
+    // up, the whole menu bears every label, so of two buttons that bear the label, the one
+    // whose row is nearer is meant.
+    let row_of = |button: Entity| -> Option<usize> {
+        let Some(row) = row else {
+            return Some(0);
+        };
+        let mut holder = holders.get(button).ok().map(ChildOf::parent);
+        let mut depth = 1;
+        while let Some(piece) = holder {
+            if bears(piece, row) {
+                return Some(depth);
+            }
+            holder = holders.get(piece).ok().map(ChildOf::parent);
+            depth += 1;
+        }
+        None
     };
-    let mut found = buttons
-        .iter_mut()
-        .filter(|(button, _)| bears(*button, label) && in_its_row(*button));
-    match found.next() {
+    let found = buttons
+        .iter()
+        .filter(|(button, _)| bears(*button, label))
+        .filter_map(|(button, _)| row_of(button).map(|depth| (depth, button)))
+        .min_by_key(|(depth, _)| *depth)
+        .map(|(_, button)| button);
+    match found.and_then(|button| buttons.get_mut(button).ok()) {
         Some((_, mut interaction)) => *interaction = Interaction::Pressed,
         None => warn!("no button bears the label: {asked}"),
     }

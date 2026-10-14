@@ -14,14 +14,14 @@ use tanku_core::{
     modes::{Difficulty, Unlock},
     protocol::{Lobby, Member, NAME_LENGTH, lettered, named},
     reference::{Reference, Teammates},
-    rules::{MAX_PLAYERS, PLAYTEST_LAST_SECTOR, TICK_RATE},
+    rules::{COUNTDOWN, MAX_PLAYERS, PLAYTEST_LAST_SECTOR, TICK_RATE},
     seed::{self, VERSION},
     sim::{Playtest, Run, RunPhase, RunRequest, SimEvent},
     stats::{Ammo, Genome, PLAYER_BUDGET, Stat},
 };
 
 use crate::{
-    Overlay, Screen,
+    Overlay, Screen, balloons,
     camera::{self, MainCamera, View},
     cli::Options,
     crew::LocalSeat,
@@ -1140,6 +1140,7 @@ fn staging(screen: Screen, sheet: Vec2, parts: usize) -> (f32, Vec2, Rect) {
     let left = match screen {
         Screen::Menu => drawing::LEFT + MENU_WIDTH,
         Screen::Garage => drawing::LEFT + garage_width() + 24.0,
+        Screen::Lobby => drawing::LEFT + lobby_width() + JOIN_WIDTH + 48.0,
         _ => drawing::LEFT + FORM_WIDTH,
     };
     let room = Rect::new(left, edge, sheet.x - edge, sheet.y - SHEET_EDGE - below);
@@ -2729,75 +2730,102 @@ fn show_copy(
             copied.0 = None;
         }
     }
-    let wanted = copy_label(&copied);
+    // The key is lettered in capitals, as every key is.
+    let wanted = copy_label(&copied).to_uppercase();
     for mut label in &mut labels {
         if label.0 != wanted {
-            label.0 = wanted.to_string();
+            label.0.clone_from(&wanted);
         }
     }
 }
 
 /// How others join the game of this machine, in the lobby of its host: the players at a
-/// desktop game, or those in a browser.
+/// desktop game, or those in a browser. What it shows can be copied, and the notes under it
+/// say where it goes.
 fn ways_to_join(
     parent: &mut ChildSpawnerCommands,
     invitation: &Invitation,
     way: Way,
     copied: &Copied,
 ) {
-    // The buttons of a way stand in a row under what it tells.
-    let buttons = Node {
-        column_gap: px(6),
+    // The keys of a way stand in a row under what it tells.
+    let keys = Node {
+        column_gap: px(8),
+        margin: UiRect::top(px(2)),
         ..default()
     };
+    let copy_key = |row: &mut ChildSpawnerCommands| {
+        let words = (CopyLabel, drawing::value(copy_label(copied), theme::TEXT));
+        row.spawn((
+            Button,
+            Press::Copy,
+            Node {
+                width: px(COPY_WIDTH),
+                height: px(drawing::CONTROL),
+                flex_shrink: 0.0,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                border: UiRect::all(px(1)),
+                ..default()
+            },
+            BackgroundColor(theme::SURFACE_RAISED),
+            BorderColor::all(theme::RULE),
+            children![words],
+        ));
+    };
+    let other_way = JOIN_WIDTH - COPY_WIDTH - 8.0;
     let code = invitation.web.as_ref().filter(|_| way == Way::Browser);
     if let (Some(code), Some(port)) = (code, invitation.web_port) {
         let [place, first, second] = link_ending(code);
-        section(parent, "Link for a browser");
-        parent.spawn(theme::old::figure(place, 20.0, theme::TEXT));
-        // Nobody types the print: a button copies the lot.
-        parent.spawn(theme::old::figure(first, 15.0, theme::TEXT));
-        parent.spawn(theme::old::figure(second, 15.0, theme::TEXT));
-        parent.spawn(buttons).with_children(|row| {
-            let words = (
-                CopyLabel,
-                theme::old::text(copy_label(copied), 16.0, theme::TEXT),
-            );
-            small_with(row, words, 120.0, Press::Copy);
-            small(row, "For a desktop", 140.0, Press::Show(Way::Desktop));
+        parent.spawn(drawing::key("Link for a browser"));
+        parent.spawn(theme::code(place, theme::VALUE, theme::TEXT));
+        // Nobody types the print: a key copies the lot.
+        parent.spawn(theme::code(first, theme::LABEL, theme::TEXT));
+        parent.spawn(theme::code(second, theme::LABEL, theme::TEXT));
+        parent.spawn(keys).with_children(|row| {
+            copy_key(row);
+            let desktop = Press::Show(Way::Desktop);
+            drawing::choice(row, "For a desktop", other_way, desktop, false);
         });
         let hint = "In a browser, it goes at the end of the address of the game's page, or is \
                     pasted into that page. The log has it too.";
-        line(parent, hint, theme::TEXT_DIM);
+        note(parent, hint, theme::TEXT_DIM);
         let hint = format!(
             "From the internet, your public address goes in place of this one, and UDP port \
              {port} must reach this machine."
         );
-        line(parent, hint, theme::TEXT_DIM);
+        note(parent, hint, theme::TEXT_DIM);
         return;
     }
-    section(parent, "Address");
+    parent.spawn(drawing::key("Address"));
     match &invitation.address {
         Some(address) => {
-            parent.spawn(theme::old::figure(address.clone(), 24.0, theme::TEXT));
+            parent.spawn(theme::code(address.clone(), theme::VALUE, theme::TEXT));
         }
-        None => line(
+        None => note(
             parent,
             "This machine has no address on a network.",
             theme::TEXT_DIM,
         ),
     }
-    if invitation.web.is_some() {
-        parent.spawn(buttons).with_children(|row| {
-            small(row, "For a browser", 140.0, Press::Show(Way::Browser));
+    let browsers = invitation.web.is_some();
+    if invitation.address.is_some() || browsers {
+        parent.spawn(keys).with_children(|row| {
+            if invitation.address.is_some() {
+                copy_key(row);
+            }
+            if browsers {
+                let browser = Press::Show(Way::Browser);
+                drawing::choice(row, "For a browser", other_way, browser, false);
+            }
         });
     }
     if invitation.address.is_some() {
         let hint = "Players on this network find the game on their join screen, or type this \
                     address there.";
-        line(parent, hint, theme::TEXT_DIM);
+        note(parent, hint, theme::TEXT_DIM);
     }
-    line(
+    note(
         parent,
         format!(
             "From the internet, they need your public address, and UDP port {} must reach \
@@ -2809,7 +2837,7 @@ fn ways_to_join(
     // A game that can't listen for browsers says why none can join.
     if let (None, Some(port)) = (&invitation.web, invitation.web_port) {
         let hint = format!("No browser can join: UDP port {port} is taken on this machine.");
-        line(parent, hint, theme::TEXT_DIM);
+        note(parent, hint, theme::TEXT_DIM);
     }
 }
 
@@ -2903,20 +2931,57 @@ fn unearned(lobby: &Lobby) -> Option<&'static str> {
     }
 }
 
-/// A seat of the lobby: its number, who sits there, and whether they are ready for the run.
+/// The columns of the seats of the lobby: the balloon of a seat, who sits there, and their
+/// signature once they are ready.
+const SEAT_COLUMNS: [f32; 3] = [78.0, 270.0, 212.0];
+/// The columns of the run that the host sets: the name of an option, and its choices.
+const RUN_COLUMNS: [f32; 2] = [200.0, 360.0];
+/// The balloon of a seat, and a choice of the run.
+const SEAT_BALLOON: f32 = 48.0;
+const RUN_CHOICE: f32 = 144.0;
+/// The column right of the tables of the lobby, which tells how the others join, and the key
+/// that copies what it tells.
+const JOIN_WIDTH: f32 = 374.0;
+const COPY_WIDTH: f32 = 108.0;
+/// The fields of the upper row of the title block of the lobby.
+const LOBBY_TITLE: [f32; 4] = [160.0, 232.0, 144.0, 90.0];
+
+/// How wide the tables of the lobby are, its edges included.
+fn lobby_width() -> f32 {
+    drawing::title_width_of(&SEAT_COLUMNS)
+}
+
+/// Where the tables of a screen start, from the top of the sheet: under its name and title.
+fn tables_top() -> f32 {
+    MARGIN_TOP
+        + theme::capitals_height(theme::LABEL)
+        + theme::capitals_height(theme::HEADING)
+        + 20.0
+}
+
+/// A player's signature on a seat of the lobby: a stamp that says they are ready.
+fn signature() -> impl Bundle {
+    (
+        Node {
+            border: UiRect::all(px(2)),
+            padding: UiRect::axes(px(10), px(3)),
+            ..default()
+        },
+        BorderColor::all(theme::ACCENT),
+        UiTransform::from_rotation(Rot2::degrees(-4.0)),
+        children![theme::label("Ready", theme::LABEL, theme::ACCENT)],
+    )
+}
+
+/// A seat of the lobby: the balloon of its number, who sits there, and their signature once
+/// they are ready, or the line where they will sign. An open seat has a balloon in dashes.
 fn seat_row(
-    parent: &mut ChildSpawnerCommands,
+    table: &mut ChildSpawnerCommands,
     seat: usize,
     (member, ready): (Option<Member>, bool),
     own: bool,
 ) {
     let taken = member.is_some();
-    let word = match (taken, ready) {
-        (false, _) => theme::old::label("", 13.0, theme::TEXT_DIM),
-        (true, false) => theme::old::label("Not ready", 13.0, theme::TEXT_DIM),
-        (true, true) => theme::old::label("Ready", 13.0, theme::GOOD),
-    };
-    let color = theme::PLAYER;
     let who = match (member, own) {
         (None, _) => "Open",
         (Some(Member::Host), true) => "You, the host",
@@ -2925,86 +2990,141 @@ fn seat_row(
         (Some(Member::Guest(_)), false) => "A guest",
     };
     let ink = if taken { theme::TEXT } else { theme::TEXT_DIM };
-    parent.spawn((
-        Node {
-            column_gap: px(12),
-            align_items: AlignItems::Center,
-            padding: UiRect::axes(px(12), px(8)),
-            border: if seat == 0 {
-                UiRect::ZERO
-            } else {
-                UiRect::top(px(1))
+    let last = seat + 1 == MAX_PLAYERS as usize;
+    drawing::row(table, drawing::ROW, !last, |row| {
+        row.spawn((
+            Node {
+                width: px(SEAT_COLUMNS[0]),
+                flex_shrink: 0.0,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                border: drawing::rules(true, false),
+                ..default()
             },
-            ..default()
-        },
-        BorderColor::all(theme::RULE_DIM),
-        children![
-            (
-                Node {
-                    width: px(14),
-                    height: px(14),
-                    border: UiRect::all(px(1)),
-                    ..default()
-                },
-                BackgroundColor(if taken { color } else { Color::NONE }),
-                BorderColor::all(if taken { color } else { theme::RULE_DIM }),
-            ),
-            (
-                Node {
-                    width: px(110),
-                    ..default()
-                },
-                children![theme::old::label(format!("Player {}", seat + 1), 13.0, ink)],
-            ),
-            // The word of the player stands at the end of the row.
-            (
-                Node {
-                    flex_grow: 1.0,
-                    ..default()
-                },
-                children![theme::old::text(who, 16.0, ink)],
-            ),
-            word,
-        ],
-    ));
+            BorderColor::all(theme::RULE_DIM),
+        ))
+        .with_children(|cell| {
+            let mut balloon = cell.spawn(balloons::balloon(seat as u8, SEAT_BALLOON, theme::VALUE));
+            if !taken {
+                balloon.insert(balloons::State::Open);
+            }
+        });
+        drawing::cell(row, SEAT_COLUMNS[1], true, |cell| {
+            cell.spawn(drawing::value(who, ink));
+        });
+        drawing::cell(row, SEAT_COLUMNS[2], false, |cell| match (taken, ready) {
+            (true, true) => {
+                cell.spawn(signature());
+            }
+            (true, false) => {
+                let line = ". . . . . . . .";
+                cell.spawn(theme::label(line, theme::LABEL, theme::RULE));
+            }
+            (false, _) => {}
+        });
+    });
 }
 
-/// How the lobby stands, under the button that says a player is ready: the countdown to the
-/// run, whom the run waits for, or what starts it.
+/// How the lobby stands, under the keys: the countdown to the run, whom the run waits for, or
+/// what starts it.
 fn lobby_words(lobby: &Lobby, own: usize) -> (String, Color) {
     let seated = lobby.seats.iter().zip(lobby.ready);
     let waited_for = seated.filter(|(seat, ready)| seat.is_some() && !ready);
     let mine = lobby.ready.get(own).copied().unwrap_or(false);
     match (lobby.countdown, waited_for.count()) {
-        (Some(seconds), _) => (format!("The run starts in {seconds}"), theme::ACCENT),
-        (None, 1) if mine => ("Waiting for 1 player".to_string(), theme::TEXT_DIM),
-        (None, others) if mine && others > 0 => {
-            (format!("Waiting for {others} players"), theme::TEXT_DIM)
-        }
+        (Some(seconds), _) => (format!("The run starts in {seconds} s"), theme::ACCENT),
+        (None, 1) if mine => ("Waiting for 1 player to sign".to_string(), theme::TEXT_DIM),
+        (None, others) if mine && others > 0 => (
+            format!("Waiting for {others} players to sign"),
+            theme::TEXT_DIM,
+        ),
         (None, _) => {
-            let told = "The run starts once everyone is ready";
-            (told.to_string(), theme::TEXT_DIM)
+            let told = format!(
+                "The run starts {} s after every player has signed",
+                COUNTDOWN as u32
+            );
+            (told, theme::TEXT_DIM)
         }
     }
 }
 
-/// A column of a menu to the right of its margin, level with what stands under its title. It
-/// ends short of what the sheet draws.
+/// The column of the lobby right of its tables, level with them. It ends short of what the
+/// sheet draws.
 fn aside(root: &mut ChildSpawnerCommands, content: impl FnOnce(&mut ChildSpawnerCommands)) {
     root.spawn(Node {
         position_type: PositionType::Absolute,
-        left: px(620),
-        top: px(227),
-        width: px(380),
+        left: px(drawing::LEFT + lobby_width() + 24.0),
+        top: px(tables_top()),
+        width: px(JOIN_WIDTH),
         flex_direction: FlexDirection::Column,
-        row_gap: px(10),
+        row_gap: px(8),
         ..default()
     })
     .with_children(content);
 }
 
-/// The lobby: who is there, what they are about to play, and how others join. The host sets
-/// the run, and the others see it. It is drawn again whenever something it shows changes.
+/// A row of the run that the lobby sets: the name of an option, and what it holds.
+fn run_row(
+    table: &mut ChildSpawnerCommands,
+    name: &str,
+    last: bool,
+    holds: impl FnOnce(&mut ChildSpawnerCommands),
+) {
+    drawing::row(table, drawing::ROW, !last, |row| {
+        drawing::cell(row, RUN_COLUMNS[0], true, |cell| {
+            cell.spawn(drawing::value(name, theme::TEXT));
+        });
+        drawing::cell(row, RUN_COLUMNS[1], false, holds);
+    });
+}
+
+/// The choices of an option of the run, which the host makes: the others see the one that was
+/// made.
+fn run_choices<T: Copy + PartialEq>(
+    cell: &mut ChildSpawnerCommands,
+    host: bool,
+    (now, offered): (T, &[(&str, T)]),
+    press: fn(T) -> Press,
+) {
+    for (word, value) in offered {
+        if host {
+            drawing::choice(cell, *word, RUN_CHOICE, press(*value), now == *value);
+        } else if now == *value {
+            cell.spawn(drawing::value(*word, theme::TEXT));
+        }
+    }
+}
+
+/// The title block of the lobby: a game of so many, how hard its run is, the host's balloon,
+/// and whether every player has signed for the run.
+fn lobby_title_block(parent: &mut ChildSpawnerCommands, lobby: &Lobby) {
+    let [owner, title, creator, rev] = LOBBY_TITLE;
+    let hard = unlocks::difficulty_name(lobby.difficulty).to_lowercase();
+    let game = format!("Game of {} \u{b7} {hard}", lobby.players());
+    let status = match lobby.countdown {
+        Some(_) => Holds::Value("Released".to_string(), theme::GOOD),
+        None => Holds::Value("Under approval".to_string(), theme::ACCENT),
+    };
+    let upper = vec![
+        drawing::Field::new(owner, "Legal owner", Holds::Owner(None)),
+        drawing::Field::new(title, "Title", Holds::Titled("Lobby".to_string(), game)),
+        drawing::Field::new(creator, "Created by", Holds::Balloon(0)),
+        drawing::Field::new(rev, "Rev", Holds::Value(VERSION.to_string(), theme::TEXT)),
+    ];
+    let lower = vec![
+        drawing::Field::new(owner + title, "Status", status),
+        drawing::Field::new(
+            creator + rev,
+            "Date of issue",
+            Holds::Value(sheet::day_of_issue(), theme::TEXT),
+        ),
+    ];
+    drawing::title_block(parent, upper, lower);
+}
+
+/// The lobby: who is there, what they are about to play, and how others join. The seats are
+/// the players' balloons, and a player who is ready signs. The host sets the run, and the
+/// others see it. It is drawn again whenever something it shows changes.
 fn lobby_screen(
     mut commands: Commands,
     lobbies: Query<Ref<Lobby>>,
@@ -3032,6 +3152,7 @@ fn lobby_screen(
     let host = *session == Session::Host;
     // A playtest that was given a seed keeps it, and one that brought a tank plays in it.
     let (reseeds, brought) = (host && options.seed.is_none(), options.tank.is_some());
+    let own = seat.0 as usize;
     commands
         .spawn((
             LobbyRoot,
@@ -3045,7 +3166,7 @@ fn lobby_screen(
             children![sheet::frame()],
         ))
         .with_children(|root| {
-            margin(root, 460.0, |parent| {
+            margin(root, lobby_width(), |parent| {
                 // The game goes by the name that its host gave it.
                 let role = if host { "host" } else { "guest" };
                 let game = match lobby.name.as_str() {
@@ -3054,125 +3175,133 @@ fn lobby_screen(
                 };
                 // A game that has a password says so: whoever is to join needs it.
                 let lock = if lobby.locked { " \u{b7} locked" } else { "" };
-                parent.spawn(theme::old::label(
-                    format!("{game} \u{b7} {role}{lock}"),
-                    13.0,
-                    theme::TEXT_DIM,
+                // A long name runs on over the sheet rather than push the lobby down.
+                parent.spawn((
+                    drawing::key(format!("{game} \u{b7} {role}{lock}")),
+                    TextLayout::no_wrap(),
                 ));
-                parent.spawn(theme::old::title("Lobby", 84.0, theme::TEXT));
-                section(parent, "Players");
+                parent.spawn(theme::label("Lobby", theme::HEADING, theme::TEXT));
                 parent
-                    .spawn(ruled(Node {
-                        flex_direction: FlexDirection::Column,
+                    .spawn(drawing::block(Node {
+                        align_self: AlignSelf::Start,
                         ..default()
                     }))
-                    .with_children(|seats| {
+                    .with_children(|table| {
+                        let names = ["Seat", "Player", "Signature \u{b7} ready"];
+                        let columns: Vec<(f32, &str)> =
+                            SEAT_COLUMNS.iter().copied().zip(names).collect();
+                        drawing::header(table, &columns, false);
                         let seated = lobby.seats.iter().zip(lobby.ready);
                         for (number, (member, ready)) in seated.enumerate() {
-                            let own = number == seat.0 as usize;
-                            seat_row(seats, number, (*member, ready), own);
+                            seat_row(table, number, (*member, ready), number == own);
                         }
                     });
-                section(parent, "Run");
-                row(parent, "Difficulty", |row| {
-                    if !host {
-                        let name = unlocks::difficulty_name(lobby.difficulty);
-                        row.spawn(theme::old::text(name, 16.0, theme::TEXT));
-                        return;
-                    }
-                    for difficulty in Difficulty::ALL {
-                        let name = unlocks::difficulty_name(difficulty);
-                        let chosen = lobby.difficulty == difficulty;
-                        choice(row, name, 90.0, Press::Difficulty(difficulty), chosen);
-                    }
-                });
-                row(parent, "Arena mode", |row| {
-                    if !host {
-                        row.spawn(theme::old::text(on_off(lobby.arena), 16.0, theme::TEXT));
-                        return;
-                    }
-                    for (name, on) in [("Off", false), ("On", true)] {
-                        choice(row, name, 90.0, Press::Arena(on), lobby.arena == on);
-                    }
-                });
-                row(parent, "Free mode", |row| {
-                    if !host {
-                        row.spawn(theme::old::text(on_off(lobby.free), 16.0, theme::TEXT));
-                        return;
-                    }
-                    for (name, on) in [("Off", false), ("On", true)] {
-                        choice(row, name, 90.0, Press::Free(on), lobby.free == on);
-                    }
-                });
-                // In free mode, each player has the tank of their own garage.
-                if lobby.free {
-                    row(parent, "Your tank", |row| {
-                        if host && brought {
-                            let told = "The tank of this playtest";
-                            row.spawn(theme::old::text(told, 16.0, theme::TEXT));
-                            return;
+                parent.spawn(drawing::key("Run \u{b7} set by the host"));
+                parent
+                    .spawn(drawing::block(Node {
+                        align_self: AlignSelf::Start,
+                        ..default()
+                    }))
+                    .with_children(|table| {
+                        let difficulties: Vec<(&str, Difficulty)> = Difficulty::ALL
+                            .iter()
+                            .map(|difficulty| (unlocks::difficulty_name(*difficulty), *difficulty))
+                            .collect();
+                        let switch = [("Off", false), ("On", true)];
+                        run_row(table, "Difficulty", false, |cell| {
+                            let now = (lobby.difficulty, difficulties.as_slice());
+                            run_choices(cell, host, now, Press::Difficulty);
+                        });
+                        run_row(table, "Arena mode", false, |cell| {
+                            run_choices(cell, host, (lobby.arena, &switch), Press::Arena);
+                        });
+                        run_row(table, "Free mode", false, |cell| {
+                            run_choices(cell, host, (lobby.free, &switch), Press::Free);
+                        });
+                        // In free mode, each player has the tank of their own garage.
+                        if lobby.free {
+                            run_row(table, "Your tank", false, |cell| {
+                                if host && brought {
+                                    let told = "Of this playtest";
+                                    cell.spawn(drawing::value(told, theme::TEXT));
+                                    return;
+                                }
+                                let spent = format!("{} of {PLAYER_BUDGET}", garage.tank.cost());
+                                cell.spawn(drawing::value(spent, theme::TEXT));
+                                let garage = Press::OpenGarage;
+                                drawing::choice(cell, "Garage", RUN_CHOICE, garage, false);
+                            });
                         }
-                        let spent = format!("{} of {PLAYER_BUDGET} points", garage.tank.cost());
-                        row.spawn((
-                            Node {
-                                min_width: px(130),
-                                ..default()
-                            },
-                            children![theme::old::text(spent, 16.0, theme::TEXT)],
-                        ));
-                        small(row, "Garage", 110.0, Press::OpenGarage);
+                        run_row(table, "Seed", true, |cell| {
+                            cell.spawn((
+                                Node {
+                                    flex_grow: 1.0,
+                                    ..default()
+                                },
+                                children![(
+                                    SeedField,
+                                    theme::code(lobby.seed.clone(), theme::VALUE, theme::TEXT)
+                                )],
+                            ));
+                            if reseeds {
+                                let width = RUN_CHOICE + 24.0;
+                                drawing::choice(cell, "New seed", width, Press::Reseed, false);
+                            }
+                        });
                     });
+                // The run starts once everyone is ready. A host who is alone plays a solo
+                // run, with its locks: what a single player has not unlocked holds them back.
+                let mine = lobby.ready.get(own).copied().unwrap_or(false);
+                let held = held_back(&lobby, &unlocks, &options).filter(|_| host);
+                parent
+                    .spawn(Node {
+                        column_gap: px(12),
+                        margin: UiRect::top(px(4)),
+                        ..default()
+                    })
+                    .with_children(|keys| {
+                        let width = px((lobby_width() - 12.0) / 2.0);
+                        match (&held, mine) {
+                            (Some(_), _) => {}
+                            (None, false) => {
+                                let ready = (Press::Ready, Primary);
+                                drawing::key_button(keys, "Ready", width, ready, true);
+                            }
+                            (None, true) => {
+                                drawing::key_button(keys, "Not ready", width, Press::Ready, false);
+                            }
+                        }
+                        let leave = if host {
+                            "Close the game"
+                        } else {
+                            "Leave the game"
+                        };
+                        drawing::key_button(keys, leave, width, Press::Abandon, false);
+                    });
+                let (words, ink) = lobby_words(&lobby, own);
+                note(parent, words, ink);
+            });
+            // Right of the tables: how the others join, for the host, and the notes of the
+            // run, for everyone.
+            aside(root, |parent| {
+                if host {
+                    ways_to_join(parent, &invitation, *way, &copied);
                 }
-                row(parent, "Seed", |row| {
-                    row.spawn((
-                        Node {
-                            min_width: px(130),
-                            ..default()
-                        },
-                        children![(
-                            SeedField,
-                            theme::old::code(lobby.seed.clone(), 16.0, theme::TEXT)
-                        )],
-                    ));
-                    if reseeds {
-                        small(row, "New seed", 110.0, Press::Reseed);
-                    }
-                });
+                if let Some(why) = held_back(&lobby, &unlocks, &options).filter(|_| host) {
+                    note(parent, why, theme::DANGER);
+                }
                 if reseeds {
                     let hint = "Type a seed of your own, in letters and digits.";
-                    line(parent, hint, theme::TEXT_DIM);
+                    note(parent, hint, theme::TEXT_DIM);
                 }
                 // A player who has everything is not told what the run doesn't earn, but
                 // everyone is told of a playtest: it sets no record either.
                 let told = unlocks.wanting() || lobby.playtest;
                 if let Some(why) = unearned(&lobby).filter(|_| told) {
-                    line(parent, why, theme::TEXT);
+                    note(parent, why, theme::TEXT);
                 }
-                // The run starts once everyone is ready. A host who is alone plays a solo
-                // run, with its locks: what a single player has not unlocked holds them back.
-                let own = seat.0 as usize;
-                let mine = lobby.ready.get(own).copied().unwrap_or(false);
-                let held = held_back(&lobby, &unlocks, &options).filter(|_| host);
-                match (held, mine) {
-                    (Some(why), _) => line(parent, why, theme::TEXT),
-                    (None, false) => primary(parent, "Ready", Press::Ready),
-                    (None, true) => button(parent, "Not ready", Press::Ready),
-                }
-                let (words, ink) = lobby_words(&lobby, own);
-                line(parent, words, ink);
-                let leave = if host {
-                    "Close the game"
-                } else {
-                    "Leave the game"
-                };
-                button(parent, leave, Press::Abandon);
             });
-            // The host tells the others how to join, next to the lobby.
-            if host {
-                aside(root, |parent| {
-                    ways_to_join(parent, &invitation, *way, &copied);
-                });
-            }
+            lobby_title_block(root, &lobby);
         });
 }
 
@@ -4050,9 +4179,14 @@ fn press(
                 }
             }
             Press::Show(wanted) => *way = wanted,
+            // The key copies what the lobby shows: the link for browsers, or the address.
             Press::Copy => {
-                if let Some(code) = &invitation.web {
-                    let done = copy(clipboard.as_deref_mut(), link_end(code));
+                let shown = match (*way, &invitation.web) {
+                    (Way::Browser, Some(code)) => Some(link_end(code)),
+                    _ => invitation.address.clone(),
+                };
+                if let Some(shown) = shown {
+                    let done = copy(clipboard.as_deref_mut(), shown);
                     copied.0 = Some((done, COPY_SHOWN));
                 }
             }
@@ -6580,7 +6714,7 @@ mod tests {
             .iter(world)
             .map(|text| text.0.clone())
             .collect();
-        for wanted in ["Hard", "On", LONG_SEED, "59 of 59 points"] {
+        for wanted in ["HARD", "ON", LONG_SEED, "59 OF 59"] {
             assert!(says(&told, wanted), "{wanted}");
         }
         // Nor does a press that reaches a guest's game by another way.
@@ -6898,21 +7032,22 @@ mod tests {
         let words = |lobby: &Lobby, own: usize| lobby_words(lobby, own).0;
         // Whoever is not ready is told what starts the run.
         let nobody = lobby([false; 4], None);
-        assert_eq!(words(&nobody, 0), "The run starts once everyone is ready");
+        let starts = "The run starts 3 s after every player has signed";
+        assert_eq!(words(&nobody, 0), starts);
         // Whoever is ready is told how many players the run waits for.
         let one = lobby([true, false, false, false], None);
-        assert_eq!(words(&one, 0), "Waiting for 2 players");
-        assert_eq!(words(&one, 1), "The run starts once everyone is ready");
+        assert_eq!(words(&one, 0), "Waiting for 2 players to sign");
+        assert_eq!(words(&one, 1), starts);
         let two = lobby([true, true, false, false], None);
-        assert_eq!(words(&two, 1), "Waiting for 1 player");
+        assert_eq!(words(&two, 1), "Waiting for 1 player to sign");
         // An open seat is waited for by nobody, whatever was left on it.
         let stale = lobby([true, true, false, true], None);
-        assert_eq!(words(&stale, 0), "Waiting for 1 player");
+        assert_eq!(words(&stale, 0), "Waiting for 1 player to sign");
         // Once everyone is ready, the lobby counts down, in the accent.
         let all = lobby([true, true, true, false], Some(3));
         assert_eq!(
             lobby_words(&all, 2),
-            ("The run starts in 3".to_string(), theme::ACCENT)
+            ("The run starts in 3 s".to_string(), theme::ACCENT)
         );
 
         // Each seat that is taken says whether its player is ready.
@@ -6926,9 +7061,14 @@ mod tests {
         let mut texts = world.query::<&Text>();
         let told: Vec<String> = texts.iter(world).map(|text| text.0.clone()).collect();
         let count = |word: &str| told.iter().filter(|text| text.as_str() == word).count();
-        // The words of a label are in capitals. The third word "READY" is the button.
-        assert_eq!((count("READY"), count("NOT READY")), (3, 1));
-        assert!(says(&told, "The run starts once everyone is ready"));
+        // The words of a label are in capitals. Each player who is ready signed with a stamp,
+        // and the key says what pressing it does.
+        assert_eq!((count("READY"), count("NOT READY")), (3, 0));
+        assert_eq!(count(". . . . . . . ."), 1);
+        assert!(says(
+            &told,
+            "The run starts 3 s after every player has signed"
+        ));
     }
 
     #[test]

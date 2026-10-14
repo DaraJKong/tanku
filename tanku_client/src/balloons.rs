@@ -35,6 +35,8 @@ pub enum State {
     Lost(f32),
     /// The player left the game.
     Left,
+    /// Nobody sits on the seat.
+    Open,
 }
 
 /// The balloon of the player of a seat.
@@ -155,6 +157,12 @@ pub fn look(state: State, width: f32) -> Look {
             figure: theme::RULE,
             ring: none,
             struck: true,
+        },
+        State::Open => Look {
+            line: dashed(theme::RULE_DIM, width, 0.0),
+            figure: theme::RULE,
+            ring: none,
+            struck: false,
         },
     }
 }
@@ -286,5 +294,9 @@ mod tests {
         assert_eq!(look(State::Lost(RING_TIME), 36.0).ring.color, Color::NONE);
         // A player who left is struck out.
         assert!(look(State::Left, 36.0).struck);
+        // An open seat is drawn in dashes, dim.
+        let open = look(State::Open, 48.0);
+        assert!((shares(&open.line, theme::RULE_DIM) - 2.0 / 3.0).abs() < 0.02);
+        assert_eq!((open.figure, open.struck), (theme::RULE, false));
     }
 }
