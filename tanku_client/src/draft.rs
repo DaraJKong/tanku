@@ -378,13 +378,26 @@ impl Draft {
         self.frame(foot, plan, -width, line);
     }
 
-    /// A line up each of the four corners of a box. It stands a little proud of the faces it
-    /// joins, so that it shows on both.
-    pub fn corners(&mut self, center: Vec3, size: Vec3, width: f32, color: Color) {
+    /// A box whose every edge is drawn as a line of this width just outside it: around its
+    /// top, around its foot, and up each of its four corners. The lines of one corner meet in
+    /// the same square, so that they join as one line turns.
+    pub fn edged(
+        &mut self,
+        center: Vec3,
+        size: Vec3,
+        (top, side, line): (Color, Color, Color),
+        width: f32,
+    ) {
+        self.solid(center, size, top, side);
+        let plan = Vec2::new(size.x, size.z);
+        let lid = center + Vec3::Y * (size.y / 2.0 + LIFT);
+        self.frame(lid, plan, -width, line);
+        let foot = center - Vec3::Y * (size.y / 2.0 - LIFT);
+        self.frame(foot, plan, -width, line);
         let post = Vec3::new(width, size.y, width);
         for (x, z) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
-            let corner = center + Vec3::new(x * size.x, 0.0, z * size.z) / 2.0;
-            self.solid(corner, post, color, color);
+            let corner = Vec3::new(x * (size.x + width), 0.0, z * (size.z + width)) / 2.0;
+            self.solid(center + corner, post, line, line);
         }
     }
 
@@ -560,6 +573,42 @@ mod tests {
         let mut draft = Draft::default();
         draft.line(Vec3::ZERO, Vec3::new(3.0, 0.0, 4.0), 0.2, INK);
         assert!(close(draft.area(INK), 1.0));
+    }
+
+    #[test]
+    fn the_edges_of_a_box_meet_at_its_corners() {
+        let (center, size, width) = (Vec3::Y, Vec3::new(2.0, 2.0, 2.0), 0.1);
+        let mut draft = Draft::default();
+        draft.edged(center, size, (TOP, SIDE, INK), width);
+        // Every line lies outside the box, as far out as the others.
+        let (lowest, highest) = draft.bounds();
+        let reach = size.x / 2.0 + width;
+        assert!(close(lowest.x, -reach) && close(highest.x, reach));
+        assert!(close(lowest.z, -reach) && close(highest.z, reach));
+        // At a corner of the top, the line up the corner ends in the square where the lines
+        // of the top meet, and so it does at the foot: the ink of a corner, seen from above,
+        // is a square of the width of the line, past the corner on both sides.
+        let ink: Vec<Vec3> = draft
+            .positions
+            .iter()
+            .zip(&draft.colors)
+            .filter(|(_, color)| **color == INK.to_linear().to_f32_array())
+            .map(|(position, _)| *position)
+            .filter(|position| position.x > 0.5 && position.z > 0.5)
+            .collect();
+        let corner = |position: &&Vec3| position.x >= 1.0 - 1e-4 && position.z >= 1.0 - 1e-4;
+        let posts: Vec<&Vec3> = ink.iter().filter(corner).collect();
+        assert!(!posts.is_empty());
+        assert!(
+            posts
+                .iter()
+                .all(|position| position.x <= 1.0 + width + 1e-4)
+        );
+        assert!(
+            posts
+                .iter()
+                .all(|position| position.z <= 1.0 + width + 1e-4)
+        );
     }
 
     #[test]

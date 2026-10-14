@@ -640,20 +640,18 @@ fn block_drawing() -> Draft {
         Vec3::Y * BLOCK_HEIGHT / 2.0,
         Vec3::new(BLOCK_SIZE, BLOCK_HEIGHT, BLOCK_SIZE),
     );
-    draft.outlined(
+    draft.edged(
         center,
         size,
         (theme::BLOCK, theme::BLOCK_SIDE, theme::BLOCK_LINE),
         draft::WIDE,
     );
-    draft.corners(center, size, draft::WIDE, theme::BLOCK_LINE);
     hatch(&mut draft, BLOCK_HEIGHT + LIFT / 2.0, theme::HATCH);
     draft
 }
 
 /// The hatching of a block at a height: strips at 45 degrees, half a meter apart along the
-/// edges, each cut where it meets the edges of the square. Under the outline, which hides
-/// their ends.
+/// edges, each cut where it meets the edges of the square, where the outline starts.
 fn hatch(draft: &mut Draft, top: f32, color: Color) {
     let half = BLOCK_SIZE / 2.0;
     let cut = HATCH_WIDTH / std::f32::consts::SQRT_2;
@@ -691,20 +689,20 @@ fn crate_drawing() -> Draft {
         Vec3::Y * CRATE_HEIGHT / 2.0,
         Vec3::new(CRATE_SIZE, CRATE_HEIGHT, CRATE_SIZE),
     );
-    draft.outlined(
+    draft.edged(
         center,
         size,
         (theme::CRATE, theme::CRATE_SIDE, theme::DANGER),
         draft::WIDE,
     );
-    draft.corners(center, size, draft::WIDE, theme::DANGER);
     cross(&mut draft, CRATE_HEIGHT + LIFT / 2.0, theme::DANGER);
     draft
 }
 
-/// The cross of a crate at a height, from corner to corner.
+/// The cross of a crate at a height, from corner to corner, where the outline outside it hides
+/// the ends of its lines.
 fn cross(draft: &mut Draft, top: f32, color: Color) {
-    let reach = CRATE_SIZE / 2.0 - draft::LINE;
+    let reach = CRATE_SIZE / 2.0;
     for turn in [-1.0, 1.0] {
         draft.line(
             Vec3::new(-reach, top, -reach * turn),
@@ -725,8 +723,9 @@ fn planned_drawing(explosive: bool) -> Draft {
     } else {
         (BLOCK_SIZE, theme::BLOCK_LINE, theme::HATCH)
     };
+    // Outside the square, as the edges of what will stand there.
     let (at, plan) = (Vec3::Y * 2.0 * LIFT, Vec2::splat(side));
-    draft.frame(at, plan, draft::LINE, line);
+    draft.frame(at, plan, -draft::LINE, line);
     let faint = theme::over(theme::FLOOR, mark, PLANNED_STRENGTH);
     if explosive {
         cross(&mut draft, 1.5 * LIFT, faint);
@@ -1854,11 +1853,14 @@ mod tests {
     fn what_is_on_its_way_is_drawn_flat_on_the_floor() {
         for explosive in [false, true] {
             let plan = planned_drawing(explosive);
-            // The plan lies on the floor, within the square where the thing will stand.
+            // The plan lies on the floor, on the square where the thing will stand, its
+            // outline just outside it, as the edges of what will stand there.
+            let side = footprint(explosive);
             let (low, high) = plan.bounds();
-            let half = BLOCK_SIZE / 2.0 + 1e-3;
+            let half = side / 2.0 + draft::LINE + 1e-3;
             assert!(low.y > 0.0 && high.y < 0.05, "{low} {high}");
             assert!(low.x >= -half && low.z >= -half && high.x <= half && high.z <= half);
+            assert!(close(high.x, side / 2.0 + draft::LINE));
             // Its outline is whole, with the hatching of a block or the cross of a crate
             // inside it, fainter than on what will stand there.
             let (line, mark) = if explosive {
@@ -1866,8 +1868,7 @@ mod tests {
             } else {
                 (theme::BLOCK_LINE, theme::HATCH)
             };
-            let side = if explosive { CRATE_SIZE } else { BLOCK_SIZE };
-            let whole = 4.0 * (side - draft::LINE) * draft::LINE;
+            let whole = 4.0 * (side + draft::LINE) * draft::LINE;
             assert!(close(plan.area(line), whole), "{}", plan.area(line));
             assert!(plan.area(theme::over(theme::FLOOR, mark, PLANNED_STRENGTH)) > 0.1);
         }
@@ -2150,7 +2151,7 @@ mod tests {
             (crate_drawing(), CRATE_SIZE, CRATE_HEIGHT),
         ] {
             let (lowest, highest) = draft.bounds();
-            // The wide line around the foot is the only thing outside the footprint.
+            // The wide lines of its edges are all that is outside the footprint.
             let reach = size / 2.0 + draft::WIDE;
             assert!(close(lowest.x, -reach) && close(highest.x, reach));
             assert!(close(lowest.z, -reach) && close(highest.z, reach));
