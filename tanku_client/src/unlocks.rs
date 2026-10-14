@@ -26,6 +26,11 @@ pub struct Unlocks {
     /// Whether this is what a playtest that fakes achievements has earned, which no file
     /// keeps. A playtest opens every mode and option to the player, but not this one.
     pub fake: bool,
+    /// What the player has unlocked and not used yet, which the solo screen tags as new.
+    unused: BTreeSet<Unlock>,
+    /// What the player has unlocked and not seen on the screen of the achievements yet, which
+    /// that screen tags as new.
+    unseen: BTreeSet<Unlock>,
 }
 
 impl Unlocks {
@@ -36,6 +41,15 @@ impl Unlocks {
             earned: earned.iter().copied().collect(),
             ..default()
         }
+    }
+
+    /// What a player has who has just earned these, and has neither used nor seen them yet.
+    #[cfg(test)]
+    pub fn fresh(earned: &[Unlock]) -> Self {
+        let mut unlocks = Self::default();
+        unlocks.take(earned.iter().copied());
+        unlocks.new.clear();
+        unlocks
     }
 
     /// What a playtest that fakes achievements has to start with: nothing, as on the first
@@ -57,6 +71,36 @@ impl Unlocks {
         self.earned.contains(&unlock) || above || before
     }
 
+    /// Whether the player has unlocked a mode or an option and not used it yet.
+    pub fn is_unused(&self, unlock: Unlock) -> bool {
+        self.unused.contains(&unlock)
+    }
+
+    /// Whether the player has unlocked it and not seen it on the screen of the achievements.
+    pub fn is_unseen(&self, unlock: Unlock) -> bool {
+        self.unseen.contains(&unlock)
+    }
+
+    /// The player uses a mode or an option. Returns whether it was new to them.
+    pub fn used(&mut self, unlock: Unlock) -> bool {
+        self.unused.remove(&unlock)
+    }
+
+    /// The player has seen the screen of the achievements. Returns whether anything on it was
+    /// new to them.
+    pub fn seen(&mut self) -> bool {
+        let new = !self.unseen.is_empty();
+        self.unseen.clear();
+        new
+    }
+
+    /// Keeps what the player has unlocked on their machine, unless a playtest fakes it.
+    pub fn save(&self) {
+        if !self.fake {
+            storage::save(UNLOCKS_FILE, &self.to_pairs());
+        }
+    }
+
     /// Whether something is left for a run to earn.
     pub fn wanting(&self) -> bool {
         Unlock::ALL.iter().any(|&unlock| !self.has(unlock))
@@ -73,20 +117,35 @@ impl Unlocks {
             .collect();
         self.earned.extend(earned);
         self.new.extend(&new);
+        self.unused.extend(&new);
+        self.unseen.extend(&new);
         new
     }
 
     fn from_pairs(pairs: &BTreeMap<String, String>) -> Self {
         let kept = |unlock: &Unlock| pairs.contains_key(unlock.key());
+        let earned: BTreeSet<Unlock> = Unlock::ALL.into_iter().filter(kept).collect();
+        let marked = |mark: &str| -> BTreeSet<Unlock> {
+            let marked = |unlock: &&Unlock| pairs.contains_key(&format!("{}.{mark}", unlock.key()));
+            earned.iter().filter(marked).copied().collect()
+        };
         Self {
-            earned: Unlock::ALL.into_iter().filter(kept).collect(),
+            unused: marked("unused"),
+            unseen: marked("unseen"),
+            earned,
             ..default()
         }
     }
 
     fn to_pairs(&self) -> BTreeMap<String, String> {
         let pair = |unlock: &Unlock| (unlock.key().to_string(), "unlocked".to_string());
-        self.earned.iter().map(pair).collect()
+        let mark = |mark: &'static str| {
+            move |unlock: &Unlock| (format!("{}.{mark}", unlock.key()), "yes".to_string())
+        };
+        let earned = self.earned.iter().map(pair);
+        let unused = self.unused.iter().map(mark("unused"));
+        let unseen = self.unseen.iter().map(mark("unseen"));
+        earned.chain(unused).chain(unseen).collect()
     }
 }
 
@@ -221,9 +280,7 @@ pub fn earn(
         info!("unlocked: {}", name(unlock));
         told.write(Unlocked(unlock));
     }
-    if !unlocks.fake {
-        storage::save(UNLOCKS_FILE, &unlocks.to_pairs());
-    }
+    unlocks.save();
 }
 
 #[cfg(test)]
@@ -247,6 +304,41 @@ mod tests {
     }
 
     #[test]
+    fn what_a_player_unlocked_is_new_until_they_use_it_and_see_it() {
+        let mut unlocks = Unlocks::default();
+        unlocks.take([Unlock::ArenaMode, Unlock::FreeMode].into_iter());
+        for unlock in [Unlock::ArenaMode, Unlock::FreeMode] {
+            assert!(unlocks.is_unused(unlock) && unlocks.is_unseen(unlock));
+        }
+        // What was not unlocked is no news, and neither is what was unlocked before.
+        assert!(!unlocks.is_unused(Unlock::ChosenSeed) && !unlocks.is_unseen(Unlock::ChosenSeed));
+        let mut older = Unlocks::of(&[Unlock::ChosenSeed]);
+        older.take([Unlock::ArenaMode, Unlock::ChosenSeed].into_iter());
+        assert!(!older.is_unused(Unlock::ArenaMode) && !older.is_unused(Unlock::ChosenSeed));
+        // Kept on the machine as it is.
+        assert_eq!(
+            Unlocks::from_pairs(&unlocks.to_pairs()).unused,
+            unlocks.unused
+        );
+        assert_eq!(
+            Unlocks::from_pairs(&unlocks.to_pairs()).unseen,
+            unlocks.unseen
+        );
+        // Used once, an option is no longer new on the solo screen; seen once, the screen of
+        // the achievements has nothing new.
+        assert!(unlocks.used(Unlock::ArenaMode));
+        assert!(!unlocks.used(Unlock::ArenaMode));
+        assert!(!unlocks.is_unused(Unlock::ArenaMode) && unlocks.is_unused(Unlock::FreeMode));
+        assert!(unlocks.seen() && !unlocks.seen());
+        assert!(!unlocks.is_unseen(Unlock::FreeMode));
+        // A file from before these marks has nothing new.
+        let mut old = BTreeMap::new();
+        old.insert("arena".to_string(), "unlocked".to_string());
+        let old = Unlocks::from_pairs(&old);
+        assert!(old.has(Unlock::ArenaMode) && !old.is_unused(Unlock::ArenaMode));
+    }
+
+    #[test]
     fn a_run_adds_what_it_earned_once() {
         let mut unlocks = Unlocks::of(&[Unlock::ChosenSeed]);
         let earned = [Unlock::ChosenSeed, Unlock::FreeMode];
@@ -267,7 +359,8 @@ mod tests {
         assert_eq!(unlocks.take(earned.into_iter()), [Unlock::FreeMode]);
         assert_eq!(unlocks.take(earned.into_iter()), []);
         // What is kept is all that was earned.
-        assert_eq!(unlocks.to_pairs().len(), 3);
+        let kept = unlocks.to_pairs();
+        assert_eq!(kept.values().filter(|kept| *kept == "unlocked").count(), 3);
         for earlier in [Unlock::FreeMode, Unlock::HardMode, Unlock::ImpossibleMode] {
             assert!(Unlocks::of(&[earlier]).has(Unlock::ArenaMode));
         }

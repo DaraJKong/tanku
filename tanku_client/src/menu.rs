@@ -324,7 +324,10 @@ pub fn plugin(app: &mut App) {
         .add_systems(OnExit(Screen::Menu), put_the_exhibit_away)
         .add_systems(OnExit(Screen::Solo), put_the_exhibit_away)
         .add_systems(OnExit(Screen::Garage), put_the_exhibit_away)
-        .add_systems(OnExit(Screen::Achievements), put_the_exhibit_away)
+        .add_systems(
+            OnExit(Screen::Achievements),
+            (put_the_exhibit_away, see_the_achievements),
+        )
         .add_systems(OnExit(Screen::Host), put_the_exhibit_away)
         .add_systems(OnExit(Screen::Join), put_the_exhibit_away)
         .add_systems(OnExit(Screen::Lobby), put_the_exhibit_away)
@@ -524,6 +527,16 @@ fn row(
     label: &str,
     controls: impl FnOnce(&mut ChildSpawnerCommands),
 ) {
+    flagged_row(parent, label, false, controls);
+}
+
+/// A row whose label is tagged as new when what it chooses is new to the player.
+fn flagged_row(
+    parent: &mut ChildSpawnerCommands,
+    label: &str,
+    new: bool,
+    controls: impl FnOnce(&mut ChildSpawnerCommands),
+) {
     parent
         .spawn(Node {
             column_gap: px(6),
@@ -532,15 +545,33 @@ fn row(
         })
         .with_children(|row| {
             // The label sits in a box of fixed width, so that the controls line up.
-            row.spawn((
-                Node {
-                    width: px(200),
-                    ..default()
-                },
-                children![theme::text(label, 16.0, theme::TEXT)],
-            ));
+            row.spawn(Node {
+                width: px(200),
+                align_items: AlignItems::Center,
+                ..default()
+            })
+            .with_children(|labelled| {
+                labelled.spawn(theme::text(label, 16.0, theme::TEXT));
+                if new {
+                    labelled.spawn(new_tag());
+                }
+            });
             controls(row);
         });
+}
+
+/// The tag of what a player has unlocked and not used, or not seen, yet.
+fn new_tag() -> impl Bundle {
+    (
+        Node {
+            border: UiRect::all(px(1)),
+            padding: UiRect::new(px(6), px(4), px(0), px(0)),
+            margin: UiRect::left(px(10)),
+            ..default()
+        },
+        BorderColor::all(theme::GOOD),
+        children![theme::label("New", 11.0, theme::GOOD)],
+    )
 }
 
 /// A small button, for the controls of a row.
@@ -1293,7 +1324,7 @@ fn retyped(seed: &str, typed: bool, key: &Key, text: Option<&str>) -> Option<Str
 fn type_seed(
     mut keys: MessageReader<KeyboardInput>,
     screen: Res<State<Screen>>,
-    (session, unlocks, seat): (Res<Session>, Res<Unlocks>, Res<LocalSeat>),
+    (session, mut unlocks, seat): (Res<Session>, ResMut<Unlocks>, Res<LocalSeat>),
     (options, garage): (Res<Options>, Res<Garage>),
     (mut setup, mut drawn): (ResMut<Setup>, ResMut<Drawn>),
     mut lobbies: Query<&mut Lobby>,
@@ -1331,6 +1362,9 @@ fn type_seed(
             begin(&setup, (&options, &garage), &mut requests, &mut next_screen);
         } else if typing && let Some(seed) = retyped(&setup.seed, setup.typed, pressed, text) {
             (setup.seed, setup.typed) = (seed, true);
+            if unlocks.used(Unlock::ChosenSeed) {
+                unlocks.save();
+            }
         }
     }
 }
@@ -1406,7 +1440,8 @@ fn solo_screen(
                 ));
                 parent.spawn(theme::title("Solo", 84.0, theme::TEXT));
                 section(parent, "Run");
-                row(parent, "Difficulty", |row| {
+                let new = |unlock| unlocks.is_unused(unlock);
+                flagged_row(parent, "Difficulty", hard && new(Unlock::HardMode), |row| {
                     // A player who has a single difficulty has nothing to choose.
                     if !hard {
                         row.spawn(theme::text("Normal", 16.0, theme::TEXT));
@@ -1426,20 +1461,25 @@ fn solo_screen(
                 } else if setup.difficulty == Difficulty::Hard {
                     line(parent, HARD_MODE, theme::TEXT_DIM);
                 }
-                row(parent, "Arena mode", |row| {
-                    if rooms {
-                        for (name, on) in [("Off", false), ("On", true)] {
-                            choice(row, name, 90.0, Press::Arena(on), setup.arena == on);
+                flagged_row(
+                    parent,
+                    "Arena mode",
+                    rooms && new(Unlock::ArenaMode),
+                    |row| {
+                        if rooms {
+                            for (name, on) in [("Off", false), ("On", true)] {
+                                choice(row, name, 90.0, Press::Arena(on), setup.arena == on);
+                            }
+                        } else {
+                            let unlock = unlocks::condition(Unlock::ArenaMode);
+                            row.spawn(theme::text(unlock, 16.0, theme::TEXT_DIM));
                         }
-                    } else {
-                        let unlock = unlocks::condition(Unlock::ArenaMode);
-                        row.spawn(theme::text(unlock, 16.0, theme::TEXT_DIM));
-                    }
-                });
+                    },
+                );
                 if setup.arena {
                     line(parent, ARENA_MODE, theme::TEXT_DIM);
                 }
-                row(parent, "Free mode", |row| {
+                flagged_row(parent, "Free mode", frees && new(Unlock::FreeMode), |row| {
                     if brought {
                         let told = "On, in the tank of this playtest";
                         row.spawn(theme::text(told, 16.0, theme::TEXT));
@@ -1466,7 +1506,7 @@ fn solo_screen(
                         small(row, "Garage", 110.0, Press::OpenGarage);
                     });
                 }
-                row(parent, "Seed", |row| {
+                flagged_row(parent, "Seed", types && new(Unlock::ChosenSeed), |row| {
                     row.spawn((
                         Node {
                             min_width: px(130),
@@ -1795,7 +1835,19 @@ fn achievements_screen(mut commands: Commands, unlocks: Res<Unlocks>) {
                             ..default()
                         }))
                         .with_children(|entry| {
-                            entry.spawn(theme::title(unlocks::name(unlock), 20.0, theme::TEXT));
+                            let new = unlocks.is_unseen(unlock);
+                            entry
+                                .spawn(Node {
+                                    align_items: AlignItems::Center,
+                                    ..default()
+                                })
+                                .with_children(|heading| {
+                                    let name = unlocks::name(unlock);
+                                    heading.spawn(theme::title(name, 20.0, theme::TEXT));
+                                    if new {
+                                        heading.spawn(new_tag());
+                                    }
+                                });
                             let condition = unlocks::condition(unlock);
                             entry.spawn(theme::text(condition, 16.0, theme::TEXT_DIM));
                             entry.spawn(theme::label(state, 13.0, color));
@@ -1809,6 +1861,14 @@ fn achievements_screen(mut commands: Commands, unlocks: Res<Unlocks>) {
                 button(parent, "Back", Press::Abandon);
             });
         });
+}
+
+/// What the screen of the achievements showed as new is no longer new once the player leaves
+/// it.
+fn see_the_achievements(mut unlocks: ResMut<Unlocks>) {
+    if unlocks.seen() {
+        unlocks.save();
+    }
 }
 
 /// What a key does to words that a player types for others to read, such as the name of a
@@ -3263,12 +3323,12 @@ fn press(
     mut capture: ResMut<Capture>,
     mut playtest: Option<ResMut<Playtest>>,
     mut destination: ResMut<Destination>,
-    (options, run, time, seat, unlocks): (
+    (options, run, time, seat, mut unlocks): (
         Res<Options>,
         Option<Res<Run>>,
         Res<Time<Real>>,
         Res<LocalSeat>,
-        Res<Unlocks>,
+        ResMut<Unlocks>,
     ),
     (session, mut address, mut notice, mut opening, mut asked, mut entry): (
         Res<Session>,
@@ -3327,6 +3387,11 @@ fn press(
                     if settings.solo_difficulty != difficulty {
                         settings.solo_difficulty = difficulty;
                     }
+                    // What the player has unlocked is no longer new once they use it.
+                    let unlock = difficulty.unlock();
+                    if unlock.is_some_and(|unlock| unlocks.used(unlock)) {
+                        unlocks.save();
+                    }
                 }
                 _ => {}
             },
@@ -3342,6 +3407,9 @@ fn press(
                     if settings.solo_free != on {
                         settings.solo_free = on;
                     }
+                    if on && unlocks.used(Unlock::FreeMode) {
+                        unlocks.save();
+                    }
                 }
                 _ => {}
             },
@@ -3356,6 +3424,9 @@ fn press(
                     setup.arena = on;
                     if settings.solo_arena != on {
                         settings.solo_arena = on;
+                    }
+                    if on && unlocks.used(Unlock::ArenaMode) {
+                        unlocks.save();
                     }
                 }
                 _ => {}
@@ -6298,6 +6369,42 @@ mod tests {
         go(&mut app, Screen::Lobby);
         let next = lobby_of(&mut app);
         assert!(next.seed != "MINE" && !next.seed.is_empty() && !next.typed);
+    }
+
+    #[test]
+    fn what_a_player_unlocked_is_tagged_new_until_they_use_it_or_see_it() {
+        let fresh = |app: &mut App| {
+            app.insert_resource(Unlocks::fresh(&[Unlock::ArenaMode]));
+            build(app, solo_screen);
+        };
+        assert!(texts(fresh).iter().any(|text| text == "NEW"));
+        // Turned on, arena mode is no longer new.
+        let mut app = stage(fresh, WINDOWS[0]);
+        click(&mut app, Press::Arena(true));
+        assert!(
+            !app.world()
+                .resource::<Unlocks>()
+                .is_unused(Unlock::ArenaMode)
+        );
+        // Nothing that the player had before is new.
+        let had = |app: &mut App| {
+            app.insert_resource(Unlocks::of(&[Unlock::ArenaMode]));
+            build(app, solo_screen);
+        };
+        assert!(!texts(had).iter().any(|text| text == "NEW"));
+        // The screen of the achievements tags it until the player leaves it.
+        let shown = |app: &mut App| {
+            app.insert_resource(Unlocks::fresh(&[Unlock::ArenaMode]));
+            build(app, achievements_screen);
+        };
+        assert!(texts(shown).iter().any(|text| text == "NEW"));
+        let mut app = stage(shown, WINDOWS[0]);
+        build(&mut app, see_the_achievements);
+        assert!(
+            !app.world()
+                .resource::<Unlocks>()
+                .is_unseen(Unlock::ArenaMode)
+        );
     }
 
     #[test]
