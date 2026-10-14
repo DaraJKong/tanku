@@ -27,6 +27,7 @@ mod mirror;
 mod models;
 mod music;
 mod net;
+mod notices;
 #[cfg(not(target_arch = "wasm32"))]
 mod quit;
 mod repair;
@@ -130,7 +131,7 @@ fn main() {
             report::plugin,
             repair::plugin,
         ))
-        .add_plugins((audio::plugin, music::plugin));
+        .add_plugins((audio::plugin, music::plugin, notices::plugin));
     // A browser joins games and hosts none.
     app.add_plugins(net::NetPlugin);
     // A page keeps no journal: nothing outside the browser could read it. And a page is

@@ -10,7 +10,7 @@ use tanku_core::{
     seed::VERSION,
     sim::{
         Enemy, Gun, Player, Playtest, Position, Run, Shield, ShieldState, SimEvent, Tank,
-        TankCommand, Team, Wreck,
+        TankCommand, Wreck,
     },
     stats::{Genome, Stat},
 };
@@ -20,6 +20,7 @@ use crate::{
     camera::{MainCamera, View},
     crew::{LocalSeat, Own},
     draft::{Draft, LIFT},
+    notices::Alarms,
     repair, scene,
     settings::{Action, Settings},
     theme,
@@ -753,6 +754,15 @@ fn light(on: bool, lit: Color, color: &mut BackgroundColor, border: &mut BorderC
     };
 }
 
+/// Lights a square in the colors of a loss, or puts it out, while it blinks for the loss.
+fn alarm(on: bool, color: &mut BackgroundColor, border: &mut BorderColor) {
+    (color.0, *border) = if on {
+        (theme::DANGER_FILL, BorderColor::all(theme::DANGER))
+    } else {
+        (Color::NONE, BorderColor::all(theme::RULE))
+    };
+}
+
 fn shown(visible: bool) -> Display {
     if visible {
         Display::Flex
@@ -848,9 +858,10 @@ fn status(
     crew: Query<(&Player, Has<Wreck>)>,
     own: Query<&Tank, With<Own>>,
     tanks: Query<(&Position, Option<&Wreck>, &TankCommand, Has<Own>), With<Player>>,
-    mut readouts: Query<(&Readout, &mut Text)>,
+    alarms: Res<Alarms>,
+    mut readouts: Query<(&Readout, &mut Text, &mut TextColor), Without<MateNumber>>,
     mut pips: Query<(&Pip, &mut BackgroundColor, &mut BorderColor, &mut Node)>,
-    mut numbers: Query<(&MateNumber, &mut TextColor)>,
+    mut numbers: Query<(&MateNumber, &mut TextColor), Without<Readout>>,
 ) {
     let Some(run) = run else {
         return;
@@ -873,10 +884,22 @@ fn status(
         let own = (place.0, wreck.map(|wreck| wreck.repair), command.repair);
         repair::word(own, &wrecks)
     });
-    for (readout, mut text) in &mut readouts {
+    // A single player on their last life is told so, in the color of danger, for as long as
+    // it lasts.
+    let last_life = run.solo && !infinite_lives && run.lives == 1;
+    for (readout, mut text, mut ink) in &mut readouts {
+        if matches!(readout, Readout::Crew) {
+            let color = if last_life {
+                theme::DANGER
+            } else {
+                theme::TEXT_DIM
+            };
+            ink.set_if_neq(TextColor(color));
+        }
         let wanted = match readout {
             Readout::Player => format!("PLAYER {}", seat.0 + 1),
             Readout::Mode => mode(&run),
+            Readout::Crew if last_life => "LAST LIFE".to_string(),
             Readout::Crew if run.solo => "LIVES".to_string(),
             Readout::Crew => "TEAM".to_string(),
             Readout::Unit => place(&run).0.to_string(),
@@ -911,6 +934,15 @@ fn status(
             Pip::Life(life) => {
                 node.display = shown(run.solo && !infinite_lives);
                 light(life <= run.lives, theme::ACCENT, &mut color, &mut border);
+                // The last one is edged in the color of danger.
+                if last_life && life == 1 {
+                    *border = BorderColor::all(theme::DANGER);
+                }
+                // The life that was just lost blinks.
+                let lost = alarms.life.filter(|(lost, _)| *lost == life);
+                if let Some(on) = Alarms::blink(lost.map(|(_, since)| since)) {
+                    alarm(on, &mut color, &mut border);
+                }
             }
             // Several players have each other: a square for each tank, with the number of
             // its player, lit while the tank runs and empty while it is a wreck.
@@ -919,6 +951,10 @@ fn status(
                 node.display = shown(!run.solo && mate.is_some());
                 let runs = mate.is_some_and(|(_, wreck)| !wreck);
                 light(runs, theme::ACCENT, &mut color, &mut border);
+                // The square of a tank that was just destroyed blinks.
+                if let Some(on) = Alarms::blink(alarms.lost(seat)) {
+                    alarm(on, &mut color, &mut border);
+                }
             }
             _ => {}
         }
@@ -926,10 +962,11 @@ fn status(
     for (number, mut ink) in &mut numbers {
         let mut mates = crew.iter().filter(|(player, _)| player.seat == number.0);
         let runs = mates.any(|(_, wreck)| !wreck);
-        ink.set_if_neq(TextColor(if runs {
-            theme::TEXT_ON_ACCENT
-        } else {
-            theme::TEXT_DIM
+        let blinks = Alarms::blink(alarms.lost(number.0)) == Some(true);
+        ink.set_if_neq(TextColor(match (blinks, runs) {
+            (true, _) => theme::DANGER,
+            (false, true) => theme::TEXT_ON_ACCENT,
+            (false, false) => theme::TEXT_DIM,
         }));
     }
 }
@@ -994,7 +1031,6 @@ fn weapons(
 fn toasts(
     time: Res<Time>,
     run: Option<Res<Run>>,
-    playtest: Option<Res<Playtest>>,
     mut events: MessageReader<SimEvent>,
     mut unlocked: MessageReader<Unlocked>,
     mut toast: Single<(&mut Toast, &mut Text, &mut TextColor)>,
@@ -1002,7 +1038,6 @@ fn toasts(
     mut counted: Local<Option<u8>>,
 ) {
     let (toast, text, color) = &mut *toast;
-    let infinite_lives = playtest.is_some_and(|playtest| playtest.infinite_lives);
     // Several things can happen at once, such as clearing a sector and unlocking its barrier.
     // The message that matters most is shown.
     let mut news: Option<(u8, String)> = None;
@@ -1036,27 +1071,6 @@ fn toasts(
             SimEvent::BarrierUnlocked { sector } if sector > 0 => {
                 (1, "Barrier unlocked".to_string())
             }
-            SimEvent::TankDestroyed {
-                team: Team::Players,
-                ..
-            } => {
-                // A playtest that doesn't count its lives has none to announce, and several
-                // players have wrecks to repair instead.
-                let solo = run.as_ref().is_none_or(|run| run.solo);
-                let lives = if infinite_lives || !solo {
-                    0
-                } else {
-                    run.as_ref().map_or(0, |run| run.lives)
-                };
-                let message = match lives {
-                    _ if !solo => "Tank destroyed - a teammate can repair it".to_string(),
-                    0 => "Tank destroyed".to_string(),
-                    1 => "Tank destroyed - last life".to_string(),
-                    lives => format!("Tank destroyed - {lives} lives left"),
-                };
-                (3, message)
-            }
-            SimEvent::TankRepaired { .. } => (2, "Tank repaired".to_string()),
             // The waves of an arena are counted, so that the players know when it ends. A
             // group of arena mode is named when it comes.
             SimEvent::WaveIncoming { wave, of } => (2, wave_words(run.as_deref(), wave, of)),
@@ -1198,10 +1212,17 @@ fn clear_place(
 fn mark_mates(
     run: Option<Res<Run>>,
     ui_scale: Res<UiScale>,
+    alarms: Res<Alarms>,
     camera: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
     tanks: Query<(&Player, &Position, Has<Own>, Has<Wreck>)>,
     enemies: Query<&Node, (With<EnemyMarker>, Without<MateMarker>)>,
-    mut markers: Query<(&MateMarker, &mut Node, &mut BackgroundColor, &Children)>,
+    mut markers: Query<(
+        &MateMarker,
+        &mut Node,
+        &mut BackgroundColor,
+        &mut BorderColor,
+        &Children,
+    )>,
     mut numbers: Query<&mut TextColor>,
 ) {
     let (camera, camera_transform) = *camera;
@@ -1238,7 +1259,11 @@ fn mark_mates(
         taken.push((place, MATE_MARKER));
         marked.push((player.seat, place, wreck));
     }
-    for (marker, mut node, mut fill, children) in &mut markers {
+    for (marker, mut node, mut fill, mut border, children) in &mut markers {
+        // The marker of a tank that was just destroyed blinks in the color of danger.
+        let blinks = Alarms::blink(alarms.lost(marker.0)) == Some(true);
+        let edge = if blinks { theme::DANGER } else { theme::PLAYER };
+        border.set_if_neq(BorderColor::all(edge));
         let Some(&(_, place, wreck)) = marked.iter().find(|(seat, ..)| *seat == marker.0) else {
             if node.display != Display::None {
                 node.display = Display::None;
@@ -1273,13 +1298,22 @@ fn tag_place(tank: Vec2, meter: f32) -> Vec2 {
 fn tag_players(
     run: Option<Res<Run>>,
     ui_scale: Res<UiScale>,
+    alarms: Res<Alarms>,
     camera: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
     tanks: Query<(&Player, &GlobalTransform)>,
-    mut tags: Query<(&PlayerTag, &mut Node)>,
+    mut tags: Query<(&PlayerTag, &mut Node, &mut BorderColor)>,
 ) {
     let (camera, camera_transform) = *camera;
     let several = run.is_some_and(|run| !run.solo);
-    for (tag, mut node) in &mut tags {
+    for (tag, mut node, mut border) in &mut tags {
+        // The tag of a tank that was just destroyed is in the color of danger, for as long
+        // as its alert shows.
+        let color = if alarms.lost(tag.0).is_some() {
+            theme::DANGER
+        } else {
+            theme::PLAYER
+        };
+        border.set_if_neq(BorderColor::all(color));
         let tank = tanks.iter().find(|(player, _)| player.seat == tag.0);
         let place = tank.filter(|_| several).and_then(|(_, tank)| {
             let middle = tank.translation();

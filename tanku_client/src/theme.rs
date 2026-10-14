@@ -57,6 +57,8 @@ pub const TEXT_ON_ACCENT: Color = VOID;
 pub const ACCENT: Color = PLAYER;
 pub const ACCENT_HOVERED: Color = hex(0x5C9FF5);
 pub const DANGER: Color = hex(0xF24D40);
+/// The fill of a square that tells a loss for a moment.
+pub const DANGER_FILL: Color = hex(0x2B1418);
 pub const GOOD: Color = hex(0x4DD980);
 /// Shields: the disk under the turret of a tank that has one, and the bubble when it is up.
 pub const SHIELD: Color = Color::WHITE;
@@ -181,19 +183,22 @@ pub fn code(content: impl Into<String>, size: f32, color: Color) -> impl Bundle 
     lettered(content.into(), (LETTERING, HEAVY), (size, TRACKING), color)
 }
 
-/// How a text is set.
+/// How a text is set: as a title, or as a number.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Face {
     Title,
+    Figure,
 }
 
 impl Face {
     fn set(self, content: String, size: f32, color: Color) -> impl Bundle {
         let (face, tracking) = match self {
             Face::Title => ((LETTERING, HEAVY), TRACKING),
+            Face::Figure => ((FIGURES, FontWeight::NORMAL), 0.0),
         };
         let content = match self {
             Face::Title => content.to_uppercase(),
+            Face::Figure => content,
         };
         lettered(content, face, (size, tracking), color)
     }

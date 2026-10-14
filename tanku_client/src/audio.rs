@@ -20,6 +20,15 @@ use crate::{
 #[derive(Resource)]
 pub struct Muted;
 
+/// Where the cues of a frame are played: what asks for one comes before it.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Playing;
+
+/// Asks for a cue that no event of the simulation plays by itself, at full volume: what the
+/// display tells of the run, such as the loss of a teammate.
+#[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Sound(pub Cue);
+
 /// Distance at which a sound is at its quietest.
 const HEARING_RANGE: f32 = 50.0;
 /// How fast what still sounds of a blast falls, each second: as the blast itself dies away.
@@ -47,8 +56,9 @@ impl Cues {
 
 pub fn plugin(app: &mut App) {
     // The music hears of a cue in the frame that plays it.
-    app.add_systems(Startup, setup)
-        .add_systems(Update, (play.before(music::tell), click));
+    app.add_message::<Sound>()
+        .add_systems(Startup, setup)
+        .add_systems(Update, (play.in_set(Playing).before(music::tell), click));
 }
 
 /// Starts a cue, this loud. A game that logs what is for debugging lists the cues as they
@@ -73,6 +83,7 @@ fn setup(mut commands: Commands, mut sources: ResMut<Assets<AudioSource>>) {
 fn play(
     mut commands: Commands,
     mut events: MessageReader<SimEvent>,
+    mut asked: MessageReader<Sound>,
     cues: Res<Cues>,
     view: Res<View>,
     time: Res<Time<Real>>,
@@ -136,6 +147,9 @@ fn play(
         } else {
             start(&mut commands, &cues, cue, volume);
         }
+    }
+    for Sound(cue) in asked.read() {
+        start(&mut commands, &cues, *cue, 1.0);
     }
     // Blasts that go off together sound as one, as loud as the nearest of them. A mine that
     // takes a tank with it is a blast and a tank that is destroyed, and a sound that is
@@ -216,6 +230,7 @@ mod tests {
                 paused: false,
             })
             .add_message::<SimEvent>()
+            .add_message::<Sound>()
             .add_systems(Startup, setup)
             .add_systems(Update, (play.before(music::tell), music::tell));
         app.update();
@@ -309,6 +324,16 @@ mod tests {
             app.world_mut().write_message(event);
             app.update();
             assert_eq!(played(&mut app), [], "{event:?}");
+        }
+    }
+
+    #[test]
+    fn a_cue_that_is_asked_for_plays_at_full_volume() {
+        let mut app = game();
+        for cue in [Cue::Down, Cue::Last, Cue::Stamp] {
+            app.world_mut().write_message(Sound(cue));
+            app.update();
+            assert_eq!(played(&mut app), [(cue, 1.0)], "{cue:?}");
         }
     }
 
