@@ -139,6 +139,11 @@ struct MateNumber(u8);
 #[derive(Component)]
 struct RepairFill(u8);
 
+/// The line that strikes out the square of a player who left the game, for a moment before
+/// it goes.
+#[derive(Component)]
+struct Strike(u8);
+
 /// The bar under the name on the marker of the tank of a seat, which fills as its wreck is
 /// repaired.
 #[derive(Component)]
@@ -383,6 +388,19 @@ fn mate(seat: u8) -> impl Bundle {
             (
                 MateNumber(seat),
                 theme::label((seat + 1).to_string(), 12.0, theme::TEXT_DIM),
+            ),
+            (
+                Strike(seat),
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: px(1),
+                    right: px(1),
+                    top: px(8),
+                    height: px(1),
+                    ..default()
+                },
+                BackgroundColor(theme::TEXT_DIM),
+                Visibility::Hidden,
             ),
         ],
     )
@@ -910,14 +928,24 @@ fn status(
     mut readouts: Query<(&Readout, &mut Text, &mut TextColor), Without<MateNumber>>,
     mut pips: Query<(&Pip, &mut BackgroundColor, &mut BorderColor, &mut Node)>,
     mut numbers: Query<(&MateNumber, &mut TextColor), Without<Readout>>,
-    (wrecks, mut fills): (
+    (wrecks, mut fills, mut strikes): (
         Query<(&Player, &Wreck)>,
         Query<(&RepairFill, &mut Node), Without<Pip>>,
+        Query<(&Strike, &mut Visibility)>,
     ),
 ) {
     let Some(run) = run else {
         return;
     };
+    for (strike, mut visibility) in &mut strikes {
+        let gone = !crew.iter().any(|(player, _)| player.seat == strike.0);
+        let wanted = if gone && alarms.left(strike.0).is_some() {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+        visibility.set_if_neq(wanted);
+    }
     // The square of a wreck fills as it is repaired.
     for (fill, mut node) in &mut fills {
         let wreck = wrecks.iter().find(|(player, _)| player.seat == fill.0);
@@ -1026,9 +1054,14 @@ fn status(
             // its player, lit while the tank runs and empty while it is a wreck.
             Pip::Mate(seat) => {
                 let mate = crew.iter().find(|(player, _)| player.seat == seat);
-                node.display = shown(!run.solo && mate.is_some());
+                // The square of a player who left the game stays a moment, struck out.
+                let leaving = mate.is_none() && alarms.left(seat).is_some();
+                node.display = shown(!run.solo && (mate.is_some() || leaving));
                 let runs = mate.is_some_and(|(_, wreck)| !wreck);
                 light(runs, theme::ACCENT, &mut color, &mut border);
+                if leaving {
+                    *border = BorderColor::all(theme::RULE_DIM);
+                }
                 // The square of a tank that was just destroyed blinks.
                 if let Some(on) = Alarms::blink(alarms.lost(seat)) {
                     alarm(on, &mut color, &mut border);

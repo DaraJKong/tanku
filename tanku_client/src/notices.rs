@@ -45,6 +45,8 @@ const ALERT_DROP: f32 = 2.65;
 const ALERT_ROOM: Vec2 = Vec2::new(240.0, 170.0);
 /// How long a square of the display or a marker blinks for a loss, and each step of it.
 pub const BLINK_TIME: f32 = 0.9;
+/// How long the square of a player who left the game stays, struck out, before it goes.
+pub const LEFT_TIME: f32 = 3.0;
 const BLINK_STEP: f32 = 0.15;
 /// The flash of the frame of the sheet: how strong it starts, how long it fades, and how wide
 /// its line is.
@@ -84,6 +86,8 @@ pub struct Alarms {
     pub lost: [Option<f32>; MAX_PLAYERS as usize],
     pub life: Option<(u32, f32)>,
     pub back: Option<(u32, f32)>,
+    /// How long ago the player of each seat left the game, if it was a moment ago.
+    pub left: [Option<f32>; MAX_PLAYERS as usize],
 }
 
 impl Alarms {
@@ -97,6 +101,11 @@ impl Alarms {
     /// How long ago the tank of a seat was destroyed, if it was a moment ago.
     pub fn lost(&self, seat: u8) -> Option<f32> {
         self.lost.get(seat as usize).copied().flatten()
+    }
+
+    /// How long ago the player of a seat left the game, if it was a moment ago.
+    pub fn left(&self, seat: u8) -> Option<f32> {
+        self.left.get(seat as usize).copied().flatten()
     }
 }
 
@@ -121,6 +130,9 @@ enum Told {
     },
     /// The tank of a teammate is back, or the player's own.
     Back(Option<u8>),
+    /// A teammate left the game, and the next sectors, or the next groups of arena mode, are
+    /// for so many players.
+    Left { seat: u8, players: u32, arena: bool },
     /// The player's own tank is destroyed: by what, if the run knows, and what is left. A single
     /// player has lives, which a playtest may not count. Among several players, the teammates
     /// whose tanks run can repair it.
@@ -392,6 +404,16 @@ fn menders_words(menders: &[u8]) -> Option<String> {
     }
 }
 
+/// What an alert says of the run that a player left: what it is played for from then on.
+fn left_words(players: u32, arena: bool) -> String {
+    let unit = if arena { "groups" } else { "sectors" };
+    let players = match players {
+        1 => "1 player".to_string(),
+        players => format!("{players} players"),
+    };
+    format!("The next {unit} are for {players}")
+}
+
 /// What an alert says of the tank that is left alone to run.
 fn last_words(last: Last) -> String {
     match last {
@@ -436,10 +458,12 @@ fn tell(
     (mut shown, mut alarms, mut flash): (ResMut<Shown>, ResMut<Alarms>, ResMut<Flash>),
     mut sounds: MessageWriter<Sound>,
     (rings, mut materials): (Res<Rings>, ResMut<Assets<StandardMaterial>>),
+    mut before: Local<Option<(u64, u64, u32, Vec<u8>)>>,
 ) {
     let Some(run) = run else {
         events.clear();
         repaired.clear();
+        *before = None;
         return;
     };
     let infinite_lives = playtest.is_some_and(|playtest| playtest.infinite_lives);
@@ -565,6 +589,27 @@ fn tell(
             told.push((back, Anchor::Watched));
         }
     }
+    // A player who leaves the run takes their tank away, and the run counts one player less.
+    let mut seats: Vec<u8> = players.iter().map(|(player, ..)| player.seat).collect();
+    seats.sort();
+    if let Some((seed, ticks, count, ref was)) = *before
+        && seed == run.seed
+        && ticks <= run.ticks
+        && run.players < count
+    {
+        for &seat in was.iter().filter(|seat| !seats.contains(seat)) {
+            if let Some(since) = alarms.left.get_mut(seat as usize) {
+                *since = Some(0.0);
+            }
+            let left = Told::Left {
+                seat,
+                players: run.players,
+                arena: run.arena,
+            };
+            told.push((left, Anchor::Watched));
+        }
+    }
+    *before = Some((run.seed, run.ticks, run.players, seats));
     if let Some(cue) = cue {
         sounds.write(Sound(cue));
     }
@@ -752,6 +797,7 @@ fn spawn(commands: &mut Commands, told: &Told) -> Entity {
         .id();
     let heading = match told {
         Told::Back(_) => theme::ACCENT_HOVERED,
+        Told::Left { .. } => theme::TEXT,
         _ => theme::DANGER,
     };
     let rule = heading.with_alpha(0.75);
@@ -800,6 +846,17 @@ fn spawn(commands: &mut Commands, told: &Told) -> Entity {
                 }
                 None => words(commands, (first, root), big, "Your tank is back", heading),
             };
+        }
+        Told::Left {
+            seat,
+            players,
+            arena,
+        } => {
+            tag(commands, (first, root), *seat);
+            words(commands, (first, root), big, "Left the game", heading);
+            let second = row(commands, column, 9.0);
+            let said = left_words(*players, *arena);
+            words(commands, (second, root), line, said, theme::TEXT);
         }
         Told::Own {
             blow,
@@ -897,6 +954,11 @@ fn place(
             .filter(|since| *since < ALERT_TIME);
     }
     let alarms = &mut *alarms;
+    for since in alarms.left.iter_mut() {
+        *since = since
+            .map(|since| since + seconds)
+            .filter(|since| *since < LEFT_TIME);
+    }
     for told in [&mut alarms.life, &mut alarms.back] {
         if let Some((life, since)) = *told {
             *told = Some((life, since + seconds)).filter(|(_, since)| *since < ALERT_TIME);
@@ -1499,6 +1561,31 @@ mod tests {
         app.world_mut().entity_mut(tanks[1]).remove::<Wreck>();
         app.update();
         assert_eq!(heard(&mut app), (vec![], Some(Told::Back(Some(1)))));
+    }
+
+    #[test]
+    fn a_teammate_who_leaves_is_told() {
+        let (mut app, tanks) = game(&[0, 1, 2]);
+        app.update();
+        // Player 3 leaves: their tank goes, and the run is for two players.
+        app.world_mut().entity_mut(tanks[2]).despawn();
+        app.world_mut().resource_mut::<Run>().players = 2;
+        app.update();
+        let left = Told::Left {
+            seat: 2,
+            players: 2,
+            arena: false,
+        };
+        assert_eq!(heard(&mut app), (vec![], Some(left)));
+        assert_eq!(app.world().resource::<Alarms>().left(2), Some(0.0));
+        assert_eq!(left_words(2, false), "The next sectors are for 2 players");
+        assert_eq!(left_words(1, true), "The next groups are for 1 player");
+        // A new run on another seed is no leaving.
+        app.world_mut().entity_mut(tanks[1]).despawn();
+        let mut run = app.world_mut().resource_mut::<Run>();
+        (run.seed, run.players) = (2, 1);
+        app.update();
+        assert_eq!(app.world().resource::<Alarms>().left(1), None);
     }
 
     #[test]
