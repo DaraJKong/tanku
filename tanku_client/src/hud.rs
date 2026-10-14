@@ -23,7 +23,8 @@ use crate::{
     notices::Alarms,
     repair, scene,
     settings::{Action, Settings},
-    theme, unlocks,
+    theme,
+    unlocks::{self, Fair, Unlocks},
 };
 
 /// Seconds a message stays on screen.
@@ -857,7 +858,7 @@ fn status(
     crew: Query<(&Player, Has<Wreck>)>,
     own: Query<&Tank, With<Own>>,
     tanks: Query<(&Position, Option<&Wreck>, &TankCommand, Has<Own>), With<Player>>,
-    alarms: Res<Alarms>,
+    (alarms, unlocks, fair): (Res<Alarms>, Res<Unlocks>, Res<Fair>),
     mut readouts: Query<(&Readout, &mut Text, &mut TextColor), Without<MateNumber>>,
     mut pips: Query<(&Pip, &mut BackgroundColor, &mut BorderColor, &mut Node)>,
     mut numbers: Query<(&MateNumber, &mut TextColor), Without<Readout>>,
@@ -906,7 +907,15 @@ fn status(
             Readout::Lives if infinite_lives && run.solo => "INFINITE".to_string(),
             Readout::Lives => String::new(),
             Readout::Seed => run.seed_text.clone(),
-            // A playtest says what it is next to the name of the game.
+            // A playtest says what it is next to the name of the game, and whether the
+            // achievements that it earns are fake ones.
+            Readout::Earning if run.playtest && unlocks.fake => {
+                match unlocks::earns(&run, &unlocks, *fair) {
+                    true => "FAKE ACHIEVEMENTS",
+                    false => "NO ACHIEVEMENTS",
+                }
+                .to_string()
+            }
             Readout::Earning if !run.earns && !run.playtest => "NO ACHIEVEMENTS".to_string(),
             Readout::Earning => String::new(),
             Readout::Difficulty => unlocks::difficulty_name(run.difficulty).to_uppercase(),

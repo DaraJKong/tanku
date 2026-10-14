@@ -30,7 +30,7 @@ use crate::{
     session::{Asked, Drawn, Found, Game, Invitation, Notice, Session, SessionRequest, Shut, Sign},
     settings::{Action, Binding, League, Records, Settings},
     theme,
-    unlocks::{self, Unlocks},
+    unlocks::{self, Fair, Unlocks},
 };
 
 /// Seconds between the end of a run and the game over screen.
@@ -125,6 +125,8 @@ enum Press {
     ResetBindings,
     /// In a playtest: turns the infinite lives on or off.
     InfiniteLives,
+    /// In a playtest: turns the fake achievements on or off.
+    FakeAchievements,
     /// In a playtest: moves the sector to skip to by this many.
     Destination(i32),
     /// In a playtest: skips to that sector.
@@ -876,7 +878,12 @@ fn main_menu(
                         "Playtest: cheats are in the pause menu",
                         theme::ACCENT,
                     );
-                    line(parent, "A playtest sets no record", theme::TEXT_DIM);
+                    let kept = if playtest.is_some_and(|playtest| playtest.fake_achievements) {
+                        "Fake achievements and records, forgotten when the game closes"
+                    } else {
+                        "A playtest sets no record"
+                    };
+                    line(parent, kept, theme::TEXT_DIM);
                     if let Some(seed) = &options.seed {
                         line(
                             parent,
@@ -1153,9 +1160,10 @@ fn draw_a_seed_for_one(
     };
 }
 
-/// Whether a mode or an option is open to a single player. A playtest has them all.
+/// Whether a mode or an option is open to a single player. A playtest has them all, unless it
+/// fakes achievements: it plays as on the first time then.
 fn open(unlocks: &Unlocks, options: &Options, unlock: Unlock) -> bool {
-    options.playtest || unlocks.has(unlock)
+    (options.playtest && !unlocks.fake) || unlocks.has(unlock)
 }
 
 /// Whether a single player may play a difficulty.
@@ -1476,14 +1484,16 @@ fn solo_screen(
                     format!("To type a seed of your own: {unlock}.")
                 };
                 line(parent, hint, theme::TEXT_DIM);
-                // A playtest earns nothing either way, and says what it is elsewhere.
+                // A playtest earns nothing either way, and says what it is elsewhere, unless it
+                // fakes achievements.
                 let unearned = match (setup.arena, free, setup.typed) {
                     (true, ..) => Some("A run in arena mode earns no achievement."),
                     (false, true, _) => Some("A run in free mode earns no achievement."),
                     (false, false, true) => Some("A run on a typed seed earns no achievement."),
                     (false, false, false) => None,
                 };
-                if let Some(why) = unearned.filter(|_| unlocks.wanting() && !options.playtest) {
+                let told = unlocks.wanting() && (!options.playtest || unlocks.fake);
+                if let Some(why) = unearned.filter(|_| told) {
                     line(parent, why, theme::TEXT);
                 }
                 primary(parent, "Start", Press::Begin);
@@ -2826,6 +2836,10 @@ fn pause_menu(
                     let state = on_off(playtest.infinite_lives);
                     small(row, state, 70.0, Press::InfiniteLives);
                 });
+                row(parent, "Fake achievements", |row| {
+                    let state = on_off(playtest.fake_achievements);
+                    small(row, state, 70.0, Press::FakeAchievements);
+                });
                 // A run in arena mode skips to the lull before a group.
                 let in_a_room = run.as_ref().is_some_and(|run| run.arena);
                 let unit = if in_a_room { "group" } else { "sector" };
@@ -2873,10 +2887,12 @@ fn new_seed(options: &Options, entropy: u64) -> String {
     chosen.unwrap_or_else(|| seed::random_seed_text(entropy))
 }
 
-/// Keeps the record of a run for a team of the size it started with, unless it was a playtest.
-/// Returns whether the record is new.
+/// Keeps the record of a run for a team of the size it started with, unless it was a playtest
+/// that keeps none: one that fakes them keeps them in memory. Returns whether the record is
+/// new.
 fn keep_record(records: &mut Records, run: &Run) -> bool {
-    !run.playtest && records.submit(League::of(run), run.team, run.cleared, &run.seed_text)
+    let kept = !run.playtest || records.fake;
+    kept && records.submit(League::of(run), run.team, run.cleared, &run.seed_text)
 }
 
 /// Where a run ended, as the stamp of the game over screen tells it: in a sector of the
@@ -2899,7 +2915,7 @@ fn game_over(
     records: Res<Records>,
     outcome: Res<Outcome>,
     session: Res<Session>,
-    (unlocks, options): (Res<Unlocks>, Res<Options>),
+    (unlocks, options, fair): (Res<Unlocks>, Res<Options>, Res<Fair>),
     lobbies: Query<&Lobby>,
 ) {
     // What holds a host back from the same seed again, and from a new run.
@@ -2991,7 +3007,7 @@ fn game_over(
                         });
                     line(parent, level_line(run), theme::TEXT_DIM);
                 }
-                if playtest {
+                if playtest && !records.fake {
                     line(parent, "Playtest: no record kept", theme::TEXT_DIM);
                 } else if outcome.new_record {
                     line(parent, "New record", theme::GOOD);
@@ -3004,8 +3020,9 @@ fn game_over(
                     line(parent, format!("Unlocked: {name}"), theme::GOOD);
                 }
                 // A player who has everything is not told what they miss.
-                let wanting = unlocks.wanting() && !playtest;
-                if wanting && run.as_ref().is_some_and(|run| !run.earns) {
+                let wanting = unlocks.wanting() && (!playtest || unlocks.fake);
+                let earned = |run: &Run| unlocks::earns(run, &unlocks, *fair);
+                if wanting && run.as_ref().is_some_and(|run| !earned(run)) {
                     // In arena mode and in free mode, the next run earns nothing either,
                     // retry or not.
                     let why = if league.arena {
@@ -3460,6 +3477,13 @@ fn press(
                     playtest.infinite_lives = !playtest.infinite_lives;
                 }
             }
+            // This machine sets its achievements and its records aside for fake ones, or takes
+            // them back.
+            Press::FakeAchievements => {
+                if let Some(playtest) = &mut playtest {
+                    playtest.fake_achievements = !playtest.fake_achievements;
+                }
+            }
             Press::Destination(change) => {
                 let sector = destination.0.saturating_add_signed(change);
                 destination.0 = sector.clamp(1, PLAYTEST_LAST_SECTOR);
@@ -3803,6 +3827,7 @@ mod tests {
                 app.insert_resource(Records::of_every_team(128, "85GVTHQA"))
                     .insert_resource(Playtest {
                         infinite_lives: true,
+                        fake_achievements: false,
                     })
                     .insert_resource(Options {
                         playtest: true,
@@ -3817,6 +3842,7 @@ mod tests {
                 app.insert_resource(Records::of_every_team(128, "85GVTHQA"))
                     .insert_resource(Playtest {
                         infinite_lives: true,
+                        fake_achievements: false,
                     })
                     .insert_resource(Options {
                         playtest: true,
@@ -4172,6 +4198,7 @@ mod tests {
                     .insert_resource(Session::Host)
                     .insert_resource(Playtest {
                         infinite_lives: true,
+                        fake_achievements: false,
                     });
                 build(app, pause_menu);
             }),
@@ -4189,6 +4216,7 @@ mod tests {
                         .insert_resource(Session::Host)
                         .insert_resource(Playtest {
                             infinite_lives: true,
+                            fake_achievements: false,
                         });
                     build(app, pause_menu);
                 },
@@ -4229,6 +4257,7 @@ mod tests {
             .init_resource::<Listed>()
             .init_resource::<Garage>()
             .init_resource::<Unlocks>()
+            .init_resource::<Fair>()
             .init_resource::<Way>()
             .init_resource::<Copied>()
             .init_resource::<Capture>()
@@ -6219,6 +6248,43 @@ mod tests {
         go(&mut app, Screen::Lobby);
         let next = lobby_of(&mut app);
         assert!(next.seed != "MINE" && !next.seed.is_empty() && !next.typed);
+    }
+
+    #[test]
+    fn a_playtest_can_fake_achievements_as_on_the_first_time() {
+        // The switch is in the pause menu of a playtest, off at first.
+        let paused = |app: &mut App| {
+            app.insert_resource(lost_run(1))
+                .insert_resource(Session::Solo)
+                .insert_resource(Playtest {
+                    infinite_lives: true,
+                    fake_achievements: false,
+                });
+            build(app, pause_menu);
+        };
+        let mut app = stage(paused, WINDOWS[0]);
+        click(&mut app, Press::FakeAchievements);
+        assert!(app.world().resource::<Playtest>().fake_achievements);
+        // With it, a playtest has what the fake progress has earned, as on the first time,
+        // and not every mode and option.
+        let first_time = |app: &mut App| {
+            app.insert_resource(Options {
+                playtest: true,
+                ..default()
+            })
+            .insert_resource(Unlocks::fake());
+            build(app, solo_screen);
+        };
+        assert!(says(&texts(first_time), "Clear sector 10"));
+        // The records of its runs are kept, in memory.
+        let mut records = Records::fake();
+        let run = Run {
+            playtest: true,
+            ..lost_run(1)
+        };
+        assert!(keep_record(&mut records, &run));
+        let kept = records.best(League::of(&run), run.team);
+        assert_eq!(kept.map(|record| record.sector), Some(run.cleared));
     }
 
     #[test]

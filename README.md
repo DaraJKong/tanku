@@ -111,7 +111,8 @@ cargo run -p tanku_client -- --playtest
 | Infinite lives | On from the start. The pause menu turns them off and on. |
 | Skip to a sector | The pause menu picks any sector up to 999. The tank comes back at the end of the sector before it, in front of its barrier, as it does after clearing that sector. In arena mode, it picks a group: the run goes on with the lull before that group. |
 | Choose the seed | `--seed TEXT` after `--playtest` starts every run on that seed instead of a random one. |
-| Nothing locked | The solo screen takes a typed seed and offers hard mode, arena mode and free mode, whatever the player has unlocked. |
+| Nothing locked | The solo screen takes a typed seed and offers hard mode, arena mode and free mode, whatever the player has unlocked, unless the playtest fakes achievements. |
+| Fake achievements | Off at the start. The pause menu turns them on: the machine sets its achievements and its records aside, and plays as on its first time, every option locked. What the playtest earns then, by the rules of a run that counts, is kept in memory until the game is closed: no file is written. Turned off, the machine has its own back. |
 | Bring a tank | `--tank TANK` after `--playtest` starts every run in free mode, in that tank, without a visit to the garage: see [The garage check](#the-garage-check). |
 
 With a seed and a skip, a seed and a sector from a report are a few clicks away:
@@ -120,7 +121,7 @@ With a seed and a skip, a seed and a sector from a report are a few clicks away:
 cargo run -p tanku_client -- --playtest --seed 85GVTHQA
 ```
 
-A playtest sets no record and earns no achievement. The web build has none, because a page has no command line.
+A playtest sets no record and earns no achievement, unless it fakes them. The web build has none, because a page has no command line.
 
 #### The garage check
 

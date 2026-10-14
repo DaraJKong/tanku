@@ -5,6 +5,7 @@ use bevy::prelude::*;
 use std::collections::BTreeMap;
 
 use tanku_core::{
+    modes,
     rules::{MAX_PLAYERS, PLAYTEST_LAST_SECTOR, RESPAWN_DELAY, SOLO_LIVES, SPAWN_FIRE_DELAY, TICK},
     seed,
     sim::{
@@ -177,9 +178,7 @@ pub fn handle_requests(
                     phase: RunPhase::Playing,
                     lost_to: None,
                     playtest: playtest.is_some(),
-                    // A seed can't be practiced to unlock anything, and no tank can be
-                    // built for it. What a run unlocks is earned in the corridor.
-                    earns: *drawn && !*free && !*arena && playtest.is_none(),
+                    earns: modes::fair(*drawn, *free, *arena) && playtest.is_none(),
                     free: *free,
                     arena: *arena,
                     lull: None,

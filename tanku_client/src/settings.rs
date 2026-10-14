@@ -514,7 +514,11 @@ impl League {
 
 /// The best run per league and number of players.
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
-pub struct Records(BTreeMap<String, Record>);
+pub struct Records {
+    best: BTreeMap<String, Record>,
+    /// Whether these are the fake records of a playtest, which no file keeps.
+    pub fake: bool,
+}
 
 impl Records {
     fn key(league: League, players: u32) -> String {
@@ -529,7 +533,7 @@ impl Records {
     }
 
     pub fn best(&self, league: League, players: u32) -> Option<&Record> {
-        self.0.get(&Self::key(league, players))
+        self.best.get(&Self::key(league, players))
     }
 
     /// Keeps a run if it went further than the record of its league and of a team of its
@@ -544,8 +548,10 @@ impl Records {
             seed: seed.to_string(),
             version: VERSION.to_string(),
         };
-        self.0.insert(Self::key(league, players), record);
-        storage::save(RECORDS_FILE, &self.to_pairs());
+        self.best.insert(Self::key(league, players), record);
+        if !self.fake {
+            storage::save(RECORDS_FILE, &self.to_pairs());
+        }
         true
     }
 
@@ -558,16 +564,25 @@ impl Records {
                 version: parts.next()?.to_string(),
             })
         };
-        Self(
-            pairs
+        Self {
+            best: pairs
                 .iter()
                 .filter_map(|(key, value)| Some((key.clone(), record(value)?)))
                 .collect(),
-        )
+            fake: false,
+        }
+    }
+
+    /// The records of a playtest that fakes them: none to start with, and none ever saved.
+    pub fn fake() -> Self {
+        Self {
+            best: BTreeMap::new(),
+            fake: true,
+        }
     }
 
     fn to_pairs(&self) -> BTreeMap<String, String> {
-        self.0
+        self.best
             .iter()
             .map(|(key, record)| {
                 let value = format!("{} {} {}", record.sector, record.seed, record.version);

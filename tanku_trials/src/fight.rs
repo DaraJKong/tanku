@@ -191,6 +191,7 @@ pub fn corridor(setup: &Setup) -> Option<Outcome> {
     });
     app.insert_resource(Playtest {
         infinite_lives: true,
+        fake_achievements: false,
     });
     app.world_mut().write_message(RunRequest::Start {
         seed: setup.seed.clone(),

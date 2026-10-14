@@ -1087,7 +1087,7 @@ fn past(best: Option<u32>, cleared: u32) -> bool {
 }
 
 /// Finds what a run earns: each achievement that it unlocks, and the first sector that it
-/// clears past its record. A playtest keeps no record.
+/// clears past its record. A playtest keeps no record, unless it fakes them.
 fn earn(
     run: Option<Res<Run>>,
     records: Res<Records>,
@@ -1099,13 +1099,14 @@ fn earn(
         unlocked.clear();
         return;
     };
-    // A new run, or the same seed again, starts from the record as it stands.
+    // A new run, or the same seed again, starts from the record as it stands, and so do the
+    // records that a playtest swaps in or out.
     let this = (run.seed, run.ticks);
     let new = best
         .run
         .is_none_or(|(seed, ticks)| seed != this.0 || ticks > this.1);
     best.run = Some(this);
-    if new {
+    if new || records.is_changed() {
         let record = records.best(League::of(&run), run.team);
         best.sector = record.map(|record| record.sector);
         best.told = false;
@@ -1113,7 +1114,8 @@ fn earn(
     for Unlocked(unlock) in unlocked.read() {
         stamps.waiting.push(unlock_words(*unlock, run.solo));
     }
-    if !best.told && !run.playtest && past(best.sector, run.cleared) {
+    let kept = !run.playtest || records.fake;
+    if !best.told && kept && past(best.sector, run.cleared) {
         best.told = true;
         let words = record_words(&run, best.sector.unwrap_or_default());
         stamps.waiting.push(words);
@@ -1651,5 +1653,13 @@ mod tests {
         app.world_mut().resource_mut::<Run>().cleared = 9;
         app.update();
         assert_eq!(stamped(&mut app), (0, vec![], vec![]));
+        // A playtest that fakes records has them stamped.
+        let mut fake = Records::fake();
+        fake.submit(League::default(), 1, 3, "FAKE");
+        let mut app = earning(fake);
+        app.world_mut().resource_mut::<Run>().playtest = true;
+        app.world_mut().resource_mut::<Run>().cleared = 4;
+        app.update();
+        assert_eq!(stamped(&mut app), (1, vec![], vec![Cue::Stamp]));
     }
 }

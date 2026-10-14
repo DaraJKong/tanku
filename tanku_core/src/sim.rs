@@ -378,12 +378,16 @@ pub struct Run {
 }
 
 /// Present when the game was started as a playtest, which lets the player cheat. The runs of
-/// a playtest set no record. Whoever starts the game inserts it and sets its options, and the
-/// server follows them.
+/// a playtest set no record and earn no achievement, unless it fakes them. Whoever starts the
+/// game inserts it and sets its options, and the server follows them.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Playtest {
     /// A destroyed player comes back without losing a life.
     pub infinite_lives: bool,
+    /// The machine plays as on its first time: it sets the achievements and the records that
+    /// it keeps aside, and earns fake ones, which it keeps in memory alone. The server knows
+    /// nothing of it.
+    pub fake_achievements: bool,
 }
 
 /// What the client asks of the server.

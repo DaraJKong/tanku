@@ -1467,6 +1467,7 @@ fn a_life_that_is_left_on_the_floor_is_lost_when_the_player_moves_on() {
     // A player who is destroyed in the next sector comes back in the arena, and finds nothing.
     app.insert_resource(Playtest {
         infinite_lives: false,
+        fake_achievements: false,
     });
     destroy_player(&mut app);
     tick(&mut app, seconds(RESPAWN_DELAY) + 1);
@@ -1479,6 +1480,7 @@ fn several_players_are_left_no_life() {
     let mut app = team("TEST", 2);
     app.insert_resource(Playtest {
         infinite_lives: true,
+        fake_achievements: false,
     });
     let arena = first_arena(&mut app);
     skip_to(&mut app, arena);
@@ -1509,6 +1511,7 @@ fn enter_arena(seed: &str) -> (App, u32, Vec<u32>) {
     let mut app = start(seed);
     app.insert_resource(Playtest {
         infinite_lives: true,
+        fake_achievements: false,
     });
     let arena = first_arena(&mut app);
     skip_to(&mut app, arena);
@@ -1682,6 +1685,7 @@ fn an_arena_holds_the_group_that_its_players_call_for() {
     let mut app = team("TEST", 4);
     app.insert_resource(Playtest {
         infinite_lives: true,
+        fake_achievements: false,
     });
     let arena = first_arena(&mut app);
     skip_to(&mut app, arena);
@@ -1724,6 +1728,7 @@ fn a_playtest_skips_to_a_sector_and_comes_back() {
     let mut app = start("TEST");
     app.insert_resource(Playtest {
         infinite_lives: false,
+        fake_achievements: false,
     });
     skip_to(&mut app, 7);
     let state = run(&app);
@@ -1777,6 +1782,7 @@ fn a_skip_goes_no_further_than_the_last_sector_and_the_last_one_asked_wins() {
     let mut app = start("TEST");
     app.insert_resource(Playtest {
         infinite_lives: true,
+        fake_achievements: false,
     });
     skip_to(&mut app, u32::MAX);
     assert_eq!(run(&app).sector, PLAYTEST_LAST_SECTOR - 1);
@@ -1803,6 +1809,7 @@ fn a_skip_asked_with_the_start_of_a_run_applies_to_that_run() {
     app.add_plugins((MinimalPlugins, CorePlugin, ServerPlugin))
         .insert_resource(Playtest {
             infinite_lives: true,
+            fake_achievements: false,
         });
     app.world_mut().write_message(RunRequest::Start {
         seed: "TEST".into(),
@@ -1834,6 +1841,7 @@ fn infinite_lives_keep_a_playtest_going() {
     let mut app = start("TEST");
     app.insert_resource(Playtest {
         infinite_lives: true,
+        fake_achievements: false,
     });
     for _ in 0..5 {
         destroy_player(&mut app);
@@ -1856,6 +1864,7 @@ fn infinite_lives_keep_a_playtest_going() {
     // Turned off, the lives count again.
     app.insert_resource(Playtest {
         infinite_lives: false,
+        fake_achievements: false,
     });
     destroy_player(&mut app);
     assert_eq!(run(&app).lives, 2);
@@ -2518,6 +2527,7 @@ fn a_run_earns_achievements_on_a_seed_that_was_drawn_for_it_unless_it_is_a_playt
         if playtest {
             app.insert_resource(Playtest {
                 infinite_lives: true,
+                fake_achievements: false,
             });
         }
         app.world_mut().write_message(RunRequest::Start {
@@ -3441,6 +3451,7 @@ fn a_playtest_brings_several_players_back_together() {
     let mut app = team("TEST", 3);
     app.insert_resource(Playtest {
         infinite_lives: true,
+        fake_achievements: false,
     });
     let wrecked = seat(&mut app, 2);
     destroy(&mut app, wrecked);

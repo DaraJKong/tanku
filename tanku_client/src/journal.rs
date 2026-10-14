@@ -433,6 +433,7 @@ mod tests {
         let mut app = world();
         app.insert_resource(Playtest {
             infinite_lives: true,
+            fake_achievements: false,
         });
         let mut playtest = run("PLAYTEST");
         (playtest.playtest, playtest.earns) = (true, false);

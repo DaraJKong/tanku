@@ -97,11 +97,24 @@ impl Unlock {
     }
 }
 
+/// Whether a run would earn achievements if it were no playtest: it is on a seed that the game
+/// drew for it, in the standard tank, and in the corridor. A seed can't be practiced to unlock
+/// anything, and no tank can be built for it. What a run unlocks is earned in the corridor.
+pub fn fair(drawn: bool, free: bool, arena: bool) -> bool {
+    drawn && !free && !arena
+}
+
 /// What a run has earned so far. A run that can't earn achievements earns nothing, however
 /// far it gets: the groups that a run in arena mode clears are no sectors of the corridor. A
 /// run in hard mode earns what a run in normal mode does, and what takes one in hard mode.
 pub fn earned(run: &Run) -> impl Iterator<Item = Unlock> {
-    let (earns, cleared, hard) = (run.earns, run.cleared, run.difficulty == Difficulty::Hard);
+    earned_by(run, run.earns)
+}
+
+/// What a run has earned so far, if it earns achievements: a playtest that fakes them says
+/// so itself.
+pub fn earned_by(run: &Run, earns: bool) -> impl Iterator<Item = Unlock> {
+    let (cleared, hard) = (run.cleared, run.difficulty == Difficulty::Hard);
     let reached = move |unlock: &Unlock| {
         earns && cleared >= unlock.sector() && (hard || !unlock.in_hard_mode())
     };
@@ -174,6 +187,21 @@ mod tests {
         assert_eq!(earned(20, true), at_twenty);
         assert_eq!(earned(30, true), Unlock::ALL);
         assert_eq!(earned(99, false), []);
+    }
+
+    #[test]
+    fn a_run_is_fair_on_a_seed_that_was_drawn_in_the_standard_tank_and_in_the_corridor() {
+        assert!(fair(true, false, false));
+        assert!(!fair(false, false, false));
+        assert!(!fair(true, true, false));
+        assert!(!fair(true, false, true));
+        // A run that doesn't earn may be told to, as a playtest that fakes achievements is.
+        let run = run(10, false);
+        assert_eq!(earned(&run).count(), 0);
+        assert_eq!(
+            earned_by(&run, true).collect::<Vec<_>>(),
+            [Unlock::ArenaMode]
+        );
     }
 
     #[test]
