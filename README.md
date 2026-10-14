@@ -293,19 +293,19 @@ cargo test -p tanku_client room_the_menus_take -- --ignored --nocapture
 
 The tests of the music editor lay each of its tabs out in the same way, in three sizes of window, and fail if a button crosses that line or lies on another.
 
-After a change to a brain, two tests compare a soldier, a veteran and an ace in the same five tanks. Each fights a crude player that nothing destroys, in about twenty sectors of six seeds: one tank alone, against bursts and against single shots, and two tanks together, against bursts. They print how long the enemies lasted and how many of their shots landed, and take six minutes:
+After a change to a brain, two tests compare a soldier, a veteran and an ace in the same five tanks. Each fights a crude player that nothing destroys, in about twenty sectors of six seeds: one tank alone, against bursts and against single shots, and two tanks together, against bursts. They print how long the enemies lasted and how many of their shots landed, and take a minute and a quarter:
 
 ```bash
 cargo test -p tanku_server trials::brains -- --ignored --nocapture
 ```
 
-After a change to what a mode makes of its enemies, two more tests send the same crude player against the groups of the first thirty sectors as they are, in normal mode and in hard mode. They print the same figures for each mode by stretch of sectors, and take nine minutes:
+After a change to what a mode makes of its enemies, two more tests send the same crude player against the groups of the first thirty sectors as they are, in normal mode and in hard mode. They print the same figures for each mode by stretch of sectors, and take just over a minute:
 
 ```bash
 cargo test -p tanku_server trials::modes -- --ignored --nocapture
 ```
 
-After a change to arena mode, one more test fights the groups of sectors 6 to 9 and 15 to 20 twice on the same eight seeds: each in its sector of the corridor, and in the room. It prints the same figures, and takes a minute and a half:
+After a change to arena mode, one more test fights the groups of sectors 6 to 9 and 15 to 20 twice on the same eight seeds: each in its sector of the corridor, and in the room. It prints the same figures, and takes about half a minute:
 
 ```bash
 cargo test -p tanku_server trials::arena -- --ignored --nocapture
@@ -326,13 +326,13 @@ On 2026-10-12 it gave this, with the two ways that were tried first, on the same
 
 The crude player says little about one of flesh and blood: nothing destroys it, and it neither takes cover nor reads the reserve.
 
-Before a change to what a player's tank may be, one more test puts the same crude player in the four tanks of [the garage check](#the-garage-check), against the groups of sectors 6 to 15. That player raises its shield just before a bullet reaches its tank and lays no mine. The test prints the same figures for each tank, and how many shots landed for each enemy that fell. It takes four minutes:
+Before a change to what a player's tank may be, one more test puts the same crude player in the four tanks of [the garage check](#the-garage-check), against the groups of sectors 6 to 15. That player raises its shield just before a bullet reaches its tank and lays no mine. The test prints the same figures for each tank, and how many shots landed for each enemy that fell. It takes about forty seconds:
 
 ```bash
 cargo test -p tanku_server trials::garage -- --ignored --nocapture
 ```
 
-After a change to the [teammates](#teammates) of a playtest, one more test sends teams of two, three and four of them alone through the corridor of twelve seeds, the first seat leading through the barriers, and nothing protects them. It prints the sectors that each team cleared, and every run that stopped clearing sectors for three minutes, with what held it: where each tank stood, and what was left to fight. It takes six to seven minutes:
+After a change to the [teammates](#teammates) of a playtest, one more test sends teams of two, three and four of them alone through the corridor of twelve seeds, the first seat leading through the barriers, and nothing protects them. It prints the sectors that each team cleared, and every run that stopped clearing sectors for three minutes, with what held it: where each tank stood, and what was left to fight. It takes about a minute:
 
 ```bash
 cargo test -p tanku_server teams_of_teammates -- --ignored --nocapture
