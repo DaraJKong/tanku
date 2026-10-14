@@ -12,7 +12,7 @@ use tanku_core::{
     rules::TANK_RADIUS,
     sim::Tank,
 };
-use tanku_simd::{Band, Reach, Segments};
+use tanku_simd::{Band, Kept, Reach, Segments};
 
 use crate::field::{Collider, Solid};
 
@@ -47,21 +47,40 @@ impl Colliders {
 
     /// First thing a circle touches when it moves from `origin` by `delta`.
     pub fn cast(&self, origin: Vec2, delta: Vec2, radius: f32) -> Option<(Hit, Solid)> {
+        let kept = self.segments.sift(&swept(origin, delta, radius));
+        self.cast_among(kept, origin, delta, radius)
+    }
+
+    /// The colliders that a circle may touch anywhere on its way when it moves from `origin`
+    /// by `delta`. A cast that starts on that way and ends on it, as a bullet does tick
+    /// after tick while it flies straight, has the same answer among them as among all.
+    pub fn lane(&self, origin: Vec2, delta: Vec2, radius: f32) -> Lane {
+        Lane(self.segments.sift(&swept(origin, delta, radius)))
+    }
+
+    /// The same as `cast`, for a cast that starts and ends on the way of a lane.
+    pub fn cast_in(
+        &self,
+        lane: &Lane,
+        origin: Vec2,
+        delta: Vec2,
+        radius: f32,
+    ) -> Option<(Hit, Solid)> {
+        self.cast_among(lane.0.clone(), origin, delta, radius)
+    }
+
+    /// What `cast` finds among the colliders that a sieve kept.
+    fn cast_among(
+        &self,
+        kept: Kept,
+        origin: Vec2,
+        delta: Vec2,
+        radius: f32,
+    ) -> Option<(Hit, Solid)> {
         let reach = delta.abs() / 2.0 + Vec2::splat(radius);
         let center = origin + delta / 2.0;
-        // The circle never leaves the band of its radius around the line it moves along.
-        let band = delta.perp().try_normalize().map(|normal| Band {
-            point: origin.into(),
-            normal: normal.into(),
-            half_width: radius,
-        });
-        let near = Reach {
-            center: center.into(),
-            half: reach.into(),
-            band,
-        };
         let mut first: Option<(Hit, Solid)> = None;
-        for collider in self.sift(near) {
+        for collider in kept.map(|index| &self.list[index]) {
             // The test of boxes that the sieve made with some slack, made exactly: a
             // collider that only the slack kept is left out, as it always was.
             let middle = (collider.a + collider.b) / 2.0;
@@ -143,6 +162,28 @@ impl Colliders {
     }
 }
 
+/// The colliders that a sieve kept for the way of a circle that moves straight.
+#[derive(Clone, Debug)]
+pub struct Lane(Kept);
+
+/// Where a circle may touch something when it moves from `origin` by `delta`: in the box of
+/// its way, and in the band of its radius around the line it moves along, which it never
+/// leaves.
+fn swept(origin: Vec2, delta: Vec2, radius: f32) -> Reach {
+    let reach = delta.abs() / 2.0 + Vec2::splat(radius);
+    let center = origin + delta / 2.0;
+    let band = delta.perp().try_normalize().map(|normal| Band {
+        point: origin.into(),
+        normal: normal.into(),
+        half_width: radius,
+    });
+    Reach {
+        center: center.into(),
+        half: reach.into(),
+        band,
+    }
+}
+
 /// Moves a tank out of a collider if it overlaps it, and tells whether it did.
 fn push(collider: &Collider, tank: &Tank, position: &mut Vec2, velocity: &mut Vec2) -> bool {
     if !collider.solid.stops(tank) {
@@ -194,6 +235,8 @@ mod tests {
     };
 
     use super::*;
+
+    const TICK_TEST: f32 = tanku_core::rules::TICK;
 
     /// Numbers that look random and are the same on every run.
     struct Numbers(u64);
@@ -393,6 +436,79 @@ mod tests {
                         .map(|collider| (collider.a, collider.b))
                         .collect();
                     assert_eq!(sieved_near, each_near);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_bullet_flies_the_same_way_in_a_lane() {
+        use tanku_core::sim::{Bullet, Kind};
+
+        use crate::{
+            bullets::{self, Flight},
+            field::Field,
+        };
+
+        let mut numbers = Numbers(0x5DEE_CE66_D1CE_4E5B);
+        for seed in [3, 11] {
+            let mut corridor = Corridor::new(seed);
+            for middle in [3, 30, 58] {
+                let each = sectors(&mut corridor, middle);
+                let mut field = Field::new(seed, 1, tanku_core::modes::Difficulty::Normal);
+                field.colliders = Colliders::from(each.clone());
+                // Tanks that a seeking bullet may leave a wall toward.
+                let quarry: Vec<(Vec2, Team)> = (0..4)
+                    .map(|_| {
+                        let collider =
+                            each[(numbers.unit() * each.len() as f32) as usize % each.len()];
+                        let team =
+                            [Team::Players, Team::Enemies][(numbers.unit() * 2.0) as usize % 2];
+                        (collider.a + numbers.way(2.0, 6.0), team)
+                    })
+                    .collect();
+                for _ in 0..300 {
+                    let collider = each[(numbers.unit() * each.len() as f32) as usize % each.len()];
+                    let start = collider.a.lerp(collider.b, numbers.unit()) + numbers.way(1.0, 8.0);
+                    let kind = [Kind::Plain, Kind::Seeking, Kind::Exploding]
+                        [(numbers.unit() * 3.0) as usize % 3];
+                    let bullet = Bullet {
+                        owner: Entity::PLACEHOLDER,
+                        team: Team::Enemies,
+                        sector: middle,
+                        velocity: numbers.way(6.0, 19.0),
+                        bounces_left: (numbers.unit() * 4.0) as u8 % 4,
+                        pierces_left: 0,
+                        bounced: false,
+                        kind,
+                    };
+                    let step = bullet.velocity.length() * TICK_TEST;
+                    let ticks = 180;
+                    let (mut plain, mut laned) = ((start, bullet), (start, bullet));
+                    let mut lane = None;
+                    for tick in 0..ticks {
+                        let one = bullets::fly_past_walls(
+                            &field,
+                            &mut plain.0,
+                            &mut plain.1,
+                            step,
+                            &quarry,
+                        );
+                        let way = step * (ticks - tick) as f32;
+                        let flying = (&mut laned.0, &mut laned.1);
+                        let other =
+                            bullets::fly_in_lane(&field, &mut lane, flying, (step, way), &quarry);
+                        assert_eq!(
+                            plain.0.to_array().map(f32::to_bits),
+                            laned.0.to_array().map(f32::to_bits)
+                        );
+                        assert_eq!(plain.1, laned.1);
+                        assert_eq!(one.bounces, other.bounces);
+                        assert_eq!(one.end, other.end);
+                        if let Flight::Stopped(_) = one.end {
+                            break;
+                        }
+                    }
                 }
             }
         }

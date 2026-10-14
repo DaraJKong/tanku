@@ -103,8 +103,30 @@ pub fn step_among(
     position: &mut Vec2,
     motion: &mut Motion,
 ) {
+    drive_among(colliders, tank, command.drive, position, motion);
+    if command.aim.distance_squared(*position) > 0.01 {
+        let rate = if is_player {
+            PLAYER_TURRET_RATE
+        } else {
+            tank.genome.turret_turn_rate()
+        };
+        let target = (command.aim - *position).to_angle();
+        motion.turret = geom::rotate_toward(motion.turret, target, rate * TICK);
+    }
+}
+
+/// The part of a tick that moves a tank: its hull turns and it drives as it is asked, among
+/// these colliders. A course that a brain or a player works out ahead is made of this
+/// alone: the turret moves nothing.
+pub fn drive_among(
+    colliders: &Colliders,
+    tank: &Tank,
+    drive: Vec2,
+    position: &mut Vec2,
+    motion: &mut Motion,
+) {
     let top_speed = tank.genome.top_speed();
-    let drive = command.drive.clamp_length_max(1.0);
+    let drive = drive.clamp_length_max(1.0);
 
     // A tank drives along its hull only, forward or in reverse, whichever turns less.
     let mut wanted = Vec2::ZERO;
@@ -123,16 +145,6 @@ pub fn step_among(
     motion.velocity += change.clamp_length_max(acceleration);
     *position += motion.velocity * TICK;
     colliders.push_out(tank, position, &mut motion.velocity);
-
-    if command.aim.distance_squared(*position) > 0.01 {
-        let rate = if is_player {
-            PLAYER_TURRET_RATE
-        } else {
-            tank.genome.turret_turn_rate()
-        };
-        let target = (command.aim - *position).to_angle();
-        motion.turret = geom::rotate_toward(motion.turret, target, rate * TICK);
-    }
 }
 
 /// Moves the hulls and turns the turrets. A wreck stays as it is.

@@ -18,7 +18,7 @@ use tanku_core::{
     stats::Genome,
 };
 
-pub use crate::colliders::Colliders;
+pub use crate::colliders::{Colliders, Lane};
 use crate::{brain::Brain, room::RoomState};
 
 /// What a collider belongs to.

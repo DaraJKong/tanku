@@ -442,16 +442,12 @@ impl<'a> Mover<'a> {
 
     /// Where the tank is, tick after tick, when it drives one way from now on.
     fn course(&self, way: Vec2) -> Vec<Vec2> {
-        let command = TankCommand {
-            drive: way,
-            aim: self.at,
-            ..default()
-        };
         let (mut at, mut motion) = (self.at, *self.motion);
         let ticks = (FORESIGHT / TICK).round() as usize;
-        let mut places = vec![at];
+        let mut places = Vec::with_capacity(ticks + 1);
+        places.push(at);
         for _ in 0..ticks {
-            tanks::step_among(&self.near, self.tank, false, &command, &mut at, &mut motion);
+            tanks::drive_among(&self.near, self.tank, way, &mut at, &mut motion);
             places.push(at);
         }
         places

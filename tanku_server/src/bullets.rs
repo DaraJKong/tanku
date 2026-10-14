@@ -13,7 +13,7 @@ use tanku_core::{
 
 use crate::{
     Casualties, Maker,
-    field::{Field, InSector, Solid},
+    field::{Field, InSector, Lane, Solid},
     tanks,
 };
 
@@ -68,6 +68,42 @@ pub fn fly_past_walls(
     field: &Field,
     position: &mut Vec2,
     bullet: &mut Bullet,
+    distance: f32,
+    quarry: &[Quarry],
+) -> FlightReport {
+    fly_in(field, None, position, bullet, distance, quarry)
+}
+
+/// The same for a bullet that flies straight in a lane: the colliders that a sieve kept for
+/// the way that it has to go, which it is on. Following a bullet tick after tick, the lane is
+/// sieved once instead of every tick, and anew after each bounce. The flight is the same as
+/// among all the colliders.
+pub fn fly_in_lane(
+    field: &Field,
+    lane: &mut Option<(Vec2, Lane)>,
+    (position, bullet): (&mut Vec2, &mut Bullet),
+    (distance, way): (f32, f32),
+    quarry: &[Quarry],
+) -> FlightReport {
+    if lane
+        .as_ref()
+        .is_none_or(|(velocity, _)| *velocity != bullet.velocity)
+    {
+        let ahead = bullet.velocity.normalize_or_zero() * way.max(distance);
+        *lane = Some((
+            bullet.velocity,
+            field.colliders.lane(*position, ahead, BULLET_RADIUS),
+        ));
+    }
+    let lane = lane.as_ref().map(|(_, lane)| lane);
+    fly_in(field, lane, position, bullet, distance, quarry)
+}
+
+fn fly_in(
+    field: &Field,
+    mut lane: Option<&Lane>,
+    position: &mut Vec2,
+    bullet: &mut Bullet,
     mut distance: f32,
     quarry: &[Quarry],
 ) -> FlightReport {
@@ -76,7 +112,14 @@ pub fn fly_past_walls(
     for _ in 0..4 {
         let direction = bullet.velocity.normalize_or_zero();
         let delta = direction * distance;
-        let Some((hit, solid)) = field.cast(*position, delta, BULLET_RADIUS) else {
+        // A lane holds the way that the bullet had before it bounced, and no other.
+        let met = match lane.take() {
+            Some(lane) => field
+                .colliders
+                .cast_in(lane, *position, delta, BULLET_RADIUS),
+            None => field.cast(*position, delta, BULLET_RADIUS),
+        };
+        let Some((hit, solid)) = met else {
             *position += delta;
             break;
         };

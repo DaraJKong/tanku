@@ -183,6 +183,7 @@ impl Track {
             safe: if own { usize::MAX } else { 0 },
             blast: None,
         };
+        let mut lane = None;
         for tick in from..HORIZON {
             // The two ways of a splitting bullet are drawn ahead of it: every player sees them.
             if let Kind::Splitting { fuse, bounces } = bullet.kind {
@@ -197,7 +198,9 @@ impl Track {
                     break;
                 }
             }
-            let flight = bullets::fly_past_walls(field, &mut at, &mut bullet, step, quarry);
+            let way = step * (HORIZON - tick) as f32;
+            let flying = (&mut at, &mut bullet);
+            let flight = bullets::fly_in_lane(field, &mut lane, flying, (step, way), quarry);
             if let Flight::Stopped(_) = flight.end {
                 track.places.push(at);
                 track.blast = (bullet.kind == Kind::Exploding).then_some(at);
@@ -636,8 +639,11 @@ fn sound_shot(
     let mut at = me;
     let blast_room = BLAST_RADIUS + SHOT_ROOM;
     let near_a_mate = |at: Vec2, room: f32| crew.iter().any(|mate| mate.distance(at) < room);
-    for _ in 0..SHOT_AHEAD {
-        let flight = bullets::fly_past_walls(field, &mut at, &mut bullet, step, quarry);
+    let mut lane = None;
+    for tick in 0..SHOT_AHEAD {
+        let way = step * (SHOT_AHEAD - tick) as f32;
+        let flying = (&mut at, &mut bullet);
+        let flight = bullets::fly_in_lane(field, &mut lane, flying, (step, way), quarry);
         if at.distance(foe) < reach {
             // A bullet that explodes goes off on the enemy, and on whoever stands by it.
             return !(bullet.kind == Kind::Exploding && near_a_mate(at, blast_room));
@@ -782,15 +788,11 @@ fn hazard((mine, at): &(Mine, Vec2), tank: Entity) -> Option<Hazard> {
 
 /// Where a tank is, tick after tick from now, when it drives one way.
 fn course(near: &Colliders, tank: &Tank, at: Vec2, motion: &Motion, way: Vec2) -> Vec<Vec2> {
-    let command = TankCommand {
-        drive: way,
-        aim: at,
-        ..default()
-    };
     let (mut at, mut motion) = (at, *motion);
-    let mut places = vec![at];
+    let mut places = Vec::with_capacity(HORIZON + 1);
+    places.push(at);
     for _ in 0..HORIZON {
-        tanks::step_among(near, tank, true, &command, &mut at, &mut motion);
+        tanks::drive_among(near, tank, way, &mut at, &mut motion);
         places.push(at);
     }
     places
