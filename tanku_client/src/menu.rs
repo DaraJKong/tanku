@@ -446,152 +446,9 @@ fn garage_key_width() -> f32 {
     (garage_width() - SPENT_WIDTH - 2.0 * KEY_GAP) / 2.0
 }
 
-/// A box with a ruled edge.
-pub fn ruled(node: Node) -> impl Bundle {
-    (
-        Node {
-            border: UiRect::all(px(1)),
-            ..node
-        },
-        BackgroundColor(theme::SURFACE),
-        BorderColor::all(theme::RULE),
-    )
-}
-
-/// A screen-wide container with a sheet in its middle, which holds a column of content.
-fn panel(
-    commands: &mut Commands,
-    scope: impl Bundle,
-    scrim: Color,
-    content: impl FnOnce(&mut ChildSpawnerCommands),
-) {
-    commands
-        .spawn((
-            scope,
-            Node {
-                width: percent(100),
-                height: percent(100),
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                ..default()
-            },
-            BackgroundColor(scrim),
-            GlobalZIndex(10),
-        ))
-        .with_children(|root| {
-            root.spawn(ruled(Node {
-                flex_direction: FlexDirection::Column,
-                align_items: AlignItems::Stretch,
-                row_gap: px(10),
-                padding: UiRect::all(px(28)),
-                min_width: px(380),
-                ..default()
-            }))
-            .with_children(content);
-        });
-}
-
-fn heading(parent: &mut ChildSpawnerCommands, content: &str) {
-    parent.spawn((
-        theme::old::title(content, 40.0, theme::TEXT),
-        Node {
-            margin: UiRect::bottom(px(8)),
-            ..default()
-        },
-    ));
-}
-
-fn line(parent: &mut ChildSpawnerCommands, content: impl Into<String>, color: Color) {
-    parent.spawn(theme::old::text(content, 17.0, color));
-}
-
 /// A note of a screen drawn as a sheet: a sentence in the smallest lettering.
 fn note(parent: &mut ChildSpawnerCommands, content: impl Into<String>, color: Color) {
     parent.spawn(theme::text(content, theme::LABEL, color));
-}
-
-/// The name of a group of rows, a little apart from what comes before it.
-fn section(parent: &mut ChildSpawnerCommands, content: &str) {
-    parent.spawn((
-        theme::old::label(content, 13.0, theme::TEXT_DIM),
-        Node {
-            margin: UiRect::top(px(8)),
-            ..default()
-        },
-    ));
-}
-
-fn button_node(width: Val) -> Node {
-    Node {
-        width,
-        padding: UiRect::axes(px(16), px(10)),
-        justify_content: JustifyContent::Center,
-        border: UiRect::all(px(1)),
-        ..default()
-    }
-}
-
-fn button(parent: &mut ChildSpawnerCommands, content: impl Into<String>, press: Press) {
-    parent.spawn((
-        Button,
-        press,
-        button_node(Val::Auto),
-        BackgroundColor(theme::SURFACE_RAISED),
-        BorderColor::all(theme::RULE),
-        children![theme::old::title(content, 20.0, theme::TEXT)],
-    ));
-}
-
-/// The button that the player most likely wants.
-fn primary(parent: &mut ChildSpawnerCommands, content: impl Into<String>, press: Press) {
-    parent.spawn((
-        Button,
-        Primary,
-        press,
-        button_node(Val::Auto),
-        BackgroundColor(theme::ACCENT),
-        BorderColor::all(theme::ACCENT),
-        children![theme::old::title(content, 20.0, theme::TEXT_ON_ACCENT)],
-    ));
-}
-
-/// A label followed by its controls.
-fn row(
-    parent: &mut ChildSpawnerCommands,
-    label: &str,
-    controls: impl FnOnce(&mut ChildSpawnerCommands),
-) {
-    flagged_row(parent, label, false, controls);
-}
-
-/// A row whose label is tagged as new when what it chooses is new to the player.
-fn flagged_row(
-    parent: &mut ChildSpawnerCommands,
-    label: &str,
-    new: bool,
-    controls: impl FnOnce(&mut ChildSpawnerCommands),
-) {
-    parent
-        .spawn(Node {
-            column_gap: px(6),
-            align_items: AlignItems::Center,
-            ..default()
-        })
-        .with_children(|row| {
-            // The label sits in a box of fixed width, so that the controls line up.
-            row.spawn(Node {
-                width: px(200),
-                align_items: AlignItems::Center,
-                ..default()
-            })
-            .with_children(|labelled| {
-                labelled.spawn(theme::old::text(label, 16.0, theme::TEXT));
-                if new {
-                    labelled.spawn(new_tag());
-                }
-            });
-            controls(row);
-        });
 }
 
 /// The tag of what a player has unlocked and not used, or not seen, yet.
@@ -607,35 +464,6 @@ fn new_tag() -> impl Bundle {
         BorderColor::all(theme::GOOD),
         children![theme::label("New", theme::LABEL, theme::GOOD)],
     )
-}
-
-/// A small button, for the controls of a row.
-fn small(parent: &mut ChildSpawnerCommands, content: impl Into<String>, width: f32, press: Press) {
-    small_with(
-        parent,
-        theme::old::text(content, 16.0, theme::TEXT),
-        width,
-        press,
-    );
-}
-
-/// A small button around words of its own, which may change.
-fn small_with(parent: &mut ChildSpawnerCommands, words: impl Bundle, width: f32, press: Press) {
-    parent.spawn((
-        Button,
-        press,
-        Node {
-            padding: UiRect::axes(px(6), px(5)),
-            ..button_node(px(width))
-        },
-        BackgroundColor(theme::SURFACE_RAISED),
-        BorderColor::all(theme::RULE),
-        children![words],
-    ));
-}
-
-fn on_off(on: bool) -> &'static str {
-    if on { "On" } else { "Off" }
 }
 
 /// A level of sound that the settings can show: a whole number of tenths, from 0 to 1.
@@ -684,17 +512,14 @@ fn records_of(records: &Records, league: League) -> Vec<String> {
     teams.collect()
 }
 
-/// The seed of a run with the version of the game and, in hard mode, the difficulty: what
-/// tells one level from another. The seed of a run in arena mode is that of a room.
-fn level_line(run: &Run) -> String {
-    let mut level = format!("Seed {}, v{VERSION}", run.seed_text);
-    if run.difficulty == Difficulty::Hard {
-        level.push_str(", hard mode");
-    }
+/// How a run is played, as the foot of the pause menu tells it: its difficulty, and arena mode
+/// if it is on.
+fn run_kind(run: &Run) -> String {
+    let mut kind = unlocks::difficulty_name(run.difficulty).to_string();
     if run.arena {
-        level.push_str(", arena mode");
+        kind.push_str(" \u{b7} arena");
     }
-    level
+    kind
 }
 
 /// The line that tells the player how a game of several players goes, as a note of a screen
@@ -1564,6 +1389,15 @@ type FormRow<'a> = (
 /// A form, as a request for a drawing is filled in: a ruled block of rows, each 56 px high or
 /// as high as what answers it, with its choices as boxes 44 px high.
 fn form(parent: &mut ChildSpawnerCommands, rows: Vec<FormRow>) {
+    form_in(parent, (FORM_COLUMNS, drawing::ROW), rows);
+}
+
+/// A form of columns and rows of its own.
+fn form_in(
+    parent: &mut ChildSpawnerCommands,
+    (columns, high): ([f32; 2], f32),
+    rows: Vec<FormRow>,
+) {
     parent
         .spawn(drawing::block(Node {
             align_self: AlignSelf::Start,
@@ -1575,7 +1409,7 @@ fn form(parent: &mut ChildSpawnerCommands, rows: Vec<FormRow>) {
                 table
                     .spawn((
                         Node {
-                            min_height: px(drawing::ROW),
+                            min_height: px(high),
                             flex_shrink: 0.0,
                             border: drawing::rules(false, index < last),
                             ..default()
@@ -1583,13 +1417,13 @@ fn form(parent: &mut ChildSpawnerCommands, rows: Vec<FormRow>) {
                         BorderColor::all(theme::RULE_DIM),
                     ))
                     .with_children(|row| {
-                        drawing::cell(row, FORM_COLUMNS[0], true, |cell| {
+                        drawing::cell(row, columns[0], true, |cell| {
                             cell.spawn(drawing::value(name, theme::TEXT));
                             if new {
                                 cell.spawn(new_tag());
                             }
                         });
-                        drawing::cell(row, FORM_COLUMNS[1], false, holds);
+                        drawing::cell(row, columns[1], false, holds);
                     });
             }
         });
@@ -3582,12 +3416,83 @@ fn offer_the_next_sector(run: Option<Res<Run>>, mut destination: ResMut<Destinat
     }
 }
 
-/// What a run counts, with a capital: the sectors of the corridor, or the groups of arena
-/// mode.
-fn unit_name(in_a_room: bool) -> &'static str {
-    if in_a_room { "Group" } else { "Sector" }
+/// The width of the note block of the pause menu, and the columns of its cheats and of its
+/// foot.
+const HOLD_WIDTH: f32 = 600.0;
+const CHEAT_COLUMNS: [f32; 2] = [236.0, 328.0];
+const HOLD_FOOT: [f32; 3] = [228.0, 120.0, 248.0];
+/// The steps of the sector that a playtest skips to.
+const SKIP_STEP: f32 = 56.0;
+
+/// A note block over the sheet, as an overlay draws one: in the middle of the screen, over a
+/// scrim that dims the game, a block this wide.
+fn note_block(
+    commands: &mut Commands,
+    scope: impl Bundle,
+    width: f32,
+    content: impl FnOnce(&mut ChildSpawnerCommands),
+) {
+    commands
+        .spawn((
+            scope,
+            // A column, so that the height of the block is its main size, which its rows
+            // add up to: across a row, the engine measured its texts too narrow and made it
+            // too high.
+            Node {
+                width: percent(100),
+                height: percent(100),
+                flex_direction: FlexDirection::Column,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BackgroundColor(theme::SCRIM),
+            GlobalZIndex(10),
+        ))
+        .with_children(|root| {
+            root.spawn(drawing::block(Node {
+                width: px(width),
+                flex_shrink: 0.0,
+                ..default()
+            }))
+            .with_children(content);
+        });
 }
 
+/// The title of a note block: what it is about, its title, and what it says under it.
+fn note_title(block: &mut ChildSpawnerCommands, (what, title): (&str, &str), said: Option<&str>) {
+    note_title_of(block, (what, title, theme::LARGE), said);
+}
+
+/// The title of a note block, its title of this size.
+fn note_title_of(
+    block: &mut ChildSpawnerCommands,
+    (what, title, size): (&str, &str, f32),
+    said: Option<&str>,
+) {
+    block
+        .spawn((
+            Node {
+                flex_direction: FlexDirection::Column,
+                row_gap: px(4),
+                padding: UiRect::axes(px(20), px(14)),
+                border: UiRect::bottom(px(1)),
+                ..default()
+            },
+            BorderColor::all(theme::RULE_DIM),
+        ))
+        .with_children(|head| {
+            head.spawn(drawing::key(what));
+            head.spawn(theme::label(title, size, theme::TEXT));
+            if let Some(said) = said {
+                note(head, said, theme::TEXT_DIM);
+            }
+        });
+}
+
+/// The pause menu: a note block over the sheet, with Hold as its title while the run stands
+/// still, what the player can do as the rows of a list, the cheats of a playtest as a form,
+/// and the seed of the run with its revision at its foot.
 fn pause_menu(
     mut commands: Commands,
     run: Option<Res<Run>>,
@@ -3597,56 +3502,155 @@ fn pause_menu(
 ) {
     // A single player's run stands still while the menu is open, and so does the run of a
     // host, for everyone in it. A guest's menu holds nothing.
-    let paused = run.as_ref().is_none_or(|run| run.solo) || *session == Session::Host;
-    panel(
+    let solo = run.as_ref().is_none_or(|run| run.solo);
+    let paused = solo || *session == Session::Host;
+    let what = if solo {
+        "Run of a single player"
+    } else {
+        "Game of several players"
+    };
+    let said = if !paused {
+        Some("The run goes on meanwhile.")
+    } else if *session == Session::Host && !solo {
+        Some("The run waits for everyone.")
+    } else {
+        None
+    };
+    note_block(
         &mut commands,
         (PauseRoot, DespawnOnExit(Overlay::Pause)),
-        theme::SCRIM,
-        |parent| {
-            heading(parent, if paused { "Paused" } else { "Menu" });
-            if !paused {
-                line(parent, "The run goes on meanwhile", theme::TEXT_DIM);
-            } else if *session == Session::Host && run.as_ref().is_some_and(|run| !run.solo) {
-                line(parent, "The run waits for everyone", theme::TEXT_DIM);
-            }
-            primary(parent, "Resume", Press::Resume);
-            button(parent, "Settings", Press::OpenSettings);
-            match *session {
-                Session::Solo => button(parent, "Quit to the menu", Press::Abandon),
-                Session::Host => {
-                    button(parent, "Back to the lobby", Press::Regroup);
-                    button(parent, "Close the game", Press::Abandon);
-                }
-                Session::Guest => button(parent, "Leave the game", Press::Abandon),
-            }
+        HOLD_WIDTH,
+        |block| {
+            note_title(block, (what, if paused { "Hold" } else { "Menu" }), said);
+            block
+                .spawn(Node {
+                    flex_direction: FlexDirection::Column,
+                    padding: UiRect::all(px(16)),
+                    ..default()
+                })
+                .with_children(|list| {
+                    drawing::list_row(list, 1, "Resume", (Press::Resume, Primary), true);
+                    drawing::list_row(list, 2, "Settings", Press::OpenSettings, false);
+                    match *session {
+                        Session::Solo => {
+                            drawing::list_row(list, 3, "Quit to the menu", Press::Abandon, false);
+                        }
+                        Session::Host => {
+                            let back = Press::Regroup;
+                            drawing::list_row(list, 3, "Back to the lobby", back, false);
+                            drawing::list_row(list, 4, "Close the game", Press::Abandon, false);
+                        }
+                        Session::Guest => {
+                            drawing::list_row(list, 3, "Leave the game", Press::Abandon, false);
+                        }
+                    }
+                });
             // The cheats are the host's: a guest's simulation is not here.
             if let Some(playtest) = playtest.filter(|_| *session != Session::Guest) {
-                section(parent, "Playtest");
-                row(parent, "Infinite lives", |row| {
-                    let state = on_off(playtest.infinite_lives);
-                    small(row, state, 70.0, Press::InfiniteLives);
-                });
-                row(parent, "Fake achievements", |row| {
-                    let state = on_off(playtest.fake_achievements);
-                    small(row, state, 70.0, Press::FakeAchievements);
-                });
-                // A run in arena mode skips to the lull before a group.
-                let in_a_room = run.as_ref().is_some_and(|run| run.arena);
-                let unit = if in_a_room { "group" } else { "sector" };
-                row(
-                    parent,
-                    &format!("{} to skip to", unit_name(in_a_room)),
-                    |row| {
-                        for change in [-10, -1, 1, 10] {
-                            small(row, format!("{change:+}"), 48.0, Press::Destination(change));
-                        }
-                    },
-                );
-                let skip = format!("Skip to {unit} {}", destination.0);
-                button(parent, skip, Press::Skip);
+                block
+                    .spawn(Node {
+                        flex_direction: FlexDirection::Column,
+                        row_gap: px(8),
+                        padding: UiRect::new(px(16), px(16), px(0), px(16)),
+                        ..default()
+                    })
+                    .with_children(|cheats| {
+                        cheats.spawn(drawing::key("Playtest"));
+                        let switch = |on: bool, press: Press| {
+                            move |cell: &mut ChildSpawnerCommands| {
+                                for (word, state) in [("Off", false), ("On", true)] {
+                                    let chosen = on == state;
+                                    drawing::choice(cell, word, TEAM_CHOICE, press, chosen);
+                                }
+                            }
+                        };
+                        // A run in arena mode skips to the lull before a group.
+                        let in_a_room = run.as_ref().is_some_and(|run| run.arena);
+                        let unit = if in_a_room { "group" } else { "sector" };
+                        let to = destination.0;
+                        let rows: Vec<FormRow> = vec![
+                            (
+                                "Infinite lives",
+                                false,
+                                Box::new(switch(playtest.infinite_lives, Press::InfiniteLives)),
+                            ),
+                            (
+                                "Fake achievements",
+                                false,
+                                Box::new(switch(
+                                    playtest.fake_achievements,
+                                    Press::FakeAchievements,
+                                )),
+                            ),
+                            (
+                                "Skip to",
+                                false,
+                                Box::new(move |cell: &mut ChildSpawnerCommands| {
+                                    for change in [-10, -1] {
+                                        let word = format!("\u{2212}{}", -change);
+                                        let press = Press::Destination(change);
+                                        drawing::choice(cell, word, SKIP_STEP, press, false);
+                                    }
+                                    cell.spawn((
+                                        Node {
+                                            width: px(40),
+                                            flex_shrink: 0.0,
+                                            justify_content: JustifyContent::Center,
+                                            ..default()
+                                        },
+                                        children![theme::figure(
+                                            to.to_string(),
+                                            theme::VALUE,
+                                            theme::TEXT
+                                        )],
+                                    ));
+                                    for change in [1, 10] {
+                                        let word = format!("+{change}");
+                                        let press = Press::Destination(change);
+                                        drawing::choice(cell, word, SKIP_STEP, press, false);
+                                    }
+                                }),
+                            ),
+                        ];
+                        form_in(cheats, (CHEAT_COLUMNS, drawing::ROW), rows);
+                        let skip = format!("Skip to {unit} {to}");
+                        let width = px(CHEAT_COLUMNS.iter().sum::<f32>() + 4.0);
+                        drawing::key_button(cheats, skip, width, Press::Skip, false);
+                    });
             }
-            if let Some(run) = run {
-                line(parent, level_line(&run), theme::TEXT_DIM);
+            // The foot of the note: the seed of the run, its revision, and how it is played.
+            if let Some(run) = &run {
+                block
+                    .spawn((
+                        Node {
+                            border: UiRect::top(px(1)),
+                            ..default()
+                        },
+                        BorderColor::all(theme::RULE_DIM),
+                    ))
+                    .with_children(|foot| {
+                        let fields = [
+                            ("Seed", run.seed_text.clone()),
+                            ("Rev", VERSION.to_string()),
+                            ("Run", run_kind(run)),
+                        ];
+                        let last = fields.len() - 1;
+                        for (index, (label, value)) in fields.into_iter().enumerate() {
+                            foot.spawn((
+                                Node {
+                                    width: px(HOLD_FOOT[index]),
+                                    flex_shrink: 0.0,
+                                    flex_direction: FlexDirection::Column,
+                                    row_gap: px(4),
+                                    padding: UiRect::axes(px(drawing::PAD), px(8)),
+                                    border: drawing::rules(index < last, false),
+                                    ..default()
+                                },
+                                BorderColor::all(theme::RULE_DIM),
+                                children![drawing::key(label), drawing::value(value, theme::TEXT)],
+                            ));
+                        }
+                    });
             }
         },
     );
@@ -4081,96 +4085,242 @@ fn game_over(
         });
 }
 
+/// The columns of the controls in the settings: the action, and the two keys that do it.
+const CONTROL_COLUMNS: [f32; 3] = [316.0, 210.0, 210.0];
+/// The columns of the other settings: the name of a setting, and its choices or its steps.
+const OPTION_COLUMNS: [f32; 2] = [270.0, 220.0];
+/// The rows of the settings, and the keys of the controls in them.
+const SETTING_ROW: f32 = 52.0;
+const BINDING_KEY: f32 = 190.0;
+/// The figure between the two steps of a level of the settings.
+const LEVEL_SHOWN: f32 = 76.0;
+
+/// A key of the controls: the key or the button that does an action, which a press makes wait
+/// for another. One that waits is edged with the accent.
+fn binding_key(
+    cell: &mut ChildSpawnerCommands,
+    (action, slot): (Action, usize),
+    named: (String, bool),
+) {
+    let (name, waiting) = named;
+    let ink = if waiting { theme::ACCENT } else { theme::TEXT };
+    let mut key = cell.spawn((
+        Button,
+        Press::Rebind(action, slot),
+        Node {
+            width: px(BINDING_KEY),
+            height: px(drawing::CONTROL),
+            flex_shrink: 0.0,
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            border: UiRect::all(px(1)),
+            ..default()
+        },
+        BackgroundColor(theme::SURFACE_RAISED),
+        BorderColor::all(if waiting { theme::ACCENT } else { theme::RULE }),
+        children![(theme::label(name, theme::LABEL, ink), TextLayout::no_wrap())],
+    ));
+    if waiting {
+        key.insert(Lit);
+    }
+}
+
+/// A setting that is on or off: the two choices, of which the other one turns it.
+fn switch_of(on: bool, press: Press) -> impl FnOnce(&mut ChildSpawnerCommands) {
+    move |cell: &mut ChildSpawnerCommands| {
+        for (word, state) in [("Off", false), ("On", true)] {
+            drawing::choice(cell, word, TEAM_CHOICE, press, on == state);
+        }
+    }
+}
+
+/// A level of a setting: a step down, the level, and a step up.
+fn steps_of(shown: String, (down, up): (Press, Press)) -> impl FnOnce(&mut ChildSpawnerCommands) {
+    move |cell: &mut ChildSpawnerCommands| {
+        drawing::choice(cell, "\u{2212}", drawing::CONTROL, down, false);
+        cell.spawn((
+            Node {
+                width: px(LEVEL_SHOWN),
+                flex_shrink: 0.0,
+                justify_content: JustifyContent::Center,
+                ..default()
+            },
+            children![theme::figure(shown, theme::VALUE, theme::TEXT)],
+        ));
+        drawing::choice(cell, "+", drawing::CONTROL, up, false);
+    }
+}
+
+/// The settings: a note block over the sheet, the controls as a table of the keys that do
+/// each action, and the video, the audio and what helps the players as forms beside it.
 fn settings_menu(mut commands: Commands, settings: Res<Settings>, capture: Res<Capture>) {
-    panel(
+    let (controls, options) = (
+        drawing::title_width_of(&CONTROL_COLUMNS),
+        drawing::title_width_of(&OPTION_COLUMNS),
+    );
+    let width = controls + options + 24.0 + 32.0 + 4.0;
+    let percent_of = |share: f32| format!("{:.0}%", share * 100.0);
+    note_block(
         &mut commands,
         (SettingsRoot, DespawnOnExit(Overlay::Settings)),
-        theme::SCRIM,
-        |parent| {
-            heading(parent, "Settings");
-            parent
+        width,
+        |block| {
+            note_title_of(block, ("Of this machine", "Settings", theme::ALERT), None);
+            block
                 .spawn(Node {
-                    column_gap: px(36),
+                    column_gap: px(24),
+                    align_items: AlignItems::FlexStart,
+                    padding: UiRect::new(px(16), px(16), px(16), px(0)),
                     ..default()
                 })
                 .with_children(|columns| {
                     let column = Node {
                         flex_direction: FlexDirection::Column,
-                        row_gap: px(7),
+                        row_gap: px(8),
                         ..default()
                     };
-                    columns.spawn(column.clone()).with_children(|controls| {
-                        section(controls, "Controls");
-                        for action in Action::ALL {
-                            row(controls, action.label(), |row| {
-                                for (slot, binding) in
-                                    settings.bindings(action).into_iter().enumerate()
-                                {
-                                    let content = if capture.waiting == Some((action, slot)) {
-                                        "press a key".to_string()
-                                    } else {
-                                        binding.map_or("-".to_string(), Binding::name)
-                                    };
-                                    small(row, content, 126.0, Press::Rebind(action, slot));
-                                }
+                    columns.spawn(column.clone()).with_children(|keys| {
+                        keys.spawn(drawing::key("Controls"));
+                        keys.spawn(drawing::block(Node {
+                            align_self: AlignSelf::Start,
+                            ..default()
+                        }))
+                        .with_children(|table| {
+                            let names = ["Action", "Key", "Other key"];
+                            let columns: Vec<(f32, &str)> =
+                                CONTROL_COLUMNS.iter().copied().zip(names).collect();
+                            drawing::header(table, &columns, false);
+                            for action in Action::ALL {
+                                drawing::row(table, SETTING_ROW, true, |row| {
+                                    drawing::cell(row, CONTROL_COLUMNS[0], true, |cell| {
+                                        cell.spawn(drawing::value(action.label(), theme::TEXT));
+                                    });
+                                    let bindings = settings.bindings(action).into_iter();
+                                    for (slot, binding) in bindings.enumerate() {
+                                        let waiting = capture.waiting == Some((action, slot));
+                                        let name = if waiting {
+                                            "Press a key".to_string()
+                                        } else {
+                                            binding.map_or("\u{2212}".to_string(), Binding::name)
+                                        };
+                                        let right = slot == 0;
+                                        drawing::cell(
+                                            row,
+                                            CONTROL_COLUMNS[1 + slot],
+                                            right,
+                                            |cell| {
+                                                binding_key(cell, (action, slot), (name, waiting));
+                                            },
+                                        );
+                                    }
+                                });
+                            }
+                            // Esc opens the menu, and can't be bound to anything else.
+                            drawing::row(table, SETTING_ROW, false, |row| {
+                                drawing::cell(row, CONTROL_COLUMNS[0], true, |cell| {
+                                    cell.spawn(drawing::value("Menu", theme::TEXT));
+                                });
+                                drawing::cell(row, CONTROL_COLUMNS[1], true, |cell| {
+                                    cell.spawn(theme::label("Esc", theme::LABEL, theme::TEXT_DIM));
+                                });
+                                drawing::cell(row, CONTROL_COLUMNS[2], false, |_| {});
                             });
-                        }
-                        row(controls, "Menu", |row| {
-                            row.spawn(theme::old::text("Esc", 16.0, theme::TEXT_DIM));
                         });
-                        button(controls, "Reset the controls", Press::ResetBindings);
                     });
-
-                    columns.spawn(column).with_children(|options| {
-                        section(options, "Video");
-                        row(options, "Fullscreen", |row| {
-                            small(row, on_off(settings.fullscreen), 70.0, Press::Fullscreen);
-                        });
-                        row(options, "Vertical sync", |row| {
-                            small(row, on_off(settings.vsync), 70.0, Press::Vsync);
-                        });
-                        row(options, "Anti-aliasing", |row| {
-                            let on = on_off(settings.anti_aliasing);
-                            small(row, on, 70.0, Press::AntiAliasing);
-                        });
-                        section(options, "Audio");
-                        row(options, "Volume", |row| {
-                            small(row, "-", 34.0, Press::Volume(-0.1));
-                            row.spawn(theme::old::figure(
-                                format!("{:.0}%", settings.volume * 100.0),
-                                15.0,
-                                theme::TEXT,
-                            ));
-                            small(row, "+", 34.0, Press::Volume(0.1));
-                        });
-                        row(options, "Music", |row| {
-                            small(row, "-", 34.0, Press::Music(-0.1));
-                            row.spawn(theme::old::figure(
-                                format!("{:.0}%", settings.music * 100.0),
-                                15.0,
-                                theme::TEXT,
-                            ));
-                            small(row, "+", 34.0, Press::Music(0.1));
-                        });
-                        section(options, "Accessibility");
-                        row(options, "Camera shake", |row| {
-                            small(row, on_off(settings.camera_shake), 70.0, Press::Shake);
-                        });
-                        row(options, "Flash the frame", |row| {
-                            small(row, on_off(settings.flash_frame), 70.0, Press::Flash);
-                        });
-                        row(options, "Interface size", |row| {
-                            small(row, "-", 34.0, Press::Scale(-0.25));
-                            row.spawn(theme::old::figure(
-                                format!("{:.0}%", settings.ui_scale * 100.0),
-                                15.0,
-                                theme::TEXT,
-                            ));
-                            small(row, "+", 34.0, Press::Scale(0.25));
-                        });
+                    columns.spawn(column).with_children(|parts| {
+                        let shape = (OPTION_COLUMNS, SETTING_ROW);
+                        parts.spawn(drawing::key("Video"));
+                        let video: Vec<FormRow> = vec![
+                            (
+                                "Fullscreen",
+                                false,
+                                Box::new(switch_of(settings.fullscreen, Press::Fullscreen)),
+                            ),
+                            (
+                                "Vertical sync",
+                                false,
+                                Box::new(switch_of(settings.vsync, Press::Vsync)),
+                            ),
+                            (
+                                "Anti-aliasing",
+                                false,
+                                Box::new(switch_of(settings.anti_aliasing, Press::AntiAliasing)),
+                            ),
+                        ];
+                        form_in(parts, shape, video);
+                        parts.spawn((
+                            drawing::key("Audio"),
+                            Node {
+                                margin: UiRect::top(px(4)),
+                                ..default()
+                            },
+                        ));
+                        let audio: Vec<FormRow> = vec![
+                            (
+                                "Volume",
+                                false,
+                                Box::new(steps_of(
+                                    percent_of(settings.volume),
+                                    (Press::Volume(-0.1), Press::Volume(0.1)),
+                                )),
+                            ),
+                            (
+                                "Music",
+                                false,
+                                Box::new(steps_of(
+                                    percent_of(settings.music),
+                                    (Press::Music(-0.1), Press::Music(0.1)),
+                                )),
+                            ),
+                        ];
+                        form_in(parts, shape, audio);
+                        parts.spawn((
+                            drawing::key("Accessibility"),
+                            Node {
+                                margin: UiRect::top(px(4)),
+                                ..default()
+                            },
+                        ));
+                        let helps: Vec<FormRow> = vec![
+                            (
+                                "Camera shake",
+                                false,
+                                Box::new(switch_of(settings.camera_shake, Press::Shake)),
+                            ),
+                            (
+                                "Flash the frame",
+                                false,
+                                Box::new(switch_of(settings.flash_frame, Press::Flash)),
+                            ),
+                            (
+                                "Interface size",
+                                false,
+                                Box::new(steps_of(
+                                    percent_of(settings.ui_scale),
+                                    (Press::Scale(-0.25), Press::Scale(0.25)),
+                                )),
+                            ),
+                        ];
+                        form_in(parts, shape, helps);
                     });
                 });
-            button(parent, "Back", Press::Back);
+            block
+                .spawn(Node {
+                    column_gap: px(12),
+                    padding: UiRect::all(px(16)),
+                    ..default()
+                })
+                .with_children(|keys| {
+                    let width = px((width - 4.0 - 32.0 - 12.0) / 2.0);
+                    drawing::key_button(
+                        keys,
+                        "Reset the controls",
+                        width,
+                        Press::ResetBindings,
+                        false,
+                    );
+                    drawing::key_button(keys, "Back", width, Press::Back, false);
+                });
         },
     );
 }
@@ -5921,24 +6071,18 @@ mod tests {
     #[test]
     fn a_level_is_told_by_its_seed_its_version_and_its_difficulty() {
         let run = lost_run(1);
-        assert_eq!(level_line(&run), format!("Seed 85GVTHQA, v{VERSION}"));
+        assert_eq!(run_kind(&run), "Normal");
         let hard = Run {
             difficulty: Difficulty::Hard,
             ..run
         };
-        assert_eq!(
-            level_line(&hard),
-            format!("Seed 85GVTHQA, v{VERSION}, hard mode")
-        );
+        assert_eq!(run_kind(&hard), "Hard");
         // The seed of a run in arena mode is that of a room.
         let room = Run {
             arena: true,
             ..hard
         };
-        assert_eq!(
-            level_line(&room),
-            format!("Seed 85GVTHQA, v{VERSION}, hard mode, arena mode")
-        );
+        assert_eq!(run_kind(&room), "Hard \u{b7} arena");
     }
 
     #[test]
@@ -6271,11 +6415,9 @@ mod tests {
         // menus offer the same cheats.
         let mut corridor = stage(|_| {}, WINDOWS[0]);
         menu(false)(&mut corridor);
-        assert!(said(&mut corridor, "Sector to skip to"));
         assert!(said(&mut corridor, "Skip to sector 8"));
         let mut room = stage(|_| {}, WINDOWS[0]);
         menu(true)(&mut room);
-        assert!(said(&mut room, "Group to skip to"));
         assert!(said(&mut room, "Skip to group 8"));
         assert!(buttons(&mut room) == buttons(&mut corridor));
     }

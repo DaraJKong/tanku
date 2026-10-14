@@ -42,8 +42,6 @@ pub const BULLET: Color = hex(0xFFFFFF);
 /// The fire of a blast and of a tank that is destroyed.
 pub const FIRE: Color = hex(0xFF8C26);
 
-/// The background of a panel, through which the game shows a little.
-pub const SURFACE: Color = Color::srgba(0.039, 0.059, 0.086, 0.86);
 pub const SURFACE_RAISED: Color = hex(0x111A26);
 /// The ground of a block of the sheet, a title block or a parts list, and of a balloon,
 /// through which the lettering of the void doesn't show. The engine blends colors in linear
@@ -155,79 +153,11 @@ struct Faces(#[expect(dead_code, reason = "held so that the fonts stay loaded")]
 
 pub fn plugin(app: &mut App) {
     let mut fonts = app.world_mut().resource_mut::<Assets<Font>>();
-    let faces = [FACE].into_iter().chain(old::FACES);
+    let faces = [FACE].into_iter();
     let faces = faces.map(|file| fonts.add(Font::from_bytes(file.to_vec())));
     let faces = Faces(faces.collect());
     app.insert_resource(faces)
         .add_systems(PostUpdate, follow_edges.before(UiSystems::Prepare));
-}
-
-/// The faces that the interface was lettered in before Tanku Lettering, Barlow Semi Condensed
-/// and Share Tech Mono, for the screens that are not drawn again yet.
-pub mod old {
-    use bevy::{prelude::*, text::LetterSpacing};
-
-    /// A narrow face, for everything that is read as words. Its regular weight is too thin
-    /// for the small labels of the interface, so the medium one stands in for it.
-    pub(super) const LETTERING: &str = "Barlow Semi Condensed";
-    pub(super) const PLAIN: FontWeight = FontWeight::MEDIUM;
-    pub(super) const HEAVY: FontWeight = FontWeight::SEMIBOLD;
-    /// A face whose characters all have the same width, for numbers: counts, times and
-    /// versions. It draws B like 8, S like 5 and Z like 2, so nothing that mixes letters and
-    /// figures is set in it: a seed that is read wrong gives another map.
-    pub(super) const FIGURES: &str = "Share Tech Mono";
-    /// How far apart the letters of a label or of a title stand, as a share of their size.
-    const TRACKING: f32 = 0.14;
-
-    /// The font files, with their licenses next to them.
-    pub(super) const FACES: [&[u8]; 3] = [
-        include_bytes!("../assets/fonts/barlow_semi_condensed/BarlowSemiCondensed-Medium.ttf"),
-        include_bytes!("../assets/fonts/barlow_semi_condensed/BarlowSemiCondensed-SemiBold.ttf"),
-        include_bytes!("../assets/fonts/share_tech_mono/ShareTechMono-Regular.ttf"),
-    ];
-
-    fn lettered(
-        content: String,
-        (family, weight): (&str, FontWeight),
-        (size, tracking): (f32, f32),
-        color: Color,
-    ) -> impl Bundle {
-        (
-            Text::new(content),
-            TextFont {
-                font: family.into(),
-                font_size: FontSize::Px(size),
-                weight,
-                ..default()
-            },
-            // Whole pixels: small letters would stand unevenly apart otherwise.
-            LetterSpacing::Px((size * tracking).round()),
-            TextColor(color),
-        )
-    }
-
-    /// Running text: a sentence, a hint.
-    pub fn text(content: impl Into<String>, size: f32, color: Color) -> impl Bundle {
-        lettered(content.into(), (LETTERING, PLAIN), (size, 0.0), color)
-    }
-
-    /// A label: the name of what stands next to it, in capitals that stand apart.
-    pub fn label(content: impl Into<String>, size: f32, color: Color) -> impl Bundle {
-        let face = (LETTERING, PLAIN);
-        lettered(content.into().to_uppercase(), face, (size, TRACKING), color)
-    }
-
-    /// A title, or the name of a button: a heavier label.
-    pub fn title(content: impl Into<String>, size: f32, color: Color) -> impl Bundle {
-        let face = (LETTERING, HEAVY);
-        lettered(content.into().to_uppercase(), face, (size, TRACKING), color)
-    }
-
-    /// A number, or a word that stands among numbers.
-    pub fn figure(content: impl Into<String>, size: f32, color: Color) -> impl Bundle {
-        let face = (FIGURES, FontWeight::NORMAL);
-        lettered(content.into(), face, (size, 0.0), color)
-    }
 }
 
 fn lettered(content: String, size: f32, pitch: f32, color: Color) -> impl Bundle {
@@ -424,9 +354,10 @@ mod tests {
             weights
         };
         assert_eq!(weights(LETTERING), [FontWeight::NORMAL.0 as f32]);
-        let (plain, heavy) = (old::PLAIN.0 as f32, old::HEAVY.0 as f32);
-        assert_eq!(weights(old::LETTERING), [plain, heavy]);
-        assert_eq!(weights(old::FIGURES), [FontWeight::NORMAL.0 as f32]);
+        // The faces that the menus were lettered in before are the music editor's alone.
+        for gone in ["Barlow Semi Condensed", "Share Tech Mono"] {
+            assert!(fonts.collection.family_id(gone).is_none(), "{gone}");
+        }
     }
 
     /// FNV-1a of a text, with the ends of its lines as Unix writes them, as the script that
