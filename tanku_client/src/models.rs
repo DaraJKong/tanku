@@ -102,6 +102,29 @@ struct Bubble;
 #[derive(Component)]
 struct Standing(f32);
 
+/// A dormant enemy of a sector that no player has entered, which waits for its drawings. Such
+/// a sector loads with its group a sector ahead of the players, out of view: its tanks are
+/// drawn a few in each frame, instead of all in the one frame that is also the one where the
+/// players cross a barrier and a group wakes.
+#[derive(Component)]
+struct Undrawn;
+
+/// The drawings that a dormant enemy stands up with when it wakes, made ahead of time: a few
+/// tanks in each frame while the players fight in the sector before, instead of all in the
+/// frame when the group wakes. They are the drawings that would be made then.
+#[derive(Component, Clone)]
+struct Ready {
+    /// Its parts, each with the drawing it rises with. A part without one has none.
+    stages: Vec<(Stage, Handle<Mesh>)>,
+    turret: Handle<Mesh>,
+    /// What veils its deck and its roof before the ink spreads there.
+    veils: [Handle<Mesh>; 2],
+}
+
+/// How many dormant enemies are drawn in a frame, and how many get the drawings that they
+/// stand up with ready.
+const DRAWN_PER_FRAME: usize = 3;
+
 /// A part of a tank that stands up.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 enum Stage {
@@ -120,6 +143,8 @@ enum Stage {
 #[derive(Component)]
 struct Veil {
     over: Veiled,
+    /// The edge of what it veils, which its drawing is made on frame after frame.
+    rim: Rim,
     /// What shows where the ink is not yet: a little of the color of the tank.
     tint: Color,
     /// How far the ink had spread when the veil was last drawn.
@@ -174,7 +199,14 @@ struct Glass {
 pub fn plugin(app: &mut App) {
     app.add_systems(Startup, setup).add_systems(
         Update,
-        (build, hold_in_reserve, ink_in, stand_up, (pose, shield))
+        (
+            build,
+            hold_in_reserve,
+            ink_in,
+            stand_up,
+            (pose, shield),
+            prepare,
+        )
             .chain()
             .before(scene::place),
     );
@@ -514,11 +546,20 @@ fn veiled_edge(over: Veiled, angle: f32) -> f32 {
     }
 }
 
-/// What hides the color of a deck or of a roof where the ink has not spread yet: all of it
-/// that lies further than `reach` from the middle of the tank. It lies flat, at the height
-/// of its own place.
+/// The veil of a deck or of a roof where the ink has spread this far: see [`Rim::veil`].
+#[cfg(test)]
 fn veil_drawing(over: Veiled, reach: f32, tint: Color) -> Draft {
-    let mut draft = Draft::default();
+    rim(over).veil(reach, tint)
+}
+
+/// The edge of what a veil covers, as its drawing goes around the tank: at each angle where
+/// it turns, the way out from the middle of the tank and how far the edge is that way. The
+/// last angle is the first one again, a full turn later. A veil is drawn anew in each frame
+/// of a tank that stands up, on the same edge: the edge is worked out once.
+#[derive(Clone, Debug, PartialEq)]
+struct Rim(Vec<(Vec3, f32)>);
+
+fn rim(over: Veiled) -> Rim {
     // Evenly around the tank, and at the four corners of a deck, which would be cut otherwise.
     let mut angles: Vec<f32> = (0..VEIL_STEPS)
         .map(|step| step as f32 / VEIL_STEPS as f32 * std::f32::consts::TAU)
@@ -534,27 +575,39 @@ fn veil_drawing(over: Veiled, reach: f32, tint: Color) -> Draft {
         ]);
     }
     angles.sort_by(f32::total_cmp);
-    let at = |angle: f32, radius: f32| Vec3::new(angle.cos(), 0.0, angle.sin()) * radius;
-    for (index, &from) in angles.iter().enumerate() {
-        let to = match angles.get(index + 1) {
-            Some(&next) => next,
-            None => angles[0] + std::f32::consts::TAU,
-        };
-        let (near, far) = (veiled_edge(over, from), veiled_edge(over, to));
-        if reach >= near && reach >= far {
-            continue;
-        }
-        draft.face(
-            &[
-                at(from, reach.min(near)),
-                at(from, near),
-                at(to, far),
-                at(to, reach.min(far)),
-            ],
-            tint,
-        );
+    if let Some(&first) = angles.first() {
+        angles.push(first + std::f32::consts::TAU);
     }
-    draft
+    let way = |angle: f32| Vec3::new(angle.cos(), 0.0, angle.sin());
+    Rim(angles
+        .into_iter()
+        .map(|angle| (way(angle), veiled_edge(over, angle)))
+        .collect())
+}
+
+impl Rim {
+    /// What hides the color of a deck or of a roof where the ink has not spread yet: all of
+    /// it that lies further than `reach` from the middle of the tank. It lies flat, at the
+    /// height of its own place.
+    fn veil(&self, reach: f32, tint: Color) -> Draft {
+        let mut draft = Draft::default();
+        for pair in self.0.windows(2) {
+            let [(from, near), (to, far)] = [pair[0], pair[1]];
+            if reach >= near && reach >= far {
+                continue;
+            }
+            draft.face(
+                &[
+                    from * reach.min(near),
+                    from * near,
+                    to * far,
+                    to * reach.min(far),
+                ],
+                tint,
+            );
+        }
+        draft
+    }
 }
 
 /// The drawing of the turret of a tank, with what it carries: the barrel with its rings and
@@ -988,32 +1041,86 @@ fn build(
         ),
         Added<Tank>,
     >,
+    undrawn: Query<(Entity, &Tank, &Motion), With<Undrawn>>,
     run: Option<Res<Run>>,
     shapes: Res<Shapes>,
     paints: Res<Paints>,
     glass: Res<Glass>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
+    let run = run.as_deref();
+    let mut paint = |commands: &mut Commands, entity, tank, motion, player, look| {
+        let parts = (&*shapes, &*paints, &*glass);
+        give_drawings(
+            commands,
+            (entity, tank, motion, player),
+            look,
+            run,
+            parts,
+            &mut meshes,
+        );
+    };
     for (entity, tank, motion, player, enemy, wreck) in &tanks {
         let look = look_of(enemy, wreck);
-        commands
-            .entity(entity)
-            .insert((Transform::default(), Visibility::default(), look))
-            .with_children(|root| {
-                root.spawn((
-                    Bubble,
-                    Mesh3d(shapes.sphere.clone()),
-                    MeshMaterial3d(glass.bubble.clone()),
-                    Transform::from_xyz(0.0, 0.5, 0.0).with_scale(Vec3::splat(2.0 * SHIELD_RADIUS)),
-                    Visibility::Hidden,
-                    children![(
-                        Mesh3d(shapes.hairline.clone()),
-                        MeshMaterial3d(glass.edge.clone()),
-                    )],
-                ));
-            });
-        let drawings = drawings(tank, player, look, run.as_deref(), &mut meshes);
-        draw(&mut commands, entity, motion, drawings, &paints.ink);
+        if look == Look::Outline && enemy.is_some() && scene::is_dormant(tank.sector, run) {
+            commands.entity(entity).insert(Undrawn);
+            continue;
+        }
+        paint(&mut commands, entity, tank, motion, player, look);
+    }
+    // A sector that was entered draws what it still owes at once. Its tanks are drawn as
+    // they were when it loaded, and stand up as the others do.
+    let (owed, waiting): (Vec<_>, Vec<_>) = undrawn
+        .iter()
+        .partition(|(_, tank, _)| !scene::is_dormant(tank.sector, run));
+    for (entity, tank, motion) in owed
+        .into_iter()
+        .chain(waiting.into_iter().take(DRAWN_PER_FRAME))
+    {
+        commands.entity(entity).remove::<Undrawn>();
+        paint(&mut commands, entity, tank, motion, None, Look::Outline);
+    }
+}
+
+/// Gives a tank that was just made its look, its shield and its drawings.
+fn give_drawings(
+    commands: &mut Commands,
+    (entity, tank, motion, player): (Entity, &Tank, &Motion, Option<&Player>),
+    look: Look,
+    run: Option<&Run>,
+    (shapes, paints, glass): (&Shapes, &Paints, &Glass),
+    meshes: &mut Assets<Mesh>,
+) {
+    commands
+        .entity(entity)
+        .insert((Transform::default(), Visibility::default(), look))
+        .with_children(|root| {
+            root.spawn((
+                Bubble,
+                Mesh3d(shapes.sphere.clone()),
+                MeshMaterial3d(glass.bubble.clone()),
+                Transform::from_xyz(0.0, 0.5, 0.0).with_scale(Vec3::splat(2.0 * SHIELD_RADIUS)),
+                Visibility::Hidden,
+                children![(
+                    Mesh3d(shapes.hairline.clone()),
+                    MeshMaterial3d(glass.edge.clone()),
+                )],
+            ));
+        });
+    let drawings = drawings(tank, player, look, run, meshes);
+    draw(commands, entity, motion, drawings, &paints.ink);
+}
+
+/// Makes ahead of time the drawings that dormant enemies stand up with, a few in each frame.
+fn prepare(
+    mut commands: Commands,
+    tanks: Query<(Entity, &Tank, &Enemy), (With<Look>, Without<Ready>)>,
+    mut meshes: ResMut<Assets<Mesh>>,
+) {
+    let dormant = tanks.iter().filter(|(_, _, enemy)| !enemy.awake);
+    for (entity, tank, _) in dormant.take(DRAWN_PER_FRAME) {
+        let ready = standing_drawings(&tank.genome, &mut meshes);
+        commands.entity(entity).insert(ready);
     }
 }
 
@@ -1069,13 +1176,14 @@ fn ink_in(
         Has<Wreck>,
         &mut Look,
         &Children,
+        Option<&Ready>,
     )>,
     parts: Query<(), Or<(With<Hull>, With<Turret>)>>,
     run: Option<Res<Run>>,
     paints: Res<Paints>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
-    for (entity, tank, motion, player, enemy, wreck, mut look, children) in &mut tanks {
+    for (entity, tank, motion, player, enemy, wreck, mut look, children, ready) in &mut tanks {
         let wanted = look_of(enemy, wreck);
         if *look == wanted {
             continue;
@@ -1085,21 +1193,45 @@ fn ink_in(
             commands.entity(child).despawn();
         }
         if wanted == Look::Solid && enemy.is_some() {
-            draw_standing(
-                &mut commands,
-                entity,
-                tank,
-                motion,
-                &mut meshes,
-                &paints.ink,
-            );
-            commands.entity(entity).insert(Standing(0.0));
+            let ready = match ready {
+                Some(ready) => ready.clone(),
+                None => standing_drawings(&tank.genome, &mut meshes),
+            };
+            draw_standing(&mut commands, entity, tank, motion, ready, &paints.ink);
+            commands
+                .entity(entity)
+                .insert(Standing(0.0))
+                .remove::<Ready>();
             continue;
         }
         commands.entity(entity).remove::<Standing>();
         let drawings = drawings(tank, player, wanted, run.as_deref(), &mut meshes);
         draw(&mut commands, entity, motion, drawings, &paints.ink);
     }
+}
+
+/// The drawings that an enemy stands up with: its parts as they rise, and what veils its deck
+/// and its roof before the ink spreads there.
+fn standing_drawings(genome: &Genome, meshes: &mut Assets<Mesh>) -> Ready {
+    let color = enemy_color(genome);
+    let (tint, [deck, roof]) = veils(genome);
+    let stages = hull_stages(genome, color).into_iter();
+    // A tank without a brain has no antenna to raise.
+    let stages = stages.filter(|(_, draft)| !draft.is_empty());
+    Ready {
+        stages: stages
+            .map(|(stage, draft)| (stage, meshes.add(draft.build())))
+            .collect(),
+        turret: meshes.add(turret_drawing(genome, color).build()),
+        veils: [deck, roof].map(|over| meshes.add(rim(over).veil(0.0, tint).build())),
+    }
+}
+
+/// The color of what veils the deck and the roof of a tank, and what they veil.
+fn veils(genome: &Genome) -> (Color, [Veiled; 2]) {
+    let tint = Outline::dormant(outline_color(genome), theme::FLOOR).body;
+    let (length, radius) = (hull_length(genome), turret_radius(genome));
+    (tint, [Veiled::Deck(length), Veiled::Roof(radius, length)])
 }
 
 /// Gives an enemy that wakes up the drawings that it stands up with: its parts, flat on the
@@ -1109,13 +1241,10 @@ fn draw_standing(
     entity: Entity,
     tank: &Tank,
     motion: &Motion,
-    meshes: &mut Assets<Mesh>,
+    ready: Ready,
     ink: &Handle<StandardMaterial>,
 ) {
-    let genome = &tank.genome;
-    let color = enemy_color(genome);
-    let tint = Outline::dormant(outline_color(genome), theme::FLOOR).body;
-    let (length, radius) = (hull_length(genome), turret_radius(genome));
+    let (tint, [deck, roof]) = veils(&tank.genome);
     let flat = Vec3::new(1.0, FLAT, 1.0);
     let lying = |rotation: Quat, height: f32| Transform {
         translation: Vec3::Y * height,
@@ -1123,12 +1252,13 @@ fn draw_standing(
         scale: flat,
     };
     let (hull, turret) = (scene::facing(motion.hull), scene::facing(motion.turret));
+    let Ready {
+        stages,
+        turret: turret_mesh,
+        veils: [deck_veil, roof_veil],
+    } = ready;
     commands.entity(entity).with_children(|root| {
-        for (stage, draft) in hull_stages(genome, color) {
-            // A tank without a brain has no antenna to raise.
-            if draft.is_empty() {
-                continue;
-            }
+        for (stage, mesh) in stages {
             let height = if stage == Stage::Masts {
                 TURRET_HEIGHT * FLAT
             } else {
@@ -1137,7 +1267,7 @@ fn draw_standing(
             root.spawn((
                 Hull,
                 stage,
-                Mesh3d(meshes.add(draft.build())),
+                Mesh3d(mesh),
                 MeshMaterial3d(ink.clone()),
                 lying(hull, height),
             ));
@@ -1145,23 +1275,24 @@ fn draw_standing(
         root.spawn((
             Turret,
             Stage::Turret,
-            Mesh3d(meshes.add(turret_drawing(genome, color).build())),
+            Mesh3d(turret_mesh),
             MeshMaterial3d(ink.clone()),
             lying(turret, TURRET_HEIGHT * FLAT),
         ));
-        let mut veil = |over: Veiled| {
+        let veil = |over: Veiled, mesh: Handle<Mesh>| {
             (
                 Veil {
                     over,
+                    rim: rim(over),
                     tint,
                     ink: 0.0,
                 },
-                Mesh3d(meshes.add(veil_drawing(over, 0.0, tint).build())),
+                Mesh3d(mesh),
                 MeshMaterial3d(ink.clone()),
             )
         };
-        root.spawn((Hull, veil(Veiled::Deck(length))));
-        root.spawn((Turret, veil(Veiled::Roof(radius, length))));
+        root.spawn((Hull, veil(deck, deck_veil)));
+        root.spawn((Turret, veil(roof, roof_veil)));
     });
 }
 
@@ -1218,7 +1349,7 @@ fn stand_up(
             placed.translation.y = height + LIFT / 2.0;
             if veil.ink != now.ink {
                 veil.ink = now.ink;
-                let left = veil_drawing(veil.over, now.ink * ink_reach(length), veil.tint);
+                let left = veil.rim.veil(now.ink * ink_reach(length), veil.tint);
                 // The ink is all over this face, a roof long before a deck: its veil goes.
                 // A veil of nothing would be a mesh without a vertex, which the engine takes
                 // for a fault, and says so.
@@ -1282,6 +1413,79 @@ fn shield(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A veil as it was drawn before its edge was kept from one frame to the next.
+    fn veil_as_it_was(over: Veiled, reach: f32, tint: Color) -> Draft {
+        let mut draft = Draft::default();
+        let mut angles: Vec<f32> = (0..VEIL_STEPS)
+            .map(|step| step as f32 / VEIL_STEPS as f32 * std::f32::consts::TAU)
+            .collect();
+        if let Veiled::Deck(length) = over {
+            let corner = (HULL.y / 2.0 - LINE).atan2(length / 2.0 - LINE);
+            let half_turn = std::f32::consts::PI;
+            angles.extend([
+                corner,
+                half_turn - corner,
+                half_turn + corner,
+                2.0 * half_turn - corner,
+            ]);
+        }
+        angles.sort_by(f32::total_cmp);
+        let at = |angle: f32, radius: f32| Vec3::new(angle.cos(), 0.0, angle.sin()) * radius;
+        for (index, &from) in angles.iter().enumerate() {
+            let to = match angles.get(index + 1) {
+                Some(&next) => next,
+                None => angles[0] + std::f32::consts::TAU,
+            };
+            let (near, far) = (veiled_edge(over, from), veiled_edge(over, to));
+            if reach >= near && reach >= far {
+                continue;
+            }
+            draft.face(
+                &[
+                    at(from, reach.min(near)),
+                    at(from, near),
+                    at(to, far),
+                    at(to, reach.min(far)),
+                ],
+                tint,
+            );
+        }
+        draft
+    }
+
+    #[test]
+    fn a_veil_drawn_on_its_kept_edge_is_the_veil_that_was_drawn_before() {
+        let positions = |draft: Draft| {
+            let mesh = draft.build();
+            match mesh.attribute(Mesh::ATTRIBUTE_POSITION) {
+                Some(bevy::mesh::VertexAttributeValues::Float32x3(positions)) => positions
+                    .iter()
+                    .map(|corner| corner.map(f32::to_bits))
+                    .collect::<Vec<_>>(),
+                _ => Vec::new(),
+            }
+        };
+        let tint = theme::FLOOR;
+        for length in [1.2, 1.6, 2.0, 2.3] {
+            for over in [
+                Veiled::Deck(length),
+                Veiled::Roof(0.45, length),
+                Veiled::Roof(0.7, length),
+            ] {
+                let kept = rim(over);
+                for step in 0..=40 {
+                    let reach = step as f32 / 40.0 * ink_reach(length) * 1.1;
+                    let before = positions(veil_as_it_was(over, reach, tint));
+                    assert_eq!(
+                        positions(kept.veil(reach, tint)),
+                        before,
+                        "{over:?} at {reach}"
+                    );
+                }
+            }
+        }
+    }
 
     fn close(found: f32, wanted: f32) -> bool {
         (found - wanted).abs() < 1e-3
