@@ -55,10 +55,36 @@ impl Colliders {
     /// by `delta`. A cast that starts on that way and ends on it, as a bullet does tick
     /// after tick while it flies straight, has the same answer among them as among all.
     pub fn lane(&self, origin: Vec2, delta: Vec2, radius: f32) -> Lane {
-        Lane(self.segments.sift(&swept(origin, delta, radius)))
+        let kept = self.segments.sift(&swept(origin, delta, radius));
+        let along = delta.normalize_or_zero();
+        let reach = radius + NEAR_LANE;
+        let mut near: Vec<(f32, f32)> = kept
+            .clone()
+            .filter_map(|index| {
+                let collider = &self.list[index];
+                stretch((origin, along), (collider.a, collider.b), reach)
+            })
+            .collect();
+        near.sort_by(|one, other| one.0.total_cmp(&other.0));
+        // Stretches that overlap are one.
+        let mut merged: Vec<(f32, f32)> = Vec::with_capacity(near.len());
+        for (from, to) in near {
+            match merged.last_mut() {
+                Some(last) if from <= last.1 => last.1 = last.1.max(to),
+                _ => merged.push((from, to)),
+            }
+        }
+        Lane {
+            kept,
+            origin,
+            along,
+            near: merged,
+        }
     }
 
-    /// The same as `cast`, for a cast that starts and ends on the way of a lane.
+    /// The same as `cast`, for a cast that starts and ends on the way of a lane. A cast whose
+    /// way along the lane comes near none of its colliders meets nothing, and none of them is
+    /// asked.
     pub fn cast_in(
         &self,
         lane: &Lane,
@@ -66,7 +92,18 @@ impl Colliders {
         delta: Vec2,
         radius: f32,
     ) -> Option<(Hit, Solid)> {
-        self.cast_among(lane.0.clone(), origin, delta, radius)
+        let from = origin - lane.origin;
+        let (start, end) = (from.dot(lane.along), (from + delta).dot(lane.along));
+        let (low, high) = (start.min(end), start.max(end));
+        // A cast off the line of the lane by more than the rounding of numbers would move it
+        // is asked of the colliders, and so is one that comes near one of them.
+        let on_line = from.perp_dot(lane.along).abs() <= NEAR_LANE / 2.0;
+        let first = lane.near.partition_point(|&(_, to)| to < low);
+        let clear = lane.near.get(first).is_none_or(|&(from, _)| from > high);
+        if on_line && clear {
+            return None;
+        }
+        self.cast_among(lane.kept.clone(), origin, delta, radius)
     }
 
     /// What `cast` finds among the colliders that a sieve kept.
@@ -162,9 +199,55 @@ impl Colliders {
     }
 }
 
-/// The colliders that a sieve kept for the way of a circle that moves straight.
+/// How much further than its radius a circle in a lane may come to a collider of the lane
+/// before a cast there is asked of the colliders, in meters: half of it for the rounding of
+/// the places of a bullet that flies straight tick after tick, which is far less, and half for
+/// what the lane leaves off the line of its way.
+const NEAR_LANE: f32 = 0.02;
+
+/// The colliders that a sieve kept for the way of a circle that moves straight, and the
+/// stretches of that way where the circle comes near one of them.
 #[derive(Clone, Debug)]
-pub struct Lane(Kept);
+pub struct Lane {
+    kept: Kept,
+    /// Where the way starts, and the unit vector along it.
+    origin: Vec2,
+    along: Vec2,
+    /// The stretches where the circle comes within its radius and `NEAR_LANE` of a collider
+    /// of the lane, as distances from the start of the way, in their order and merged.
+    near: Vec<(f32, f32)>,
+}
+
+/// The stretch of a line where it comes within `reach` of a segment, as distances along it
+/// from a point: a little longer than that stretch is, and none if the line keeps further.
+/// The line is given by the point and the unit vector along it.
+fn stretch((origin, along): (Vec2, Vec2), (a, b): (Vec2, Vec2), reach: f32) -> Option<(f32, f32)> {
+    let across = along.perp();
+    let (to_a, to_b) = (a - origin, b - origin);
+    let (along_a, along_b) = (to_a.dot(along), to_b.dot(along));
+    let (off_a, off_b) = (to_a.dot(across), to_b.dot(across));
+    // The part of the segment that lies within reach of the line, as shares of it from `a`.
+    let (low, high) = if (off_b - off_a).abs() < 1e-6 {
+        if off_a.abs() >= reach {
+            return None;
+        }
+        (0.0, 1.0)
+    } else {
+        let one = (-reach - off_a) / (off_b - off_a);
+        let other = (reach - off_a) / (off_b - off_a);
+        (one.min(other).max(0.0), one.max(other).min(1.0))
+    };
+    if low > high {
+        return None;
+    }
+    let (first, last) = (
+        along_a + (along_b - along_a) * low,
+        along_a + (along_b - along_a) * high,
+    );
+    // A point of the line within reach of a point of that part is no further along it than
+    // the reach.
+    Some((first.min(last) - reach, first.max(last) + reach))
+}
 
 /// Where a circle may touch something when it moves from `origin` by `delta`: in the box of
 /// its way, and in the band of its radius around the line it moves along, which it never
@@ -467,16 +550,30 @@ mod tests {
                         (collider.a + numbers.way(2.0, 6.0), team)
                     })
                     .collect();
-                for _ in 0..300 {
+                for round in 0..600 {
                     let collider = each[(numbers.unit() * each.len() as f32) as usize % each.len()];
-                    let start = collider.a.lerp(collider.b, numbers.unit()) + numbers.way(1.0, 8.0);
+                    let along = (collider.b - collider.a).normalize_or_zero();
+                    let on = collider.a.lerp(collider.b, numbers.unit());
+                    // Half of them graze a wall: they start a radius from it, or a hair more or
+                    // less, and fly along it or nearly.
+                    let grazing = round % 2 == 1;
+                    let start = if grazing {
+                        on + along.perp() * (BULLET_RADIUS + numbers.within(-1e-3, 1e-3))
+                    } else {
+                        on + numbers.way(1.0, 8.0)
+                    };
                     let kind = [Kind::Plain, Kind::Seeking, Kind::Exploding]
                         [(numbers.unit() * 3.0) as usize % 3];
                     let bullet = Bullet {
                         owner: Entity::PLACEHOLDER,
                         team: Team::Enemies,
                         sector: middle,
-                        velocity: numbers.way(6.0, 19.0),
+                        velocity: if grazing {
+                            let tilt = numbers.within(-0.02, 0.02);
+                            Vec2::from_angle(tilt).rotate(along) * numbers.within(6.0, 19.0)
+                        } else {
+                            numbers.way(6.0, 19.0)
+                        },
                         bounces_left: (numbers.unit() * 4.0) as u8 % 4,
                         pierces_left: 0,
                         bounced: false,
