@@ -9,7 +9,7 @@ use tanku_core::{
     rules::{MAX_PLAYERS, REPAIR_TIME, SOLO_LIVES},
     seed::VERSION,
     sim::{
-        Enemy, Gun, Player, Playtest, Position, Run, Shield, ShieldState, SimEvent, Tank,
+        Barrier, Enemy, Gun, Player, Playtest, Position, Run, Shield, ShieldState, SimEvent, Tank,
         TankCommand, Wreck,
     },
     stats::{Genome, Stat},
@@ -23,7 +23,7 @@ use crate::{
     notices::Alarms,
     repair, scene,
     settings::{Action, Settings},
-    theme,
+    tags, theme,
     unlocks::{self, Fair, Unlocks},
 };
 
@@ -1111,8 +1111,12 @@ fn toasts(
     run: Option<Res<Run>>,
     mut events: MessageReader<SimEvent>,
     mut toast: Single<(&mut Toast, &mut Text, &mut TextColor)>,
-    mut shown: Local<u8>,
-    mut counted: Local<Option<u8>>,
+    (barriers, running, seat): (
+        Query<&Barrier>,
+        Query<(&Player, &Position), Without<Wreck>>,
+        Res<LocalSeat>,
+    ),
+    (mut shown, mut counted, mut waited): (Local<u8>, Local<Option<u8>>, Local<bool>),
 ) {
     let (toast, text, color) = &mut *toast;
     // Several things can happen at once, such as clearing a sector and unlocking its barrier.
@@ -1155,6 +1159,27 @@ fn toasts(
         };
         if news.as_ref().is_none_or(|(shown, _)| weight >= *shown) {
             news = Some((weight, message));
+        }
+    }
+    // A barrier that starts to wait for teammates who are far from it says so once, as soon
+    // as the line is free: the sector that was cleared is told first.
+    if let Some(run) = &run {
+        let running: Vec<(u8, Vec2)> = running
+            .iter()
+            .map(|(player, position)| (player.seat, position.0))
+            .collect();
+        let waits = barriers
+            .iter()
+            .map(|barrier| tags::waiting(run, barrier, &running))
+            .find(|waits| !waits.is_empty());
+        match waits {
+            Some(waits) if !*waited && news.is_none() && toast.0 == 0.0 => {
+                let who = tags::names(&waits, seat.0);
+                news = Some((1, format!("The barrier waits for {who}")));
+                *waited = true;
+            }
+            Some(_) => {}
+            None => *waited = false,
         }
     }
     // A message stays until its time is over, unless one that matters as much comes.

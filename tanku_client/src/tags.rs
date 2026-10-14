@@ -8,14 +8,17 @@
 
 use bevy::prelude::*;
 use tanku_core::{
+    geom,
     map::SectorKind,
-    sim::{Barrier, Sector},
+    rules::BARRIER_GATHER_DISTANCE,
+    sim::{Barrier, Player, Position, Run, Sector, Wreck},
 };
 
 use crate::{
     Screen,
     camera::{self, OnScreen},
-    scene, theme,
+    crew::LocalSeat,
+    hud, scene, theme,
 };
 
 /// Barriers that can be loaded at once: one at the end of each of three sectors, and the one
@@ -77,12 +80,57 @@ fn numbers(barrier: &Barrier) -> (String, String) {
     (barrier.sector.to_string(), (barrier.sector + 1).to_string())
 }
 
-/// What the caption of a barrier says: whether it is locked, and whether the sector behind it
-/// is an arena, which looks empty from here.
-fn caption(barrier: &Barrier, arena: bool) -> String {
+/// The players that a barrier waits for, among several: its sector is cleared, and it stays
+/// locked until every tank that runs is close to it. They are given by seat, with where their
+/// tanks are.
+pub fn waiting(run: &Run, barrier: &Barrier, running: &[(u8, Vec2)]) -> Vec<u8> {
+    let held = !run.solo && !barrier.unlocked;
+    if !held || barrier.sector != run.sector || run.cleared < barrier.sector {
+        return Vec::new();
+    }
+    let far = |at: &Vec2| {
+        geom::distance_to_segment(*at, barrier.from, barrier.to) > BARRIER_GATHER_DISTANCE
+    };
+    let mut seats: Vec<u8> = running
+        .iter()
+        .filter(|(_, at)| far(at))
+        .map(|(seat, _)| *seat)
+        .collect();
+    seats.sort();
+    seats
+}
+
+/// The players of some seats, by their numbers, as the player at this screen reads them: "P2",
+/// "you and P2", or "P2, P3 and P4".
+pub fn names(seats: &[u8], own: u8) -> String {
+    let mut seats = seats.to_vec();
+    // The player at this screen comes first, as "you".
+    seats.sort_by_key(|seat| (*seat != own, *seat));
+    let name = |seat: &u8| {
+        if *seat == own {
+            "you".to_string()
+        } else {
+            hud::short_name(*seat)
+        }
+    };
+    let names: Vec<String> = seats.iter().map(name).collect();
+    match names.as_slice() {
+        [first @ .., last] if !first.is_empty() => format!("{} and {last}", first.join(", ")),
+        _ => names.concat(),
+    }
+}
+
+/// What the caption of a barrier says: whether it is locked, and whom for when it waits for
+/// players, and whether the sector behind it is an arena, which looks empty from here.
+fn caption(barrier: &Barrier, (waits, own): (&[u8], u8), arena: bool) -> String {
     let state = if barrier.unlocked { "OPEN" } else { "LOCKED" };
+    let waits = if waits.is_empty() {
+        String::new()
+    } else {
+        format!(" \u{b7} WAITS FOR {}", names(waits, own).to_uppercase())
+    };
     let ahead = if arena { " \u{b7} ARENA AHEAD" } else { "" };
-    format!("BARRIER {} \u{b7} {state}{ahead}", barrier.sector)
+    format!("BARRIER {} \u{b7} {state}{waits}{ahead}", barrier.sector)
 }
 
 /// The color of a barrier, which its tags take.
@@ -246,6 +294,11 @@ fn show(at: Option<Vec2>, transform: &mut UiTransform, visibility: &mut Visibili
 /// Puts the tags on the barriers that are loaded, and tells what they close.
 fn place(
     screen: OnScreen,
+    (run, running, seat): (
+        Option<Res<Run>>,
+        Query<(&Player, &Position), Without<Wreck>>,
+        Res<LocalSeat>,
+    ),
     barriers: Query<&Barrier>,
     sectors: Query<&Sector>,
     mut balloons: Query<(&Balloon, &mut UiTransform, &mut Visibility, &Children), Without<Part>>,
@@ -380,7 +433,14 @@ fn place(
                 let plan = &sector.layout.plan;
                 plan.index == barrier.sector + 1 && plan.kind == SectorKind::Arena
             });
-            let content = caption(barrier, arena);
+            let running: Vec<(u8, Vec2)> = running
+                .iter()
+                .map(|(player, position)| (player.seat, position.0))
+                .collect();
+            let waits = run
+                .as_ref()
+                .map_or(Vec::new(), |run| waiting(run, barrier, &running));
+            let content = caption(barrier, (&waits, seat.0), arena);
             if text.0 != content {
                 text.0 = content;
             }
@@ -427,16 +487,75 @@ mod tests {
     #[test]
     fn a_caption_tells_in_words_whether_its_barrier_is_locked() {
         assert_eq!(
-            caption(&barrier(12, false), false),
+            caption(&barrier(12, false), (&[], 0), false),
             "BARRIER 12 \u{b7} LOCKED"
         );
-        assert_eq!(caption(&barrier(12, true), false), "BARRIER 12 \u{b7} OPEN");
+        assert_eq!(
+            caption(&barrier(12, true), (&[], 0), false),
+            "BARRIER 12 \u{b7} OPEN"
+        );
         // An arena looks empty through its barrier, so the barrier says what it is.
         assert_eq!(
-            caption(&barrier(12, false), true),
+            caption(&barrier(12, false), (&[], 0), true),
             "BARRIER 12 \u{b7} LOCKED \u{b7} ARENA AHEAD"
         );
+        // A barrier that waits for players names them.
+        assert_eq!(
+            caption(&barrier(12, false), (&[1], 0), false),
+            "BARRIER 12 \u{b7} LOCKED \u{b7} WAITS FOR P2"
+        );
+        assert_eq!(
+            caption(&barrier(12, false), (&[1, 3], 3), true),
+            "BARRIER 12 \u{b7} LOCKED \u{b7} WAITS FOR YOU AND P2 \u{b7} ARENA AHEAD"
+        );
         assert_ne!(color(&barrier(12, false)), color(&barrier(12, true)));
+    }
+
+    #[test]
+    fn a_barrier_waits_for_the_players_who_are_far_from_it_once_its_sector_is_cleared() {
+        let run = |solo: bool, sector: u32, cleared: u32| Run {
+            seed_text: "TEST".into(),
+            seed: 1,
+            difficulty: default(),
+            players: 3,
+            team: 3,
+            solo,
+            sector,
+            cleared,
+            checkpoint: cleared,
+            lives: 3,
+            kills: 0,
+            ticks: 0,
+            phase: tanku_core::sim::RunPhase::Playing,
+            lost_to: None,
+            playtest: false,
+            earns: true,
+            free: false,
+            arena: false,
+            lull: None,
+            paused: false,
+        };
+        // The barrier lies across y = 16: P1 is next to it, P2 and P4 are far from it.
+        let running = [
+            (0, Vec2::new(0.0, 12.0)),
+            (1, Vec2::new(0.0, -10.0)),
+            (3, Vec2::new(5.0, 0.0)),
+        ];
+        let locked = barrier(12, false);
+        assert_eq!(waiting(&run(false, 12, 12), &locked, &running), [1, 3]);
+        // Not while it is fought, nor once it is open, nor for a single player, nor for the
+        // barrier of a sector that is not the one reached.
+        assert_eq!(
+            waiting(&run(false, 12, 11), &locked, &running),
+            [] as [u8; 0]
+        );
+        assert!(waiting(&run(false, 12, 12), &barrier(12, true), &running).is_empty());
+        assert!(waiting(&run(true, 12, 12), &locked, &running).is_empty());
+        assert!(waiting(&run(false, 13, 12), &locked, &running).is_empty());
+        assert_eq!(names(&[1], 0), "P2");
+        assert_eq!(names(&[1, 2, 3], 0), "P2, P3 and P4");
+        // The player at this screen reads "you", first.
+        assert_eq!(names(&[0, 2], 2), "you and P1");
     }
 
     #[test]
