@@ -9,7 +9,10 @@
 use std::f32::consts::FRAC_PI_2;
 
 use bevy::{
-    core_pipeline::tonemapping::Tonemapping, ecs::system::SystemParam, prelude::*,
+    core_pipeline::tonemapping::Tonemapping,
+    ecs::system::SystemParam,
+    light::cluster::{ClusterConfig, GlobalClusterSettings},
+    prelude::*,
     window::PrimaryWindow,
 };
 use tanku_core::{
@@ -165,8 +168,18 @@ impl OnScreen<'_, '_> {
 pub fn plugin(app: &mut App) {
     app.init_resource::<View>()
         .insert_resource(ClearColor(theme::VOID))
-        .add_systems(Startup, setup)
+        .add_systems(Startup, (setup, sort_lights_on_the_processor))
         .add_systems(Update, follow.after(scene::place));
+}
+
+/// Sorts the lights of the engine into the clusters of the view on the processor, as a
+/// browser does. The graphics card would do it in passes of its own every frame, buffers
+/// included, and the game has no light to sort: those passes cost the drawing a fraction of
+/// a millisecond each frame for nothing.
+fn sort_lights_on_the_processor(settings: Option<ResMut<GlobalClusterSettings>>) {
+    if let Some(mut settings) = settings {
+        settings.gpu_clustering = None;
+    }
 }
 
 fn setup(mut commands: Commands) {
@@ -175,6 +188,9 @@ fn setup(mut commands: Commands) {
         MainCamera,
         Camera3d::default(),
         Tonemapping::None,
+        // The lights of the engine are sorted into clusters of the view: there is no light,
+        // and one cluster does.
+        ClusterConfig::Single,
         Projection::Perspective(PerspectiveProjection {
             fov: FIELD_OF_VIEW.to_radians(),
             ..default()

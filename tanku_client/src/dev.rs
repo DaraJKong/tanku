@@ -218,6 +218,7 @@ pub fn add_engine(app: &mut App) {
                 exit_condition: ExitCondition::DontExit,
                 ..default()
             })
+            .set(crate::task_pools())
             .disable::<WinitPlugin>(),
         ScheduleRunnerPlugin::run_loop(Duration::from_secs_f64(1.0 / 60.0)),
     ))

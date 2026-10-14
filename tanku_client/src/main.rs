@@ -44,7 +44,10 @@ mod theme;
 mod unlocks;
 mod wake;
 
-use bevy::prelude::*;
+use bevy::{
+    app::{TaskPoolOptions, TaskPoolPlugin},
+    prelude::*,
+};
 use tanku_core::{CorePlugin, sim::Playtest};
 use tanku_server::ServerPlugin;
 
@@ -78,6 +81,22 @@ pub enum Overlay {
     Settings,
 }
 
+/// The most threads that the systems of the engine run on side by side.
+const COMPUTE_THREADS: usize = 4;
+
+/// The threads of the engine. It runs its systems side by side on the threads of a pool,
+/// which has nearly every core of the machine unless it is told otherwise. The work of a
+/// frame is small, and waking many threads for its pieces costs more than they save: on a
+/// machine of 24 cores, the main schedule of a fight of four players took 6.0 ms a frame on
+/// the 16 threads that the engine took, and 4.0 ms on four.
+pub fn task_pools() -> TaskPoolPlugin {
+    let mut options = TaskPoolOptions::default();
+    options.compute.max_threads = COMPUTE_THREADS;
+    TaskPoolPlugin {
+        task_pool_options: options,
+    }
+}
+
 fn main() {
     let options = cli::Options::from_command_line();
     let mut app = App::new();
@@ -90,18 +109,22 @@ fn main() {
         dev::add_engine(&mut app);
     } else {
         let settings = settings::Settings::load();
-        app.add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
-                title: "Tanku".into(),
-                fit_canvas_to_parent: true,
-                // Set from the start, so that the window doesn't open in one mode and jump
-                // to the other.
-                mode: settings.window_mode(),
-                present_mode: settings.present_mode(),
-                ..default()
-            }),
-            ..default()
-        }));
+        app.add_plugins(
+            DefaultPlugins
+                .set(WindowPlugin {
+                    primary_window: Some(Window {
+                        title: "Tanku".into(),
+                        fit_canvas_to_parent: true,
+                        // Set from the start, so that the window doesn't open in one mode and
+                        // jump to the other.
+                        mode: settings.window_mode(),
+                        present_mode: settings.present_mode(),
+                        ..default()
+                    }),
+                    ..default()
+                })
+                .set(task_pools()),
+        );
     }
     // The client embeds the server for solo and hosted games.
     app.add_plugins((CorePlugin, ServerPlugin))

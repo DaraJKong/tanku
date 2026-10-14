@@ -375,8 +375,9 @@ pub fn setup(
     );
     commands.insert_resource(Shapes {
         cube: meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
-        sphere: meshes.add(Sphere::new(0.5)),
-        hairline: meshes.add(Torus::new(0.487, 0.5)),
+        sphere: meshes.add(bubble_mesh()),
+        // The tube of the line is a fraction of a pixel across: a few sides are enough.
+        hairline: meshes.add(Torus::new(0.487, 0.5).mesh().minor_resolution(8)),
         disc: meshes.add(disc.build()),
         block: meshes.add(block_drawing().build()),
         explosive: meshes.add(crate_drawing().build()),
@@ -428,6 +429,18 @@ pub fn setup(
         blast: paint(materials, theme::DANGER),
         blast_fill: paint(materials, theme::DANGER.with_alpha(0.1)),
     });
+}
+
+/// The sphere of a shield. Its material is unlit and as faint all over, so that it shows as a
+/// disc whose edge alone tells how finely the sphere is cut: three subdivisions keep that edge
+/// within a tenth of a pixel of a circle, with 1,280 triangles. The engine's own sphere has
+/// 20,480, most of them smaller than a pixel, which a graphics card draws at a high cost.
+fn bubble_mesh() -> Mesh {
+    let sphere = Sphere::new(0.5);
+    sphere
+        .mesh()
+        .ico(3)
+        .unwrap_or_else(|_| sphere.mesh().build())
 }
 
 /// How much of a stretch of floor, from `from` to `to` meters along one axis of the tile, the
