@@ -40,14 +40,14 @@ const ROOM_EDGE: f32 = CALLOUT / 2.0 + 4.0;
 /// How much longer than the balloons need the ellipse is at least, where the room allows it.
 const CROWDED: f32 = 1.25;
 
-/// What points at the parts of the tank on show: where the tank stands, where each part is in
-/// the world and the number of its balloon, the room of the screen that the balloons keep
-/// inside, in the pixels of the interface, and the part whose balloon is lit, if one is, by
-/// its place in the list.
+/// What points at the parts of the tank on show: where the tank stands, where each part is on
+/// the tank, whether on its hull or on its turret, and the number of its balloon, the room of
+/// the screen that the balloons keep inside, in the pixels of the interface, and the part whose
+/// balloon is lit, if one is, by its place in the list.
 #[derive(Resource)]
 pub struct Callouts {
     stand: Stand,
-    parts: Vec<Vec3>,
+    parts: Vec<(bool, Vec3)>,
     numbers: Vec<usize>,
     room: Rect,
     lit: Option<usize>,
@@ -84,6 +84,10 @@ pub struct Exhibit;
 #[derive(Component)]
 struct Sway(f32);
 
+/// The turret of the tank on show, which may look around.
+#[derive(Component)]
+struct ShownTurret;
+
 /// How a tank is shown.
 pub struct Show {
     pub genome: Genome,
@@ -113,9 +117,14 @@ pub struct Stand {
 impl Stand {
     /// The place in the world of a point of the hull, or of the turret.
     pub fn point(&self, on_turret: bool, at: Vec3) -> Vec3 {
+        self.point_turned(on_turret, at, scene::facing(self.turret))
+    }
+
+    /// The place in the world of a point of the hull, or of the turret turned this way.
+    fn point_turned(&self, on_turret: bool, at: Vec3, turret: Quat) -> Vec3 {
         let origin = scene::to_world(self.at, 0.0);
         if on_turret {
-            origin + Vec3::Y * models::TURRET_HEIGHT + scene::facing(self.turret) * at
+            origin + Vec3::Y * models::TURRET_HEIGHT + turret * at
         } else {
             origin + scene::facing(self.hull) * at
         }
@@ -129,6 +138,7 @@ pub fn plugin(app: &mut App) {
             sway,
             point
                 .after(camera::follow)
+                .after(sway)
                 .run_if(resource_exists::<Callouts>),
         ),
     );
@@ -144,7 +154,7 @@ pub fn call_out(
 ) {
     let parts = anchors
         .iter()
-        .map(|(_, anchor)| stand.point(anchor.on_turret, anchor.at))
+        .map(|(_, anchor)| (anchor.on_turret, anchor.at))
         .collect();
     let numbers: Vec<usize> = anchors.iter().map(|(number, _)| *number).collect();
     commands.insert_resource(Callouts {
@@ -333,9 +343,12 @@ struct Pointer {
 
 /// Lays out the balloons around the tank: each one stands on an ellipse around it, on the side
 /// of its part, inside the room of the screen, and no two stand on each other. The ellipse is
-/// a circle where the room is large enough.
-fn pointers(callouts: &Callouts, screen: &OnScreen) -> Option<Vec<Pointer>> {
-    let middle = callouts.stand.point(false, Vec3::Y * models::TURRET_HEIGHT);
+/// a circle where the room is large enough. The balloons stand where the parts are while the
+/// turret points the way it rests, and stay there as it looks around: only their leaders follow
+/// the parts of the turret, which is turned this way now.
+fn pointers(callouts: &Callouts, screen: &OnScreen, turret: Quat) -> Option<Vec<Pointer>> {
+    let stand = &callouts.stand;
+    let middle = stand.point(false, Vec3::Y * models::TURRET_HEIGHT);
     let center = screen.point(middle)?;
     let meter = screen.point(middle + Vec3::X)?.distance(center);
     // The ellipse keeps inside the room around the middle of the tank, wherever in the room
@@ -344,9 +357,10 @@ fn pointers(callouts: &Callouts, screen: &OnScreen) -> Option<Vec<Pointer>> {
     let reach = (center - room.min).min(room.max - center) - ROOM_EDGE;
     let reach = reach.max(Vec2::splat(CALLOUT));
     let mut radii = Vec2::splat(meter * CIRCLE).min(reach);
-    let mut parts = Vec::with_capacity(callouts.parts.len());
-    for part in &callouts.parts {
-        parts.push(screen.point(*part)?);
+    let (mut resting, mut parts) = (Vec::new(), Vec::new());
+    for &(on_turret, at) in &callouts.parts {
+        resting.push(screen.point(stand.point(on_turret, at))?);
+        parts.push(screen.point(stand.point_turned(on_turret, at, turret))?);
     }
     let mut ellipse = Ellipse::new(center, radii);
     // A tank of many parts drawn small gets a wider ellipse, as far as the room holds one, so
@@ -359,7 +373,7 @@ fn pointers(callouts: &Callouts, screen: &OnScreen) -> Option<Vec<Pointer>> {
         radii = (radii * wanted / ellipse.around()).min(reach);
         ellipse = Ellipse::new(center, radii);
     }
-    let places: Vec<f32> = parts
+    let places: Vec<f32> = resting
         .iter()
         .map(|part| ellipse.at_angle((*part - center).to_angle(), radii))
         .collect();
@@ -380,6 +394,7 @@ fn pointers(callouts: &Callouts, screen: &OnScreen) -> Option<Vec<Pointer>> {
 fn point(
     screen: OnScreen,
     callouts: Res<Callouts>,
+    turrets: Query<&Transform, With<ShownTurret>>,
     mut pieces: Query<(
         &Callout,
         &mut Node,
@@ -391,7 +406,12 @@ fn point(
     )>,
     mut figures: Query<&mut TextColor>,
 ) {
-    let pointers = pointers(&callouts, &screen);
+    let resting = scene::facing(callouts.stand.turret);
+    let turret = turrets
+        .iter()
+        .next()
+        .map_or(resting, |turret| turret.rotation);
+    let pointers = pointers(&callouts, &screen, turret);
     for (piece, mut node, mut transform, mut visibility, mut fill, border, children) in &mut pieces
     {
         let index = match *piece {
@@ -549,6 +569,7 @@ pub fn put(
                 rotation: scene::facing(stand.turret),
                 ..default()
             },
+            ShownTurret,
             ChildOf(tank),
         ))
         .id();
