@@ -90,6 +90,7 @@ use crate::{
     garage::Garage,
     host::{HostPort, WebPort},
     input,
+    margin::Margin,
     music::Baton,
     profile,
     session::{SessionRequest, Sign},
@@ -116,6 +117,33 @@ struct Script {
     press: Option<String>,
     /// The password of the game that the script hosts next.
     password: String,
+}
+
+/// Whether the interface is hidden, to look at the game alone.
+#[derive(Resource, Default)]
+struct Bare(bool);
+
+/// Hides every part of the interface while the script asks for the game alone, and gives
+/// each back the visibility it had.
+fn strip(
+    bare: Res<Bare>,
+    mut roots: Query<(Entity, &mut Visibility), (With<Node>, Without<ChildOf>)>,
+    mut hidden: Local<Vec<(Entity, Visibility)>>,
+) {
+    if bare.0 {
+        for (entity, mut visibility) in &mut roots {
+            if *visibility != Visibility::Hidden {
+                hidden.push((entity, *visibility));
+                *visibility = Visibility::Hidden;
+            }
+        }
+    } else {
+        for (entity, was) in hidden.drain(..) {
+            if let Ok((_, mut visibility)) = roots.get_mut(entity) {
+                *visibility = was;
+            }
+        }
+    }
 }
 
 /// The music that a scripted run would play, kept from the command `tape` on.
@@ -255,8 +283,13 @@ pub fn plugin(app: &mut App) {
         press: None,
         password: String::new(),
     })
+    .init_resource::<Bare>()
     .add_systems(PostStartup, draw_into_an_image)
     .add_systems(Update, run_script)
+    .add_systems(
+        PostUpdate,
+        strip.before(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate),
+    )
     .add_systems(Last, roll_the_tape)
     .add_systems(
         PreUpdate,
@@ -446,12 +479,14 @@ fn run_script(
         Res<Options>,
         ResMut<Garage>,
     ),
-    (mut session_requests, mut keys, mut port, mut web, mut hold): (
+    (mut session_requests, mut keys, mut port, mut web, mut hold, mut margin, mut bare): (
         MessageWriter<SessionRequest>,
         MessageWriter<KeyboardInput>,
         ResMut<HostPort>,
         ResMut<WebPort>,
         ResMut<Hold>,
+        ResMut<Margin>,
+        ResMut<Bare>,
     ),
     mut events: MessageWriter<SimEvent>,
     mut exit: MessageWriter<AppExit>,
@@ -593,6 +628,11 @@ fn run_script(
             }
         }
         "turn" => view.turns = number(1) as i32,
+        // Takes the dimensions and the hatching out of the void with `margin off`, and gives
+        // them back with `margin on`.
+        "margin" => *margin = Margin(word(1) != "off"),
+        // Hides the interface, or shows it again with `bare off`: the game alone.
+        "bare" => bare.0 = word(1) != "off",
         // Holds everything that wakes at one moment of its rise, in seconds since it woke.
         // Without a number, what wakes takes its time again.
         "lift" => *hold = Hold(word(1).parse().ok()),

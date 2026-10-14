@@ -32,7 +32,7 @@ use crate::{
 };
 
 pub const WALL_HEIGHT: f32 = 1.2;
-const WALL_THICKNESS: f32 = 0.4;
+pub const WALL_THICKNESS: f32 = 0.4;
 const BLOCK_HEIGHT: f32 = 1.1;
 /// An explosive crate is lower than a block, and a little smaller than the square it stands on.
 const CRATE_HEIGHT: f32 = 0.9;
@@ -152,7 +152,7 @@ pub struct Paints {
     /// The sheet with its grid.
     pub floor: Handle<StandardMaterial>,
     /// The same two for a sector that no player has entered yet.
-    ink_dormant: Handle<StandardMaterial>,
+    pub ink_dormant: Handle<StandardMaterial>,
     floor_dormant: Handle<StandardMaterial>,
     /// The same two while the light of a sector comes up, as a playtest can have it.
     ink_waking: Handle<StandardMaterial>,
@@ -179,9 +179,19 @@ pub struct Paints {
 /// What a part of the corridor is drawn with, which changes when a player enters its sector:
 /// its floor, its walls and its obstacles.
 #[derive(Component, Clone, Copy)]
-struct Ground {
+pub struct Ground {
     sector: u32,
     floor: bool,
+}
+
+impl Ground {
+    /// Ink on the ground of a sector, which is dull while the sector sleeps.
+    pub fn ink(sector: u32) -> Self {
+        Self {
+            sector,
+            floor: false,
+        }
+    }
 }
 
 /// The two drawings of a block or of a crate: as it stands, and as the plan of it that lies
@@ -283,6 +293,11 @@ enum MinePart {
     Blast,
 }
 
+/// The systems that draw what the simulation contains, and wake the sectors that a player
+/// enters.
+#[derive(SystemSet, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Drawing;
+
 pub fn plugin(app: &mut App) {
     app.init_resource::<Plans>();
     app.add_systems(PreStartup, setup).add_systems(
@@ -301,7 +316,8 @@ pub fn plugin(app: &mut App) {
             place,
             (roll_bullets, stretch_trails),
         )
-            .chain(),
+            .chain()
+            .in_set(Drawing),
     );
 }
 
