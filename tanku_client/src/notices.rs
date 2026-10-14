@@ -813,16 +813,26 @@ fn spawn(commands: &mut Commands, told: &Told) -> Entity {
                 "Your tank is destroyed"
             };
             words(commands, (first, root), big, title, heading);
-            if let Some(blow) = blow {
+            // What destroyed it, and among several players who can repair it, on one line.
+            let menders = menders_words(menders);
+            if blow.is_some() || menders.is_some() {
                 let second = row(commands, column, 9.0);
-                square(commands, (second, root), 11.0, (report::color(blow), None));
-                words(
-                    commands,
-                    (second, root),
-                    line,
-                    cause(blow, *solo),
-                    theme::TEXT,
-                );
+                if let Some(blow) = blow {
+                    square(commands, (second, root), 11.0, (report::color(blow), None));
+                    words(
+                        commands,
+                        (second, root),
+                        line,
+                        cause(blow, *solo),
+                        theme::TEXT,
+                    );
+                }
+                if let Some(said) = menders {
+                    if blow.is_some() {
+                        square(commands, (second, root), 3.0, (theme::TEXT_DIM, None));
+                    }
+                    words(commands, (second, root), line, said, theme::TEXT);
+                }
             }
             if let Some((left, (said, color))) = lives.and_then(|n| Some((n, lives_words(n)?))) {
                 let third = row(commands, column, 7.0);
@@ -837,10 +847,6 @@ fn spawn(commands: &mut Commands, told: &Told) -> Entity {
                     square(commands, (third, root), 14.0, look);
                 }
                 words(commands, (third, root), line, said, color);
-            }
-            if let Some(said) = menders_words(menders) {
-                let third = row(commands, column, 7.0);
-                words(commands, (third, root), line, said, theme::TEXT);
             }
         }
     }

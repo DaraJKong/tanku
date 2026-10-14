@@ -177,13 +177,17 @@ fn ink_circles(
     }
 }
 
+/// The seats of players, one bit for each, as a wreck counts those who repair it.
+pub type Seats = u8;
+
 /// What the player at this screen is told about repairs.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Word {
-    /// Their tank is a wreck that nobody works on.
-    Wrecked,
-    /// A teammate repairs their tank, and has so many seconds to go.
-    Mended(f32),
+    /// Their tank is a wreck that nobody works on, and the teammates whose tanks run can
+    /// repair it.
+    Wrecked(Seats),
+    /// Teammates repair their tank, and have so many seconds to go.
+    Mended(f32, Seats),
     /// The tank of a teammate is a wreck somewhere.
     Wanted,
     /// Their tank is in the circle of a wreck.
@@ -192,22 +196,27 @@ pub enum Word {
     Repairing(f32),
 }
 
-/// What there is to tell the player whose tank is at a place: whether it is a wreck, and
-/// how far its repair has got, or whether its player holds the repair key. The other wrecks
-/// are given with how far their repair has got, and whether this player's tank is the one,
-/// or one of those, at it.
+/// What there is to tell the player whose tank is at a place: whether it is a wreck, with
+/// how far its repair has got and who is at it, or whether its player holds the repair key.
+/// The teammates whose tanks run are those who can repair it. The other wrecks are given with
+/// how far their repair has got, and whether this player's tank is the one, or one of those,
+/// at it.
 ///
 /// A tank repairs one wreck at a time. The host says which one. Until it has, a tank whose
 /// player holds the key is taken to be at the nearest wreck within reach, which is the one
 /// that the host picks.
-pub fn word(own: (Vec2, Option<f32>, bool), wrecks: &[(Vec2, f32, bool)]) -> Option<Word> {
+pub fn word(
+    own: (Vec2, Option<(f32, Seats)>, bool),
+    menders: Seats,
+    wrecks: &[(Vec2, f32, bool)],
+) -> Option<Word> {
     let (place, wrecked, holds) = own;
     let left = |repair: f32| REPAIR_TIME - repair;
-    if let Some(repair) = wrecked {
+    if let Some((repair, repairers)) = wrecked {
         return Some(if repair > 0.0 {
-            Word::Mended(left(repair))
+            Word::Mended(left(repair), repairers)
         } else {
-            Word::Wrecked
+            Word::Wrecked(menders)
         });
     }
     let reach = |(wreck, ..): &(Vec2, f32, bool)| wreck.distance(place);
@@ -222,15 +231,38 @@ pub fn word(own: (Vec2, Option<f32>, bool), wrecks: &[(Vec2, f32, bool)]) -> Opt
     }
 }
 
+/// The players of some seats, by their numbers: "P2", "P2 and P3", "P2, P3 and P4".
+fn named(seats: Seats) -> Option<String> {
+    let names: Vec<String> = (0..8u8)
+        .filter(|seat| seats & (1 << seat) != 0)
+        .map(crate::hud::short_name)
+        .collect();
+    match names.as_slice() {
+        [] => None,
+        [one] => Some(one.clone()),
+        [first @ .., last] => Some(format!("{} and {last}", first.join(", "))),
+    }
+}
+
 impl Word {
-    /// The sentence, with the name of the repair key.
+    /// The sentence, with the name of the repair key. It names the teammates who repair the
+    /// player's tank, or the one who can.
     pub fn sentence(self, key: &str) -> String {
         let seconds = |left: f32| left.max(0.0).ceil() as u32;
         match self {
-            Word::Wrecked => "Your tank is destroyed - a teammate can repair it".to_string(),
-            Word::Mended(left) => {
-                format!("A teammate repairs your tank - {} s", seconds(left))
+            Word::Wrecked(0) => "Your tank is destroyed".to_string(),
+            Word::Wrecked(menders) if menders.count_ones() == 1 => {
+                let one = named(menders).unwrap_or_default();
+                format!("Your tank is destroyed - {one} can repair it")
             }
+            Word::Wrecked(_) => "Your tank is destroyed - a teammate can repair it".to_string(),
+            Word::Mended(left, repairers) => match named(repairers) {
+                Some(who) if repairers.count_ones() == 1 => {
+                    format!("{who} repairs your tank - {} s", seconds(left))
+                }
+                Some(who) => format!("{who} repair your tank - {} s", seconds(left)),
+                None => format!("A teammate repairs your tank - {} s", seconds(left)),
+            },
             Word::Wanted => format!("Hold {key} in the circle of a wreck to repair it"),
             Word::Within => format!("Hold {key} to repair"),
             Word::Repairing(left) => {
@@ -319,15 +351,24 @@ mod tests {
         let near = Vec2::new(REPAIR_RADIUS - 0.1, 0.0);
         let far = Vec2::new(REPAIR_RADIUS + 0.1, 0.0);
         // Nothing while every tank runs.
-        assert_eq!(word((here, None, false), &[]), None);
-        assert_eq!(word((here, None, true), &[]), None);
+        assert_eq!(word((here, None, false), 0, &[]), None);
+        assert_eq!(word((here, None, true), 0, &[]), None);
         // A wreck somewhere, then within reach, then under repair.
         let idle = |wreck: Vec2| (wreck, 0.0, false);
-        assert_eq!(word((here, None, false), &[idle(far)]), Some(Word::Wanted));
-        assert_eq!(word((here, None, true), &[idle(far)]), Some(Word::Wanted));
-        assert_eq!(word((here, None, false), &[idle(near)]), Some(Word::Within));
         assert_eq!(
-            word((here, None, true), &[(near, 0.5, true)]),
+            word((here, None, false), 0, &[idle(far)]),
+            Some(Word::Wanted)
+        );
+        assert_eq!(
+            word((here, None, true), 0, &[idle(far)]),
+            Some(Word::Wanted)
+        );
+        assert_eq!(
+            word((here, None, false), 0, &[idle(near)]),
+            Some(Word::Within)
+        );
+        assert_eq!(
+            word((here, None, true), 0, &[(near, 0.5, true)]),
             Some(Word::Repairing(REPAIR_TIME - 0.5))
         );
         // A tank repairs one wreck at a time. Of several within reach, the one that the host
@@ -336,28 +377,29 @@ mod tests {
         let (nearer, other) = (near / 2.0, -near);
         let wrecks = [(nearer, 0.0, false), (near, 0.5, true), (other, 1.5, false)];
         assert_eq!(
-            word((here, None, true), &wrecks),
+            word((here, None, true), 0, &wrecks),
             Some(Word::Repairing(REPAIR_TIME - 0.5))
         );
         // Until the host has said, a tank that holds the key is at the nearest one.
         let wrecks = [(near, 0.0, false), (nearer, 1.0, false), (far, 1.8, false)];
         assert_eq!(
-            word((here, None, true), &wrecks),
+            word((here, None, true), 0, &wrecks),
             Some(Word::Repairing(REPAIR_TIME - 1.0))
         );
         // Once the key is let go, the tank is at none, whatever the host still says.
         assert_eq!(
-            word((here, None, false), &[(near, 0.5, true)]),
+            word((here, None, false), 0, &[(near, 0.5, true)]),
             Some(Word::Within)
         );
-        // The player whose tank is the wreck waits, and sees when someone is at it.
+        // The player whose tank is the wreck waits, knows who can repair it, and sees who is
+        // at it.
         assert_eq!(
-            word((here, Some(0.0), true), &[idle(near)]),
-            Some(Word::Wrecked)
+            word((here, Some((0.0, 0)), true), 0b10, &[idle(near)]),
+            Some(Word::Wrecked(0b10))
         );
         assert_eq!(
-            word((here, Some(1.0), false), &[]),
-            Some(Word::Mended(REPAIR_TIME - 1.0))
+            word((here, Some((1.0, 0b100)), false), 0b110, &[]),
+            Some(Word::Mended(REPAIR_TIME - 1.0, 0b100))
         );
     }
 
@@ -376,15 +418,29 @@ mod tests {
             Word::Repairing(0.2).sentence("R"),
             "Repairing - 1 s - keep holding R"
         );
+        // They name who repairs the tank, and who can.
         assert_eq!(
-            Word::Mended(2.5).sentence("R"),
-            "A teammate repairs your tank - 3 s"
+            Word::Mended(2.5, 0b10).sentence("R"),
+            "P2 repairs your tank - 3 s"
         );
+        assert_eq!(
+            Word::Mended(0.5, 0b1010).sentence("R"),
+            "P2 and P4 repair your tank - 1 s"
+        );
+        assert_eq!(
+            Word::Wrecked(0b100).sentence("R"),
+            "Your tank is destroyed - P3 can repair it"
+        );
+        assert_eq!(
+            Word::Wrecked(0b110).sentence("R"),
+            "Your tank is destroyed - a teammate can repair it"
+        );
+        assert_eq!(Word::Wrecked(0).sentence("R"), "Your tank is destroyed");
         assert!(
             Word::Wanted
                 .sentence("R")
                 .starts_with("Hold R in the circle")
         );
-        assert!(!Word::Wrecked.sentence("R").contains('R'));
+        assert!(!Word::Wrecked(0b10).sentence("R").contains('R'));
     }
 }

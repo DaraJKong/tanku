@@ -941,8 +941,14 @@ fn status(
                 Some((place.0, wreck.repair, wreck.repaired_by(seat.0)))
             })
             .collect();
-        let own = (place.0, wreck.map(|wreck| wreck.repair), command.repair);
-        repair::word(own, &wrecks)
+        // The teammates whose tanks run can repair it, and those at it are named.
+        let menders = crew
+            .iter()
+            .filter(|(player, wreck)| !wreck && player.seat != seat.0);
+        let menders = menders.fold(0, |seats, (player, _)| seats | 1 << player.seat);
+        let wreck = wreck.map(|wreck| (wreck.repair, wreck.repairers));
+        let own = (place.0, wreck, command.repair);
+        repair::word(own, menders, &wrecks)
     });
     // A single player on their last life is told so, in the color of danger, for as long as
     // it lasts.
