@@ -81,12 +81,10 @@ pub enum Cue {
     /// The first player is through a barrier, and the sector behind it wakes. An experiment
     /// of a playtest: the music marks that moment otherwise, with its roll.
     Entered,
-    /// The tank of a teammate is destroyed: the tonic, then the fifth under it, plucked so
-    /// that they are heard over a blast.
-    Down,
-    /// One more loss ends the run: the last tank that runs, or the last life of a single
-    /// player. The fall of a loss, one note further. The end of a run falls the same way, an
-    /// octave lower and slower.
+    /// One more loss ends the run: a loss leaves the last tank that runs, or a single player
+    /// their last life. The tonic, the fifth under it and the tonic under that, plucked so
+    /// that they are heard over a blast. The end of a run falls the same way, an octave lower
+    /// and slower.
     Last,
     /// A run has earned something: a knock as a stamp lands, then two notes that go on up from
     /// where the cue of a cleared sector stops.
@@ -95,7 +93,7 @@ pub enum Cue {
 
 impl Cue {
     /// Every cue, in the order of their numbers.
-    pub const ALL: [Cue; 22] = [
+    pub const ALL: [Cue; 21] = [
         Cue::Shot,
         Cue::EnemyShot,
         Cue::Ricochet,
@@ -115,7 +113,6 @@ impl Cue {
         Cue::Wave,
         Cue::Appeared,
         Cue::Entered,
-        Cue::Down,
         Cue::Last,
         Cue::Stamp,
     ];
@@ -142,7 +139,6 @@ impl Cue {
             Cue::Wave => 0.9,
             Cue::Appeared => 0.3,
             Cue::Entered => 0.52,
-            Cue::Down => 0.6,
             Cue::Last => 0.95,
             Cue::Stamp => 1.4,
         }
@@ -225,10 +221,6 @@ impl Cue {
                     * (0.42 * tone(since, frequency(E3)) * decay(since * 16.0)
                         + 0.18 * tone(since, frequency(E4)) * decay(since * 24.0)
                         + 0.55 * noise.dull(0.5) * decay(since * 45.0))
-            }
-            Cue::Down => {
-                let fall = pluck(t, 0.0, A5) + pluck(t, LOSS_STEP, E5);
-                0.3 * fall + 0.22 * knock(t, 0.0, noise)
             }
             Cue::Last => {
                 let fall =
@@ -356,14 +348,13 @@ mod tests {
 
     #[test]
     fn cues_play_the_tonic_of_the_music_and_its_fifth() {
-        let played: [(Cue, &[u8]); 9] = [
+        let played: [(Cue, &[u8]); 8] = [
             (Cue::MinePlaced, &[E5]),
             (Cue::ShieldBlocked, &[A5, E6]),
             (Cue::Cleared, &[A2, E5, A5]),
             (Cue::LifeTaken, &[E5, A5, E6]),
             (Cue::Unlocked, &[A5, E6]),
             (Cue::RunOver, &[A3, E4, A4]),
-            (Cue::Down, &[E3, E5, A5]),
             (Cue::Last, &[E3, A4, E5, A5]),
             (Cue::Stamp, &[E3, E6, A6]),
         ];
@@ -430,7 +421,7 @@ mod tests {
     }
 
     #[test]
-    fn a_loss_falls_and_the_last_one_falls_further() {
+    fn the_last_loss_falls_to_the_a_where_the_end_of_a_run_starts() {
         // The strongest of the notes of a fall in each step of it.
         let strongest = |cue: Cue, step: f32| {
             let samples = cue.samples();
@@ -441,9 +432,8 @@ mod tests {
                 .into_iter()
                 .max_by(|a, b| strength(a).total_cmp(&strength(b)))
         };
-        assert_eq!(strongest(Cue::Down, 0.0), Some(A5));
-        assert_eq!(strongest(Cue::Down, 1.0), Some(E5));
-        // The last one goes on to the A under them, where the end of a run starts its own fall.
+        // From the tonic to the fifth under it, then to the A under them, where the end of a
+        // run starts its own fall.
         assert_eq!(strongest(Cue::Last, 0.0), Some(A5));
         assert_eq!(strongest(Cue::Last, 1.0), Some(E5));
         assert_eq!(strongest(Cue::Last, 2.0), Some(A4));
@@ -458,7 +448,7 @@ mod tests {
                 .sum::<f64>()
         };
         let high = |cue: Cue| power(cue, 400.0, 5000.0) / power(cue, 0.0, 5000.0);
-        assert!(high(Cue::Down) > 0.6, "{}", high(Cue::Down));
+        assert!(high(Cue::Last) > 0.6, "{}", high(Cue::Last));
         assert!(high(Cue::Blast) < 0.2, "{}", high(Cue::Blast));
     }
 

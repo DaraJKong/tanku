@@ -330,7 +330,7 @@ mod tests {
     #[test]
     fn a_cue_that_is_asked_for_plays_at_full_volume() {
         let mut app = game();
-        for cue in [Cue::Down, Cue::Last, Cue::Stamp] {
+        for cue in [Cue::Last, Cue::Stamp] {
             app.world_mut().write_message(Sound(cue));
             app.update();
             assert_eq!(played(&mut app), [(cue, 1.0)], "{cue:?}");

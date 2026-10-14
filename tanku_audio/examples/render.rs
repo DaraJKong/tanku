@@ -202,7 +202,6 @@ fn told(cue: Cue) -> &'static str {
         Cue::Wave => "A wave of an arena is on its way",
         Cue::Appeared => "The tanks of a wave are there",
         Cue::Entered => "A sector of the corridor is entered",
-        Cue::Down => "A teammate's tank is destroyed",
         Cue::Last => "One more loss ends the run",
         Cue::Stamp => "A run has earned something",
     }

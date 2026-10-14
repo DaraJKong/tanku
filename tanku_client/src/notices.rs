@@ -339,14 +339,12 @@ fn forget(
     *best = Best::default();
 }
 
-/// The cue of a loss of the players, by the tanks that still run after it: one more loss ends
-/// the run when one is left. None is left when the run is over, which has a cue of its own.
+/// The cue of a loss of the players, by the tanks that still run after it. Only a loss after
+/// which one more ends the run has one, when a single tank is left: the others are told by
+/// what shows and by their blast. None is left when the run is over, which has a cue of its
+/// own.
 fn loss_cue(running: usize) -> Option<Cue> {
-    match running {
-        0 => None,
-        1 => Some(Cue::Last),
-        _ => Some(Cue::Down),
-    }
+    (running == 1).then_some(Cue::Last)
 }
 
 /// The cue of a single player's loss: the last life has one of its own.
@@ -563,9 +561,7 @@ fn tell(
     // One's own loss is told before a teammate's that comes with it.
     if let Some(ground) = own_loss {
         let menders: Vec<u8> = running.iter().map(|(seat, _)| *seat).collect();
-        if menders.len() == 1 {
-            cue = cue.or(Some(Cue::Last));
-        }
+        cue = cue.or(loss_cue(menders.len()));
         let own = Told::Own {
             blow: run.lost_to,
             solo: false,
@@ -1438,9 +1434,9 @@ mod tests {
     }
 
     #[test]
-    fn a_loss_that_leaves_one_tank_running_has_the_cue_of_the_last() {
-        assert_eq!(loss_cue(3), Some(Cue::Down));
-        assert_eq!(loss_cue(2), Some(Cue::Down));
+    fn only_a_loss_after_which_one_more_ends_the_run_has_a_cue() {
+        assert_eq!(loss_cue(3), None);
+        assert_eq!(loss_cue(2), None);
         assert_eq!(loss_cue(1), Some(Cue::Last));
         // The end of a run has its own.
         assert_eq!(loss_cue(0), None);
@@ -1554,10 +1550,10 @@ mod tests {
     }
 
     #[test]
-    fn the_loss_of_a_teammate_is_told_with_its_cue() {
+    fn the_loss_of_a_teammate_is_told_and_heard_once_one_tank_is_left() {
         let (mut app, tanks) = game(&[0, 1, 2]);
         assert_eq!(heard(&mut app), (vec![], None));
-        // Player 3's tank is destroyed: two tanks still run.
+        // Player 3's tank is destroyed: two tanks still run, and the loss is only seen.
         app.world_mut()
             .entity_mut(tanks[2])
             .insert(Wreck::default());
@@ -1567,10 +1563,7 @@ mod tests {
             wreck: Vec2::new(10.0, 0.0),
             last,
         };
-        assert_eq!(
-            heard(&mut app),
-            (vec![Cue::Down], Some(lost(vec![2], None)))
-        );
+        assert_eq!(heard(&mut app), (vec![], Some(lost(vec![2], None))));
         assert_eq!(app.world().resource::<Alarms>().lost(2), Some(0.0));
         assert_eq!(app.world().resource::<Flash>().age, 0.0);
         // Then player 2's: the player at this screen is the last tank that runs.
