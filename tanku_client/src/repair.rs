@@ -18,11 +18,10 @@ use crate::{
     scene, theme,
 };
 
-/// The arcs in which the circle of a wreck is inked in, the width of their line, and the
-/// dashes of the circle.
+/// The arcs in which the circle of a wreck is inked in, and the width of their line. The circle
+/// itself is a reach, in a phantom line.
 const STEPS: usize = 36;
 const INKED: f32 = 0.09;
-const DASHES: usize = 72;
 
 /// The circle around a wreck.
 #[derive(Component)]
@@ -58,12 +57,8 @@ fn setup(
 ) {
     // A drawing in white takes the color of its material.
     let mut dashes = Draft::default();
-    dashes.ring(
-        Vec3::ZERO,
-        (REPAIR_RADIUS - draft::LINE, REPAIR_RADIUS),
-        (DASHES, 0.5),
-        Color::WHITE,
-    );
+    let ring = (REPAIR_RADIUS - draft::LINE, REPAIR_RADIUS);
+    dashes.patterned_ring(Vec3::ZERO, ring, &draft::PHANTOM, Color::WHITE);
     // One arc, at the right of the wreck: each is turned to its place.
     let mut step = Draft::default();
     step.ring(

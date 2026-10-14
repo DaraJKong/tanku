@@ -35,10 +35,6 @@ const FORK_WIDTH: f32 = 0.05;
 /// How many times those lines show or hide while they flash, each for as long: an odd
 /// number, so that they show at first and show again when the bullet splits.
 const FLASHES: u32 = 5;
-/// The dashes of the circle that a blast to come will reach, which are those of the circle
-/// around an armed mine.
-const BLAST_DASHES: (usize, f32) = (42, 0.5);
-
 /// The drawing of what the bullets are about to do.
 #[derive(Component)]
 struct Ahead;
@@ -150,7 +146,8 @@ fn drawing(signs: &[Sign]) -> Draft {
             }
             Sign::Blast { at } => {
                 let ring = (BLAST_RADIUS - draft::LINE, BLAST_RADIUS);
-                draft.ring(scene::to_world(at, 3.0 * LIFT), ring, BLAST_DASHES, red);
+                let center = scene::to_world(at, 3.0 * LIFT);
+                draft.patterned_ring(center, ring, &draft::PHANTOM, red);
             }
             Sign::Fork { at, heading, whole } => {
                 for side in [-1.0, 1.0] {
@@ -459,10 +456,11 @@ mod tests {
         assert!((ink(&long) - 8.0 * share).abs() < dash);
         assert!((ink(&short) - 3.97 * share).abs() < dash);
 
-        // The circle of a blast is red, in dashes, on the floor.
+        // The circle of a blast is red, on the floor, in the phantom line of a reach: 27 of
+        // its 36 widths are inked.
         let blast = drawing(&[Sign::Blast { at: to }]);
         let whole = std::f32::consts::PI * (2.0 * BLAST_RADIUS - draft::LINE) * draft::LINE;
-        assert!((blast.area(red) / whole - 0.5).abs() < 0.02);
+        assert!((blast.area(red) / whole - 0.75).abs() < 0.03);
         assert!(blast.bounds().1.y < 0.05);
         // The two ways of a bullet that splits leave its nose at the angle of the split.
         let fork = |whole: bool| {
@@ -475,7 +473,8 @@ mod tests {
         let (dashed, whole) = (fork(false), fork(true));
         let length = FORK.1 - FORK.0;
         assert!((whole.area(white) - 2.0 * length * FORK_WIDTH).abs() < 1e-4);
-        assert!(dashed.area(white) < 0.7 * whole.area(white));
+        // In dashes, a gap of 3 widths after each dash of 12.
+        assert!(dashed.area(white) < 0.9 * whole.area(white));
         let reach = scene::to_ground(whole.bounds().1);
         assert!((reach.x - FORK.1 * SPLIT_ANGLE.cos()).abs() < FORK_WIDTH);
         assert!((reach.y.abs() - FORK.1 * SPLIT_ANGLE.sin()).abs() < FORK_WIDTH);

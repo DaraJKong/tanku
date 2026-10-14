@@ -12,8 +12,18 @@ use bevy::{asset::RenderAssetUsages, mesh::PrimitiveTopology, prelude::*};
 pub const LINE: f32 = 0.04;
 /// How far a line lies above the face it is drawn on, so that the two don't fight.
 pub const LIFT: f32 = 0.004;
-/// A dash of a line that stands for what isn't there, and the gap after it.
-pub const DASH: (f32, f32) = (0.12, 0.08);
+/// A dash of a line that stands for what isn't there, and the gap after it: 12 and 3 widths
+/// of the line, as ISO 128-20 has them.
+pub const DASH: (f32, f32) = (12.0 * LINE, 3.0 * LINE);
+/// The wide line of ISO 128-20's group, twice its narrow one: the edges of what stands, walls,
+/// blocks and crates. Tanks keep the line of their parts.
+pub const WIDE: f32 = 0.06;
+
+/// The patterns of ISO 128-20, in widths of the line: a dash, a gap, and so on. A dot is drawn
+/// a width and a half long, so that it shows. A phantom line draws a reach, a chain line an
+/// axis.
+pub const PHANTOM: [f32; 6] = [24.0, 3.0, 1.5, 3.0, 1.5, 3.0];
+pub const CHAIN: [f32; 4] = [24.0, 3.0, 1.5, 3.0];
 /// A circle too small for this many dashes is drawn whole.
 const FEWEST_DASHES: usize = 4;
 /// Sides of the polygon that stands for a circle of one meter in radius. Smaller circles
@@ -236,6 +246,70 @@ impl Draft {
         self.ring(center, (inner, outer), dashes, color);
     }
 
+    /// A flat ring in a pattern of ISO 128-20, fitted around it: whole repetitions of the
+    /// pattern, a little stretched. `pattern` is in widths of the ring.
+    pub fn patterned_ring(
+        &mut self,
+        center: Vec3,
+        (inner, outer): (f32, f32),
+        pattern: &[f32],
+        color: Color,
+    ) {
+        let width = outer - inner;
+        let period: f32 = pattern.iter().sum::<f32>() * width;
+        let circumference = TAU * outer;
+        let count = ((circumference / period).round() as usize).max(1);
+        let stretch = circumference / (count as f32 * period);
+        let mut turn = 0.0;
+        for _ in 0..count {
+            for (index, &element) in pattern.iter().enumerate() {
+                let length = element * width * stretch / circumference;
+                if index % 2 == 0 {
+                    let steps = ((length * sides(outer) as f32).ceil() as usize).max(1);
+                    for step in 0..steps {
+                        let at = |step: usize| turn + length * step as f32 / steps as f32;
+                        self.face(
+                            &[
+                                around(center, inner, at(step)),
+                                around(center, outer, at(step)),
+                                around(center, outer, at(step + 1)),
+                                around(center, inner, at(step + 1)),
+                            ],
+                            color,
+                        );
+                    }
+                }
+                turn += length;
+            }
+        }
+    }
+
+    /// A flat strip in a pattern of ISO 128-20 between two points of the same height, which
+    /// starts and ends with a dash. `pattern` is in widths of the strip.
+    pub fn patterned(&mut self, from: Vec3, to: Vec3, width: f32, pattern: &[f32], color: Color) {
+        let length = from.distance(to);
+        let period: f32 = pattern.iter().sum::<f32>() * width;
+        // Whole repetitions, and a last dash.
+        // A negative count, for a strip shorter than a dash, saturates to none.
+        let count = ((length - pattern[0] * width) / period).round() as usize;
+        let fitted = count as f32 * period + pattern[0] * width;
+        let stretch = length / fitted;
+        let mut along = 0.0;
+        for repetition in 0..=count {
+            for (index, &element) in pattern.iter().enumerate() {
+                let step = element * width * stretch;
+                if index % 2 == 0 {
+                    let (start, end) = (along / length, ((along + step) / length).min(1.0));
+                    self.line(from.lerp(to, start), from.lerp(to, end), width, color);
+                }
+                along += step;
+                if repetition == count {
+                    break;
+                }
+            }
+        }
+    }
+
     /// A rectangle lying flat around `center`.
     pub fn plate(&mut self, center: Vec3, size: Vec2, color: Color) {
         let half = size / 2.0;
@@ -287,21 +361,27 @@ impl Draft {
         }
     }
 
-    /// A box with its edges drawn: a line inside the edge of its top face, and one around
-    /// its foot.
-    pub fn outlined(&mut self, center: Vec3, size: Vec3, (top, side, line): (Color, Color, Color)) {
+    /// A box with its edges drawn: a line of this width inside the edge of its top face, and
+    /// one around its foot.
+    pub fn outlined(
+        &mut self,
+        center: Vec3,
+        size: Vec3,
+        (top, side, line): (Color, Color, Color),
+        width: f32,
+    ) {
         self.solid(center, size, top, side);
         let plan = Vec2::new(size.x, size.z);
         let lid = center + Vec3::Y * (size.y / 2.0 + LIFT);
-        self.frame(lid, plan, LINE, line);
+        self.frame(lid, plan, width, line);
         let foot = center - Vec3::Y * (size.y / 2.0 - LIFT);
-        self.frame(foot, plan, -LINE, line);
+        self.frame(foot, plan, -width, line);
     }
 
     /// A line up each of the four corners of a box. It stands a little proud of the faces it
     /// joins, so that it shows on both.
-    pub fn corners(&mut self, center: Vec3, size: Vec3, color: Color) {
-        let post = Vec3::new(LINE, size.y, LINE);
+    pub fn corners(&mut self, center: Vec3, size: Vec3, width: f32, color: Color) {
+        let post = Vec3::new(width, size.y, width);
         for (x, z) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
             let corner = center + Vec3::new(x * size.x, 0.0, z * size.z) / 2.0;
             self.solid(corner, post, color, color);
@@ -423,11 +503,12 @@ mod tests {
             draft.dashed(Vec3::ZERO, Vec3::X * length, 0.1, INK);
             let (lowest, highest) = draft.bounds();
             assert!(close(lowest.x, 0.0) && close(highest.x, length), "{length}");
-            // The dashes and the gaps keep their shares of the line.
+            // The dashes and the gaps keep their shares of the line: 12 widths of dash for 3
+            // of gap, and a line too short for two dashes is one.
             let dashes = dash_count(length) as f32;
             let share = dashes * dash / (dashes * dash + (dashes - 1.0) * gap);
             assert!(close(draft.area(INK), length * 0.1 * share), "{length}");
-            assert!(share > 0.6 && share < 0.75, "{length}");
+            assert!((0.79..=1.0).contains(&share), "{length}");
         }
         // A line too short for two dashes is whole.
         let mut short = Draft::default();
@@ -444,8 +525,8 @@ mod tests {
         whole.frame(Vec3::ZERO, size, 0.1, INK);
         // It reaches the four corners of the rectangle, and stays inside it.
         assert_eq!(dashed.bounds(), whole.bounds());
-        assert!(dashed.area(INK) > 0.5 * whole.area(INK));
-        assert!(dashed.area(INK) < 0.8 * whole.area(INK));
+        assert!(dashed.area(INK) > 0.7 * whole.area(INK));
+        assert!(dashed.area(INK) < 0.95 * whole.area(INK));
     }
 
     #[test]
@@ -484,7 +565,7 @@ mod tests {
     #[test]
     fn a_drawing_becomes_a_mesh_with_its_colors() {
         let mut draft = Draft::default();
-        draft.outlined(Vec3::Y, Vec3::splat(2.0), (TOP, SIDE, INK));
+        draft.outlined(Vec3::Y, Vec3::splat(2.0), (TOP, SIDE, INK), LINE);
         let mesh = draft.build();
         let corners = mesh.count_vertices();
         assert!(corners > 0 && corners.is_multiple_of(3));

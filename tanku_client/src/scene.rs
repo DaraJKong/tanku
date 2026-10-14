@@ -367,10 +367,12 @@ pub fn setup(
         draft.ring(Vec3::ZERO, (radius - width, radius), dashes, Color::WHITE);
         meshes.add(draft.build())
     };
-    let (trigger, blast) = (
-        circle(MINE_TRIGGER_RADIUS, draft::LINE, (28, 0.5)),
-        circle(BLAST_RADIUS, 0.06, (1, 1.0)),
-    );
+    let blast = circle(BLAST_RADIUS, 0.06, (1, 1.0));
+    // The circle in which a tank sets a mine off: a reach, in a phantom line.
+    let mut phantom = Draft::default();
+    let ring = (MINE_TRIGGER_RADIUS - draft::LINE, MINE_TRIGGER_RADIUS);
+    phantom.patterned_ring(Vec3::ZERO, ring, &draft::PHANTOM, Color::WHITE);
+    let trigger = meshes.add(phantom.build());
     let mut disc = Draft::default();
     disc.disc(Vec3::ZERO, 0.5, Color::WHITE);
     let mut trail = Draft::default();
@@ -598,7 +600,7 @@ fn wall_drawing(walls: &[(Vec2, Vec2)], around: &[(Vec2, Vec2)]) -> Draft {
         if stops.1 {
             rise(&mut draft, b, b_out);
         }
-        let (inside_a, inside_b) = (reach.0 * draft::LINE, reach.1 * draft::LINE);
+        let (inside_a, inside_b) = (reach.0 * draft::WIDE, reach.1 * draft::WIDE);
         let top = WALL_HEIGHT + LIFT;
         band(
             &mut draft,
@@ -642,8 +644,9 @@ fn block_drawing() -> Draft {
         center,
         size,
         (theme::BLOCK, theme::BLOCK_SIDE, theme::BLOCK_LINE),
+        draft::WIDE,
     );
-    draft.corners(center, size, theme::BLOCK_LINE);
+    draft.corners(center, size, draft::WIDE, theme::BLOCK_LINE);
     hatch(&mut draft, BLOCK_HEIGHT + LIFT / 2.0, theme::HATCH);
     draft
 }
@@ -692,8 +695,9 @@ fn crate_drawing() -> Draft {
         center,
         size,
         (theme::CRATE, theme::CRATE_SIDE, theme::DANGER),
+        draft::WIDE,
     );
-    draft.corners(center, size, theme::DANGER);
+    draft.corners(center, size, draft::WIDE, theme::DANGER);
     cross(&mut draft, CRATE_HEIGHT + LIFT / 2.0, theme::DANGER);
     draft
 }
@@ -1124,15 +1128,23 @@ fn arena_rings(min: Vec2, max: Vec2) -> (f32, f32) {
     (outer, outer * 0.55)
 }
 
-/// What is drawn on the floor of an arena: two circles in dashes around its middle, in the
-/// red of what is dangerous.
+/// What is drawn on the floor of an arena, in the red of what is dangerous: two circles of
+/// centers in chain lines around its middle, as the pitch circles of holes, and the center
+/// lines that cross there and go a little past the outer circle.
 fn arena_drawing(min: Vec2, max: Vec2) -> Draft {
     let mut draft = Draft::default();
     let middle = to_world((min + max) / 2.0, 2.0 * LIFT);
     let (outer, inner) = arena_rings(min, max);
     let ink = theme::DANGER.mix(&theme::FLOOR, 0.45);
-    for (radius, dashes) in [(outer, 48), (inner, 28)] {
-        draft.ring(middle, (radius - 0.12, radius), (dashes, 0.5), ink);
+    // As wide as the edge of what stands: a narrow line in this dull red would be lost.
+    let width = draft::WIDE;
+    for radius in [outer, inner] {
+        draft.patterned_ring(middle, (radius - width, radius), &draft::CHAIN, ink);
+    }
+    let reach = outer + 1.0;
+    for along in [Vec3::X, Vec3::Z] {
+        let (from, to) = (middle - along * reach, middle + along * reach);
+        draft.patterned(from, to, width, &draft::CHAIN, ink);
     }
     draft
 }
@@ -2138,11 +2150,11 @@ mod tests {
             (crate_drawing(), CRATE_SIZE, CRATE_HEIGHT),
         ] {
             let (lowest, highest) = draft.bounds();
-            // The line around the foot is the only thing outside the footprint.
-            let reach = size / 2.0 + draft::LINE;
+            // The wide line around the foot is the only thing outside the footprint.
+            let reach = size / 2.0 + draft::WIDE;
             assert!(close(lowest.x, -reach) && close(highest.x, reach));
             assert!(close(lowest.z, -reach) && close(highest.z, reach));
-            assert!(reach <= BLOCK_SIZE / 2.0 + draft::LINE);
+            assert!(reach <= BLOCK_SIZE / 2.0 + draft::WIDE);
             assert!(close(lowest.y, 0.0) && close(highest.y, height + LIFT));
         }
         // Eight strips cross the top of a block.

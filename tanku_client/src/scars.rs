@@ -27,8 +27,9 @@ const SCALLOP_STROKES: usize = 6;
 /// Radius of the darker patch inside the outline, and how dark it is.
 const SCORCH_RADIUS: f32 = 2.3;
 const SCORCH: f32 = 0.2;
-/// A dash of the outline of a block that is gone, and the gap after it.
-const DASH: (f32, f32) = (0.18, 0.14);
+/// A dash of the outline of a block that is gone, and the gap after it: 12 and 3 widths of its
+/// line, as ISO 128-20 has them.
+const DASH: (f32, f32) = (12.0 * WIDTHS.1, 3.0 * WIDTHS.1);
 /// Length of an arm of the cross that marks a destroyed tank, from end to end.
 const CROSS: f32 = 1.0;
 /// Widths of the three kinds of line.
@@ -95,17 +96,20 @@ fn scallops(center: Vec2, turn: f32) -> Vec<(Vec2, Vec2)> {
     strokes
 }
 
-/// A line in dashes, from one point to another.
+/// A line in dashes, from one point to another. It starts and ends with a dash, so that every
+/// corner of a square is drawn, and its dashes are stretched a little to fit.
 fn dashes(from: Vec2, to: Vec2) -> Vec<(Vec2, Vec2)> {
     let (length, along) = (from.distance(to), (to - from).normalize_or_zero());
-    let pitch = DASH.0 + DASH.1;
-    // The dashes are centered, so that a square gets the same corners all around.
-    let count = ((length + DASH.1) / pitch).floor().max(1.0);
-    let start = (length - (count * pitch - DASH.1)) / 2.0;
-    (0..count as usize)
-        .map(|dash| {
-            let at = start + dash as f32 * pitch;
-            (from + along * at, from + along * (at + DASH.0).min(length))
+    let (dash, gap) = DASH;
+    let count = (((length + gap) / (dash + gap)).round() as usize).max(1);
+    let stretch = length / (count as f32 * dash + (count - 1) as f32 * gap);
+    (0..count)
+        .map(|index| {
+            let at = index as f32 * (dash + gap) * stretch;
+            (
+                from + along * at,
+                from + along * (at + dash * stretch).min(length),
+            )
         })
         .collect()
 }
@@ -343,15 +347,18 @@ mod tests {
     }
 
     #[test]
-    fn dashes_fill_a_line_evenly() {
+    fn dashes_fill_a_line_from_corner_to_corner() {
         let (from, to) = (Vec2::new(1.0, 1.0), Vec2::new(3.0, 1.0));
         let strokes = dashes(from, to);
-        assert_eq!(strokes.len(), 6);
-        // They leave the same room at both ends, and each is as long as the others.
+        assert_eq!(strokes.len(), 5);
+        // A dash at each end, so that the corners of a square are drawn, and each dash as
+        // long as the others, a little more than 12 widths of the line.
         let (first, last) = (strokes[0], strokes[strokes.len() - 1]);
-        assert!((first.0.x - from.x - (to.x - last.1.x)).abs() < 1e-4);
+        assert!(first.0.distance(from) < 1e-4 && last.1.distance(to) < 1e-4);
+        let length = first.1.x - first.0.x;
+        assert!((length - DASH.0).abs() < 0.03);
         for (start, end) in strokes {
-            assert!((end.x - start.x - DASH.0).abs() < 1e-4);
+            assert!((end.x - start.x - length).abs() < 1e-4);
         }
     }
 

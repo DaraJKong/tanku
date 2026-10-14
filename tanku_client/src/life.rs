@@ -65,6 +65,7 @@ fn offered_drawing() -> Draft {
         Vec3::Y * HEIGHT / 2.0,
         Vec3::new(SIDE, HEIGHT, SIDE),
         (lit, theme::side(lit), theme::LINE),
+        draft::LINE,
     );
     let floor = Vec3::Y * 3.0 * draft::LIFT;
     draft.ring(floor, (LIFE_REACH - 0.06, LIFE_REACH), (1, 1.0), lit);

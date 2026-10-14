@@ -456,7 +456,7 @@ fn gear(draft: &mut Draft, genome: &Genome) {
         for side in [-1.0, 1.0] {
             let center = Vec3::new(0.0, high / 2.0, side * (TRACK_GAUGE + wide / 2.0));
             let size = Vec3::new(hull_length(genome) + TRACK_OVERHANG, high, wide);
-            draft.outlined(center, size, (dark, dark, theme::LINE));
+            draft.outlined(center, size, (dark, dark, theme::LINE), LINE);
         }
     }
 }
