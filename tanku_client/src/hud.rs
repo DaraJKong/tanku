@@ -6,7 +6,7 @@
 
 use bevy::prelude::*;
 use tanku_core::{
-    rules::{MAX_PLAYERS, SOLO_LIVES},
+    rules::{MAX_PLAYERS, REPAIR_TIME, SOLO_LIVES},
     seed::VERSION,
     sim::{
         Enemy, Gun, Player, Playtest, Position, Run, Shield, ShieldState, SimEvent, Tank,
@@ -133,6 +133,21 @@ struct EnemyMarker(usize);
 /// The number of the player of a seat, next to the square of their tank.
 #[derive(Component)]
 struct MateNumber(u8);
+
+/// The fill of the square of the tank of a seat, which rises as its wreck is repaired, as its
+/// circle is inked.
+#[derive(Component)]
+struct RepairFill(u8);
+
+/// The bar under the name on the marker of the tank of a seat, which fills as its wreck is
+/// repaired.
+#[derive(Component)]
+struct RepairBar(u8);
+
+/// How far the repair of a wreck has got, from nothing to done.
+fn repaired(wreck: Option<&Wreck>) -> f32 {
+    wreck.map_or(0.0, |wreck| (wreck.repair / REPAIR_TIME).clamp(0.0, 1.0))
+}
 
 /// The tag that follows the tank of the player of a seat, among several players: their tanks
 /// look alike, and the tag tells whose each one is.
@@ -348,10 +363,24 @@ fn mate(seat: u8) -> impl Bundle {
         },
         BackgroundColor(Color::NONE),
         BorderColor::all(theme::RULE),
-        children![(
-            MateNumber(seat),
-            theme::label((seat + 1).to_string(), 12.0, theme::TEXT_DIM),
-        )],
+        children![
+            (
+                RepairFill(seat),
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: px(0),
+                    right: px(0),
+                    bottom: px(0),
+                    height: percent(0),
+                    ..default()
+                },
+                BackgroundColor(theme::PLAYER.with_alpha(0.55)),
+            ),
+            (
+                MateNumber(seat),
+                theme::label((seat + 1).to_string(), 12.0, theme::TEXT_DIM),
+            ),
+        ],
     )
 }
 
@@ -721,7 +750,21 @@ fn build(mut commands: Commands) {
             BackgroundColor(fill),
             BorderColor::all(theme::PLAYER),
             Pickable::IGNORE,
-            children![theme::label(short_name(seat), 12.0, theme::TEXT_ON_ACCENT)],
+            children![
+                theme::label(short_name(seat), 12.0, theme::TEXT_ON_ACCENT),
+                (
+                    RepairBar(seat),
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: px(0),
+                        bottom: px(0),
+                        width: percent(0),
+                        height: px(3),
+                        ..default()
+                    },
+                    BackgroundColor(theme::PLAYER),
+                ),
+            ],
         ));
     }
     for index in 0..MARKED_ENEMIES {
@@ -862,10 +905,22 @@ fn status(
     mut readouts: Query<(&Readout, &mut Text, &mut TextColor), Without<MateNumber>>,
     mut pips: Query<(&Pip, &mut BackgroundColor, &mut BorderColor, &mut Node)>,
     mut numbers: Query<(&MateNumber, &mut TextColor), Without<Readout>>,
+    (wrecks, mut fills): (
+        Query<(&Player, &Wreck)>,
+        Query<(&RepairFill, &mut Node), Without<Pip>>,
+    ),
 ) {
     let Some(run) = run else {
         return;
     };
+    // The square of a wreck fills as it is repaired.
+    for (fill, mut node) in &mut fills {
+        let wreck = wrecks.iter().find(|(player, _)| player.seat == fill.0);
+        let wanted = percent(100.0 * repaired(wreck.map(|(_, wreck)| wreck)));
+        if node.height != wanted {
+            node.height = wanted;
+        }
+    }
     let infinite_lives = playtest.is_some_and(|playtest| playtest.infinite_lives);
     let key = |action| {
         let bound = settings.bindings(action)[0];
@@ -1221,8 +1276,9 @@ fn mark_mates(
     ui_scale: Res<UiScale>,
     alarms: Res<Alarms>,
     camera: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
-    tanks: Query<(&Player, &Position, Has<Own>, Has<Wreck>)>,
+    tanks: Query<(&Player, &Position, Has<Own>, Option<&Wreck>)>,
     enemies: Query<&Node, (With<EnemyMarker>, Without<MateMarker>)>,
+    mut bars: Query<(&RepairBar, &mut Node), (Without<MateMarker>, Without<EnemyMarker>)>,
     mut markers: Query<(
         &MateMarker,
         &mut Node,
@@ -1250,7 +1306,16 @@ fn mark_mates(
     let mut marked: Vec<(u8, Vec2, bool)> = Vec::new();
     let mut seats: Vec<_> = tanks.iter().collect();
     seats.sort_by_key(|(player, ..)| player.seat);
+    // The marker of a wreck fills a bar under its name as it is repaired.
+    for (bar, mut node) in &mut bars {
+        let wreck = seats.iter().find(|(player, ..)| player.seat == bar.0);
+        let wanted = percent(100.0 * repaired(wreck.and_then(|(.., wreck)| *wreck)));
+        if node.width != wanted {
+            node.width = wanted;
+        }
+    }
     for (player, position, own, wreck) in seats {
+        let wreck = wreck.is_some();
         let Some(screen) = screen.filter(|_| is_marked(own, wreck)) else {
             continue;
         };
@@ -1768,6 +1833,18 @@ mod tests {
             "WASD move, mouse aim, Left click shoot\n\
              Space shield, hold Left Shift to repair, Q/E turn the view, Esc menu"
         );
+    }
+
+    #[test]
+    fn the_square_and_the_marker_of_a_wreck_fill_as_it_is_repaired() {
+        let wreck = |repair: f32| Wreck {
+            repair,
+            ..default()
+        };
+        assert_eq!(repaired(None), 0.0);
+        assert_eq!(repaired(Some(&wreck(0.0))), 0.0);
+        assert_eq!(repaired(Some(&wreck(REPAIR_TIME / 2.0))), 0.5);
+        assert_eq!(repaired(Some(&wreck(REPAIR_TIME * 2.0))), 1.0);
     }
 
     #[test]
