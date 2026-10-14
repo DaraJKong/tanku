@@ -81,7 +81,7 @@ pub const FRAME_WIDTH: f32 = 2.0;
 const ZONES: (usize, usize) = (8, 6);
 /// The centring marks: how wide they are, and how far into the sheet they reach from the
 /// edge of the screen.
-const CENTRING: (f32, f32) = (3.0, 34.0);
+pub const CENTRING: (f32, f32) = (3.0, 34.0);
 /// The trimming marks: how far along each edge the triangle in a corner reaches.
 const TRIMMING: f32 = 12.0;
 

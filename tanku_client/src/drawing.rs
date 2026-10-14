@@ -11,7 +11,12 @@
 
 use bevy::prelude::*;
 
-use crate::{balloons, hud::SHEET_EDGE, sheet::FRAME_WIDTH, theme};
+use crate::{
+    balloons,
+    hud::SHEET_EDGE,
+    sheet::{self, FRAME_WIDTH},
+    theme,
+};
 
 /// Where what a screen holds starts, from the left of the sheet.
 pub const LEFT: f32 = 120.0;
@@ -557,13 +562,14 @@ fn header_at(parent: &mut ChildSpawnerCommands, columns: &[(f32, &str)], height:
 
 /// The notes of a screen: what it has to say that is no control, at the bottom of the sheet
 /// between these distances from its left and from its right, left of the title block, as the
-/// notes of a drawing stand near its title block.
+/// notes of a drawing stand near its title block. They stand clear of the centring mark at
+/// the middle of the bottom edge, which reaches into the sheet.
 pub fn notes(left: f32, right: f32) -> Node {
     Node {
         position_type: PositionType::Absolute,
         left: px(left),
         right: px(right),
-        bottom: px(SHEET_EDGE + 12.0),
+        bottom: px(sheet::CENTRING.1 + 8.0),
         flex_direction: FlexDirection::Column,
         row_gap: px(6),
         ..default()
