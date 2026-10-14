@@ -13,6 +13,7 @@ mod dev;
 #[cfg(not(target_arch = "wasm32"))]
 mod discovery;
 mod draft;
+mod drawing;
 mod effects;
 mod exhibit;
 mod garage;

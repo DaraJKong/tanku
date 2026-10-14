@@ -21,11 +21,13 @@ use tanku_core::{
 
 use crate::{
     Overlay, Screen,
-    camera::View,
+    camera::{MainCamera, View},
     cli::Options,
     crew::LocalSeat,
+    drawing::{self, Holds},
     exhibit::{self, Exhibit, Show},
     garage::{self, Garage},
+    hud::SHEET_EDGE,
     net, report,
     scene::Paints,
     session::{Asked, Drawn, Found, Game, Invitation, Notice, Session, SessionRequest, Shut, Sign},
@@ -36,10 +38,12 @@ use crate::{
 
 /// Seconds between the end of a run and the game over screen.
 const GAME_OVER_DELAY: f32 = 1.4;
-/// Meters of ground that the main menu shows from the bottom to the top of the screen.
-const EXHIBIT_SPAN: f32 = 7.5;
-/// Where the tank stands on the screen of the main menu, in meters from its middle.
-const EXHIBIT_PLACE: Vec2 = Vec2::new(3.2, 0.2);
+/// How far from the middle of the tank of a screen the balloons of its parts reach, and the
+/// circle of its shield, in meters, with the room of a balloon: what the tank needs around it.
+const EXHIBIT_REACH: f32 = 2.6;
+/// The least and the most meters of ground that a screen shows from its bottom to its top,
+/// however much room it leaves the tank.
+const EXHIBIT_SPANS: (f32, f32) = (6.0, 14.0);
 /// The longest address that the join screen takes.
 const ADDRESS_LENGTH: usize = 64;
 /// The longest seed that a player types: as many letters as the screens have room for.
@@ -402,14 +406,26 @@ fn margin(
 ) {
     root.spawn(Node {
         position_type: PositionType::Absolute,
-        left: px(120),
-        top: px(90),
+        left: px(drawing::LEFT),
+        top: px(MARGIN_TOP),
         width: px(width),
         flex_direction: FlexDirection::Column,
         row_gap: px(10),
         ..default()
     })
     .with_children(content);
+}
+
+/// How far from the top of the sheet what a screen holds starts.
+const MARGIN_TOP: f32 = 56.0;
+/// How wide the list of the main menu and its records are.
+const MENU_WIDTH: f32 = 500.0;
+/// How wide the forms of the other screens are: their rows, their choices and their notes.
+const FORM_WIDTH: f32 = 640.0;
+
+/// How wide the table of the garage is, with the room around it.
+fn garage_width() -> f32 {
+    GARAGE_COLUMNS.iter().sum::<f32>() + 60.0
 }
 
 /// A box with a ruled edge.
@@ -469,6 +485,11 @@ fn heading(parent: &mut ChildSpawnerCommands, content: &str) {
 
 fn line(parent: &mut ChildSpawnerCommands, content: impl Into<String>, color: Color) {
     parent.spawn(theme::old::text(content, 17.0, color));
+}
+
+/// A note of a screen drawn as a sheet: a sentence in the smallest lettering.
+fn note(parent: &mut ChildSpawnerCommands, content: impl Into<String>, color: Color) {
+    parent.spawn(theme::text(content, theme::LABEL, color));
 }
 
 /// The name of a group of rows, a little apart from what comes before it.
@@ -707,6 +728,12 @@ fn status_line(parent: &mut ChildSpawnerCommands) {
     parent.spawn((StatusLine, theme::old::text("", 17.0, theme::DANGER)));
 }
 
+/// The line that tells the player how a game of several players goes, as a note of a screen
+/// drawn as a sheet.
+fn status_note(parent: &mut ChildSpawnerCommands) {
+    parent.spawn((StatusLine, theme::text("", theme::LABEL, theme::DANGER)));
+}
+
 /// The main menu opens on what the player chose last for a run of their own: it draws the
 /// tank of that run, and first lists the best runs of its league.
 fn remember_the_last_run(
@@ -726,26 +753,28 @@ fn remember_the_last_run(
     };
 }
 
-/// A small button of the record list that turns a league on or off. It is lit while its
-/// league is the one that is listed.
+/// A switch of the record list that turns a league on or off, as a choice of 44 px: it stands
+/// in the accent while its league is the one that is listed.
 fn league_switch(parent: &mut ChildSpawnerCommands, name: &str, to: League, lit: bool) {
-    let node = Node {
-        padding: UiRect::axes(px(8), px(2)),
-        border: UiRect::all(px(1)),
-        ..default()
-    };
-    let (edge, ink) = if lit {
-        (theme::ACCENT, theme::ACCENT)
+    let (edge, ink, fill) = if lit {
+        (theme::ACCENT, theme::ACCENT, theme::ACCENT.with_alpha(0.12))
     } else {
-        (theme::RULE, theme::TEXT)
+        (theme::RULE, theme::TEXT, theme::SURFACE_RAISED)
     };
     let button = (
         Button,
         Press::List(to),
-        node,
-        BackgroundColor(theme::SURFACE_RAISED),
+        Node {
+            height: px(drawing::CONTROL),
+            padding: UiRect::horizontal(px(drawing::PAD)),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            border: UiRect::all(px(1)),
+            ..default()
+        },
+        BackgroundColor(fill),
         BorderColor::all(edge),
-        children![theme::old::label(name, 12.0, ink)],
+        children![theme::label(name, theme::LABEL, ink)],
     );
     if lit {
         parent.spawn((button, Lit));
@@ -753,6 +782,10 @@ fn league_switch(parent: &mut ChildSpawnerCommands, name: &str, to: League, lit:
         parent.spawn(button);
     }
 }
+
+/// The columns of the table of the best runs: the team, the sectors or the groups that it
+/// cleared, its seed and the version of the game.
+const RECORD_COLUMNS: [f32; 4] = [128.0, 108.0, 184.0, 76.0];
 
 /// Lists the best runs of a league on the main menu, again whenever there is a new one or
 /// the player asks for those of another league. Hard mode, arena mode and free mode each
@@ -778,63 +811,150 @@ fn list_records(
         let offers_hard = hard || played(|league| league.difficulty == Difficulty::Hard);
         let offers_arena = league.arena || played(|league| league.arena);
         let offers_free = league.free || played(|league| league.free);
-        let mut lines = records_of(&records, league);
-        if lines.is_empty() {
-            lines.push(match league.words() {
-                Some(words) => format!("No run in {words} yet"),
-                None => "No run yet".to_string(),
-            });
-        }
+        let best: Vec<(String, String, String, String)> = (1..=MAX_PLAYERS)
+            .filter_map(|players| {
+                let record = records.best(league, players)?;
+                let team = match players {
+                    1 => "Solo".to_string(),
+                    players => format!("{players} players"),
+                };
+                let version = record.version.clone();
+                Some((
+                    team,
+                    record.sector.to_string(),
+                    record.seed.clone(),
+                    version,
+                ))
+            })
+            .collect();
+        let named = match league.words() {
+            Some(words) => format!("Record \u{b7} {words}"),
+            None => "Record \u{b7} normal".to_string(),
+        };
+        let unit = if league.arena { "Groups" } else { "Sectors" };
         commands
             .entity(list)
             .despawn_related::<Children>()
             .with_children(|record| {
-                let header = Node {
-                    align_items: AlignItems::Center,
-                    column_gap: px(8),
-                    ..default()
-                };
-                record.spawn(header).with_children(|header| {
-                    header.spawn((
-                        Node {
-                            flex_grow: 1.0,
-                            ..default()
-                        },
-                        children![theme::old::label("RECORD", 12.0, theme::TEXT_DIM)],
-                    ));
-                    if offers_hard {
-                        let difficulty = if hard {
-                            Difficulty::Normal
-                        } else {
-                            Difficulty::Hard
-                        };
-                        let to = League {
-                            difficulty,
-                            ..league
-                        };
-                        league_switch(header, "Hard mode", to, hard);
-                    }
-                    if offers_arena {
-                        let to = League {
-                            arena: !league.arena,
-                            ..league
-                        };
-                        league_switch(header, "Arena mode", to, league.arena);
-                    }
-                    if offers_free {
-                        let to = League {
-                            free: !league.free,
-                            ..league
-                        };
-                        league_switch(header, "Free mode", to, league.free);
-                    }
-                });
-                for line in lines {
-                    record.spawn(theme::old::text(line, 16.0, theme::TEXT));
+                record.spawn(drawing::key(named));
+                if offers_hard || offers_arena || offers_free {
+                    let switches = Node {
+                        column_gap: px(8),
+                        ..default()
+                    };
+                    record.spawn(switches).with_children(|switches| {
+                        if offers_hard {
+                            let difficulty = if hard {
+                                Difficulty::Normal
+                            } else {
+                                Difficulty::Hard
+                            };
+                            let to = League {
+                                difficulty,
+                                ..league
+                            };
+                            league_switch(switches, "Hard mode", to, hard);
+                        }
+                        if offers_arena {
+                            let to = League {
+                                arena: !league.arena,
+                                ..league
+                            };
+                            league_switch(switches, "Arena mode", to, league.arena);
+                        }
+                        if offers_free {
+                            let to = League {
+                                free: !league.free,
+                                ..league
+                            };
+                            league_switch(switches, "Free mode", to, league.free);
+                        }
+                    });
                 }
+                record
+                    .spawn(drawing::block(Node::default()))
+                    .with_children(|table| {
+                        if best.is_empty() {
+                            let none = match league.words() {
+                                Some(words) => format!("No run in {words} yet"),
+                                None => "No run yet".to_string(),
+                            };
+                            let width: f32 = RECORD_COLUMNS.iter().sum();
+                            drawing::row(table, drawing::ROW, false, |row| {
+                                drawing::cell(row, width, false, |cell| {
+                                    cell.spawn(drawing::value(none, theme::TEXT));
+                                });
+                            });
+                            return;
+                        }
+                        let names = ["Team", unit, "Seed", "Rev"];
+                        let columns: Vec<(f32, &str)> =
+                            RECORD_COLUMNS.iter().copied().zip(names).collect();
+                        drawing::header(table, &columns, false);
+                        let last = best.len() - 1;
+                        for (index, (team, cleared, seed, version)) in best.into_iter().enumerate()
+                        {
+                            drawing::row(table, drawing::PART_ROW, index < last, |row| {
+                                let words = [team, cleared, seed, version];
+                                for (column, word) in words.into_iter().enumerate() {
+                                    let right = column < 3;
+                                    drawing::cell(row, RECORD_COLUMNS[column], right, |cell| {
+                                        cell.spawn(theme::figure(word, theme::LABEL, theme::TEXT));
+                                    });
+                                }
+                            });
+                        }
+                    });
             });
     }
 }
+
+/// What the tank that a menu draws is, as the title of its sheet says it: its name and what
+/// kind of drawing it is, and its budget, with what it leaves over.
+fn drawn_tank(tank: &Genome, brought: bool, free: bool) -> (&'static str, &'static str, String) {
+    let (name, kind) = match (brought, free) {
+        (true, _) => ("Playtest tank", "Assembly \u{b7} a playtest's"),
+        (false, true) => ("Your tank", "Assembly \u{b7} free mode"),
+        (false, false) => ("Standard tank", "Assembly \u{b7} every player's"),
+    };
+    let budget = if tank.cost() < u32::from(tank.budget) {
+        format!("{} of {}", tank.cost(), tank.budget)
+    } else {
+        tank.budget.to_string()
+    };
+    (name, kind, budget)
+}
+
+/// The fields of the title block of a sheet that draws a tank: the upper row, and the lower
+/// one with its scale and its day.
+fn tank_title_block(parent: &mut ChildSpawnerCommands, (name, kind, budget): (&str, &str, String)) {
+    let upper = vec![
+        drawing::Field::new(156.0, "Legal owner", Holds::Owner(None)),
+        drawing::Field::new(
+            300.0,
+            "Title",
+            Holds::Titled(name.to_string(), kind.to_string()),
+        ),
+        drawing::Field::new(150.0, "Budget", Holds::Value(budget, theme::TEXT)),
+        drawing::Field::new(94.0, "Rev", Holds::Value(VERSION.to_string(), theme::TEXT)),
+    ];
+    let lower = vec![
+        drawing::Field::new(
+            156.0,
+            "Scale",
+            Holds::Value("1:25".to_string(), theme::TEXT),
+        ),
+        drawing::Field::new(
+            544.0,
+            "Date of issue",
+            Holds::Value(sheet::day_of_issue(), theme::TEXT),
+        ),
+    ];
+    drawing::title_block(parent, upper, lower);
+}
+
+/// The columns of the parts list of a tank drawn as an assembly: as wide as its title block.
+pub const PART_COLUMNS: [f32; 6] = [64.0, 120.0, 126.0, 80.0, 222.0, 88.0];
 
 fn main_menu(
     mut commands: Commands,
@@ -844,12 +964,8 @@ fn main_menu(
     // What the drawing shows: the standard tank, the one that the player built for free
     // mode or the one that a playtest brought. Those two may have points left over.
     let tank = shown_tank(Screen::Menu, (&setup, None), &options, &garage);
-    let spent = format!("{} OF {} POINTS", tank.cost(), tank.budget);
-    let (drawn, budget) = match (options.tank.is_some(), is_free(&setup, &options)) {
-        (true, _) => ("PLAYTEST TANK", spent),
-        (false, true) => ("GARAGE TANK", spent),
-        (false, false) => ("PLAYER TANK", format!("{} POINTS", tank.budget)),
-    };
+    let drawn = drawn_tank(&tank, options.tank.is_some(), is_free(&setup, &options));
+    let parts = report::assembly(&tank, tanku_core::sim::Team::Players);
     commands
         .spawn((
             DespawnOnExit(Screen::Menu),
@@ -862,47 +978,70 @@ fn main_menu(
             children![sheet::frame()],
         ))
         .with_children(|root| {
-            // The menu is the left margin of the sheet. The tank is drawn on its right.
-            margin(root, 400.0, |parent| {
-                parent.spawn(theme::old::figure(
-                    format!("VERSION {VERSION}"),
-                    15.0,
-                    theme::TEXT_DIM,
-                ));
+            // The menu is the left of the sheet, as rows of a list. The tank is drawn on its
+            // right, as an assembly over its parts list and the title block.
+            margin(root, MENU_WIDTH, |parent| {
+                parent.spawn(drawing::key(format!("Version {VERSION}")));
                 parent.spawn((
-                    theme::old::title("TANKU", 112.0, theme::TEXT),
+                    theme::lone("Tanku", theme::NAME, theme::TEXT),
                     Node {
-                        margin: UiRect::bottom(px(14)),
+                        margin: UiRect::vertical(px(10)),
                         ..default()
                     },
                 ));
-                primary(parent, "Solo", Press::Solo);
-                // A browser can't accept connections, so it hosts no game.
-                if cfg!(not(target_arch = "wasm32")) {
-                    button(parent, "Host a game", Press::OpenHost);
-                }
-                button(parent, "Join a game", Press::OpenJoin);
-                button(parent, "Achievements", Press::OpenAchievements);
-                button(parent, "Settings", Press::OpenSettings);
-                // A browser tab is closed by the browser.
-                if cfg!(not(target_arch = "wasm32")) {
-                    button(parent, "Quit", Press::Quit);
-                }
+                parent
+                    .spawn(Node {
+                        flex_direction: FlexDirection::Column,
+                        flex_shrink: 0.0,
+                        margin: UiRect::top(px(10)),
+                        ..default()
+                    })
+                    .with_children(|list| {
+                        let mut number = 0;
+                        let mut row =
+                            |list: &mut ChildSpawnerCommands, name: &str, press, first| {
+                                number += 1;
+                                if first {
+                                    drawing::list_row(list, number, name, (press, Primary), true);
+                                } else {
+                                    drawing::list_row(list, number, name, press, false);
+                                }
+                            };
+                        row(list, "Solo", Press::Solo, true);
+                        // A browser can't accept connections, so it hosts no game.
+                        if cfg!(not(target_arch = "wasm32")) {
+                            row(list, "Host a game", Press::OpenHost, false);
+                        }
+                        row(list, "Join a game", Press::OpenJoin, false);
+                        row(list, "Achievements", Press::OpenAchievements, false);
+                        row(list, "Settings", Press::OpenSettings, false);
+                        // A browser tab is closed by the browser.
+                        if cfg!(not(target_arch = "wasm32")) {
+                            row(list, "Quit", Press::Quit, false);
+                        }
+                    });
                 // `list_records` fills it in.
                 parent.spawn((
                     RecordList,
-                    ruled(Node {
+                    Node {
                         flex_direction: FlexDirection::Column,
-                        row_gap: px(4),
-                        padding: UiRect::axes(px(12), px(8)),
-                        margin: UiRect::top(px(8)),
+                        row_gap: px(8),
+                        margin: UiRect::top(px(14)),
                         ..default()
-                    }),
+                    },
                 ));
-                status_line(parent);
+            });
+            // What the menu has to say, between the list and the title block, as the notes of a
+            // drawing stand near its title block.
+            let notes = drawing::notes(
+                drawing::LEFT + MENU_WIDTH + 24.0,
+                SHEET_EDGE + drawing::title_width_of(&PART_COLUMNS) + 24.0,
+            );
+            root.spawn(notes).with_children(|notes| {
+                status_note(notes);
                 if playtest.is_some() {
-                    line(
-                        parent,
+                    note(
+                        notes,
                         "Playtest: cheats are in the pause menu",
                         theme::ACCENT,
                     );
@@ -911,53 +1050,18 @@ fn main_menu(
                     } else {
                         "A playtest sets no record"
                     };
-                    line(parent, kept, theme::TEXT_DIM);
+                    note(notes, kept, theme::TEXT_DIM);
                     if let Some(seed) = &options.seed {
-                        line(
-                            parent,
+                        note(
+                            notes,
                             format!("Every run is on seed {seed}"),
                             theme::TEXT_DIM,
                         );
                     }
                 }
             });
-            // What the drawing shows, as in the corner of a sheet.
-            root.spawn((
-                ruled(Node {
-                    position_type: PositionType::Absolute,
-                    right: px(48),
-                    bottom: px(48),
-                    ..default()
-                }),
-                children![
-                    (
-                        Node {
-                            flex_direction: FlexDirection::Column,
-                            row_gap: px(4),
-                            padding: UiRect::axes(px(12), px(8)),
-                            border: UiRect::right(px(1)),
-                            ..default()
-                        },
-                        BorderColor::all(theme::RULE),
-                        children![
-                            theme::old::label("DRAWING", 12.0, theme::TEXT_DIM),
-                            theme::old::title(drawn, 18.0, theme::TEXT),
-                        ],
-                    ),
-                    (
-                        Node {
-                            flex_direction: FlexDirection::Column,
-                            row_gap: px(4),
-                            padding: UiRect::axes(px(12), px(8)),
-                            ..default()
-                        },
-                        children![
-                            theme::old::label("BUDGET", 12.0, theme::TEXT_DIM),
-                            theme::old::figure(budget, 18.0, theme::TEXT),
-                        ],
-                    ),
-                ],
-            ));
+            drawing::parts_list(root, &parts, PART_COLUMNS);
+            tank_title_block(root, drawn);
         });
 }
 
@@ -974,6 +1078,7 @@ fn exhibit(
     screen: Res<State<Screen>>,
     (setup, options, garage): (Res<Setup>, Res<Options>, Res<Garage>),
     lobbies: Query<&Lobby>,
+    (camera, ui_scale): (Single<&Camera, With<MainCamera>>, Res<UiScale>),
     mut shown: Local<Option<(Screen, Genome)>>,
 ) {
     // The drawing follows the tank: every change in the garage shows at once.
@@ -987,16 +1092,19 @@ fn exhibit(
         commands.entity(stale).despawn();
     }
     *shown = Some(wanted);
+    let sheet = camera.logical_viewport_size().unwrap_or(sheet::LEAST) / ui_scale.0;
+    let named = report::named_parts(&genome, tanku_core::sim::Team::Players);
+    let (span, place) = staging(wanted.0, sheet, named.len());
     let show = Show {
         genome,
         color: theme::PLAYER,
-        span: EXHIBIT_SPAN,
-        place: EXHIBIT_PLACE,
+        span,
+        place,
         turret: 0.35,
         sways: true,
         shield: genome.shield_cooldown().is_some(),
     };
-    exhibit::put(
+    let stand = exhibit::put(
         &mut commands,
         &mut meshes,
         &paints,
@@ -1004,6 +1112,39 @@ fn exhibit(
         wanted.0,
         &show,
     );
+    // The main menu and the garage draw it as an assembly.
+    if matches!(wanted.0, Screen::Menu | Screen::Garage) {
+        exhibit::call_out(&mut commands, stand, &named, wanted.0);
+    }
+}
+
+/// Where the tank of a screen stands, and how much ground the screen shows: in the room that
+/// its sheet leaves it, as large as that room lets it be with its balloons around it. On the
+/// main menu, that is over its parts list, which lists `parts` parts; in the garage, right of
+/// the table that edits it; behind the other screens, right of what they hold. Each is over
+/// the title block. The sheet is given in the pixels of the interface.
+fn staging(screen: Screen, sheet: Vec2, parts: usize) -> (f32, Vec2) {
+    let edge = SHEET_EDGE + sheet::FRAME_WIDTH;
+    let below = match screen {
+        Screen::Menu => {
+            let list = drawing::PART_ROW * (parts + 1) as f32 + 2.0 * sheet::FRAME_WIDTH;
+            drawing::title_height() + list
+        }
+        _ => drawing::title_height(),
+    };
+    let left = match screen {
+        Screen::Menu => drawing::LEFT + MENU_WIDTH,
+        Screen::Garage => drawing::LEFT + garage_width(),
+        _ => drawing::LEFT + FORM_WIDTH,
+    };
+    let room = Rect::new(left, edge, sheet.x - edge, sheet.y - SHEET_EDGE - below);
+    // A meter of ground on the sheet, so that the tank and what is around it fit the room.
+    let meter = (room.size().min_element() / (2.0 * EXHIBIT_REACH)).max(1.0);
+    let span = (sheet.y / meter).clamp(EXHIBIT_SPANS.0, EXHIBIT_SPANS.1);
+    let meter = sheet.y / span;
+    let middle = room.center();
+    let place = Vec2::new(middle.x - sheet.x / 2.0, sheet.y / 2.0 - middle.y) / meter;
+    (span, place)
 }
 
 /// The tank that the menus draw on a screen: the one that the player takes into a run from
@@ -2896,7 +3037,8 @@ fn lobby_screen(
 }
 
 /// The game takes the view back.
-fn put_the_exhibit_away(mut view: ResMut<View>) {
+fn put_the_exhibit_away(mut commands: Commands, mut view: ResMut<View>) {
+    commands.remove_resource::<exhibit::Callouts>();
     view.release();
 }
 
@@ -3854,7 +3996,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::{crew, hud::SHEET_EDGE, session};
+    use crate::{crew, session};
 
     /// A notice as long as they get: three lines of a menu.
     const LONG_NOTICE: &str = "No game answers at 192.168.100.200:28405. Its host must run \
@@ -4665,12 +4807,15 @@ mod tests {
                 for piece in pieces.iter().filter(|piece| piece.lost_an_edge) {
                     faults.push(format!("{name}, {pixels}: {} lost an edge", piece.name));
                 }
-                // No text or button lies on another, unless one holds the other.
+                // No text or button lies on another, unless one holds the other. Two rows of
+                // a list share the pixel of their rule.
                 for (index, piece) in marks.iter().enumerate() {
                     for other in &marks[index + 1..] {
+                        let (inner, other_inner) =
+                            (piece.lies.inflate(-1.0), other.lies.inflate(-1.0));
                         let apart = piece.inside.contains(&other.entity)
                             || other.inside.contains(&piece.entity)
-                            || piece.lies.inflate(-1.0).intersect(other.lies).is_empty();
+                            || inner.intersect(other_inner).is_empty();
                         if !apart {
                             faults.push(format!(
                                 "{name}, {pixels}: {} lies on {}",
@@ -5675,8 +5820,10 @@ mod tests {
 
     #[test]
     fn the_main_menu_names_the_tank_that_a_playtest_brought() {
+        // The title block names the tank, and its budget.
         let standard = texts(|app| build(app, main_menu));
-        assert!(says(&standard, "PLAYER TANK") && says(&standard, "59 POINTS"));
+        assert!(says(&standard, "STANDARD TANK") && says(&standard, "59"));
+        assert!(says(&standard, "ASSEMBLY \u{b7} EVERY PLAYER'S"));
         // The tank of a playtest may have points left over, and the menu says so.
         let brought = texts(|app| {
             app.insert_resource(Options {
@@ -5686,8 +5833,8 @@ mod tests {
             });
             build(app, main_menu);
         });
-        assert!(says(&brought, "PLAYTEST TANK") && says(&brought, "57 OF 59 POINTS"));
-        assert!(!says(&brought, "PLAYER TANK"));
+        assert!(says(&brought, "PLAYTEST TANK") && says(&brought, "57 OF 59"));
+        assert!(!says(&brought, "STANDARD TANK"));
         // In free mode, the tank is the one of the garage.
         let built = texts(|app| {
             app.insert_resource(Garage { tank: racer() })
@@ -5697,7 +5844,8 @@ mod tests {
                 });
             build(app, main_menu);
         });
-        assert!(says(&built, "GARAGE TANK") && says(&built, "57 OF 59 POINTS"));
+        assert!(says(&built, "YOUR TANK") && says(&built, "57 OF 59"));
+        assert!(says(&built, "ASSEMBLY \u{b7} FREE MODE"));
     }
 
     /// The leagues whose best runs the main menu offers to list instead: those of normal

@@ -138,7 +138,6 @@ pub const LARGE: f32 = 42.0;
 #[expect(dead_code, reason = "the menus take it as they are drawn again")]
 pub const HEADING: f32 = 59.0;
 /// The name of the game: 20 mm.
-#[expect(dead_code, reason = "the main menu takes it as it is drawn again")]
 pub const NAME: f32 = 84.0;
 
 /// The pitch of the lines of a text, in heights of its capitals: those of capitals alone, and
