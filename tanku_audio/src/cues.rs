@@ -26,6 +26,9 @@ const E5: u8 = A4 + 7;
 const A5: u8 = A4 + 12;
 const E6: u8 = A5 + 7;
 
+/// Seconds between two notes of the fall of a loss.
+const LOSS_STEP: f32 = 0.15;
+
 /// Seconds that the glide of a sector that is entered takes to climb, before its clack.
 const ENTERED_CLIMB: f32 = 0.3;
 /// How loud the cue of a cleared sector is, next to its notes as they are written. It is as
@@ -75,11 +78,18 @@ pub enum Cue {
     /// The first player is through a barrier, and the sector behind it wakes. An experiment
     /// of a playtest: the music marks that moment otherwise, with its roll.
     Entered,
+    /// The tank of a teammate is destroyed: the tonic, then the fifth under it, plucked so
+    /// that they are heard over a blast.
+    Down,
+    /// One more loss ends the run: the last tank that runs, or the last life of a single
+    /// player. The fall of a loss, one note further. The end of a run falls the same way, an
+    /// octave lower and slower.
+    Last,
 }
 
 impl Cue {
     /// Every cue, in the order of their numbers.
-    pub const ALL: [Cue; 19] = [
+    pub const ALL: [Cue; 21] = [
         Cue::Shot,
         Cue::EnemyShot,
         Cue::Ricochet,
@@ -99,6 +109,8 @@ impl Cue {
         Cue::Wave,
         Cue::Appeared,
         Cue::Entered,
+        Cue::Down,
+        Cue::Last,
     ];
 
     /// How long the cue lasts.
@@ -123,6 +135,8 @@ impl Cue {
             Cue::Wave => 0.9,
             Cue::Appeared => 0.3,
             Cue::Entered => 0.52,
+            Cue::Down => 0.6,
+            Cue::Last => 0.95,
         }
     }
 
@@ -204,8 +218,38 @@ impl Cue {
                         + 0.18 * tone(since, frequency(E4)) * decay(since * 24.0)
                         + 0.55 * noise.dull(0.5) * decay(since * 45.0))
             }
+            Cue::Down => {
+                let fall = pluck(t, 0.0, A5) + pluck(t, LOSS_STEP, E5);
+                0.3 * fall + 0.22 * knock(t, 0.0, noise)
+            }
+            Cue::Last => {
+                let fall =
+                    pluck(t, 0.0, A5) + pluck(t, LOSS_STEP, E5) + pluck(t, 2.0 * LOSS_STEP, A4);
+                0.3 * fall + 0.22 * knock(t, 0.0, noise)
+            }
         }
     }
+}
+
+/// A note that starts at some moment, with a third of its third harmonic, which makes it
+/// hollow: it cuts through a fight better than a pure note does.
+fn pluck(t: f32, start: f32, pitch: u8) -> f32 {
+    if t < start {
+        return 0.0;
+    }
+    let (since, hz) = (t - start, frequency(pitch));
+    0.8 * (tone(since, hz) + 0.33 * tone(since, 3.0 * hz)) * decay(since * 9.0)
+}
+
+/// A dull knock on the fifth of the music, two octaves down, that starts at some moment. Its
+/// noise is drawn at every sample, so that the knock is the same wherever it starts.
+fn knock(t: f32, start: f32, noise: &mut Hiss) -> f32 {
+    let rush = noise.dull(0.35);
+    if t < start {
+        return 0.0;
+    }
+    let since = t - start;
+    tone(since, frequency(E3)) * decay(since * 26.0) + 0.8 * rush * decay(since * 45.0)
 }
 
 /// The noise of a cue, as it is or with its top taken off.
@@ -300,13 +344,15 @@ mod tests {
 
     #[test]
     fn cues_play_the_tonic_of_the_music_and_its_fifth() {
-        let played: [(Cue, &[u8]); 6] = [
+        let played: [(Cue, &[u8]); 8] = [
             (Cue::MinePlaced, &[E5]),
             (Cue::ShieldBlocked, &[A5, E6]),
             (Cue::Cleared, &[A2, E5, A5]),
             (Cue::LifeTaken, &[E5, A5, E6]),
             (Cue::Unlocked, &[A5, E6]),
             (Cue::RunOver, &[A3, E4, A4]),
+            (Cue::Down, &[E3, E5, A5]),
+            (Cue::Last, &[E3, A4, E5, A5]),
         ];
         for (cue, notes) in played {
             // Of all the notes from two octaves below the A of 440 Hz to two above, the
@@ -368,6 +414,39 @@ mod tests {
         for cue in [Cue::Unlocked, Cue::Cleared] {
             assert!(entered < loudest(cue), "{cue:?}");
         }
+    }
+
+    #[test]
+    fn a_loss_falls_and_the_last_one_falls_further() {
+        // The strongest of the notes of a fall in each step of it.
+        let strongest = |cue: Cue, step: f32| {
+            let samples = cue.samples();
+            let part =
+                &samples[(step * LOSS_STEP * RATE) as usize..][..(LOSS_STEP * RATE) as usize];
+            let strength = |pitch: &u8| amount(part, frequency(*pitch));
+            [A4, E5, A5]
+                .into_iter()
+                .max_by(|a, b| strength(a).total_cmp(&strength(b)))
+        };
+        assert_eq!(strongest(Cue::Down, 0.0), Some(A5));
+        assert_eq!(strongest(Cue::Down, 1.0), Some(E5));
+        // The last one goes on to the A under them, where the end of a run starts its own fall.
+        assert_eq!(strongest(Cue::Last, 0.0), Some(A5));
+        assert_eq!(strongest(Cue::Last, 1.0), Some(E5));
+        assert_eq!(strongest(Cue::Last, 2.0), Some(A4));
+        // It is heard over a blast: most of it is above the blast's rumble, where the blast
+        // has little.
+        let power = |cue: Cue, from: f32, to: f32| {
+            let samples = cue.samples();
+            let steps = (1..=200).map(|step| step as f32 * 25.0);
+            steps
+                .filter(|hz| (from..to).contains(hz))
+                .map(|hz| amount(&samples, hz).powi(2))
+                .sum::<f64>()
+        };
+        let high = |cue: Cue| power(cue, 400.0, 5000.0) / power(cue, 0.0, 5000.0);
+        assert!(high(Cue::Down) > 0.6, "{}", high(Cue::Down));
+        assert!(high(Cue::Blast) < 0.2, "{}", high(Cue::Blast));
     }
 
     #[test]

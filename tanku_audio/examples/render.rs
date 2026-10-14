@@ -160,8 +160,8 @@ const VOLUME: f32 = 0.7;
 const MUSIC_VOLUME: f32 = 0.5;
 /// How loud the game plays a cue that sounds as far away as a cue gets.
 const FAR: f32 = 0.25;
-/// Seconds of the file of cues before its music starts.
-const ALONE: f32 = 26.0;
+/// Seconds of the file of cues before its music starts: each cue alone, and a moment.
+const ALONE: f32 = 2.0 + 1.5 * Cue::ALL.len() as f32;
 /// The music of the file of cues: the fullest there is.
 const FULLEST: Context = fight(Place::Arena, 4);
 
@@ -202,6 +202,8 @@ fn told(cue: Cue) -> &'static str {
         Cue::Wave => "A wave of an arena is on its way",
         Cue::Appeared => "The tanks of a wave are there",
         Cue::Entered => "A sector of the corridor is entered",
+        Cue::Down => "A teammate's tank is destroyed",
+        Cue::Last => "One more loss ends the run",
     }
 }
 

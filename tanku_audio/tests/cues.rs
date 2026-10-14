@@ -13,7 +13,7 @@ fn fingerprint(samples: &[f32]) -> u64 {
 fn the_cues_are_stable() {
     // Golden values: a change here changes what a cue sounds like. They are in the order of
     // the cues.
-    let golden: [u64; 19] = [
+    let golden: [u64; 21] = [
         0x5E6C_A888_83FA_893F,
         0x8995_BBCE_6C99_3098,
         0xE7CA_389B_D3FA_4AEC,
@@ -33,6 +33,8 @@ fn the_cues_are_stable() {
         0xB848_BE40_72C9_571F,
         0xE0D2_7FE9_E228_205C,
         0x91B7_271B_C5F3_664E,
+        0x400C_7173_4D72_DA22,
+        0x4517_D490_3752_9B18,
     ];
     let heard: Vec<u64> = Cue::ALL
         .iter()
