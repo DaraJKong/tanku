@@ -651,7 +651,14 @@ fn build(mut commands: Commands) {
                     justify_content: JustifyContent::Center,
                     ..default()
                 },
-                children![(Toast(0.0), theme::title("", 20.0, theme::TEXT))],
+                // Over the game, which may have a block or a crate there: it has a dark edge.
+                children![theme::edged(
+                    Toast(0.0),
+                    theme::Face::Title,
+                    "",
+                    20.0,
+                    theme::TEXT
+                )],
             ),
             weapons_panel(),
             (

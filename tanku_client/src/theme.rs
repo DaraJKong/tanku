@@ -3,7 +3,7 @@
 //!
 //! Nothing is lit, so a color on screen is the color written here.
 
-use bevy::{prelude::*, text::LetterSpacing};
+use bevy::{prelude::*, text::LetterSpacing, ui::UiSystems};
 
 /// A color from its hexadecimal code.
 const fn hex(code: u32) -> Color {
@@ -128,7 +128,8 @@ struct Faces(#[expect(dead_code, reason = "held so that the fonts stay loaded")]
 pub fn plugin(app: &mut App) {
     let mut fonts = app.world_mut().resource_mut::<Assets<Font>>();
     let faces = FACES.map(|file| fonts.add(Font::from_bytes(file.to_vec())));
-    app.insert_resource(Faces(faces));
+    app.insert_resource(Faces(faces))
+        .add_systems(PostUpdate, follow_edges.before(UiSystems::Prepare));
 }
 
 fn lettered(
@@ -180,6 +181,113 @@ pub fn code(content: impl Into<String>, size: f32, color: Color) -> impl Bundle 
     lettered(content.into(), (LETTERING, HEAVY), (size, TRACKING), color)
 }
 
+/// How a text is set.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Face {
+    Title,
+}
+
+impl Face {
+    fn set(self, content: String, size: f32, color: Color) -> impl Bundle {
+        let (face, tracking) = match self {
+            Face::Title => ((LETTERING, HEAVY), TRACKING),
+        };
+        let content = match self {
+            Face::Title => content.to_uppercase(),
+        };
+        lettered(content, face, (size, tracking), color)
+    }
+}
+
+/// Where the copies of a text that make its dark edge stand, in pixels from the text: two
+/// pixels to each side, and one along each diagonal.
+const EDGE: [(f32, f32); 8] = [
+    (-2.0, 0.0),
+    (2.0, 0.0),
+    (0.0, -2.0),
+    (0.0, 2.0),
+    (-1.0, -1.0),
+    (1.0, -1.0),
+    (-1.0, 1.0),
+    (1.0, 1.0),
+];
+
+/// A copy of a text in the color of the void, under it: a part of its dark edge.
+#[derive(Component)]
+struct Edge;
+
+/// A text that has a dark edge. Its copies follow its words, and how see-through it is.
+#[derive(Component)]
+pub struct Edged;
+
+/// Text that is drawn over the game, with a dark edge that keeps it readable over blocks and
+/// crates, and without a panel that would hide a bullet. The edge is the text drawn again in the
+/// color of the void, a little to each side, under itself. `marker` goes on the text itself.
+pub fn edged(
+    marker: impl Bundle,
+    face: Face,
+    content: impl Into<String>,
+    size: f32,
+    color: Color,
+) -> impl Bundle {
+    let content: String = content.into();
+    let ink = VOID.with_alpha(color.alpha());
+    let copy = |(left, top): (f32, f32)| {
+        (
+            Edge,
+            Node {
+                position_type: PositionType::Absolute,
+                left: px(left),
+                top: px(top),
+                ..default()
+            },
+            face.set(content.clone(), size, ink),
+        )
+    };
+    (
+        Node::default(),
+        children![
+            copy(EDGE[0]),
+            copy(EDGE[1]),
+            copy(EDGE[2]),
+            copy(EDGE[3]),
+            copy(EDGE[4]),
+            copy(EDGE[5]),
+            copy(EDGE[6]),
+            copy(EDGE[7]),
+            (marker, Edged, face.set(content.clone(), size, color)),
+        ],
+    )
+}
+
+/// Keeps the dark edge of a text with its words, and as see-through as it is.
+fn follow_edges(
+    texts: Query<
+        (&Text, &TextColor, &ChildOf),
+        (With<Edged>, Or<(Changed<Text>, Changed<TextColor>)>),
+    >,
+    families: Query<&Children>,
+    mut edges: Query<(&mut Text, &mut TextColor), (With<Edge>, Without<Edged>)>,
+) {
+    for (text, color, parent) in &texts {
+        let Ok(children) = families.get(parent.parent()) else {
+            continue;
+        };
+        let ink = VOID.with_alpha(color.0.alpha());
+        for child in children.iter() {
+            let Ok((mut copy, mut copy_ink)) = edges.get_mut(child) else {
+                continue;
+            };
+            if copy.0 != text.0 {
+                copy.0.clone_from(&text.0);
+            }
+            if copy_ink.0 != ink {
+                copy_ink.0 = ink;
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use bevy::text::{FontCx, load_font_assets_into_font_collection};
@@ -209,6 +317,43 @@ mod tests {
         };
         assert_eq!(weights(LETTERING), [PLAIN.0 as f32, HEAVY.0 as f32]);
         assert_eq!(weights(FIGURES), [FontWeight::NORMAL.0 as f32]);
+    }
+
+    #[test]
+    fn the_dark_edge_of_a_text_follows_its_words_and_its_ink() {
+        #[derive(Component)]
+        struct Shown;
+        let mut app = App::new();
+        app.add_systems(Update, follow_edges);
+        let edged = edged(Shown, Face::Title, "Sector 3 cleared", 20.0, TEXT);
+        app.world_mut().spawn(edged);
+        app.update();
+        let copies = |app: &mut App| {
+            let world = app.world_mut();
+            let mut copies = world.query_filtered::<(&Text, &TextColor), With<Edge>>();
+            let copies = copies.iter(world);
+            copies
+                .map(|(text, ink)| (text.0.clone(), ink.0))
+                .collect::<Vec<_>>()
+        };
+        // Eight copies in the color of the void, as the text is written: a title is in
+        // capitals.
+        let first = copies(&mut app);
+        assert_eq!(first.len(), EDGE.len());
+        assert!(
+            first
+                .iter()
+                .all(|copy| *copy == ("SECTOR 3 CLEARED".into(), VOID))
+        );
+        // The words change and the text fades: its edge goes with it.
+        let world = app.world_mut();
+        let mut shown = world.query_filtered::<(&mut Text, &mut TextColor), With<Shown>>();
+        let (mut text, mut ink) = shown.single_mut(world).unwrap();
+        text.0 = "WAVE 2 OF 3".into();
+        ink.0 = TEXT.with_alpha(0.25);
+        app.update();
+        let faded = (String::from("WAVE 2 OF 3"), VOID.with_alpha(0.25));
+        assert!(copies(&mut app).iter().all(|copy| *copy == faded));
     }
 
     #[test]
