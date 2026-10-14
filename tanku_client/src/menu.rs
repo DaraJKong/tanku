@@ -125,6 +125,7 @@ enum Press {
     Back,
     Fullscreen,
     Vsync,
+    AntiAliasing,
     Shake,
     /// Turns the flash of the frame of the sheet on or off.
     Flash,
@@ -3278,6 +3279,10 @@ fn settings_menu(mut commands: Commands, settings: Res<Settings>, capture: Res<C
                         row(options, "Vertical sync", |row| {
                             small(row, on_off(settings.vsync), 70.0, Press::Vsync);
                         });
+                        row(options, "Anti-aliasing", |row| {
+                            let on = on_off(settings.anti_aliasing);
+                            small(row, on, 70.0, Press::AntiAliasing);
+                        });
                         section(options, "Audio");
                         row(options, "Volume", |row| {
                             small(row, "-", 34.0, Press::Volume(-0.1));
@@ -3628,6 +3633,7 @@ fn press(
             }
             Press::Fullscreen => settings.fullscreen = !settings.fullscreen,
             Press::Vsync => settings.vsync = !settings.vsync,
+            Press::AntiAliasing => settings.anti_aliasing = !settings.anti_aliasing,
             Press::Shake => settings.camera_shake = !settings.camera_shake,
             Press::Flash => settings.flash_frame = !settings.flash_frame,
             Press::Volume(change) => settings.volume = level(settings.volume + change),

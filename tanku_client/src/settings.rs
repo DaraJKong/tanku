@@ -5,11 +5,12 @@ use std::collections::BTreeMap;
 use bevy::{
     audio::{GlobalVolume, Volume},
     prelude::*,
+    render::view::Msaa,
     window::{MonitorSelection, PresentMode, PrimaryWindow, WindowMode},
 };
 use tanku_core::{modes::Difficulty, protocol::named, seed::VERSION, sim::Run};
 
-use crate::{audio::Muted, storage};
+use crate::{audio::Muted, camera::MainCamera, storage};
 
 const SETTINGS_FILE: &str = "settings.txt";
 const RECORDS_FILE: &str = "records.txt";
@@ -262,6 +263,8 @@ pub struct Settings {
     pub ui_scale: f32,
     pub fullscreen: bool,
     pub vsync: bool,
+    /// Whether the edges of what the game draws are smoothed.
+    pub anti_aliasing: bool,
     /// The address of the game that was joined last.
     pub address: String,
     /// The difficulty that the player chose last for a run of their own.
@@ -293,6 +296,7 @@ impl Default for Settings {
             // A browser only goes full screen when the player asks for it.
             fullscreen: !cfg!(target_arch = "wasm32"),
             vsync: true,
+            anti_aliasing: true,
             address: String::new(),
             solo_difficulty: Difficulty::Normal,
             solo_free: false,
@@ -324,6 +328,17 @@ impl Settings {
             PresentMode::AutoVsync
         } else {
             PresentMode::AutoNoVsync
+        }
+    }
+
+    /// How many samples of each pixel the drawing takes. Four smooth the edges of the fine
+    /// lines, and were a third or more of what the graphics card did in a frame (measured
+    /// 2026-10-14), which a weak card can be spared.
+    pub fn msaa(&self) -> Msaa {
+        if self.anti_aliasing {
+            Msaa::Sample4
+        } else {
+            Msaa::Off
         }
     }
 
@@ -399,6 +414,7 @@ impl Settings {
         settings.flash_frame = flag("flash_frame", settings.flash_frame);
         settings.fullscreen = flag("fullscreen", settings.fullscreen);
         settings.vsync = flag("vsync", settings.vsync);
+        settings.anti_aliasing = flag("anti_aliasing", settings.anti_aliasing);
         // A file can hold anything: only what an address is made of is kept.
         let lettered = |letter: &char| letter.is_ascii_alphanumeric() || ".:-".contains(*letter);
         let address = pairs.get("address").map(String::as_str).unwrap_or_default();
@@ -436,6 +452,7 @@ impl Settings {
         pairs.insert("flash_frame".to_string(), self.flash_frame.to_string());
         pairs.insert("fullscreen".to_string(), self.fullscreen.to_string());
         pairs.insert("vsync".to_string(), self.vsync.to_string());
+        pairs.insert("anti_aliasing".to_string(), self.anti_aliasing.to_string());
         pairs.insert("address".to_string(), self.address.clone());
         let difficulty = self.solo_difficulty.key().to_string();
         pairs.insert("solo.difficulty".to_string(), difficulty);
@@ -626,6 +643,7 @@ fn apply(
     mut volume: ResMut<GlobalVolume>,
     muted: Option<Res<Muted>>,
     window: Option<Single<&mut Window, With<PrimaryWindow>>>,
+    mut cameras: Query<&mut Msaa, With<MainCamera>>,
     mut loaded: Local<bool>,
 ) {
     let loudness = if muted.is_some() {
@@ -639,6 +657,9 @@ fn apply(
         window.mode = settings.window_mode();
         window.present_mode = settings.present_mode();
     }
+    for mut samples in &mut cameras {
+        samples.set_if_neq(settings.msaa());
+    }
     if *loaded {
         storage::save(SETTINGS_FILE, &settings.to_pairs());
     }
@@ -647,16 +668,20 @@ fn apply(
 
 #[cfg(test)]
 mod tests {
+    use bevy::ecs::system::RunSystemOnce;
+
     use super::*;
+
+    /// The settings of a file that holds one line, or none.
+    fn saved(text: &str) -> Settings {
+        let pairs = text
+            .split_once('=')
+            .map(|(key, value)| (key.into(), value.into()));
+        Settings::from_pairs(&pairs.into_iter().collect())
+    }
 
     #[test]
     fn the_first_launch_is_full_screen_and_the_saved_choice_wins_afterward() {
-        let saved = |text: &str| {
-            let pairs = text
-                .split_once('=')
-                .map(|(key, value)| (key.into(), value.into()));
-            Settings::from_pairs(&pairs.into_iter().collect())
-        };
         assert!(saved("").fullscreen);
         assert!(!saved("fullscreen=false").fullscreen);
         assert!(saved("fullscreen=true").fullscreen);
@@ -671,12 +696,36 @@ mod tests {
     }
 
     #[test]
+    fn the_edges_are_smoothed_until_the_player_says_otherwise() {
+        assert!(saved("").anti_aliasing);
+        assert_eq!(saved("").msaa(), Msaa::Sample4);
+        assert_eq!(saved("anti_aliasing=false").msaa(), Msaa::Off);
+        assert_eq!(saved("anti_aliasing=true").msaa(), Msaa::Sample4);
+    }
+
+    #[test]
+    fn the_camera_takes_the_samples_that_the_settings_ask_for() {
+        let mut world = World::new();
+        world.insert_resource(Settings::default());
+        world.insert_resource(GlobalVolume::default());
+        let camera = world.spawn((MainCamera, Msaa::Off)).id();
+        let samples = |world: &mut World| {
+            world.run_system_once(apply).unwrap();
+            *world.get::<Msaa>(camera).unwrap()
+        };
+        assert_eq!(samples(&mut world), Msaa::Sample4);
+        world.resource_mut::<Settings>().anti_aliasing = false;
+        assert_eq!(samples(&mut world), Msaa::Off);
+    }
+
+    #[test]
     fn settings_survive_a_save_and_a_load() {
         let mut settings = Settings {
             volume: 0.25,
             music: 0.8,
             camera_shake: false,
             flash_frame: false,
+            anti_aliasing: false,
             address: "192.168.1.20:4000".to_string(),
             solo_difficulty: Difficulty::Hard,
             solo_free: true,

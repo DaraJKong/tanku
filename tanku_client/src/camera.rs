@@ -182,12 +182,13 @@ fn sort_lights_on_the_processor(settings: Option<ResMut<GlobalClusterSettings>>)
     }
 }
 
-fn setup(mut commands: Commands) {
+fn setup(mut commands: Commands, settings: Res<Settings>) {
     // Nothing is lit, and no tone mapping comes between the colors of the theme and the screen.
     commands.spawn((
         MainCamera,
         Camera3d::default(),
         Tonemapping::None,
+        settings.msaa(),
         // The lights of the engine are sorted into clusters of the view: there is no light,
         // and one cluster does.
         ClusterConfig::Single,
