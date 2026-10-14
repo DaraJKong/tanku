@@ -30,7 +30,7 @@ use crate::{
     scene::Paints,
     session::{Asked, Drawn, Found, Game, Invitation, Notice, Session, SessionRequest, Shut, Sign},
     settings::{Action, Binding, League, Records, Settings},
-    theme,
+    sheet, theme,
     unlocks::{self, Fair, Unlocks},
 };
 
@@ -390,22 +390,6 @@ pub fn plugin(app: &mut App) {
                 exhibit.run_if(before_a_run),
             ),
         );
-}
-
-/// The fine line around the screen, as around a drawing.
-fn sheet_edge() -> impl Bundle {
-    (
-        Node {
-            position_type: PositionType::Absolute,
-            left: px(16),
-            right: px(16),
-            top: px(16),
-            bottom: px(16),
-            border: UiRect::all(px(1)),
-            ..default()
-        },
-        BorderColor::all(theme::RULE.with_alpha(0.35)),
-    )
 }
 
 /// The left margin of the sheet, where the menus that fill the screen stand. The right of the
@@ -874,7 +858,7 @@ fn main_menu(
                 ..default()
             },
             GlobalZIndex(10),
-            children![sheet_edge()],
+            children![sheet::fine_line()],
         ))
         .with_children(|root| {
             // The menu is the left margin of the sheet. The tank is drawn on its right.
@@ -1463,7 +1447,7 @@ fn solo_screen(
                 ..default()
             },
             GlobalZIndex(10),
-            children![sheet_edge()],
+            children![sheet::fine_line()],
         ))
         .with_children(|root| {
             margin(root, 460.0, |parent| {
@@ -1730,7 +1714,7 @@ fn garage_screen(
                 ..default()
             },
             GlobalZIndex(10),
-            children![sheet_edge()],
+            children![sheet::fine_line()],
         ))
         .with_children(|root| {
             margin(root, 500.0, |parent| {
@@ -1863,7 +1847,7 @@ fn achievements_screen(mut commands: Commands, unlocks: Res<Unlocks>) {
                 ..default()
             },
             GlobalZIndex(10),
-            children![sheet_edge()],
+            children![sheet::fine_line()],
         ))
         .with_children(|root| {
             margin(root, 460.0, |parent| {
@@ -2152,7 +2136,7 @@ fn host_screen(
                 ..default()
             },
             GlobalZIndex(10),
-            children![sheet_edge()],
+            children![sheet::fine_line()],
         ))
         .with_children(|root| {
             margin(root, 440.0, |parent| {
@@ -2245,7 +2229,7 @@ fn join_screen(
                 ..default()
             },
             GlobalZIndex(10),
-            children![sheet_edge()],
+            children![sheet::fine_line()],
         ))
         .with_children(|root| {
             margin(root, 440.0, |parent| {
@@ -2767,7 +2751,7 @@ fn lobby_screen(
                 ..default()
             },
             GlobalZIndex(10),
-            children![sheet_edge()],
+            children![sheet::fine_line()],
         ))
         .with_children(|root| {
             margin(root, 460.0, |parent| {
@@ -3115,7 +3099,7 @@ fn game_over(
                 ..default()
             },
             GlobalZIndex(10),
-            children![sheet_edge()],
+            children![sheet::fine_line()],
         ))
         .with_children(|root| {
             root.spawn(Node {
@@ -3855,7 +3839,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::{crew, hud::SHEET_EDGE, session, sheet};
+    use crate::{crew, hud::SHEET_EDGE, session};
 
     /// A notice as long as they get: three lines of a menu.
     const LONG_NOTICE: &str = "No game answers at 192.168.100.200:28405. Its host must run \

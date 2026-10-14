@@ -14,7 +14,7 @@ use bevy::{
     ui::{DefaultUiCamera, UiSystems},
 };
 
-use crate::settings::Settings;
+use crate::{hud::SHEET_EDGE, settings::Settings, theme};
 
 /// The smallest sheet that the interface is drawn for, in its own pixels.
 pub const LEAST: Vec2 = Vec2::new(1600.0, 900.0);
@@ -59,6 +59,66 @@ fn size(
     if scale.0 != wanted {
         scale.0 = wanted;
     }
+}
+
+/// The fine line around the screen, as around a drawing.
+///
+/// It is four strokes, one for each side. As the border of a box as large as the sheet, it
+/// was about a sixth of what the graphics card did in each frame (measured 2026-10-14): the
+/// engine works out every pixel of a box that has a border to find those that are on it. The
+/// strokes of the left and the right stand between those of the top and the bottom, so that
+/// no corner is drawn twice.
+///
+/// They are laid out on a grid as large as the screen: the margin, a stroke, the sheet, a
+/// stroke and the margin, across and down, and each stroke as wide as its edge. The engine
+/// rounds where a piece lies from where the one that holds it lies, so a stroke held by a box
+/// that starts inside a pixel, as the sheet does in a small window, would be a pixel off.
+pub fn fine_line() -> impl Bundle {
+    let stroke = |border, grid_row, grid_column| {
+        (
+            Node {
+                border,
+                grid_row,
+                grid_column,
+                ..default()
+            },
+            BorderColor::all(theme::RULE.with_alpha(0.35)),
+        )
+    };
+    let tracks = || {
+        vec![
+            GridTrack::px(SHEET_EDGE),
+            GridTrack::auto(),
+            GridTrack::flex(1.0),
+            GridTrack::auto(),
+            GridTrack::px(SHEET_EDGE),
+        ]
+    };
+    let (first, between, last) = (
+        GridPlacement::start(2),
+        GridPlacement::start(3),
+        GridPlacement::start(4),
+    );
+    let across = GridPlacement::start_end(2, 5);
+    (
+        Node {
+            position_type: PositionType::Absolute,
+            left: px(0),
+            right: px(0),
+            top: px(0),
+            bottom: px(0),
+            display: Display::Grid,
+            grid_template_columns: tracks(),
+            grid_template_rows: tracks(),
+            ..default()
+        },
+        children![
+            stroke(UiRect::top(px(1)), first, across),
+            stroke(UiRect::bottom(px(1)), last, across),
+            stroke(UiRect::left(px(1)), between, first),
+            stroke(UiRect::right(px(1)), between, last),
+        ],
+    )
 }
 
 /// The edges of a piece of the interface as its menu drew them, kept for as long as the
@@ -374,6 +434,89 @@ pub(crate) mod tests {
             };
             assert_eq!(drawn(&app, *ruled), UiRect::all(px(width)));
             assert!(app.world().get::<Edges>(*ruled).is_none());
+        }
+    }
+
+    /// How many edges of these pieces paint each pixel of a window of this size, row by row
+    /// from the top. A pixel is painted where its middle is.
+    fn painted(app: &App, pieces: &[Entity], pixels: UVec2) -> Vec<u8> {
+        let mut painted = vec![0; (pixels.x * pixels.y) as usize];
+        for piece in pieces {
+            let computed = app.world().get::<ComputedNode>(*piece).unwrap();
+            let center = app.world().get::<UiGlobalTransform>(*piece).unwrap();
+            let outer = Rect::from_center_size(center.translation, computed.size);
+            let (near, far) = (computed.border.min_inset, computed.border.max_inset);
+            let inner = Rect::from_corners(outer.min + near, outer.max - far);
+            for side in [outer.min, outer.max, inner.min, inner.max] {
+                assert!(
+                    side.round().distance(side) < 1e-3,
+                    "an edge ends inside a pixel, at {side}, in a window of {pixels}"
+                );
+            }
+            let span = |from: f32, to: f32| from.round() as u32..to.round() as u32;
+            for y in span(outer.min.y, outer.max.y) {
+                let middle = y as f32 + 0.5;
+                // A row between the edges at the top and the bottom has its sides alone.
+                let across = if middle > inner.min.y && middle < inner.max.y {
+                    [
+                        span(outer.min.x, inner.min.x),
+                        span(inner.max.x, outer.max.x),
+                    ]
+                } else {
+                    [span(outer.min.x, outer.max.x), 0..0]
+                };
+                for x in across.into_iter().flatten() {
+                    painted[(y * pixels.x + x) as usize] += 1;
+                }
+            }
+        }
+        painted
+    }
+
+    #[test]
+    fn the_fine_line_paints_what_the_border_of_one_box_did() {
+        let windows = [
+            (UVec2::new(1280, 720), 1.0, 1.0),
+            (UVec2::new(1366, 768), 1.0, 1.0),
+            (UVec2::new(1440, 900), 1.0, 1.0),
+            (UVec2::new(1536, 864), 1.0, 1.0),
+            (UVec2::new(1920, 1080), 1.0, 1.0),
+            (UVec2::new(1920, 1080), 1.5, 1.0),
+            (UVec2::new(1920, 1080), 1.0, 0.75),
+            (UVec2::new(1280, 720), 1.0, 0.75),
+        ];
+        for (pixels, scale_factor, chosen) in windows {
+            let mut app = window(pixels, scale_factor);
+            app.world_mut().resource_mut::<Settings>().ui_scale = chosen;
+            let ruled = Node {
+                position_type: PositionType::Absolute,
+                left: px(SHEET_EDGE),
+                right: px(SHEET_EDGE),
+                top: px(SHEET_EDGE),
+                bottom: px(SHEET_EDGE),
+                border: UiRect::all(px(1)),
+                ..default()
+            };
+            let ruled = app.world_mut().spawn(ruled).id();
+            app.world_mut().spawn(fine_line());
+            app.update();
+            let world = app.world_mut();
+            let mut pieces = world.query::<(Entity, &Node)>();
+            let strokes: Vec<Entity> = pieces
+                .iter(world)
+                .filter(|(piece, node)| *piece != ruled && node.border != UiRect::ZERO)
+                .map(|(piece, _)| piece)
+                .collect();
+            assert_eq!(strokes.len(), 4);
+            let line = painted(&app, &strokes, pixels);
+            let border = painted(&app, &[ruled], pixels);
+            let at = format!("in a window of {pixels} at {scale_factor}, chosen {chosen}");
+            assert!(
+                line.iter().all(|times| *times <= 1),
+                "a pixel is painted twice {at}"
+            );
+            assert!(border.contains(&1), "the border is drawn nowhere {at}");
+            assert!(line == border, "the line is not the border {at}");
         }
     }
 

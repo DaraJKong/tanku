@@ -23,7 +23,7 @@ use crate::{
     notices::Alarms,
     repair, scene,
     settings::{Action, Settings},
-    tags, theme,
+    sheet, tags, theme,
     unlocks::{self, Fair, Unlocks},
 };
 
@@ -682,19 +682,7 @@ fn build(mut commands: Commands) {
         // The display never takes a click away from the game.
         Pickable::IGNORE,
         children![
-            // The fine line around the sheet.
-            (
-                Node {
-                    position_type: PositionType::Absolute,
-                    left: px(SHEET_EDGE),
-                    right: px(SHEET_EDGE),
-                    top: px(SHEET_EDGE),
-                    bottom: px(SHEET_EDGE),
-                    border: UiRect::all(px(1)),
-                    ..default()
-                },
-                BorderColor::all(theme::RULE.with_alpha(0.35)),
-            ),
+            sheet::fine_line(),
             (
                 Node {
                     position_type: PositionType::Absolute,
