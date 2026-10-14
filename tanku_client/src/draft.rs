@@ -43,12 +43,28 @@ pub struct Draft {
     positions: Vec<Vec3>,
     normals: Vec<Vec3>,
     colors: Vec<[f32; 4]>,
+    /// The last color that a face was given, as the vertices carry it. The faces of a
+    /// drawing come in long runs of one color, such as the dashes of an outline, and the
+    /// way from a color to the numbers of its vertices takes three powers.
+    paint: Option<(Color, [f32; 4])>,
 }
 
 impl Draft {
+    /// The numbers that the vertices of a face of this color carry.
+    fn paint(&mut self, color: Color) -> [f32; 4] {
+        match self.paint {
+            Some((last, paint)) if last == color => paint,
+            _ => {
+                let paint = color.to_linear().to_f32_array();
+                self.paint = Some((color, paint));
+                paint
+            }
+        }
+    }
+
     /// A flat face with three corners or more. It must be convex.
     pub fn face(&mut self, corners: &[Vec3], color: Color) {
-        let paint = color.to_linear().to_f32_array();
+        let paint = self.paint(color);
         let normal = (corners[1] - corners[0])
             .cross(corners[2] - corners[0])
             .normalize_or_zero();
