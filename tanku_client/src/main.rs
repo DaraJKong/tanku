@@ -46,7 +46,9 @@ mod wake;
 
 use bevy::{
     app::{TaskPoolOptions, TaskPoolPlugin},
+    ecs::schedule::SingleThreadedExecutor,
     prelude::*,
+    render::RenderApp,
 };
 use tanku_core::{CorePlugin, sim::Playtest};
 use tanku_server::ServerPlugin;
@@ -81,19 +83,48 @@ pub enum Overlay {
     Settings,
 }
 
-/// The most threads that the systems of the engine run on side by side.
-const COMPUTE_THREADS: usize = 4;
+/// The most threads in the pool that a system of the engine shares its work out on.
+const COMPUTE_THREADS: usize = 1;
 
-/// The threads of the engine. It runs its systems side by side on the threads of a pool,
+/// The threads of the engine. A system can share its work out on the threads of a pool,
 /// which has nearly every core of the machine unless it is told otherwise. The work of a
-/// frame is small, and waking many threads for its pieces costs more than they save: on a
-/// machine of 24 cores, the main schedule of a fight of four players took 6.0 ms a frame on
-/// the 16 threads that the engine took, and 4.0 ms on four.
+/// frame is small, and waking threads for its pieces costs more than they save: on a machine
+/// of 24 cores, with every schedule on one thread (see `OneThread`), the main schedule of a
+/// fight of four players took 2.3 ms a frame with eight threads in the pool, 2.1 ms with
+/// four and 1.7 ms with one (measured 2026-10-14).
 pub fn task_pools() -> TaskPoolPlugin {
     let mut options = TaskPoolOptions::default();
     options.compute.max_threads = COMPUTE_THREADS;
     TaskPoolPlugin {
         task_pool_options: options,
+    }
+}
+
+/// Runs the systems of every schedule one after another, on the thread that runs the
+/// schedule, as a browser does, which gives the game one thread. The engine otherwise hands
+/// them out to the threads of its pool, and the systems of a frame are too many and too small
+/// for that to pay: in a fight of four players on a machine of 24 cores, the main schedule
+/// took 3.8 ms a frame at 60 frames a second, and 2.1 ms on one thread. With the schedules of
+/// the drawing, which has its own thread, run the same way too, the game drew 45% more frames
+/// when nothing held it back (measured 2026-10-14).
+struct OneThread;
+
+impl Plugin for OneThread {
+    fn build(&self, _app: &mut App) {}
+
+    /// Once every plugin has made its schedules, and before the drawing takes its own away to
+    /// its thread.
+    fn finish(&self, app: &mut App) {
+        one_thread(app.world_mut());
+        if let Some(drawing) = app.get_sub_app_mut(RenderApp) {
+            one_thread(drawing.world_mut());
+        }
+    }
+}
+
+fn one_thread(world: &mut World) {
+    for (_, schedule) in world.resource_mut::<Schedules>().iter_mut() {
+        schedule.set_executor(SingleThreadedExecutor::new());
     }
 }
 
@@ -172,5 +203,7 @@ fn main() {
     app.insert_resource(options);
     #[cfg(feature = "script")]
     app.add_plugins(dev::plugin);
+    // Last, so that it finishes after every other plugin.
+    app.add_plugins(OneThread);
     app.run();
 }
