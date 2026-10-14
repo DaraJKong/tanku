@@ -60,6 +60,8 @@ pub const DANGER: Color = hex(0xF24D40);
 /// The fill of a square that tells a loss for a moment.
 pub const DANGER_FILL: Color = hex(0x2B1418);
 pub const GOOD: Color = hex(0x4DD980);
+/// The fill of a square that tells a gain for a moment.
+pub const GOOD_FILL: Color = hex(0x10261A);
 /// Shields: the disk under the turret of a tank that has one, and the bubble when it is up.
 pub const SHIELD: Color = Color::WHITE;
 

@@ -946,10 +946,14 @@ fn status(
                 if last_life && life == 1 {
                     *border = BorderColor::all(theme::DANGER);
                 }
-                // The life that was just lost blinks.
+                // The life that was just lost blinks red, and one that was taken back green.
                 let lost = alarms.life.filter(|(lost, _)| *lost == life);
                 if let Some(on) = Alarms::blink(lost.map(|(_, since)| since)) {
                     alarm(on, &mut color, &mut border);
+                }
+                let back = alarms.back.filter(|(back, _)| *back == life);
+                if Alarms::blink(back.map(|(_, since)| since)) == Some(true) {
+                    (color.0, *border) = (theme::GOOD_FILL, BorderColor::all(theme::GOOD));
                 }
             }
             // Several players have each other: a square for each tank, with the number of

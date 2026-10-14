@@ -77,11 +77,13 @@ const STAMP_STEP: f32 = 0.25;
 const STAMP_FILL: f32 = 0.5;
 
 /// The losses that the display tells for a moment: how long ago the tank of each seat was
-/// destroyed, and which life of a single player was lost, with how long ago.
+/// destroyed, and which life of a single player was lost, with how long ago. And the life
+/// that a single player took back, with how long ago.
 #[derive(Resource, Default)]
 pub struct Alarms {
     pub lost: [Option<f32>; MAX_PLAYERS as usize],
     pub life: Option<(u32, f32)>,
+    pub back: Option<(u32, f32)>,
 }
 
 impl Alarms {
@@ -444,8 +446,12 @@ fn tell(
     // What there is to tell this frame, the last one first to be shown.
     let mut told: Vec<(Told, Anchor)> = Vec::new();
     let mut cue: Option<Cue> = None;
-    // A single player's tank is gone when it is destroyed: the run says what is left.
+    // A single player's tank is gone when it is destroyed: the run says what is left. A life
+    // that they take back is told on the display.
     for event in events.read() {
+        if matches!(event, SimEvent::LifeTaken { .. }) && run.solo {
+            alarms.back = Some((run.lives, 0.0));
+        }
         if let SimEvent::TankDestroyed {
             at,
             team: Team::Players,
@@ -884,8 +890,11 @@ fn place(
             .map(|since| since + seconds)
             .filter(|since| *since < ALERT_TIME);
     }
-    if let Some((life, since)) = alarms.life {
-        alarms.life = Some((life, since + seconds)).filter(|(_, since)| *since < ALERT_TIME);
+    let alarms = &mut *alarms;
+    for told in [&mut alarms.life, &mut alarms.back] {
+        if let Some((life, since)) = *told {
+            *told = Some((life, since + seconds)).filter(|(_, since)| *since < ALERT_TIME);
+        }
     }
     let Some(alert) = shown.0.as_mut() else {
         return;
@@ -1526,6 +1535,12 @@ mod tests {
         assert_eq!((solo, lives), (true, Some(1)));
         // The square of the second life blinks on the display.
         assert_eq!(app.world().resource::<Alarms>().life, Some((2, 0.0)));
+        // A life that is taken back blinks too, as the third.
+        app.world_mut().resource_mut::<Run>().lives = 3;
+        app.world_mut()
+            .write_message(SimEvent::LifeTaken { at: Vec2::ZERO });
+        app.update();
+        assert_eq!(app.world().resource::<Alarms>().back, Some((3, 0.0)));
         // An enemy's tank is no loss.
         let enemy = SimEvent::TankDestroyed {
             at: Vec2::ZERO,
