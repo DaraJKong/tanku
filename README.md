@@ -245,6 +245,14 @@ Clippy refuses the calls that stop the program when they fail: `unwrap`, `expect
 
 The tests keep these calls, and so do the trials, which must stop when they can't go on. Clippy takes a module for tests when its attribute is `#[cfg(test)]` and nothing else: another condition goes into a second attribute.
 
+GitHub runs the checks again on every push, with the warnings of Clippy as errors (`.github/workflows/checks.yml`):
+
+- **Linux:** all four.
+- **Windows:** the tests of the rules, of the sound and of the simulation, as `tanku_client/dev/windows.sh` runs them under wine but on a real Windows, and Clippy on the client as a release has it. They are built for `x86_64-pc-windows-msvc`, where the release is built from Linux for `x86_64-pc-windows-gnu`.
+- **Web:** Clippy on the client compiled for the page, which can't run the tests.
+
+A run is listed on the page of its commit on GitHub, and here by `gh run list`. The first run of a branch builds everything from nothing and takes the longest; the next ones start from a cache.
+
 The tests of the network open real games on this machine and play them in real time. On a machine that is busy with something else, such as another build, a dozen of them can fail together, most of them in `mirror`: run them again once the machine is quiet. Keeping their threads on two cores shows it every time:
 
 ```bash
