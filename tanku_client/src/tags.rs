@@ -81,10 +81,12 @@ fn numbers(barrier: &Barrier) -> (String, String) {
 }
 
 /// The players that a barrier waits for, among several: its sector is cleared, and it stays
-/// locked until every tank that runs is close to it. They are given by seat, with where their
-/// tanks are.
+/// locked until every tank that runs is close to it. It is said once a player is at the
+/// barrier and others are not, of a barrier after a fight: right after the last kill, nobody
+/// is there yet, and at the start of a run, everyone knows the way. They are given by seat,
+/// with where their tanks are.
 pub fn waiting(run: &Run, barrier: &Barrier, running: &[(u8, Vec2)]) -> Vec<u8> {
-    let held = !run.solo && !barrier.unlocked;
+    let held = !run.solo && !barrier.unlocked && barrier.sector > 0;
     if !held || barrier.sector != run.sector || run.cleared < barrier.sector {
         return Vec::new();
     }
@@ -96,6 +98,9 @@ pub fn waiting(run: &Run, barrier: &Barrier, running: &[(u8, Vec2)]) -> Vec<u8> 
         .filter(|(_, at)| far(at))
         .map(|(seat, _)| *seat)
         .collect();
+    if seats.len() == running.len() {
+        return Vec::new();
+    }
     seats.sort();
     seats
 }
@@ -543,6 +548,15 @@ mod tests {
         ];
         let locked = barrier(12, false);
         assert_eq!(waiting(&run(false, 12, 12), &locked, &running), [1, 3]);
+        // Nobody is at it yet: it is no matter of waiting for anyone.
+        let away = [(0, Vec2::new(0.0, -10.0)), (1, Vec2::new(0.0, -12.0))];
+        assert!(waiting(&run(false, 12, 12), &locked, &away).is_empty());
+        // The barrier of the start bay is left alone.
+        let bay = |cleared| Run {
+            sector: 0,
+            ..run(false, 0, cleared)
+        };
+        assert!(waiting(&bay(0), &barrier(0, false), &running).is_empty());
         // Not while it is fought, nor once it is open, nor for a single player, nor for the
         // barrier of a sector that is not the one reached.
         assert_eq!(
