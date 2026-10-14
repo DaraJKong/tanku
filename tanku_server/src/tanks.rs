@@ -125,13 +125,30 @@ pub fn drive_among(
     position: &mut Vec2,
     motion: &mut Motion,
 ) {
-    let top_speed = tank.genome.top_speed();
-    let drive = drive.clamp_length_max(1.0);
+    let (drive, heading) = asked(tank, drive);
+    roll(tank, (drive, heading), position, motion);
+    colliders.push_out(tank, position, &mut motion.velocity);
+}
 
+/// How a tank is asked to drive: no faster than its top speed, and the way to turn its hull
+/// to, if it moves at all.
+fn asked(tank: &Tank, drive: Vec2) -> (Vec2, Option<f32>) {
+    let drive = drive.clamp_length_max(1.0);
+    let moves = tank.genome.top_speed() > 0.0 && drive.length_squared() > 0.01;
+    (drive, moves.then(|| drive.to_angle()))
+}
+
+/// The part of a tick that moves a tank, before anything solid pushes it back.
+fn roll(
+    tank: &Tank,
+    (drive, heading): (Vec2, Option<f32>),
+    position: &mut Vec2,
+    motion: &mut Motion,
+) {
+    let top_speed = tank.genome.top_speed();
     // A tank drives along its hull only, forward or in reverse, whichever turns less.
     let mut wanted = Vec2::ZERO;
-    if top_speed > 0.0 && drive.length_squared() > 0.01 {
-        let heading = drive.to_angle();
+    if let Some(heading) = heading {
         let reverse = geom::angle_difference(motion.hull, heading).abs() > FRAC_PI_2;
         let target = if reverse { heading + PI } else { heading };
         motion.hull = geom::rotate_toward(motion.hull, target, tank.genome.hull_turn_rate() * TICK);
@@ -144,7 +161,73 @@ pub fn drive_among(
     let change = wanted - motion.velocity;
     motion.velocity += change.clamp_length_max(acceleration);
     *position += motion.velocity * TICK;
-    colliders.push_out(tank, position, &mut motion.velocity);
+}
+
+/// How much more than the rounding of numbers moves anything a course keeps from a wall
+/// before it skips pushing the tank out of it, in meters.
+const CLEARANCE: f32 = 1e-3;
+
+/// Where a tank gets to when it drives one way from a place, tick after tick, among some
+/// colliders: what a brain and a player work out ahead, to get out of the way of bullets.
+/// Each tick is the part of a tick that moves the tank, which the turret doesn't. The way
+/// to turn the hull to is worked out once. While the tank is further from every collider
+/// that stops it than its own radius, none of them can push it, and that is not asked: the
+/// course is the same as the one that the tank drives.
+pub struct Course<'a> {
+    /// The colliders within reach of where the course starts.
+    colliders: Colliders,
+    tank: &'a Tank,
+    from: Vec2,
+    /// How far from where the course starts the nearest collider that stops the tank is.
+    clear: f32,
+}
+
+impl<'a> Course<'a> {
+    /// The courses of a tank from a place, among the colliders of a field that are within
+    /// reach of it: a tank that drives for the time of a course gets no further.
+    pub fn new(field: &Field, tank: &'a Tank, from: Vec2, reach: f32) -> Self {
+        Self::among(field.colliders.near(from, reach), tank, from)
+    }
+
+    /// The same among these colliders alone.
+    pub fn among(colliders: Colliders, tank: &'a Tank, from: Vec2) -> Self {
+        let stops = colliders
+            .iter()
+            .filter(|collider| collider.solid.stops(tank));
+        let apart = stops.map(|collider| geom::distance_to_segment(from, collider.a, collider.b));
+        let clear = apart.fold(f32::INFINITY, f32::min);
+        Self {
+            colliders,
+            tank,
+            from,
+            clear,
+        }
+    }
+
+    /// Where the course starts.
+    pub fn from(&self) -> Vec2 {
+        self.from
+    }
+
+    /// The places of the tank, from where it starts, when it drives one way for so many
+    /// ticks.
+    pub fn places(&self, motion: &Motion, way: Vec2, ticks: usize) -> Vec<Vec2> {
+        let asked = asked(self.tank, way);
+        let (mut at, mut motion) = (self.from, *motion);
+        let mut places = Vec::with_capacity(ticks + 1);
+        places.push(at);
+        for _ in 0..ticks {
+            roll(self.tank, asked, &mut at, &mut motion);
+            // The nearest collider is at least this much further from the tank than its
+            // radius: nothing overlaps it.
+            if at.distance(self.from) + TANK_RADIUS + CLEARANCE >= self.clear {
+                self.colliders
+                    .push_out(self.tank, &mut at, &mut motion.velocity);
+            }
+            places.push(at);
+        }
+        places
+    }
 }
 
 /// Moves the hulls and turns the turrets. A wreck stays as it is.

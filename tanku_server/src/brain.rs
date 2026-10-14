@@ -25,8 +25,8 @@ use tanku_core::{
 
 use crate::{
     bullets::{self, Mark, Quarry},
-    field::{Colliders, Field},
-    tanks,
+    field::Field,
+    tanks::{self, Course},
 };
 
 /// How the brains fight, as the balance says it.
@@ -423,34 +423,23 @@ impl Path {
 /// A tank as its brain works out where it gets to: what it is, where it is, how it moves and
 /// what is solid around it, as far as it gets in the time that a brain sees ahead.
 struct Mover<'a> {
-    tank: &'a Tank,
-    at: Vec2,
     motion: &'a Motion,
-    near: Colliders,
+    ahead: Course<'a>,
 }
 
 impl<'a> Mover<'a> {
     fn new(field: &Field, tank: &'a Tank, at: Vec2, motion: &'a Motion) -> Self {
         let reach = tank.genome.top_speed() * FORESIGHT + TANK_RADIUS + 0.5;
         Self {
-            tank,
-            at,
             motion,
-            near: field.colliders.near(at, reach),
+            ahead: Course::new(field, tank, at, reach),
         }
     }
 
     /// Where the tank is, tick after tick, when it drives one way from now on.
     fn course(&self, way: Vec2) -> Vec<Vec2> {
-        let (mut at, mut motion) = (self.at, *self.motion);
         let ticks = (FORESIGHT / TICK).round() as usize;
-        let mut places = Vec::with_capacity(ticks + 1);
-        places.push(at);
-        for _ in 0..ticks {
-            tanks::drive_among(&self.near, self.tank, way, &mut at, &mut motion);
-            places.push(at);
-        }
-        places
+        self.ahead.places(self.motion, way, ticks)
     }
 }
 

@@ -36,8 +36,8 @@ use tanku_core::{
 use crate::{
     brain,
     bullets::{self, Flight, Quarry},
-    field::{Colliders, Field, Solid},
-    tanks,
+    field::{Field, Solid},
+    tanks::Course,
 };
 
 /// How far ahead a player sees what a bullet will do, in ticks: one second.
@@ -786,18 +786,6 @@ fn hazard((mine, at): &(Mine, Vec2), tank: Entity) -> Option<Hazard> {
     (mine.owner != tank || blows.is_some()).then_some(Hazard { at: *at, blows })
 }
 
-/// Where a tank is, tick after tick from now, when it drives one way.
-fn course(near: &Colliders, tank: &Tank, at: Vec2, motion: &Motion, way: Vec2) -> Vec<Vec2> {
-    let (mut at, mut motion) = (at, *motion);
-    let mut places = Vec::with_capacity(HORIZON + 1);
-    places.push(at);
-    for _ in 0..HORIZON {
-        tanks::drive_among(near, tank, way, &mut at, &mut motion);
-        places.push(at);
-    }
-    places
-}
-
 /// The way that a player drives among what it knows of: the way that was meant when that
 /// leaves room enough, or else the first of the ways around it that does, or standing still.
 /// Failing that, the way that leaves the most room. Tells the tick at which the tank is hit
@@ -812,9 +800,9 @@ fn way_out(
     hazards: &[Hazard],
 ) -> (Vec2, Option<usize>) {
     let reach = tank.genome.top_speed() * HORIZON as f32 * TICK + TANK_RADIUS + 0.5;
-    let near = field.colliders.near(at, reach);
+    let ahead_of = Course::new(field, tank, at, reach);
     let fare = |way: Vec2| {
-        let course = course(&near, tank, at, motion, way);
+        let course = ahead_of.places(motion, way, HORIZON);
         let rooms = tracks.iter().map(|track| track.room(&course));
         let rooms = rooms.chain(hazards.iter().map(|hazard| hazard.room(&course)));
         rooms.fold((f32::MAX, None), |(least, first), (room, hit)| {
@@ -1187,7 +1175,7 @@ mod tests {
                 aim: at,
                 ..default()
             };
-            tanks::step_among(
+            crate::tanks::step_among(
                 &field.colliders,
                 &tank,
                 true,
@@ -1269,7 +1257,8 @@ mod tests {
         };
         // It meant to drive east, over the mine.
         let (way, _) = way_out(&field, &tank, Vec2::ZERO, &motion, Vec2::X, &[], &[mine]);
-        let places = course(&field.colliders, &tank, Vec2::ZERO, &motion, way);
+        let ahead = Course::among(field.colliders.clone(), &tank, Vec2::ZERO);
+        let places = ahead.places(&motion, way, HORIZON);
         let nearest = places
             .iter()
             .take(HORIZON / 2)

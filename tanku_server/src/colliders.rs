@@ -515,6 +515,64 @@ mod tests {
     }
 
     #[test]
+    fn a_course_worked_out_ahead_is_the_one_that_the_tank_drives() {
+        use tanku_core::{sim::Motion, stats::Stat};
+
+        use crate::tanks::{self, Course};
+
+        let mut numbers = Numbers(0x2F6B_A3C1_9E08_D47B);
+        let tanks: Vec<Tank> = [(5, 5), (2, 1), (7, 6), (0, 0)]
+            .into_iter()
+            .map(|(engine, tracks)| {
+                let mut genome = Genome::empty(100);
+                genome.set(Stat::Engine, engine);
+                genome.set(Stat::Tracks, tracks);
+                Tank {
+                    genome,
+                    team: Team::Players,
+                    sector: 4,
+                }
+            })
+            .collect();
+        let mut corridor = Corridor::new(5);
+        for middle in [2, 4, 25] {
+            let all = Colliders::from(sectors(&mut corridor, middle));
+            for _ in 0..1500 {
+                let collider = all[(numbers.unit() * all.len() as f32) as usize % all.len()];
+                // Most of them start a tank's width from a wall or closer.
+                let reach = numbers.unit().powi(2) * 4.0;
+                let from = collider.a.lerp(collider.b, numbers.unit()) + numbers.way(0.0, reach);
+                let tank = &tanks[(numbers.unit() * 4.0) as usize % 4];
+                let motion = Motion {
+                    velocity: numbers.way(0.0, tank.genome.top_speed()),
+                    hull: numbers.within(-4.0, 4.0),
+                    turret: 0.0,
+                };
+                let way = if numbers.unit() < 0.1 {
+                    Vec2::ZERO
+                } else {
+                    numbers.way(0.5, 1.2)
+                };
+                let near = all.near(from, 9.0);
+                let ahead = Course::among(near.clone(), tank, from).places(&motion, way, 60);
+                let (mut at, mut driven) = (from, motion);
+                let mut places = vec![at];
+                for _ in 0..60 {
+                    tanks::drive_among(&near, tank, way, &mut at, &mut driven);
+                    places.push(at);
+                }
+                let bits = |places: &[Vec2]| -> Vec<[u32; 2]> {
+                    places
+                        .iter()
+                        .map(|at| at.to_array().map(f32::to_bits))
+                        .collect()
+                };
+                assert_eq!(bits(&ahead), bits(&places), "from {from} by {way}");
+            }
+        }
+    }
+
+    #[test]
     fn colliders_that_are_pushed_and_cleared_are_the_ones_asked() {
         let wall = |a: Vec2, b: Vec2| Collider {
             a,
