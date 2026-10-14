@@ -152,16 +152,17 @@ The locks are solo's. A solo player sets the difficulty and the options of a run
 
 ### Playtest
 
-A playtest is a way to test the game faster, not a mode for players. It starts with the `--playtest` option on the command line and lets the solo player cheat from the menu in two ways:
+A playtest is a way to test the game faster, not a mode for players. It starts with the `--playtest` option on the command line and lets the solo player cheat from the menu in three ways:
 
 - **Infinite lives.** The tank comes back as often as it is destroyed. This is on at the start and can be turned off.
 - **Skipping to a sector.** The player picks any sector and comes back in front of the barrier of the one before it, as if that sector had just been cleared. In arena mode, the player picks a group, and the run goes on with the lull before it.
+- **Fake achievements.** The machine sets its achievements and its records aside and plays as on its first time: what a run unlocks is locked again. What the playtest then earns by the rules of a run that counts, achievements and records, is fake: it is kept in memory until the game is closed, and no file keeps it. This is off at the start. Turned off, the machine has its own achievements and records back.
 
 A playtest can also choose its seed without unlocking that option: `--seed` followed by a seed starts every run on it, which brings back a situation that a player reported.
 
 It can bring a tank of its own too: `--tank` followed by the stats of a tank with their levels starts every run in free mode, in that tank, under the rules of the [garage](#garage). A tank is tried that way without building it in the garage, and the tank of the garage stays as it is.
 
-A playtest says on screen that it is one. It sets no record and earns no achievement. A playtest can host a game: the cheats are the host's alone, and the run sets no record for anyone in it.
+A playtest says on screen that it is one. It sets no record and earns no achievement, but fake ones. A playtest can host a game: the cheats are the host's alone, and the run sets no record for anyone in it, but fake ones for its host.
 
 ## Controls
 
