@@ -12,6 +12,7 @@ use tanku_core::{
     lock::PASSWORD_LENGTH,
     modes::{Difficulty, Unlock},
     protocol::{Lobby, Member, NAME_LENGTH, lettered, named},
+    reference::{Reference, Teammates},
     rules::{MAX_PLAYERS, PLAYTEST_LAST_SECTOR, TICK_RATE},
     seed::{self, VERSION},
     sim::{Playtest, Run, RunPhase, RunRequest, SimEvent},
@@ -52,6 +53,9 @@ const HARD_MODE: &str = "In hard mode, enemies have more points, every brain fro
 /// What the solo screen and the lobby say of arena mode when it is chosen.
 const ARENA_MODE: &str = "In arena mode, the run stays in one room. The groups of the sectors \
                           come there one after another, and the next one waits outside.";
+/// What the solo screen of a playtest says of the teammates that the game drives.
+const TEAMMATES: &str = "The game drives them as the reference players of the trials. The run \
+                         is one of several players: wrecks and repairs, no lives, larger groups.";
 
 /// What a button does.
 #[derive(Component, Clone, Copy, PartialEq)]
@@ -68,6 +72,10 @@ enum Press {
     Free(bool),
     /// On that screen: turns arena mode on or off.
     Arena(bool),
+    /// On that screen, in a playtest: sets how many teammates the game drives.
+    Teammates(u8),
+    /// On that screen, in a playtest: sets which reference player drives them.
+    Hands(Reference),
     /// On that screen: opens the garage.
     OpenGarage,
     /// In the garage: gives the tank a level more or less of a stat.
@@ -241,6 +249,8 @@ struct Setup {
     free: bool,
     /// Whether the run is in arena mode: in one room, against one group after another.
     arena: bool,
+    /// In a playtest: the teammates that the game drives beside the player.
+    teammates: Teammates,
 }
 
 /// The players whom the lobby of a host tells how to join: those at a desktop game, or
@@ -1190,6 +1200,8 @@ fn draw_a_seed_for_one(
         difficulty: last_difficulty(&settings, &unlocks, &options),
         free: last_free(&settings, &unlocks, &options),
         arena: last_arena(&settings, &unlocks, &options),
+        // The teammates of a playtest stay as they were set last.
+        teammates: setup.teammates,
     };
 }
 
@@ -1253,13 +1265,14 @@ fn typed_seed(seed: &mut String, key: &Key, text: Option<&str>) {
 }
 
 /// What starts the run of a single player: on a seed that the game drew for it or not, in a
-/// league, and in free mode in the tank that the player built or brought.
+/// league, in free mode in the tank that the player built or brought, and with the teammates
+/// of a playtest.
 fn solo_run(
     seed: String,
     drawn: bool,
     league: League,
-    options: &Options,
-    garage: &Garage,
+    (options, garage): (&Options, &Garage),
+    teammates: Teammates,
 ) -> RunRequest {
     let tanks = if league.free {
         vec![own_tank(options, garage)]
@@ -1268,12 +1281,31 @@ fn solo_run(
     };
     RunRequest::Start {
         seed,
-        players: 1,
+        players: 1 + u32::from(teammates.count),
         drawn,
         difficulty: league.difficulty,
         free: league.free,
         arena: league.arena,
         tanks,
+        teammates,
+    }
+}
+
+/// The name of a reference player, as the solo screen of a playtest offers it.
+fn hands_name(player: Reference) -> &'static str {
+    match player {
+        Reference::Novice => "Novice",
+        Reference::Regular => "Regular",
+        Reference::Expert => "Expert",
+    }
+}
+
+/// The teammates that the game drives in the run that a single player set up: none outside
+/// a playtest.
+fn teammates_of(setup: &Setup, options: &Options) -> Teammates {
+    match options.playtest {
+        true => setup.teammates,
+        false => Teammates::NONE,
     }
 }
 
@@ -1297,7 +1329,9 @@ fn begin(
         return;
     }
     let (seed, league) = (setup.seed.clone(), league_of(setup, options));
-    requests.write(solo_run(seed, !setup.typed, league, options, garage));
+    let teammates = teammates_of(setup, options);
+    let started = solo_run(seed, !setup.typed, league, (options, garage), teammates);
+    requests.write(started);
     screen.set(Screen::Playing);
 }
 
@@ -1505,6 +1539,31 @@ fn solo_screen(
                         ));
                         small(row, "Garage", 110.0, Press::OpenGarage);
                     });
+                }
+                // A playtest brings teammates that the game drives, for a game of several
+                // players with nobody else at hand.
+                if options.playtest {
+                    let teammates = setup.teammates;
+                    row(parent, "Teammates", |row| {
+                        for count in 0..MAX_PLAYERS as u8 {
+                            let name = match count {
+                                0 => "None".to_string(),
+                                count => count.to_string(),
+                            };
+                            let chosen = teammates.count == count;
+                            choice(row, &name, 60.0, Press::Teammates(count), chosen);
+                        }
+                    });
+                    if teammates.count > 0 {
+                        row(parent, "Skill", |row| {
+                            for player in Reference::ALL {
+                                let chosen = teammates.player == player;
+                                let name = hands_name(player);
+                                choice(row, name, 90.0, Press::Hands(player), chosen);
+                            }
+                        });
+                        line(parent, TEAMMATES, theme::TEXT_DIM);
+                    }
                 }
                 flagged_row(parent, "Seed", types && new(Unlock::ChosenSeed), |row| {
                     row.spawn((
@@ -3431,6 +3490,8 @@ fn press(
                 }
                 _ => {}
             },
+            Press::Teammates(count) => setup.teammates.count = count,
+            Press::Hands(player) => setup.teammates.player = player,
             Press::OpenGarage => next_screen.set(Screen::Garage),
             Press::Level(stat, by) => {
                 if let Some(tank) = garage.changed(stat, by) {
@@ -3463,7 +3524,9 @@ fn press(
                         // same tank.
                         let league = run.as_ref().map(|run| League::of(run));
                         let league = league.unwrap_or(league_of(&setup, &options));
-                        requests.write(solo_run(seed, fresh, league, &options, &garage));
+                        let teammates = teammates_of(&setup, &options);
+                        let tanks = (&*options, &*garage);
+                        requests.write(solo_run(seed, fresh, league, tanks, teammates));
                         next_screen.set(Screen::Playing);
                         next_overlay.set(Overlay::None);
                     }
@@ -3980,6 +4043,7 @@ mod tests {
                     difficulty: Difficulty::Normal,
                     free: false,
                     arena: false,
+                    teammates: Teammates::NONE,
                 });
                 build(app, solo_screen);
             }),
@@ -3994,6 +4058,7 @@ mod tests {
                         difficulty: Difficulty::Normal,
                         free: false,
                         arena: false,
+                        teammates: Teammates::NONE,
                     });
                 build(app, solo_screen);
             }),
@@ -4014,7 +4079,29 @@ mod tests {
                         difficulty: Difficulty::Hard,
                         free: true,
                         arena: true,
+                        teammates: Teammates::NONE,
                     });
+                build(app, solo_screen);
+            }),
+            // A playtest with every mode chosen and three teammates: the screen then holds
+            // the rows of the teammates too.
+            ("the solo screen of a playtest with teammates", |app| {
+                app.insert_resource(Options {
+                    playtest: true,
+                    ..default()
+                })
+                .insert_resource(Garage { tank: racer() })
+                .insert_resource(Setup {
+                    seed: LONG_SEED.into(),
+                    typed: true,
+                    difficulty: Difficulty::Hard,
+                    free: true,
+                    arena: true,
+                    teammates: Teammates {
+                        count: 3,
+                        player: Reference::Expert,
+                    },
+                });
                 build(app, solo_screen);
             }),
             // Hard mode is unlocked and chosen, and something is left to unlock: the screen
@@ -4028,6 +4115,7 @@ mod tests {
                         difficulty: Difficulty::Hard,
                         free: false,
                         arena: false,
+                        teammates: Teammates::NONE,
                     });
                 build(app, solo_screen);
             }),
@@ -4043,6 +4131,7 @@ mod tests {
                         difficulty: Difficulty::Hard,
                         free: true,
                         arena: false,
+                        teammates: Teammates::NONE,
                     });
                 build(app, solo_screen);
             }),
@@ -5079,6 +5168,87 @@ mod tests {
     }
 
     #[test]
+    fn a_playtest_brings_teammates_from_the_solo_screen() {
+        // The counts of teammates and the reference players that a screen offers, in order.
+        let offered = |screen: fn(&mut App)| -> (Vec<u8>, Vec<Reference>) {
+            let (mut counts, mut hands) = (Vec::new(), Vec::new());
+            for press in presses(screen) {
+                match press {
+                    Press::Teammates(count) => counts.push(count),
+                    Press::Hands(player) => hands.push(player),
+                    _ => {}
+                }
+            }
+            counts.sort();
+            hands.sort_by_key(|player| Reference::ALL.iter().position(|all| all == player));
+            (counts, hands)
+        };
+        // A player who doesn't playtest has nobody to bring.
+        let plain = |app: &mut App| build(app, solo_screen);
+        assert_eq!(offered(plain), (vec![], vec![]));
+        assert!(!says(&texts(plain), "Teammates"));
+        // A playtest offers none to three, and their skill once there are some.
+        let none = |app: &mut App| {
+            app.insert_resource(Options {
+                playtest: true,
+                ..default()
+            });
+            build(app, solo_screen);
+        };
+        assert_eq!(offered(none), (vec![1, 2, 3], vec![]));
+        assert!(!says(&texts(none), TEAMMATES));
+        let two = |app: &mut App| {
+            app.insert_resource(Options {
+                playtest: true,
+                ..default()
+            })
+            .insert_resource(Setup {
+                seed: "85GVTHQA".into(),
+                teammates: Teammates {
+                    count: 2,
+                    player: Reference::Expert,
+                },
+                ..default()
+            });
+            build(app, solo_screen);
+        };
+        let hands = vec![Reference::Novice, Reference::Regular];
+        assert_eq!(offered(two), (vec![0, 1, 3], hands));
+        assert!(says(&texts(two), TEAMMATES));
+
+        // The choice is made on the screen, and the run that starts has as many players more,
+        // in the hands of the reference player that was chosen.
+        let mut app = stage(none, WINDOWS[0]);
+        click(&mut app, Press::Teammates(2));
+        build(&mut app, solo_screen);
+        click(&mut app, Press::Hands(Reference::Novice));
+        app.world_mut().resource_mut::<Setup>().seed = "85GVTHQA".into();
+        build(&mut app, solo_screen);
+        click(&mut app, Press::Begin);
+        let mut requests = app.world_mut().resource_mut::<Messages<RunRequest>>();
+        let started: Vec<(u32, Teammates)> = requests
+            .drain()
+            .map(|request| match request {
+                RunRequest::Start {
+                    players, teammates, ..
+                } => (players, teammates),
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        let teammates = Teammates {
+            count: 2,
+            player: Reference::Novice,
+        };
+        assert_eq!(started, [(3, teammates)]);
+        // Outside a playtest, the same setup brings nobody.
+        let setup = Setup {
+            teammates,
+            ..default()
+        };
+        assert_eq!(teammates_of(&setup, &Options::default()), Teammates::NONE);
+    }
+
+    #[test]
     fn the_solo_screen_offers_arena_mode_once_it_is_unlocked() {
         let offers = |screen: fn(&mut App)| -> Vec<bool> {
             let arena = presses(screen).into_iter().filter_map(|press| match press {
@@ -5375,6 +5545,7 @@ mod tests {
             difficulty: Difficulty::Hard,
             free: false,
             arena: false,
+            teammates: Teammates::NONE,
         };
         // A seed that was typed is not one that the game drew. Outside free mode, the
         // player has the standard tank, whatever stands in their garage.

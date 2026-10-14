@@ -23,6 +23,7 @@ use tanku_core::{
     enemy,
     map::{Corridor, SectorKind},
     modes::Difficulty,
+    reference::Reference,
     rng::{Purpose, Stream},
     seed::{self, seed_value},
     stats::{Class, Genome, Stat},
@@ -33,7 +34,6 @@ use crate::{
     duels::written,
     fight::{Make, Outcome, Setup},
     players::{ratio, run, seed_text},
-    reference::Reference,
     report::{Report, Table, percent},
 };
 

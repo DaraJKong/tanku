@@ -13,6 +13,7 @@ use tanku_core::{
     CorePlugin,
     map::SectorKind,
     modes::Difficulty,
+    reference::{Reference, Teammates},
     rules::{BLAST_RADIUS, BULLET_RADIUS, RESPAWN_DELAY, TANK_RADIUS, TICK},
     sim::{
         Barrier, Bullet, Enemy, Gun, Kind, Motion, Player, Playtest, Position, PreviousPosition,
@@ -23,9 +24,8 @@ use tanku_core::{
 use tanku_server::{
     ServerPlugin,
     field::{Field, InSector},
+    pilot::{Pilot, Sight},
 };
-
-use crate::reference::{Pilot, Reference, Sight};
 
 /// What a fight is: where, against what and in whose hands.
 #[derive(Clone, Debug, PartialEq)]
@@ -201,6 +201,7 @@ pub fn corridor(setup: &Setup) -> Option<Outcome> {
         free: false,
         arena: false,
         tanks: Vec::new(),
+        teammates: Teammates::NONE,
     });
     tick(&mut app);
     let sector = setup.sector;

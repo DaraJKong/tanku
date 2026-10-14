@@ -4,7 +4,9 @@
 //! `TANKU_DEV_SCRIPT` holds commands separated by semicolons, run one after the other:
 //! `start SEED PLAYERS DIFFICULTY`, which starts a run in normal mode unless `hard` is asked
 //! for, in arena mode if `arena` comes after it, in the tank of the command line if `--tank`
-//! gave one, `seat NUMBER`, `repair SECONDS` and `shield SECONDS`, which hold the
+//! gave one, and in a playtest with every seat but the first driven by the game if
+//! `teammates` comes after it, by the reference player that is named (`novice`, `regular`
+//! or `expert`, regular if none is), `seat NUMBER`, `repair SECONDS` and `shield SECONDS`, which hold the
 //! key of that name for so long, `wait SECONDS`, `warp SECTOR`, `unlock`, which unlocks every
 //! mode and option, or those that it names, as `unlock seed free`, `tank TANK`, which builds the tank of the garage as the command line
 //! writes one,
@@ -65,6 +67,7 @@ use bevy::{
 };
 use tanku_core::{
     modes::{Difficulty, Unlock},
+    reference::{Reference, Teammates},
     sim::{
         Barrier, Blow, Bullet, Enemy, Kind, Life, Mine, MineState, Motion, Position,
         PreviousPosition, Run, RunPhase, RunRequest, Shield, ShieldState, SimEvent, Tank,
@@ -450,16 +453,31 @@ fn run_script(
     let word = |index: usize| words.get(index).copied().unwrap_or("");
     let number = |index: usize| word(index).parse::<f32>().unwrap_or(0.0);
     match word(0) {
+        // With `teammates`, the game drives every seat but the first, in the hands of the
+        // reference player that is named, or of the regular one: a playtest's alone.
         "start" => {
+            let players = (number(2) as u32).max(1);
+            let teammates = Teammates {
+                count: if words.contains(&"teammates") {
+                    players as u8 - 1
+                } else {
+                    0
+                },
+                player: words
+                    .iter()
+                    .find_map(|word| Reference::of_name(word))
+                    .unwrap_or_default(),
+            };
             requests.write(RunRequest::Start {
                 seed: word(1).to_string(),
-                players: (number(2) as u32).max(1),
+                players,
                 drawn: true,
                 difficulty: Difficulty::of_key(word(3)).unwrap_or_default(),
                 // A tank from the command line makes it a run of free mode.
                 free: options.tank.is_some(),
                 arena: words[1..].contains(&"arena"),
                 tanks: options.tanks(),
+                teammates,
             });
             screen.set(Screen::Playing);
         }

@@ -286,6 +286,7 @@ pub fn earn(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tanku_core::reference::Teammates;
 
     #[test]
     fn unlocks_survive_being_written_and_read() {
@@ -421,6 +422,7 @@ mod tests {
             free: false,
             arena: false,
             tanks: Vec::new(),
+            teammates: Teammates::NONE,
         });
         app
     }
@@ -477,6 +479,7 @@ mod tests {
             free: false,
             arena: false,
             tanks: Vec::new(),
+            teammates: Teammates::NONE,
         });
         app.update();
         assert_eq!(told(&mut app), []);

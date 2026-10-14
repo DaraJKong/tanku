@@ -13,6 +13,7 @@ pub mod map;
 pub mod modes;
 pub mod progression;
 pub mod protocol;
+pub mod reference;
 pub mod rng;
 pub mod rules;
 pub mod seed;

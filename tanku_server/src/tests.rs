@@ -6,6 +6,7 @@ use tanku_core::{
     map::SectorKind,
     modes::Difficulty,
     progression,
+    reference::Teammates,
     rng::{Purpose, Stream},
     rules::{
         APPEAR_ROOM, APPEAR_TIME, ARENA_DELAY, ARENA_WAVES, BARRIER_GATHER_DISTANCE, LIFE_REACH,
@@ -28,6 +29,7 @@ use crate::{
 
 mod ammo;
 mod room;
+mod teammates;
 mod trials;
 
 /// Where a run starts: the start bay spans x from -7 to 7 and y from 0 to 16.
@@ -66,6 +68,7 @@ fn begin_as(seed: &str, players: u32, difficulty: Difficulty, tanks: Vec<Genome>
         free: !tanks.is_empty(),
         arena: false,
         tanks,
+        teammates: Teammates::NONE,
     });
     tick(&mut app, 1);
     events(&mut app);
@@ -1819,6 +1822,7 @@ fn a_skip_asked_with_the_start_of_a_run_applies_to_that_run() {
         free: false,
         arena: false,
         tanks: Vec::new(),
+        teammates: Teammates::NONE,
     });
     skip_to(&mut app, 5);
     assert_eq!((run(&app).sector, loaded(&app)), (4, vec![4, 5]));
@@ -2538,6 +2542,7 @@ fn a_run_earns_achievements_on_a_seed_that_was_drawn_for_it_unless_it_is_a_playt
             free,
             arena: false,
             tanks: Vec::new(),
+            teammates: Teammates::NONE,
         });
         tick(&mut app, 1);
         assert_eq!(run(&app).free, free);

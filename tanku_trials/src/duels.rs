@@ -4,6 +4,7 @@
 
 use tanku_core::{
     modes::Difficulty,
+    reference::Reference,
     seed,
     stats::{Ammo, Genome, Stat},
 };
@@ -11,7 +12,6 @@ use tanku_core::{
 use crate::{
     fight::{Make, Outcome, Setup},
     players::{ratio, run, seed_text},
-    reference::Reference,
     report::{Report, Table, percent},
 };
 

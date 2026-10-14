@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 
 use tanku_core::{
     modes::Difficulty,
+    reference::Reference,
     seed,
     stats::{Ammo, Genome},
 };
@@ -15,7 +16,6 @@ use crate::{
     census::{class_name, stretch_name, stretches},
     fight::{Cause, Outcome, Setup},
     players::{ratio, run, seed_text},
-    reference::Reference,
     report::{Report, Table, percent},
 };
 

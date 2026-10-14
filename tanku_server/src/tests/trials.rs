@@ -643,6 +643,7 @@ mod arena {
             free: false,
             arena: true,
             tanks: Vec::new(),
+            teammates: Teammates::NONE,
         });
         tick(&mut app, 1);
         skip_to(&mut app, group);

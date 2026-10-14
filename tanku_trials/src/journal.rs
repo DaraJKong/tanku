@@ -22,6 +22,7 @@ use tanku_core::{
     balance::FINGERPRINT,
     journal::{Cause, Culprit, Entry, Journal, Loss},
     modes::Difficulty,
+    reference::Reference,
     seed::VERSION,
     stats::{Ammo, Class},
 };
@@ -30,7 +31,6 @@ use crate::{
     census::{class_name, stretch_name, stretches},
     fight::{self, Outcome, Setup},
     players::{self, ratio, seed_text, side_by_side},
-    reference::Reference,
     report::{Report, Table, percent},
     runs::{self, quantile},
 };

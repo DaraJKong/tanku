@@ -10,11 +10,13 @@ pub mod field;
 mod mines;
 #[cfg(feature = "net")]
 pub mod net;
+pub mod pilot;
 mod repair;
 pub mod room;
 mod run;
 mod sectors;
 pub mod tanks;
+pub mod teammates;
 #[cfg(test)]
 mod tests;
 
@@ -71,6 +73,7 @@ impl Plugin for ServerPlugin {
                     field::rebuild_colliders,
                     tanks::idle,
                     brain::think,
+                    teammates::drive.run_if(teammates::any),
                     repair::repair,
                     tanks::shields,
                     tanks::drive,

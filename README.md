@@ -114,6 +114,7 @@ cargo run -p tanku_client -- --playtest
 | Nothing locked | The solo screen takes a typed seed and offers hard mode, arena mode and free mode, whatever the player has unlocked, unless the playtest fakes achievements. |
 | Fake achievements | Off at the start. The pause menu turns them on: the machine sets its achievements and its records aside, and plays as on its first time, every option locked. What the playtest earns then, by the rules of a run that counts, is kept in memory until the game is closed: no file is written. Turned off, the machine has its own back. |
 | Bring a tank | `--tank TANK` after `--playtest` starts every run in free mode, in that tank, without a visit to the garage: see [The garage check](#the-garage-check). |
+| Teammates | The solo screen offers up to three teammates that the game drives, and how well they play. The run is then one of several players: see [Teammates](#teammates). |
 
 With a seed and a skip, a seed and a sector from a report are a few clicks away:
 
@@ -122,6 +123,23 @@ cargo run -p tanku_client -- --playtest --seed 85GVTHQA
 ```
 
 A playtest sets no record and earns no achievement, unless it fakes them. The web build has none, because a page has no command line.
+
+#### Teammates
+
+A game of several players can be playtested by one person. The solo screen of a playtest has a row for teammates, from none to three, and one for their skill. The game drives each of them in the hands of a [reference player](#reference-players) of that skill, novice, regular or expert, and the run is one of several players: wrecks and repairs instead of lives, the groups of as many players, and barriers that wait for every tank that runs. The choice stays for the next runs until the game is closed. The teammates play by four rules:
+
+- **They fight** the nearest enemy that is awake in their sector, and dodge and shield as their skill lets them. They hold a shot that would pass a teammate or go off next to one. They keep out of the reach of the player's mines, which they set off, and dodge the player's bullets, which spare them no more than an enemy's.
+- **They repair.** The teammate nearest to a wreck drives to it and repairs it, fighting on from there, while the others go on.
+- **They wait at barriers.** Once a sector is cleared, they wait in front of its barrier, within the reach that unlocks it, and cross after the player. They never wake a sector first.
+- **They follow** the player when nothing is left to fight, and keep off the places where the tanks of an arena wait for room.
+
+They lay no mines, take no cover and never lead, as the reference players don't. They try the rules of a game of several players; they are no measure of what a person does with them.
+
+A script starts such a run with `teammates` after the number of players, and the name of a skill if it isn't the regular one. The run must be a playtest:
+
+```bash
+TANKU_DEV_SCRIPT="start TANKU 3 normal teammates expert; wait 12; shot team.png; quit" cargo run -p tanku_client -- --playtest
+```
 
 #### The garage check
 
@@ -312,6 +330,14 @@ Before a change to what a player's tank may be, one more test puts the same crud
 ```bash
 cargo test -p tanku_server trials::garage -- --ignored --nocapture
 ```
+
+After a change to the [teammates](#teammates) of a playtest, one more test sends teams of two, three and four of them alone through the corridor of twelve seeds, the first seat leading through the barriers, and nothing protects them. It prints the sectors that each team cleared, and every run that stopped clearing sectors for three minutes, with what held it: where each tank stood, and what was left to fight. It takes six to seven minutes:
+
+```bash
+cargo test -p tanku_server teams_of_teammates -- --ignored --nocapture
+```
+
+On 2026-10-14, regular teammates cleared 16.0 sectors on average in teams of two, 20.6 in teams of three and 21.5 in teams of four, and no run stopped. The regular player alone, with three lives, clears about 16. Teams of reference players tell little of what people do together, and twelve seeds are few.
 
 This prints what the groups of each mode are made of, by stretch of sectors: which brains they have, and how many points they can't spend:
 

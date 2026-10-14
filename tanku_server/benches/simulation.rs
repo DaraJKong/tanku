@@ -5,6 +5,7 @@ use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use tanku_core::{
     CorePlugin,
     modes::Difficulty,
+    reference::Teammates,
     sim::{Enemy, Run, RunPhase, RunRequest},
 };
 use tanku_server::{ServerPlugin, field::Field};
@@ -21,6 +22,7 @@ fn fight(sector: u32) -> App {
         free: false,
         arena: false,
         tanks: Vec::new(),
+        teammates: Teammates::NONE,
     });
     app.world_mut().run_schedule(FixedUpdate);
 

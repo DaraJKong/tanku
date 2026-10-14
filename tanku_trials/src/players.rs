@@ -10,12 +10,11 @@ use std::{
     thread,
 };
 
-use tanku_core::{modes::Difficulty, seed};
+use tanku_core::{modes::Difficulty, reference::Reference, seed};
 
 use crate::{
     census::{stretch_name, stretches},
     fight::{self, Cause, Outcome, Setup},
-    reference::Reference,
     report::{Report, Table, percent},
 };
 

@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     map::SectorLayout,
     modes::Difficulty,
+    reference::Teammates,
     rules::SPLIT_TIME,
     stats::{Ammo, Genome},
 };
@@ -408,6 +409,8 @@ pub enum RunRequest {
         /// The tank of each seat, from the first one. A seat that has none here has the
         /// standard tank, and so has one whose tank no player may have built.
         tanks: Vec<Genome>,
+        /// The last seats, which the game drives, in a playtest. Any other run has none.
+        teammates: Teammates,
     },
     Abandon,
     /// A player leaves a run of several players, and their tank goes with them.

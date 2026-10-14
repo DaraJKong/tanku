@@ -6,6 +6,7 @@
 use tanku_core::{
     enemy,
     modes::Difficulty,
+    reference::Reference,
     seed::{self, seed_value},
     stats::Class,
 };
@@ -14,7 +15,6 @@ use crate::{
     census::class_name,
     fight::{Make, Outcome, Setup},
     players::{ratio, run, seed_text},
-    reference::Reference,
     report::{Report, Table, percent},
 };
 

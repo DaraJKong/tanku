@@ -24,6 +24,7 @@ fn open_in(seed: &str, players: u32, difficulty: Difficulty) -> App {
         free: false,
         arena: true,
         tanks: Vec::new(),
+        teammates: Teammates::NONE,
     });
     tick(&mut app, 2);
     events(&mut app);

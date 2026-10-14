@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 
 use tanku_core::{
     modes,
+    reference::Teammates,
     rules::{MAX_PLAYERS, PLAYTEST_LAST_SECTOR, RESPAWN_DELAY, SOLO_LIVES, SPAWN_FIRE_DELAY, TICK},
     seed,
     sim::{
@@ -19,6 +20,7 @@ use crate::{
     brain::Brain,
     field::{self, Field, Fuse, Home, InSector, Recruit},
     room,
+    teammates::Crew,
 };
 
 /// How far apart the tanks of several players stand, side by side and row behind row.
@@ -144,6 +146,7 @@ pub fn handle_requests(
                 free,
                 arena,
                 tanks,
+                teammates,
             } => {
                 clear(&mut commands, &entities, &mut casualties);
                 let seed = seed::seed_value(seed_text);
@@ -161,6 +164,13 @@ pub fn handle_requests(
                     }
                 }
                 enter(&mut commands, &mut field, 0);
+                // The game drives teammates in a playtest alone.
+                let teammates = if playtest.is_some() {
+                    *teammates
+                } else {
+                    Teammates::NONE
+                };
+                commands.insert_resource(Crew::new(teammates, players));
                 commands.insert_resource(field);
                 commands.insert_resource(Run {
                     seed_text: seed_text.trim().to_uppercase(),
@@ -188,6 +198,7 @@ pub fn handle_requests(
             }
             RunRequest::Abandon => {
                 clear(&mut commands, &entities, &mut casualties);
+                commands.insert_resource(Crew::default());
                 commands.remove_resource::<Run>();
                 commands.remove_resource::<Field>();
             }

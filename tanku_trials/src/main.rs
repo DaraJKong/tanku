@@ -43,7 +43,6 @@ mod duels;
 mod fight;
 mod journal;
 mod players;
-mod reference;
 mod report;
 mod runs;
 mod skirmish;
@@ -53,10 +52,11 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand};
 use tanku_core::{
     modes::Difficulty,
+    reference::Reference,
     stats::{Class, Genome, Stat},
 };
 
-use crate::{reference::Reference, report::Report};
+use crate::report::Report;
 
 #[derive(Parser)]
 #[command(

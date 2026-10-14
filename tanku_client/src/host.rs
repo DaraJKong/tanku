@@ -10,6 +10,7 @@ use tanku_core::{
     discovery::{Reach, local_address},
     modes::Difficulty,
     protocol::{Lobby, PORT, WEB_PORT},
+    reference::Teammates,
     rules::COUNTDOWN,
     sim::{Run, RunRequest},
     stats::Genome,
@@ -270,6 +271,8 @@ fn direct(
                         free: lobby.free || options.tank.is_some(),
                         arena: lobby.arena,
                         tanks,
+                        // Every seat of a hosted game is a person's.
+                        teammates: Teammates::NONE,
                     });
                     next_screen.set(Screen::Playing);
                     next_overlay.set(Overlay::None);

@@ -1,17 +1,9 @@
-//! The reference players: the hands that hold the players' tank in a trial.
+//! The pilot: the hands of a reference player on a player's tank.
 //!
 //! A trial measures the enemies against a player who is always the same, so that two reports
-//! differ by what was changed in the game and by nothing else. The three players here fight
-//! the same way and differ in one thing, which is what they do about what flies at them:
-//!
-//! | | Novice | Regular | Expert |
-//! |---|---|---|---|
-//! | Sees a bullet coming | never | after 0.30 s | after 0.20 s |
-//! | Follows a bullet off a wall | no | no | yes |
-//! | Shield | never | when the bullet can't be dodged | the same |
-//!
-//! With the time that the standard tank takes to get out of the way, the regular player
-//! reacts in about the 0.55 s that the specification counts for a player who keeps moving.
+//! differ by what was changed in the game and by nothing else, and a playtest can bring the
+//! same players along as teammates. The three of them fight the same way and differ in what
+//! they do about what flies at them (see `tanku_core::reference`).
 //!
 //! All three keep 8 to 14 m from the nearest enemy and drive around it, lead their shots,
 //! find a shot off a wall at an enemy that they don't see, and fire as fast as the gun does.
@@ -24,16 +16,24 @@
 //! know where their own go. None lays a mine, takes cover or picks the moment of a fight. They use nothing of the
 //! brains of the enemies but how to aim and how to steer around a wall, so that a change to
 //! how a brain dodges doesn't move the yardstick.
+//!
+//! A teammate asks two things more of them: a place to drive to, which takes over from the
+//! way of the fight, and the tanks of its teammates, which its shots spare. Their own shots and
+//! their own mines are those of their tank, and those of a teammate are minded as an enemy's
+//! are. A player who is alone asks none of it, and is driven as the trials always drove one.
 
 use bevy::prelude::*;
 use tanku_core::{
     geom,
-    rules::{BLAST_RADIUS, BULLET_RADIUS, MINE_TRIGGER_RADIUS, SPLIT_ANGLE, TANK_RADIUS, TICK},
-    sim::{
-        Bullet, Enemy, Gun, Kind, Mine, MineState, Motion, Position, Tank, TankCommand, Team, Wreck,
+    reference::{Reference, Skill},
+    rules::{
+        APPEAR_ROOM, BLAST_RADIUS, BULLET_RADIUS, MINE_TRIGGER_RADIUS, SPLIT_ANGLE, TANK_RADIUS,
+        TICK,
     },
+    sim::{Bullet, Enemy, Gun, Kind, Mine, MineState, Motion, Position, Tank, TankCommand, Wreck},
 };
-use tanku_server::{
+
+use crate::{
     brain,
     bullets::{self, Flight, Quarry},
     field::{Collider, Field, Solid},
@@ -74,61 +74,11 @@ const ROUTE_NEAR: f32 = 0.5;
 /// The ways that a player tries around the one that was meant, in degrees.
 const WAYS: [f32; 7] = [45.0, -45.0, 90.0, -90.0, 135.0, -135.0, 180.0];
 
-/// One of the reference players.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Reference {
-    Novice,
-    Regular,
-    Expert,
-}
-
-/// What a reference player does about what flies at the tank.
+/// A place that a player drives to, and how close to it the tank stops.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Skill {
-    /// For how long a bullet must be in view before the player acts on it, in seconds. A
-    /// player who has none never dodges.
-    pub notice: Option<f32>,
-    /// Whether the player sees where a bullet goes after a bounce before it bounces. One who
-    /// doesn't takes a bullet that has bounced for a new one.
-    pub follows: bool,
-    /// Whether the player raises the shield against what can't be dodged.
-    pub shields: bool,
-}
-
-impl Reference {
-    pub const ALL: [Self; 3] = [Self::Novice, Self::Regular, Self::Expert];
-
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::Novice => "novice",
-            Self::Regular => "regular",
-            Self::Expert => "expert",
-        }
-    }
-
-    pub fn of_name(name: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|player| player.name() == name)
-    }
-
-    pub const fn skill(self) -> Skill {
-        match self {
-            Self::Novice => Skill {
-                notice: None,
-                follows: false,
-                shields: false,
-            },
-            Self::Regular => Skill {
-                notice: Some(0.30),
-                follows: false,
-                shields: true,
-            },
-            Self::Expert => Skill {
-                notice: Some(0.20),
-                follows: true,
-                shields: true,
-            },
-        }
-    }
+pub struct Goal {
+    pub at: Vec2,
+    pub within: f32,
 }
 
 /// What a player sees of a fight in a tick, besides the tanks: the bullets, the mines, and
@@ -176,6 +126,14 @@ struct Track {
     blast: Option<Vec2>,
 }
 
+/// How a player sees a bullet: whether they follow it off a wall, and whether it is a shot of
+/// their own tank, which spares that tank until it has bounced.
+#[derive(Clone, Copy, Debug)]
+struct Eyes {
+    follows: bool,
+    own: bool,
+}
+
 impl Track {
     /// Follows a bullet from where it is, and the two that it becomes if it splits. A player
     /// who doesn't follow bounces sees it as far as the first wall that it bounces off.
@@ -185,11 +143,11 @@ impl Track {
         mut at: Vec2,
         from: usize,
         quarry: &[Quarry],
-        follows: bool,
+        eyes: Eyes,
         tracks: &mut Vec<Track>,
     ) {
         let step = bullet.velocity.length() * TICK;
-        let own = bullet.team == Team::Players && !bullet.bounced;
+        let own = eyes.own && !bullet.bounced;
         let mut track = Track {
             from,
             places: vec![at],
@@ -205,7 +163,7 @@ impl Track {
                     for side in [-1.0, 1.0] {
                         let way = Vec2::from_angle(side * SPLIT_ANGLE).rotate(bullet.velocity);
                         let half = bullet.half(way, bounces);
-                        Self::follow(field, half, at, tick, quarry, follows, tracks);
+                        Self::follow(field, half, at, tick, quarry, eyes, tracks);
                     }
                     break;
                 }
@@ -217,7 +175,7 @@ impl Track {
                 break;
             }
             match flight.bounces.first() {
-                Some(&bounce) if !follows => {
+                Some(&bounce) if !eyes.follows => {
                     track.places.push(bounce);
                     break;
                 }
@@ -353,51 +311,83 @@ impl Pilot {
         entity: Entity,
         enemy: Option<Entity>,
     ) -> TankCommand {
+        self.order_among(world, sight, entity, enemy, None, &[])
+    }
+
+    /// The same for a player among teammates: on the way to a place, if one is given, which
+    /// takes over from the way of the fight, and sparing the tanks of the teammates, which
+    /// stand at these places.
+    pub fn order_among(
+        &mut self,
+        world: &World,
+        sight: &Sight,
+        entity: Entity,
+        enemy: Option<Entity>,
+        goal: Option<Goal>,
+        crew: &[Vec2],
+    ) -> TankCommand {
         let field = world.resource::<Field>();
-        let tank = world.get::<Tank>(entity).unwrap();
-        let me = world.get::<Position>(entity).unwrap().0;
-        let motion = *world.get::<Motion>(entity).unwrap();
+        // A tank that is gone asks nothing of the player, and an enemy that is gone is no
+        // enemy.
+        let (Some(tank), Some(me), Some(&motion), Some(gun)) = (
+            world.get::<Tank>(entity),
+            world.get::<Position>(entity),
+            world.get::<Motion>(entity),
+            world.get::<Gun>(entity),
+        ) else {
+            return TankCommand::default();
+        };
+        let me = me.0;
+        let foe = enemy.and_then(|enemy| {
+            let velocity = world.get::<Motion>(enemy)?.velocity;
+            Some((world.get::<Position>(enemy)?.0, velocity))
+        });
         let mut command = TankCommand {
             aim: me + Vec2::from_angle(motion.turret) * 10.0,
             ..default()
         };
         let mut meant = Vec2::ZERO;
         // A fight that goes on without any enemy falling is one to fight another way.
-        if sight.awake != self.awake || enemy.is_none() {
+        if sight.awake != self.awake || foe.is_none() {
             (self.awake, self.since_fall) = (sight.awake, 0.0);
         } else {
             self.since_fall += TICK;
         }
-        if let Some(enemy) = enemy {
-            let foe = world.get::<Position>(enemy).unwrap().0;
-            let foe_velocity = world.get::<Motion>(enemy).unwrap().velocity;
-            let rounds = world.get::<Gun>(entity).unwrap().rounds;
+        if let Some((foe, foe_velocity)) = foe {
+            let rounds = gun.rounds;
             let aim = self.aim(field, tank, me, motion.turret, foe, foe_velocity);
             command.aim = me + Vec2::from_angle(aim.0) * 10.0;
-            // A player holds a shot that would come back, or go off too close.
+            // A player holds a shot that would come back, or go off too close, and one that
+            // would take a teammate on its way.
+            let turret = motion.turret;
             command.fire = aim.1
                 && rounds > 0
                 && self.since_shot >= self.pace
-                && sound_shot(field, entity, tank, me, motion.turret, foe, &sight.quarry);
+                && sound_shot(field, entity, tank, me, turret, foe, &sight.quarry, crew);
             let pressing = self.since_fall > PATIENCE && sight.awake <= LAST;
-            meant = match self.around(field, tank, me, foe, pressing) {
-                // The way around what hides the enemy is free as far as it was found: a
-                // tank that looked further ahead would turn back in front of the wall that
-                // the way runs along.
-                Way::Found(way) => way.normalize_or_zero(),
-                Way::Meant(way) => {
-                    let steered = brain::steer(field, tank, me, way);
-                    // An enemy that shows past what stands right in front of the tank is
-                    // not driven at: the tank would turn back from what is in its way. It
-                    // goes around, as it does when the enemy is hidden.
-                    let toward = (foe - me).normalize_or_zero();
-                    let turned_back = way.dot(toward) > 0.9 && steered.dot(toward) <= 0.0;
-                    match turned_back.then(|| self.way_around(field, tank, me, foe)) {
-                        Some(Way::Found(around)) => around.normalize_or_zero(),
-                        _ => steered,
+            if goal.is_none() {
+                meant = match self.around(field, tank, me, foe, pressing) {
+                    // The way around what hides the enemy is free as far as it was found: a
+                    // tank that looked further ahead would turn back in front of the wall that
+                    // the way runs along.
+                    Way::Found(way) => way.normalize_or_zero(),
+                    Way::Meant(way) => {
+                        let steered = brain::steer(field, tank, me, way);
+                        // An enemy that shows past what stands right in front of the tank is
+                        // not driven at: the tank would turn back from what is in its way. It
+                        // goes around, as it does when the enemy is hidden.
+                        let toward = (foe - me).normalize_or_zero();
+                        let turned_back = way.dot(toward) > 0.9 && steered.dot(toward) <= 0.0;
+                        match turned_back.then(|| self.way_around(field, tank, me, foe)) {
+                            Some(Way::Found(around)) => around.normalize_or_zero(),
+                            _ => steered,
+                        }
                     }
-                }
-            };
+                };
+            }
+        }
+        if let Some(goal) = goal {
+            meant = self.toward(field, tank, me, goal);
         }
         self.since_shot = if command.fire {
             0.0
@@ -406,17 +396,22 @@ impl Pilot {
         };
 
         command.drive = meant;
-        let known = self.watch(sight, me);
+        let known = self.watch(sight, me, entity);
         // A player who never sees a bullet coming minds no mine either.
         let minds = self.skill.notice.is_some();
         if minds && (!known.is_empty() || !sight.mines.is_empty()) {
             let mut tracks = Vec::new();
             for &(_, bullet, at) in &known {
                 // Where their own shot goes off a wall is news to no player.
-                let follows = self.skill.follows || bullet.team == Team::Players;
-                Track::follow(field, bullet, at, 0, &sight.quarry, follows, &mut tracks);
+                let own = bullet.owner == entity;
+                let eyes = Eyes {
+                    follows: self.skill.follows || own,
+                    own,
+                };
+                Track::follow(field, bullet, at, 0, &sight.quarry, eyes, &mut tracks);
             }
-            let hazards: Vec<Hazard> = sight.mines.iter().filter_map(hazard).collect();
+            let mines = sight.mines.iter();
+            let hazards: Vec<Hazard> = mines.filter_map(|mine| hazard(mine, entity)).collect();
             let (way, hit) = way_out(field, tank, me, &motion, meant, &tracks, &hazards);
             command.drive = way;
             command.shield = self.skill.shields && hit.is_some_and(|tick| tick <= SHIELD_AHEAD);
@@ -493,9 +488,28 @@ impl Pilot {
         }
     }
 
+    /// The way to a place, which ends close enough to it: straight there when the tank has
+    /// room to drive that way, and around what stands in between otherwise. A way that is
+    /// free is not steered from the walls along it: in a gap between a wall and a block, that
+    /// turns the tank back at its mouth.
+    fn toward(&mut self, field: &Field, tank: &Tank, me: Vec2, goal: Goal) -> Vec2 {
+        let off = goal.at - me;
+        if off.length() <= goal.within {
+            return Vec2::ZERO;
+        }
+        let blocked = field.cast(me, off, TANK_RADIUS);
+        if blocked.is_none_or(|(_, solid)| !solid.stops(tank)) {
+            return off.normalize_or_zero();
+        }
+        match self.way_around(field, tank, me, goal.at) {
+            Way::Found(way) => way.normalize_or_zero(),
+            Way::Meant(way) => brain::steer(field, tank, me, way),
+        }
+    }
+
     /// Keeps count of the bullets in view, and tells those that the player has seen for long
-    /// enough to act on. Its own are among them: they come back off the walls.
-    fn watch(&mut self, sight: &Sight, me: Vec2) -> Vec<(Entity, Bullet, Vec2)> {
+    /// enough to act on. The tank's own are among them: they come back off the walls.
+    fn watch(&mut self, sight: &Sight, me: Vec2, tank: Entity) -> Vec<(Entity, Bullet, Vec2)> {
         let Some(notice) = self.skill.notice else {
             return Vec::new();
         };
@@ -505,25 +519,24 @@ impl Pilot {
             .retain(|seen| near.iter().any(|(entity, ..)| *entity == seen.bullet));
         let mut known = Vec::new();
         for &(entity, bullet, at) in &near {
-            let seen = match self.seen.iter_mut().find(|seen| seen.bullet == entity) {
-                Some(seen) => seen,
-                None => {
-                    self.seen.push(Seen {
-                        bullet: entity,
-                        bounces_left: bullet.bounces_left,
-                        since: 0.0,
-                    });
-                    self.seen.last_mut().unwrap()
-                }
+            if !self.seen.iter().any(|seen| seen.bullet == entity) {
+                self.seen.push(Seen {
+                    bullet: entity,
+                    bounces_left: bullet.bounces_left,
+                    since: 0.0,
+                });
+            }
+            let Some(seen) = self.seen.iter_mut().find(|seen| seen.bullet == entity) else {
+                continue;
             };
             // Where a bullet goes off a wall is news to a player who didn't follow it there.
             if seen.bounces_left != bullet.bounces_left {
                 seen.bounces_left = bullet.bounces_left;
-                if !self.skill.follows && bullet.team != Team::Players {
+                if !self.skill.follows && bullet.owner != tank {
                     seen.since = 0.0;
                 }
             }
-            if seen.since >= notice || bullet.team == Team::Players {
+            if seen.since >= notice || bullet.owner == tank {
                 known.push((entity, bullet, at));
             }
             seen.since += TICK;
@@ -532,9 +545,44 @@ impl Pilot {
     }
 }
 
+/// The places where the tanks of an arena wait for room, in a sector: those whose place is
+/// not marked yet because a player's tank is too close to it.
+pub fn waiting_for_room(field: &Field, sector: u32) -> Vec<Vec2> {
+    let arena = field.arenas.get(&sector).into_iter();
+    let incoming = arena.flat_map(|arena| &arena.incoming);
+    let waiting = incoming.filter(|(_, marked)| marked.is_none());
+    waiting.map(|(tank, _)| tank.at).collect()
+}
+
+/// Where a player who has nobody to fight drives, to leave room to the tanks of an arena
+/// that wait for it: away from the places that are not marked yet and that the tank is too
+/// close to, all of them at once. Away from the nearest one alone, a tank between two places
+/// drives back and forth between them and leaves neither.
+pub fn off_the_marks(waiting: &[Vec2], me: Vec2) -> Option<Vec2> {
+    let near: Vec<Vec2> = waiting
+        .iter()
+        .copied()
+        .filter(|place| place.distance(me) < APPEAR_ROOM + 2.0)
+        .collect();
+    let first = *near.first()?;
+    let middle = near.iter().sum::<Vec2>() / near.len() as f32;
+    let away = me - middle;
+    if away.length() >= 0.5 {
+        return Some(away);
+    }
+    // In the middle of them, the way out is across the line that joins them.
+    let across = (first - middle).perp();
+    Some(if across.length() > 0.1 {
+        across
+    } else {
+        Vec2::X
+    })
+}
+
 /// Whether a shot that a tank fires now is one that a player would fire: it gets to the enemy
 /// before it comes back to the tank off a wall, and doesn't go off within reach of the tank,
-/// in a crate or by itself.
+/// in a crate or by itself. Among teammates, whose tanks stand at these places, it passes
+/// none of them on its way and goes off within reach of none.
 fn sound_shot(
     field: &Field,
     entity: Entity,
@@ -543,6 +591,7 @@ fn sound_shot(
     turret: f32,
     foe: Vec2,
     quarry: &[Quarry],
+    crew: &[Vec2],
 ) -> bool {
     let reach = TANK_RADIUS + BULLET_RADIUS;
     let mut bullet = Bullet::fired(
@@ -552,14 +601,21 @@ fn sound_shot(
     );
     let step = bullet.velocity.length() * TICK;
     let mut at = me;
+    let blast_room = BLAST_RADIUS + SHOT_ROOM;
+    let near_a_mate = |at: Vec2, room: f32| crew.iter().any(|mate| mate.distance(at) < room);
     for _ in 0..SHOT_AHEAD {
         let flight = bullets::fly_past_walls(field, &mut at, &mut bullet, step, quarry);
         if at.distance(foe) < reach {
-            return true;
+            // A bullet that explodes goes off on the enemy, and on whoever stands by it.
+            return !(bullet.kind == Kind::Exploding && near_a_mate(at, blast_room));
+        }
+        if near_a_mate(at, reach + SHOT_ROOM) {
+            return false;
         }
         if let Flight::Stopped(solid) = flight.end {
             let blast = matches!(solid, Solid::Crate(_)) || bullet.kind == Kind::Exploding;
-            return !(blast && at.distance(me) < BLAST_RADIUS + SHOT_ROOM);
+            let reached = at.distance(me) < blast_room || near_a_mate(at, blast_room);
+            return !(blast && reached);
         }
         if bullet.bounced && at.distance(me) < reach + SHOT_ROOM {
             return false;
@@ -643,13 +699,14 @@ fn route(field: &Field, tank: &Tank, from: Vec2, to: Vec2) -> Option<Vec2> {
     Some(center(first))
 }
 
-/// A mine as a player minds it: one of the enemies, which a player's tank sets off.
-fn hazard((mine, at): &(Mine, Vec2)) -> Option<Hazard> {
+/// A mine as the player of a tank minds it: one that another tank laid, which this one sets
+/// off, or any that warns.
+fn hazard((mine, at): &(Mine, Vec2), tank: Entity) -> Option<Hazard> {
     let blows = match mine.state {
         MineState::Triggered(left) => Some((left / TICK).ceil() as usize),
         MineState::Arming(_) | MineState::Armed(_) => None,
     };
-    (mine.team == Team::Enemies || blows.is_some()).then_some(Hazard { at: *at, blows })
+    (mine.owner != tank || blows.is_some()).then_some(Hazard { at: *at, blows })
 }
 
 /// Where a tank is, tick after tick from now, when it drives one way.
@@ -719,7 +776,7 @@ fn way_out(
 
 #[cfg(test)]
 mod tests {
-    use tanku_core::stats::Genome;
+    use tanku_core::{sim::Team, stats::Genome};
 
     use super::*;
 
@@ -733,6 +790,12 @@ mod tests {
         });
         field
     }
+
+    /// How a player who doesn't follow bounces sees a bullet of the enemies.
+    const ENEMY: Eyes = Eyes {
+        follows: false,
+        own: false,
+    };
 
     fn bullet(velocity: Vec2, bounces_left: u8, kind: Kind) -> Bullet {
         Bullet {
@@ -749,7 +812,11 @@ mod tests {
 
     fn tracks(bullet: Bullet, at: Vec2, follows: bool) -> Vec<Track> {
         let mut tracks = Vec::new();
-        Track::follow(&field(), bullet, at, 0, &[], follows, &mut tracks);
+        let eyes = Eyes {
+            follows,
+            own: bullet.team == Team::Players,
+        };
+        Track::follow(&field(), bullet, at, 0, &[], eyes, &mut tracks);
         tracks
     }
 
@@ -914,15 +981,6 @@ mod tests {
     }
 
     #[test]
-    fn the_players_are_told_by_their_names() {
-        for player in Reference::ALL {
-            assert_eq!(Reference::of_name(player.name()), Some(player));
-        }
-        assert_eq!(Reference::of_name("master"), None);
-        assert_eq!(Reference::Novice.skill().notice, None);
-    }
-
-    #[test]
     fn a_bullet_is_followed_off_a_wall_by_a_player_who_follows_bounces() {
         // It flies north at 12 m/s from 4 m under the wall: it bounces within half a second.
         let shot = bullet(Vec2::new(0.0, 12.0), 1, Kind::Plain);
@@ -995,7 +1053,7 @@ mod tests {
             Vec2::new(9.0, 0.0),
             0,
             &[],
-            false,
+            ENEMY,
             &mut coming,
         );
         let (way, hit) = way_out(&field, &tank, Vec2::ZERO, &motion, Vec2::ZERO, &coming, &[]);
@@ -1003,7 +1061,7 @@ mod tests {
         assert!(way.y.abs() > 0.5, "{way:?}");
         // From 2.5 m, nothing gets the tank out of its way in time: the shield is for that.
         let mut close = Vec::new();
-        Track::follow(&field, shot, Vec2::new(2.5, 0.0), 0, &[], false, &mut close);
+        Track::follow(&field, shot, Vec2::new(2.5, 0.0), 0, &[], ENEMY, &mut close);
         let (_, hit) = way_out(&field, &tank, Vec2::ZERO, &motion, Vec2::ZERO, &close, &[]);
         assert!(hit.is_some());
     }
@@ -1015,7 +1073,16 @@ mod tests {
         let me = Vec2::new(0.0, 4.0);
         let north = std::f32::consts::FRAC_PI_2;
         let fired = |turret: f32, foe: Vec2| {
-            sound_shot(&field, Entity::PLACEHOLDER, &tank, me, turret, foe, &[])
+            sound_shot(
+                &field,
+                Entity::PLACEHOLDER,
+                &tank,
+                me,
+                turret,
+                foe,
+                &[],
+                &[],
+            )
         };
         // Straight at the wall, the shot comes straight back, unless the enemy is in its way.
         assert!(!fired(north, Vec2::new(20.0, 4.0)));
@@ -1072,5 +1139,113 @@ mod tests {
             .take(HORIZON / 2)
             .map(|place| place.distance(mine.at));
         assert!(nearest.fold(f32::MAX, f32::min) > MINE_TRIGGER_RADIUS);
+    }
+
+    #[test]
+    fn a_player_holds_a_shot_that_would_take_a_teammate() {
+        let field = field();
+        let tank = player();
+        // The enemy is 12 m east, in the open.
+        let foe = Vec2::new(12.0, 0.0);
+        let fired = |crew: &[Vec2]| {
+            sound_shot(
+                &field,
+                Entity::PLACEHOLDER,
+                &tank,
+                Vec2::ZERO,
+                0.0,
+                foe,
+                &[],
+                crew,
+            )
+        };
+        assert!(fired(&[]));
+        // A teammate on the line of fire, or so close to it that the bullet grazes the tank.
+        assert!(!fired(&[Vec2::new(6.0, 0.0)]));
+        assert!(!fired(&[Vec2::new(6.0, 1.5)]));
+        // One that stands aside, or behind the enemy, is in no danger.
+        assert!(fired(&[Vec2::new(6.0, 4.0)]));
+        assert!(fired(&[Vec2::new(14.0, 0.0)]));
+    }
+
+    #[test]
+    fn a_shot_of_a_teammate_spares_the_tank_no_more_than_a_shot_of_the_enemies() {
+        // A shot of the players flies north at the tank from 4 m south of it.
+        let shot = Bullet {
+            team: Team::Players,
+            ..bullet(Vec2::new(0.0, 12.0), 1, Kind::Plain)
+        };
+        let stood = vec![Vec2::new(0.0, 6.0); HORIZON + 1];
+        let hit = |own: bool| {
+            let mut tracks = Vec::new();
+            let eyes = Eyes { follows: true, own };
+            Track::follow(
+                &field(),
+                shot,
+                Vec2::new(0.0, 2.0),
+                0,
+                &[],
+                eyes,
+                &mut tracks,
+            );
+            tracks[0].room(&stood).1
+        };
+        // The tank's own shot passes it, and comes back off the wall. A teammate's hits it.
+        assert!(hit(true).is_some_and(|tick| tick > 30));
+        assert!(hit(false).is_some_and(|tick| tick < 20));
+    }
+
+    #[test]
+    fn a_player_minds_the_mines_of_its_teammates_and_not_its_own() {
+        let (own, mate) = (
+            Entity::from_raw_u32(1).unwrap(),
+            Entity::from_raw_u32(2).unwrap(),
+        );
+        let mine = |owner: Entity, state: MineState| {
+            let team = Team::Players;
+            (
+                Mine {
+                    owner,
+                    team,
+                    sector: 0,
+                    state,
+                },
+                Vec2::X,
+            )
+        };
+        let armed = MineState::Armed(5.0);
+        // The tank drives over its own mine freely: it is a teammate's that it sets off.
+        assert!(hazard(&mine(own, armed), own).is_none());
+        assert!(hazard(&mine(mate, armed), own).is_some());
+        // Any mine that warns is minded.
+        assert!(hazard(&mine(own, MineState::Triggered(0.3)), own).is_some());
+    }
+
+    #[test]
+    fn a_player_with_nobody_to_fight_leaves_room_to_the_tanks_that_wait() {
+        let reach = APPEAR_ROOM + 2.0;
+        // Nothing waits near: the player stays.
+        assert_eq!(off_the_marks(&[], Vec2::ZERO), None);
+        assert_eq!(off_the_marks(&[Vec2::X * (reach + 1.0)], Vec2::ZERO), None);
+        // Away from a place that waits, and from the middle of several.
+        let away = off_the_marks(&[Vec2::X * 2.0], Vec2::ZERO).unwrap();
+        assert!(away.normalize().dot(Vec2::NEG_X) > 0.99);
+        // Between two places, the way out is across the line that joins them, and it never
+        // turns back from one tick to the next: a tank that drove away from the nearer one
+        // would come back to it from the other.
+        let places = [Vec2::new(-2.5, 0.0), Vec2::new(2.5, 0.0)];
+        let mut me = Vec2::new(0.3, 0.1);
+        let first = off_the_marks(&places, me).unwrap().normalize();
+        assert!(first.x.abs() < 0.2, "{first:?}");
+        for _ in 0..120 {
+            let Some(away) = off_the_marks(&places, me) else {
+                break;
+            };
+            assert!(away.normalize().dot(first) > 0.5);
+            me += away.normalize() * 5.0 * TICK;
+        }
+        assert!(places.iter().all(|place| place.distance(me) > APPEAR_ROOM));
+        // On the one place that waits, any way is a way out.
+        assert!(off_the_marks(&[Vec2::ZERO], Vec2::ZERO).is_some());
     }
 }
