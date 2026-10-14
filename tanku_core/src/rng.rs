@@ -72,7 +72,9 @@ impl Stream {
             }
             roll -= weight;
         }
-        unreachable!("the roll is below the total weight")
+        // The roll is below the total weight, so the loop has answered: only weights that are
+        // all zero get here, and they get the last index.
+        weights.len().saturating_sub(1)
     }
 
     /// A value in `0.0..1.0`. Only for behavior and effects: generation stays on integers.

@@ -288,9 +288,10 @@ fn dials(parent: &mut ChildSpawnerCommands, doc: &Doc, instrument: Instrument) {
     let all = parts::dials(line.unwrap_or_default(), instrument);
     let settings = parts::settings(instrument);
     // The last setting has the column at the right, and the others the one at the left.
-    let (last, rest) = settings
-        .split_last()
-        .expect("every instrument has settings");
+    // Every instrument has settings: one without any would have no dials to draw.
+    let Some((last, rest)) = settings.split_last() else {
+        return;
+    };
     let split = all.len().saturating_sub(last.1.len());
     let (left, right) = all.split_at(split);
     let names = |settings: &[(&str, &[parts::Knob])]| {

@@ -36,6 +36,11 @@ use crate::{doc::Doc, sound::Stream, state::View};
 /// The file of the game, which the editor opens when it is given no other.
 const FILE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../tanku_audio/music.score");
 
+/// The channels and the rate of the music as the sound library takes them: numbers that are
+/// not zero. They are worked out while the editor is compiled, so a zero would stop the build.
+const CHANNEL_COUNT: ChannelCount = ChannelCount::new(CHANNELS).unwrap();
+const RATE: SampleRate = SampleRate::new(SAMPLE_RATE).unwrap();
+
 const USAGE: &str = "\
 Usage: music_editor [FILE]
 
@@ -74,11 +79,11 @@ impl Source for Reader {
     }
 
     fn channels(&self) -> ChannelCount {
-        ChannelCount::new(CHANNELS).unwrap()
+        CHANNEL_COUNT
     }
 
     fn sample_rate(&self) -> SampleRate {
-        SampleRate::new(SAMPLE_RATE).unwrap()
+        RATE
     }
 
     fn total_duration(&self) -> Option<std::time::Duration> {

@@ -28,6 +28,13 @@
 //! cargo run --release -p tanku_trials -- compare before/skirmish.csv after/skirmish.csv
 //! ```
 
+// A trial that finds a tank without what every tank has can't go on, and stops where it
+// stands: a number made up in its place would be wrong in every report after it.
+#![expect(
+    clippy::unwrap_used,
+    reason = "a trial that can't go on stops: nobody plays it, and its numbers must be right"
+)]
+
 mod breed;
 mod census;
 mod classes;

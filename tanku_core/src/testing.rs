@@ -4,7 +4,7 @@
 use std::{
     net::{Ipv4Addr, TcpListener, UdpSocket},
     sync::{
-        Mutex,
+        Mutex, PoisonError,
         atomic::{AtomicU32, Ordering},
     },
 };
@@ -43,7 +43,9 @@ pub fn free_port() -> u16 {
         };
         // A port that another program holds for itself is passed over too.
         if UdpSocket::bind((Ipv4Addr::UNSPECIFIED, port)).is_ok() {
-            KEPT.lock().unwrap().push(kept);
+            // A test that failed while it held the list has harmed nothing in it.
+            let mut held = KEPT.lock().unwrap_or_else(PoisonError::into_inner);
+            held.push(kept);
             return port;
         }
     }

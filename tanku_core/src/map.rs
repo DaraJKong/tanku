@@ -537,9 +537,17 @@ fn plan_sector(seed: u64, index: u32, frame: Frame, entry: i32, spec: &Spec) -> 
         SectorKind::Bay => bay_shape(),
         SectorKind::Arena => arena_shape(&mut rng, index, entry),
         SectorKind::Corridor => corridor_shape(&mut rng, index, entry, spec),
+        #[expect(
+            clippy::unreachable,
+            reason = "no spec has the kind of the room, which `Room` plans by itself"
+        )]
         SectorKind::Room => unreachable!("a corridor has no room"),
     };
     let (length, gate) = (shape.length, shape.gate);
+    #[expect(
+        clippy::unwrap_used,
+        reason = "each wall of a shape starts with a point at its entry"
+    )]
     let (left_end, right_end) = (shape.left.last().unwrap().0, shape.right.last().unwrap().0);
 
     // Local ends of the barrier, the left end of the next entry first.
@@ -577,8 +585,8 @@ fn plan_sector(seed: u64, index: u32, frame: Frame, entry: i32, spec: &Spec) -> 
         })
         .collect();
 
-    let min = outline.iter().copied().reduce(IVec2::min).unwrap();
-    let max = outline.iter().copied().reduce(IVec2::max).unwrap();
+    let min = outline.iter().copied().fold(IVec2::MAX, IVec2::min);
+    let max = outline.iter().copied().fold(IVec2::MIN, IVec2::max);
     SectorPlan {
         index,
         kind: spec.kind,
@@ -701,6 +709,10 @@ impl Corridor {
 
     /// Plans the next maneuver. Every maneuver starts and ends heading north, north of
     /// everything planned before it.
+    #[expect(
+        clippy::unreachable,
+        reason = "the last maneuver that is tried always fits, and a corridor can't go on without one"
+    )]
     fn extend(&mut self) {
         let mut rng = Stream::new(self.seed, Purpose::Maneuver, self.maneuvers, 0);
         self.maneuvers += 1;
@@ -761,8 +773,8 @@ impl Corridor {
     }
 
     fn try_maneuver(&self, specs: &[Spec]) -> Option<Vec<SectorPlan>> {
-        let last = self.plans.last().unwrap();
-        let mut north = self.plans.iter().map(|plan| plan.max.y).max().unwrap();
+        let last = self.plans.last()?;
+        let mut north = self.plans.iter().map(|plan| plan.max.y).max()?;
         let mut planned: Vec<SectorPlan> = Vec::with_capacity(specs.len());
         for spec in specs {
             let previous = planned.last().unwrap_or(last);

@@ -800,7 +800,10 @@ fn follow_host(
     next_overlay.set(Overlay::None);
 }
 
-#[cfg(all(test, not(target_arch = "wasm32")))]
+// Two attributes and not one with `all`: Clippy takes a module for tests, whose helpers may
+// stop a test with a panic, when its attribute says `test` and nothing else.
+#[cfg(test)]
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod tests {
     use std::net::UdpSocket;
 

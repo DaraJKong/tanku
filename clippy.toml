@@ -1,0 +1,6 @@
+# The workspace refuses the calls that stop the program when they fail: see the lints of
+# `Cargo.toml`. A test that stops on one of them fails, which is what a test is for, so the
+# tests keep them.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true

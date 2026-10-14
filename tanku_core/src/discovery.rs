@@ -583,7 +583,7 @@ mod tests {
                 last(seen) == Some(&told)
             });
             let Some(Sighting::Game { name, machines, .. }) = seen.last() else {
-                unreachable!();
+                panic!("the game was seen last: {seen:?}");
             };
             assert!(name.starts_with("tanku-000000000000feed."), "{name}");
             assert_eq!(machines, &[Ipv4Addr::LOCALHOST]);

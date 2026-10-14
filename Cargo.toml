@@ -45,6 +45,15 @@ clap = { version = "4.6", features = ["derive"] }
 [workspace.lints.clippy]
 too_many_arguments = "allow"
 type_complexity = "allow"
+# The calls that stop the program when they fail. One that is meant is marked where it stands,
+# with its reason: `#[expect(clippy::unwrap_used, reason = "...")]`. The tests keep theirs:
+# see `clippy.toml`.
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+unreachable = "warn"
+todo = "warn"
+unimplemented = "warn"
 
 # Enable a small amount of optimization in the dev profile.
 [profile.dev]

@@ -82,6 +82,10 @@ pub struct Fault {
 
 impl Fault {
     /// Stops the build with the line of the file and what is wrong with it.
+    #[expect(
+        clippy::panic,
+        reason = "a panic while the crate is compiled is how a fault of the file stops the build"
+    )]
     pub const fn stop(self) -> ! {
         let mut text = [0; 400];
         let mut len = append(&mut text, 0, b"music.score, line ");

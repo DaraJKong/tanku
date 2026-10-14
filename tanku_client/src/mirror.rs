@@ -672,7 +672,10 @@ fn foresee(
 
         // The bullets that the guest shows for the tank fly on.
         for shown in &ahead.shown {
-            let Some(Ok(bullet)) = shown.thing.map(|thing| bullets.get_mut(thing)) else {
+            let Some(thing) = shown.thing else {
+                continue;
+            };
+            let Ok(bullet) = bullets.get_mut(thing) else {
                 continue;
             };
             let (mut bullet, mut place, mut before, mut state) = bullet;
@@ -685,7 +688,7 @@ fn foresee(
             bullet.set_if_neq(flying);
             if flew.spent {
                 state.spent = true;
-                commands.entity(shown.thing.unwrap()).insert(hidden(true));
+                commands.entity(thing).insert(hidden(true));
             }
         }
 

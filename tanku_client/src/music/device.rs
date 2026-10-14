@@ -16,6 +16,11 @@ use crate::{audio::Muted, settings::Settings};
 /// by one.
 const BLOCK: usize = 128 * CHANNELS as usize;
 
+/// The channels and the rate of the music as the sound library takes them: numbers that are
+/// not zero. They are worked out while the game is compiled, so a zero would stop the build.
+const CHANNEL_COUNT: ChannelCount = ChannelCount::new(CHANNELS).unwrap();
+const RATE: SampleRate = SampleRate::new(SAMPLE_RATE).unwrap();
+
 /// The piece, as something that the sound library can play.
 #[derive(Asset, TypePath)]
 struct Piece(Conductor);
@@ -67,11 +72,11 @@ impl Source for Stream {
     }
 
     fn channels(&self) -> ChannelCount {
-        ChannelCount::new(CHANNELS).unwrap()
+        CHANNEL_COUNT
     }
 
     fn sample_rate(&self) -> SampleRate {
-        SampleRate::new(SAMPLE_RATE).unwrap()
+        RATE
     }
 
     fn total_duration(&self) -> Option<Duration> {

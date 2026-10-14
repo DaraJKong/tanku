@@ -237,6 +237,14 @@ cargo test --workspace
 
 The server-only check exists because a workspace build gives the server the client's Bevy features.
 
+Clippy refuses the calls that stop the program when they fail: `unwrap`, `expect`, `panic!`, `unreachable!`, `todo!` and `unimplemented!`. Write what happens in the case that they leave out. Where stopping is meant, mark the place with its reason, and Clippy tells when the mark is no longer needed:
+
+```rust
+#[expect(clippy::unwrap_used, reason = "each wall of a shape starts with a point at its entry")]
+```
+
+The tests keep these calls, and so do the trials, which must stop when they can't go on. Clippy takes a module for tests when its attribute is `#[cfg(test)]` and nothing else: another condition goes into a second attribute.
+
 The tests of the network open real games on this machine and play them in real time. On a machine that is busy with something else, such as another build, a dozen of them can fail together, most of them in `mirror`: run them again once the machine is quiet. Keeping their threads on two cores shows it every time:
 
 ```bash
