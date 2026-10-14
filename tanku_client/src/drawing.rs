@@ -45,23 +45,6 @@ pub fn value(content: impl Into<String>, color: Color) -> impl Bundle {
     theme::label(content, theme::VALUE, color)
 }
 
-/// The name of what a screen is, in the smallest capitals, over its title.
-#[expect(dead_code, reason = "the screens take it as they are drawn again")]
-pub fn heading(
-    parent: &mut ChildSpawnerCommands,
-    what: impl Into<String>,
-    title: impl Into<String>,
-) {
-    parent.spawn(key(what));
-    parent.spawn((
-        theme::label(title, theme::HEADING, theme::TEXT),
-        Node {
-            margin: UiRect::bottom(px(12)),
-            ..default()
-        },
-    ));
-}
-
 /// A block: edged with the wide line and ruled inside with the narrow one.
 pub fn block(node: Node) -> impl Bundle {
     (
