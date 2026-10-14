@@ -6,6 +6,7 @@
 mod arena;
 pub mod brain;
 pub mod bullets;
+mod colliders;
 pub mod field;
 mod mines;
 #[cfg(feature = "net")]

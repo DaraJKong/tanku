@@ -18,3 +18,7 @@ codegen-backend = "llvm"
 
 [profile.dev.package.tanku_audio]
 codegen-backend = "llvm"
+
+# Cranelift lacks many of the vector instructions that its sieves are made of.
+[profile.dev.package.tanku_simd]
+codegen-backend = "llvm"

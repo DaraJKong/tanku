@@ -5,12 +5,12 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use bevy::prelude::*;
 use tanku_core::{
     enemy,
-    geom::{self, Hit},
+    geom::Hit,
     map::{Corridor, SectorKind, SectorPlan},
     modes::Difficulty,
     progression,
     rng::{Purpose, Stream},
-    rules::{ARENA_WAVES, BLOCK_SIZE, MAX_PLAYERS, TANK_RADIUS},
+    rules::{ARENA_WAVES, BLOCK_SIZE, MAX_PLAYERS},
     sim::{
         Barrier, Block, Enemy, ExplosiveCrate, Gun, Motion, Position, PreviousPosition, Sector,
         SectorIndex, Tank, Team,
@@ -18,6 +18,7 @@ use tanku_core::{
     stats::Genome,
 };
 
+pub use crate::colliders::Colliders;
 use crate::{brain::Brain, room::RoomState};
 
 /// What a collider belongs to.
@@ -147,7 +148,7 @@ pub struct Field {
     /// Whether the run started with a single player, who has lives.
     pub solo: bool,
     pub corridor: Corridor,
-    pub colliders: Vec<Collider>,
+    pub colliders: Colliders,
     /// Set when something solid appeared or disappeared.
     pub stale: bool,
     pub loaded: BTreeSet<u32>,
@@ -169,7 +170,7 @@ impl Field {
             tanks: [Genome::PLAYER; MAX_PLAYERS as usize],
             solo: players == 1,
             corridor: Corridor::new(seed),
-            colliders: Vec::new(),
+            colliders: Colliders::default(),
             stale: true,
             loaded: BTreeSet::new(),
             cleared: BTreeSet::new(),
@@ -193,31 +194,12 @@ impl Field {
 
     /// First thing a circle touches when it moves from `origin` by `delta`.
     pub fn cast(&self, origin: Vec2, delta: Vec2, radius: f32) -> Option<(Hit, Solid)> {
-        let reach = delta.abs() / 2.0 + Vec2::splat(radius);
-        let center = origin + delta / 2.0;
-        let mut first: Option<(Hit, Solid)> = None;
-        for collider in &self.colliders {
-            // A cheap test first: most colliders are nowhere near the path.
-            let middle = (collider.a + collider.b) / 2.0;
-            let extent = (collider.b - collider.a).abs() / 2.0;
-            if ((middle - center).abs() - extent - reach).max_element() > 0.0 {
-                continue;
-            }
-            let hit = geom::sweep_circle_segment(origin, delta, radius, collider.a, collider.b);
-            if let Some(hit) = hit
-                && first.is_none_or(|(best, _)| hit.t < best.t)
-            {
-                first = Some((hit, collider.solid));
-            }
-        }
-        first
+        self.colliders.cast(origin, delta, radius)
     }
 
     /// Whether anything that matches `stops` lies between two points.
     pub fn blocked(&self, from: Vec2, to: Vec2, stops: impl Fn(Solid) -> bool) -> bool {
-        self.colliders.iter().any(|collider| {
-            stops(collider.solid) && geom::segments_intersect(from, to, collider.a, collider.b)
-        })
+        self.colliders.blocked(from, to, stops)
     }
 
     /// Whether two points see each other.
@@ -227,7 +209,7 @@ impl Field {
 
     /// Moves a tank out of everything solid it overlaps.
     pub fn push_out(&self, tank: &Tank, position: &mut Vec2, velocity: &mut Vec2) {
-        push_out(&self.colliders, tank, position, velocity);
+        self.colliders.push_out(tank, position, velocity);
     }
 
     /// Loads a sector: its walls, its barrier, its obstacles and, unless it is cleared, its
@@ -355,30 +337,6 @@ impl Field {
     }
 }
 
-/// Moves a tank out of those of these colliders that it overlaps.
-pub fn push_out(colliders: &[Collider], tank: &Tank, position: &mut Vec2, velocity: &mut Vec2) {
-    for _ in 0..3 {
-        let mut moved = false;
-        for collider in colliders {
-            if !collider.solid.stops(tank) {
-                continue;
-            }
-            let closest = geom::closest_point_on_segment(*position, collider.a, collider.b);
-            let offset = *position - closest;
-            let distance = offset.length();
-            if distance < TANK_RADIUS && distance > 1e-5 {
-                let normal = offset / distance;
-                *position += normal * (TANK_RADIUS - distance);
-                *velocity -= normal * velocity.dot(normal).min(0.0);
-                moved = true;
-            }
-        }
-        if !moved {
-            break;
-        }
-    }
-}
-
 /// A barrier lives as long as the sector behind it, so that this sector stays closed.
 fn spawn_barrier(commands: &mut Commands, plan: &SectorPlan) {
     let (from, to) = (plan.gate.0.as_vec2(), plan.gate.1.as_vec2());
@@ -457,7 +415,7 @@ pub fn rebuild_colliders(
             },
         });
     }
-    field.colliders = colliders;
+    field.colliders = colliders.into();
 }
 
 /// Removes everything that belongs to a sector that is no longer loaded.

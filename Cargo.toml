@@ -5,6 +5,7 @@ members = [
     "tanku_client",
     "tanku_core",
     "tanku_server",
+    "tanku_simd",
     "tanku_trials",
 ]
 resolver = "3"
@@ -23,6 +24,9 @@ lightyear = { version = "0.30", default-features = false }
 # Announces a hosted game on the local network and finds those of others, by multicast DNS.
 # Its logs show with `RUST_LOG=mdns_sd=debug`.
 mdns-sd = { version = "0.21", default-features = false, features = ["logging"] }
+# The vector instructions of the processor, with the widest that it has chosen when the
+# program starts: see `tanku_simd`.
+fearless_simd = "0.4"
 # What goes over the network is written and read with it.
 serde = { version = "1", features = ["derive"] }
 # SHA-256, for the proof of the password of a hosted game. It is kept at the version that
@@ -32,6 +36,7 @@ tanku_audio = { path = "tanku_audio" }
 tanku_core = { path = "tanku_core" }
 # Without default features, so that a release client doesn't inherit the server's development ones.
 tanku_server = { path = "tanku_server", default-features = false }
+tanku_simd = { path = "tanku_simd" }
 # Already part of every web build of Bevy. The client uses it for the storage of the browser,
 # and to hand its music to the browser.
 web-sys = "0.3"
@@ -65,6 +70,10 @@ opt-level = 3
 
 # The music is computed while it plays, so its crate is optimized like a dependency.
 [profile.dev.package.tanku_audio]
+opt-level = 3
+
+# So are the sieves that every tick runs many times.
+[profile.dev.package.tanku_simd]
 opt-level = 3
 
 # Enable more optimization in the release profile at the cost of compile time.

@@ -25,7 +25,7 @@ use tanku_core::{
 
 use crate::{
     bullets::{self, Mark, Quarry},
-    field::{Collider, Field},
+    field::{Colliders, Field},
     tanks,
 };
 
@@ -426,19 +426,17 @@ struct Mover<'a> {
     tank: &'a Tank,
     at: Vec2,
     motion: &'a Motion,
-    near: Vec<Collider>,
+    near: Colliders,
 }
 
 impl<'a> Mover<'a> {
     fn new(field: &Field, tank: &'a Tank, at: Vec2, motion: &'a Motion) -> Self {
         let reach = tank.genome.top_speed() * FORESIGHT + TANK_RADIUS + 0.5;
-        let near =
-            |collider: &&Collider| geom::distance_to_segment(at, collider.a, collider.b) < reach;
         Self {
             tank,
             at,
             motion,
-            near: field.colliders.iter().filter(near).copied().collect(),
+            near: field.colliders.near(at, reach),
         }
     }
 
@@ -1037,7 +1035,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::field::Solid;
+    use crate::field::{Collider, Solid};
 
     fn wall(a: (f32, f32), b: (f32, f32)) -> Collider {
         Collider {
@@ -1055,7 +1053,8 @@ mod tests {
             wall((20.0, 0.0), (20.0, 10.0)),
             wall((20.0, 10.0), (0.0, 10.0)),
             wall((0.0, 10.0), (0.0, 0.0)),
-        ];
+        ]
+        .into();
         field
     }
 

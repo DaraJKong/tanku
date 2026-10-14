@@ -21,6 +21,7 @@ lightyear = { workspace = true, optional = true, features = [
     "webtransport_self_signed",
 ] }
 tanku_core.workspace = true
+tanku_simd.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true

@@ -234,7 +234,8 @@ mod tests {
             a: Vec2::new(-20.0, 10.0),
             b: Vec2::new(20.0, 10.0),
             solid: Solid::Wall,
-        }];
+        }]
+        .into();
         field
     }
 

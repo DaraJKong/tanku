@@ -36,7 +36,7 @@ use tanku_core::{
 use crate::{
     brain,
     bullets::{self, Flight, Quarry},
-    field::{Collider, Field, Solid},
+    field::{Colliders, Field, Solid},
     tanks,
 };
 
@@ -752,7 +752,7 @@ fn hazard((mine, at): &(Mine, Vec2), tank: Entity) -> Option<Hazard> {
 }
 
 /// Where a tank is, tick after tick from now, when it drives one way.
-fn course(near: &[Collider], tank: &Tank, at: Vec2, motion: &Motion, way: Vec2) -> Vec<Vec2> {
+fn course(near: &Colliders, tank: &Tank, at: Vec2, motion: &Motion, way: Vec2) -> Vec<Vec2> {
     let command = TankCommand {
         drive: way,
         aim: at,
@@ -781,9 +781,7 @@ fn way_out(
     hazards: &[Hazard],
 ) -> (Vec2, Option<usize>) {
     let reach = tank.genome.top_speed() * HORIZON as f32 * TICK + TANK_RADIUS + 0.5;
-    let close =
-        |collider: &&Collider| geom::distance_to_segment(at, collider.a, collider.b) < reach;
-    let near: Vec<Collider> = field.colliders.iter().filter(close).copied().collect();
+    let near = field.colliders.near(at, reach);
     let fare = |way: Vec2| {
         let course = course(&near, tank, at, motion, way);
         let rooms = tracks.iter().map(|track| track.room(&course));
@@ -821,6 +819,7 @@ mod tests {
     use tanku_core::{sim::Team, stats::Genome};
 
     use super::*;
+    use crate::field::Collider;
 
     /// A field with one wall, which runs from west to east ten meters north of the middle.
     fn field() -> Field {

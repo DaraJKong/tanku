@@ -17,6 +17,7 @@ Co-op has been played by two players. With three or four, it is checked by tests
 | `tanku_server` | The authoritative simulation: a library that the client embeds for solo and hosted games, and a headless binary |
 | `tanku_client` | The game: rendering, input, interface and sound |
 | `tanku_audio` | The sound that the game computes: the music and the waveforms of the sound cues, which the client plays |
+| `tanku_simd` | The sieves that tell, several walls at a time with the vector instructions of the processor, which few walls a question of the simulation is about. It is compiled with LLVM and optimized in every build, as the sound is. |
 | `music_editor` | A window that changes the music: it opens the file of the piece, plays it as the game does and saves it. The game doesn't need it. |
 | `tanku_trials` | The trials of the balance: a tool that counts and measures what the rules make, and tells it in reports. The game doesn't need it. |
 

@@ -1,0 +1,11 @@
+[package]
+name = "tanku_simd"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+fearless_simd.workspace = true
