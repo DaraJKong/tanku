@@ -3057,18 +3057,22 @@ fn tables_top() -> f32 {
         + 20.0
 }
 
-/// A player's signature on a seat of the lobby: a stamp that says they are ready.
-fn signature() -> impl Bundle {
-    (
+/// A player's signature on a seat of the lobby: the name of the player in a run, P1 to P4, and
+/// a stamp that says they are ready.
+fn sign(cell: &mut ChildSpawnerCommands, seat: usize) {
+    let name = format!("P{}", seat + 1);
+    cell.spawn(theme::figure(name, theme::VALUE, theme::ACCENT));
+    cell.spawn((
         Node {
             border: UiRect::all(px(2)),
             padding: UiRect::axes(px(10), px(3)),
+            margin: UiRect::left(px(6)),
             ..default()
         },
         BorderColor::all(theme::ACCENT),
         UiTransform::from_rotation(Rot2::degrees(-4.0)),
         children![theme::label("Ready", theme::LABEL, theme::ACCENT)],
-    )
+    ));
 }
 
 /// A seat of the lobby: the balloon of its number, who sits there, and their signature once
@@ -3111,9 +3115,7 @@ fn seat_row(
             cell.spawn(drawing::value(who, ink));
         });
         drawing::cell(row, SEAT_COLUMNS[2], false, |cell| match (taken, ready) {
-            (true, true) => {
-                cell.spawn(signature());
-            }
+            (true, true) => sign(cell, seat),
             (true, false) => {
                 let line = ". . . . . . . .";
                 cell.spawn(theme::label(line, theme::LABEL, theme::RULE));
@@ -7478,6 +7480,8 @@ mod tests {
         // and the key says what pressing it does.
         assert_eq!((count("READY"), count("NOT READY")), (3, 0));
         assert_eq!(count(". . . . . . . ."), 1);
+        // A player who is ready signs with their name in a run.
+        assert_eq!((count("P1"), count("P2"), count("P3")), (1, 0, 1));
         assert!(says(
             &told,
             "The run starts 3 s after every player has signed"
