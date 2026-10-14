@@ -488,7 +488,7 @@ Three fights would never end from 8 to 14 m, and the players have a way through 
 
 Nothing destroys the tank of a reference player. What would have is counted as a loss, so that every fight lasts until the group has fallen or the time is up. The losses are the one measure of what a group costs. What hits the tank within 1.5 s of a loss is no other one, since a tank that is destroyed is gone for that long.
 
-This command puts each of them against the group of every sector that is a corridor, on the same seeds. It takes about five seconds on 24 cores:
+This command puts each of them against the group of every sector that is a corridor, on the same seeds. It takes about five seconds on 24 threads:
 
 ```bash
 cargo run --release -p tanku_trials -- players
@@ -540,7 +540,7 @@ Each table of the tanks tells how many there were, the points that they spent, h
 
 ### Duels
 
-The duels answer whether a stat is priced right, without a group around the tank. They start from one tank, the base, and try one stat at a time at each of its levels, with everything else as it is. Each of these tanks is fought in the corridors of some sectors, with the brains of those sectors, in the places of tanks of their groups. It takes about twenty seconds on 24 cores:
+The duels answer whether a stat is priced right, without a group around the tank. They start from one tank, the base, and try one stat at a time at each of its levels, with everything else as it is. Each of these tanks is fought in the corridors of some sectors, with the brains of those sectors, in the places of tanks of their groups. It takes about twenty seconds on 24 threads:
 
 ```bash
 cargo run --release -p tanku_trials -- duels
@@ -565,7 +565,7 @@ There is a table for the base, one for each stat, and one for the types of bulle
 
 ### Classes
 
-The trial of the classes fights each class alone. Its tanks are made as the game makes a tank of that class, with a budget that is given and under the caps of the sectors that they are fought in. What a tank buys besides the stats of its class is drawn anew for each tank, so what is left over hundreds of them is the class itself. The budget grows from one column to the next, which gives the curve of the danger of a class over its points. It takes about twenty seconds on 24 cores:
+The trial of the classes fights each class alone. Its tanks are made as the game makes a tank of that class, with a budget that is given and under the caps of the sectors that they are fought in. What a tank buys besides the stats of its class is drawn anew for each tank, so what is left over hundreds of them is the class itself. The budget grows from one column to the next, which gives the curve of the danger of a class over its points. It takes about twenty seconds on 24 threads:
 
 ```bash
 cargo run --release -p tanku_trials -- classes
@@ -587,7 +587,7 @@ Every table has a row for each class and a column for each budget: the losses of
 
 ### Runs
 
-The runs are whole runs of a single player: from the start bay, with three lives, the checkpoints, the arenas with their waves and the lives that they leave, until the last life is lost. Here the tank of the reference player is destroyed as any other. It takes about six seconds on 24 cores:
+The runs are whole runs of a single player: from the start bay, with three lives, the checkpoints, the arenas with their waves and the lives that they leave, until the last life is lost. Here the tank of the reference player is destroyed as any other. It takes about six seconds on 24 threads:
 
 ```bash
 cargo run --release -p tanku_trials -- runs
@@ -617,7 +617,7 @@ The player fights and doesn't drive the corridor: once a sector is cleared, the 
 
 ### Journal
 
-The reference players are a yardstick, and nothing says which of them a person is. The game keeps a journal of the runs that are played (see [Playing](#playing)), and this command sets it next to the three players. It takes about fifteen seconds on 24 cores:
+The reference players are a yardstick, and nothing says which of them a person is. The game keeps a journal of the runs that are played (see [Playing](#playing)), and this command sets it next to the three players. It takes about fifteen seconds on 24 threads:
 
 ```bash
 cargo run --release -p tanku_trials -- journal
@@ -653,7 +653,7 @@ The report is worth what the journal holds. A stretch of sectors says little bef
 
 ### Breeding
 
-Prices are right when points buy as much danger wherever a tank spends them. The other trials can't say whether they do: the duels try one stat at a time, and the classes are tried as the generator makes them, which spends by the weights of each class. The breeding looks for the tank that costs a player the most for its points, and shows where that tank puts them. It takes about a minute on 24 cores:
+Prices are right when points buy as much danger wherever a tank spends them. The other trials can't say whether they do: the duels try one stat at a time, and the classes are tried as the generator makes them, which spends by the weights of each class. The breeding looks for the tank that costs a player the most for its points, and shows where that tank puts them. It takes about a minute on 24 threads:
 
 ```bash
 cargo run --release -p tanku_trials -- breed

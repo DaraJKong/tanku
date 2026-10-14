@@ -89,7 +89,7 @@ const COMPUTE_THREADS: usize = 1;
 /// The threads of the engine. A system can share its work out on the threads of a pool,
 /// which has nearly every core of the machine unless it is told otherwise. The work of a
 /// frame is small, and waking threads for its pieces costs more than they save: on a machine
-/// of 24 cores, with every schedule on one thread (see `OneThread`), the main schedule of a
+/// of 24 threads, with every schedule on one thread (see `OneThread`), the main schedule of a
 /// fight of four players took 2.3 ms a frame with eight threads in the pool, 2.1 ms with
 /// four and 1.7 ms with one (measured 2026-10-14).
 pub fn task_pools() -> TaskPoolPlugin {
@@ -103,7 +103,7 @@ pub fn task_pools() -> TaskPoolPlugin {
 /// Runs the systems of every schedule one after another, on the thread that runs the
 /// schedule, as a browser does, which gives the game one thread. The engine otherwise hands
 /// them out to the threads of its pool, and the systems of a frame are too many and too small
-/// for that to pay: in a fight of four players on a machine of 24 cores, the main schedule
+/// for that to pay: in a fight of four players on a machine of 24 threads, the main schedule
 /// took 3.8 ms a frame at 60 frames a second, and 2.1 ms on one thread. With the schedules of
 /// the drawing, which has its own thread, run the same way too, the game drew 45% more frames
 /// when nothing held it back (measured 2026-10-14).
