@@ -93,21 +93,50 @@ pub struct Sight {
 
 impl Sight {
     pub fn of(world: &mut World) -> Self {
-        let mut bullets = world.query::<(Entity, &Bullet, &Position)>();
-        let mut mines = world.query::<(&Mine, &Position)>();
-        let mut tanks = world.query::<(&Tank, &Position, Option<&Enemy>, Has<Wreck>)>();
-        let mut enemies = world.query::<&Enemy>();
+        Lookout::new(world).sight(world)
+    }
+}
+
+/// The questions that a player asks of the world for their sight, kept from one tick to the
+/// next: a query that is made anew looks through every kind of entity of the world again,
+/// which took a fight of the trials longer than the sight itself.
+pub struct Lookout {
+    bullets: QueryState<(Entity, &'static Bullet, &'static Position)>,
+    mines: QueryState<(&'static Mine, &'static Position)>,
+    tanks: QueryState<(
+        &'static Tank,
+        &'static Position,
+        Option<&'static Enemy>,
+        Has<Wreck>,
+    )>,
+    enemies: QueryState<&'static Enemy>,
+}
+
+impl Lookout {
+    pub fn new(world: &mut World) -> Self {
         Self {
-            awake: enemies.iter(world).filter(|enemy| enemy.awake).count(),
-            bullets: bullets
+            bullets: world.query(),
+            mines: world.query(),
+            tanks: world.query(),
+            enemies: world.query(),
+        }
+    }
+
+    /// What the player sees in this tick.
+    pub fn sight(&mut self, world: &World) -> Sight {
+        Sight {
+            awake: self.enemies.iter(world).filter(|enemy| enemy.awake).count(),
+            bullets: self
+                .bullets
                 .iter(world)
                 .map(|(entity, bullet, position)| (entity, *bullet, position.0))
                 .collect(),
-            mines: mines
+            mines: self
+                .mines
                 .iter(world)
                 .map(|(mine, position)| (*mine, position.0))
                 .collect(),
-            quarry: bullets::quarry(tanks.iter(world)),
+            quarry: bullets::quarry(self.tanks.iter(world)),
         }
     }
 }

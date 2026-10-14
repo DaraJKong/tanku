@@ -39,7 +39,9 @@ pub fn seed_text(number: u32) -> String {
 
 /// Does one thing for each of some items, many side by side, and gives what came of each in
 /// the order of the items. Each depends on nothing but its item, so the order they are done
-/// in changes nothing.
+/// in changes nothing. The last items are handed out first: a trial lists its fights from
+/// the first sectors to the last, and the strongest players last, so the longest come last,
+/// and one of them that starts after all the others keeps every thread but its own idle.
 pub fn side_by_side<Item: Sync, Done: Send>(
     items: &[Item],
     threads: usize,
@@ -51,10 +53,11 @@ pub fn side_by_side<Item: Sync, Done: Send>(
         for _ in 0..threads.clamp(1, items.len().max(1)) {
             scope.spawn(|| {
                 loop {
-                    let number = next.fetch_add(1, Ordering::Relaxed);
-                    let Some(item) = items.get(number) else {
+                    let handed = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(number) = items.len().checked_sub(handed + 1) else {
                         break;
                     };
+                    let item = &items[number];
                     let made = work(item);
                     done.lock().unwrap()[number] = Some(made);
                 }

@@ -24,7 +24,7 @@ use tanku_core::{
 use tanku_server::{
     ServerPlugin,
     field::{Field, InSector},
-    pilot::{Pilot, Sight},
+    pilot::{Lookout, Pilot},
 };
 
 /// What a fight is: where, against what and in whose hands.
@@ -261,6 +261,8 @@ pub fn corridor(setup: &Setup) -> Option<Outcome> {
     let maker = |owner: Entity| made.iter().position(|(entity, _)| *entity == owner);
     // A tank that is destroyed is gone for a while: what hits it again then is no new loss.
     let mut out = 0.0f32;
+    // The questions of the player's sight, made once its first sight is asked for.
+    let mut lookout: Option<Lookout> = None;
     for step in 0..ticks(limit) {
         let place = |world: &World, entity: Entity| world.get::<Position>(entity).unwrap().0;
         let me = place(app.world(), entity);
@@ -281,7 +283,8 @@ pub fn corridor(setup: &Setup) -> Option<Outcome> {
             .map(|((foe, _), _)| *foe);
         let far = |foe: &Entity| place(app.world(), *foe).distance(me);
         let nearest = left.min_by(|a, b| far(a).total_cmp(&far(b)));
-        let sight = Sight::of(app.world_mut());
+        let lookout = lookout.get_or_insert_with(|| Lookout::new(app.world_mut()));
+        let sight = lookout.sight(app.world());
         let order = pilot.order(app.world(), &sight, entity, nearest);
         *app.world_mut().get_mut::<TankCommand>(entity).unwrap() = order;
         tick(&mut app);

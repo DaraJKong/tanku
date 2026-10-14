@@ -23,7 +23,7 @@ use tanku_core::{
 use tanku_server::{
     ServerPlugin, brain,
     field::Field,
-    pilot::{self, Pilot, Sight},
+    pilot::{self, Lookout, Pilot},
 };
 
 use crate::{
@@ -179,6 +179,11 @@ pub fn journey(seed: &str, difficulty: Difficulty, player: Reference, asked: &As
     let mut pilot = Pilot::new(player);
     // How long the player has been in the sector that is fought.
     let mut stayed = 0.0f32;
+    // The questions that are asked of the world every tick, each made the first time that it
+    // is asked: a query that is made anew looks through every kind of entity again.
+    let mut players: Option<QueryState<Entity, With<Player>>> = None;
+    let mut foes: Option<QueryState<(Entity, &Tank, &Position), With<Enemy>>> = None;
+    let mut lookout: Option<Lookout> = None;
     loop {
         let run = app.world().resource::<Run>().clone();
         journey.cleared = run.cleared;
@@ -196,8 +201,8 @@ pub fn journey(seed: &str, difficulty: Difficulty, player: Reference, asked: &As
         }
         let world = app.world_mut();
         let front = run.sector;
-        let entity = world
-            .query_filtered::<Entity, With<Player>>()
+        let entity = players
+            .get_or_insert_with(|| world.query_filtered())
             .iter(world)
             .next();
         let cleared = world.resource::<Field>().cleared.contains(&front);
@@ -245,12 +250,14 @@ pub fn journey(seed: &str, difficulty: Difficulty, player: Reference, asked: &As
             // of an arena come in waves.
             Some(entity) => {
                 let me = world.get::<Position>(entity).unwrap().0;
-                let mut foes = world.query_filtered::<(Entity, &Tank, &Position), With<Enemy>>();
+                let foes = foes.get_or_insert_with(|| world.query_filtered());
                 let near = foes.iter(world).filter(|(_, tank, _)| tank.sector == front);
                 let nearest = near
                     .min_by(|a, b| a.2.0.distance(me).total_cmp(&b.2.0.distance(me)))
                     .map(|(foe, ..)| foe);
-                let sight = Sight::of(world);
+                let sight = lookout
+                    .get_or_insert_with(|| Lookout::new(world))
+                    .sight(world);
                 let mut order = pilot.order(world, &sight, entity, nearest);
                 // A tank of an arena waits for room: with nobody to fight and nothing to
                 // dodge, the player drives off the places that wait for it.
