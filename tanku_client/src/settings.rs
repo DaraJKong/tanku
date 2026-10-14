@@ -256,6 +256,9 @@ pub struct Settings {
     /// How loud the music is against the sound cues, from 0 to 1.
     pub music: f32,
     pub camera_shake: bool,
+    /// Whether the frame of the sheet flashes with a loss and with a stamp. Words and sounds
+    /// tell those whatever it is set to.
+    pub flash_frame: bool,
     pub ui_scale: f32,
     pub fullscreen: bool,
     pub vsync: bool,
@@ -285,6 +288,7 @@ impl Default for Settings {
             volume: 0.7,
             music: 0.5,
             camera_shake: true,
+            flash_frame: true,
             ui_scale: 1.0,
             // A browser only goes full screen when the player asks for it.
             fullscreen: !cfg!(target_arch = "wasm32"),
@@ -392,6 +396,7 @@ impl Settings {
         settings.music = number("music", settings.music, 0.0, 1.0);
         settings.ui_scale = number("ui_scale", settings.ui_scale, 0.75, 2.0);
         settings.camera_shake = flag("camera_shake", settings.camera_shake);
+        settings.flash_frame = flag("flash_frame", settings.flash_frame);
         settings.fullscreen = flag("fullscreen", settings.fullscreen);
         settings.vsync = flag("vsync", settings.vsync);
         // A file can hold anything: only what an address is made of is kept.
@@ -428,6 +433,7 @@ impl Settings {
         pairs.insert("music".to_string(), self.music.to_string());
         pairs.insert("ui_scale".to_string(), self.ui_scale.to_string());
         pairs.insert("camera_shake".to_string(), self.camera_shake.to_string());
+        pairs.insert("flash_frame".to_string(), self.flash_frame.to_string());
         pairs.insert("fullscreen".to_string(), self.fullscreen.to_string());
         pairs.insert("vsync".to_string(), self.vsync.to_string());
         pairs.insert("address".to_string(), self.address.clone());
@@ -670,6 +676,7 @@ mod tests {
             volume: 0.25,
             music: 0.8,
             camera_shake: false,
+            flash_frame: false,
             address: "192.168.1.20:4000".to_string(),
             solo_difficulty: Difficulty::Hard,
             solo_free: true,

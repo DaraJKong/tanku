@@ -27,7 +27,7 @@ use crate::{
     draft::{Draft, LIFT},
     hud::{self, SHEET_EDGE},
     report, scene,
-    settings::{League, Records},
+    settings::{League, Records, Settings},
     theme::{self, Face},
     unlocks::{self, Unlocked},
 };
@@ -1068,14 +1068,17 @@ fn fade(
     }
 }
 
-/// Flashes the frame of the sheet, and lets the flash fade.
+/// Flashes the frame of the sheet, and lets the flash fade. A setting of accessibility turns
+/// the flash off.
 fn flash(
     time: Res<Time>,
+    settings: Res<Settings>,
     mut flash: ResMut<Flash>,
     mut frame: Single<&mut BorderColor, With<FlashFrame>>,
 ) {
     flash.age += time.delta_secs();
-    let left = (1.0 - flash.age / FLASH_TIME).max(0.0);
+    let on = if settings.flash_frame { 1.0 } else { 0.0 };
+    let left = on * (1.0 - flash.age / FLASH_TIME).max(0.0);
     let wanted = BorderColor::all(flash.color.with_alpha(FLASH * left * left));
     frame.set_if_neq(wanted);
 }

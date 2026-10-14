@@ -118,6 +118,8 @@ enum Press {
     Fullscreen,
     Vsync,
     Shake,
+    /// Turns the flash of the frame of the sheet on or off.
+    Flash,
     Volume(f32),
     Music(f32),
     Scale(f32),
@@ -3152,6 +3154,9 @@ fn settings_menu(mut commands: Commands, settings: Res<Settings>, capture: Res<C
                         row(options, "Camera shake", |row| {
                             small(row, on_off(settings.camera_shake), 70.0, Press::Shake);
                         });
+                        row(options, "Flash the frame", |row| {
+                            small(row, on_off(settings.flash_frame), 70.0, Press::Flash);
+                        });
                         row(options, "Interface size", |row| {
                             small(row, "-", 34.0, Press::Scale(-0.25));
                             row.spawn(theme::figure(
@@ -3462,6 +3467,7 @@ fn press(
             Press::Fullscreen => settings.fullscreen = !settings.fullscreen,
             Press::Vsync => settings.vsync = !settings.vsync,
             Press::Shake => settings.camera_shake = !settings.camera_shake,
+            Press::Flash => settings.flash_frame = !settings.flash_frame,
             Press::Volume(change) => settings.volume = level(settings.volume + change),
             Press::Music(change) => settings.music = level(settings.music + change),
             Press::Scale(change) => {
