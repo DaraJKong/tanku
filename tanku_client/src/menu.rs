@@ -601,12 +601,13 @@ fn new_tag() -> impl Bundle {
     (
         Node {
             border: UiRect::all(px(1)),
-            padding: UiRect::new(px(6), px(4), px(0), px(0)),
-            margin: UiRect::left(px(10)),
+            padding: UiRect::axes(px(6), px(1)),
+            margin: UiRect::left(px(2)),
+            flex_shrink: 0.0,
             ..default()
         },
         BorderColor::all(theme::GOOD),
-        children![theme::old::label("New", 11.0, theme::GOOD)],
+        children![theme::label("New", theme::LABEL, theme::GOOD)],
     )
 }
 
@@ -1141,6 +1142,7 @@ fn staging(screen: Screen, sheet: Vec2, parts: usize) -> (f32, Vec2, Rect) {
         Screen::Menu => drawing::LEFT + MENU_WIDTH,
         Screen::Garage => drawing::LEFT + garage_width() + 24.0,
         Screen::Lobby => drawing::LEFT + lobby_width() + JOIN_WIDTH + 48.0,
+        Screen::Achievements => drawing::LEFT + register_width() + 24.0,
         _ => drawing::LEFT + FORM_WIDTH,
     };
     let room = Rect::new(left, edge, sheet.x - edge, sheet.y - SHEET_EDGE - below);
@@ -2128,8 +2130,39 @@ fn light_garage_row(
     }
 }
 
-/// The screen that lists what runs unlock for solo, and what those of the player have.
+/// The columns of the register of achievements: the item, the mode, what releases it, and
+/// its status.
+const REGISTER_COLUMNS: [f32; 4] = [64.0, 264.0, 470.0, 180.0];
+/// The fields of the upper row of the title block of the achievements.
+const REGISTER_TITLE: [f32; 4] = [160.0, 222.0, 144.0, 90.0];
+
+/// How wide the register of achievements is, its edges included.
+fn register_width() -> f32 {
+    drawing::title_width_of(&REGISTER_COLUMNS)
+}
+
+/// The stamp of a mode that a run released.
+fn released() -> impl Bundle {
+    (
+        Node {
+            border: UiRect::all(px(2)),
+            padding: UiRect::axes(px(10), px(2)),
+            ..default()
+        },
+        BorderColor::all(theme::GOOD),
+        UiTransform::from_rotation(Rot2::degrees(-3.0)),
+        children![theme::label("Released", theme::LABEL, theme::GOOD)],
+    )
+}
+
+/// The screen that lists what runs unlock for solo, and what those of the player have: a
+/// register of releases, each mode with what releases it and a stamp once it is released.
 fn achievements_screen(mut commands: Commands, unlocks: Res<Unlocks>) {
+    let count = Unlock::ALL.len();
+    let had = Unlock::ALL
+        .iter()
+        .filter(|unlock| unlocks.has(**unlock))
+        .count();
     commands
         .spawn((
             DespawnOnExit(Screen::Achievements),
@@ -2142,59 +2175,117 @@ fn achievements_screen(mut commands: Commands, unlocks: Res<Unlocks>) {
             children![sheet::frame()],
         ))
         .with_children(|root| {
-            margin(root, 460.0, |parent| {
-                parent.spawn(theme::old::label(
-                    "What a run unlocks for solo",
-                    13.0,
-                    theme::TEXT_DIM,
-                ));
-                parent.spawn(theme::old::title("Achievements", 64.0, theme::TEXT));
-                for unlock in Unlock::ALL {
-                    let (state, color) = if unlocks.has(unlock) {
-                        ("Unlocked", theme::GOOD)
-                    } else {
-                        ("Locked", theme::TEXT_DIM)
-                    };
-                    // What isn't built yet says so, before a player sets out to earn it.
-                    let state = if unlocks::built(unlock) {
-                        state.to_string()
-                    } else {
-                        format!("{state} \u{b7} not in the game yet")
-                    };
-                    parent
-                        .spawn(ruled(Node {
-                            align_self: AlignSelf::Stretch,
-                            flex_direction: FlexDirection::Column,
-                            row_gap: px(2),
-                            padding: UiRect::axes(px(12), px(8)),
-                            ..default()
-                        }))
-                        .with_children(|entry| {
-                            let new = unlocks.is_unseen(unlock);
-                            entry
-                                .spawn(Node {
-                                    align_items: AlignItems::Center,
-                                    ..default()
-                                })
-                                .with_children(|heading| {
+            margin(root, register_width(), |parent| {
+                parent.spawn(drawing::key("What a run releases for solo"));
+                parent.spawn(theme::label("Achievements", theme::HEADING, theme::TEXT));
+                parent
+                    .spawn(drawing::block(Node {
+                        align_self: AlignSelf::Start,
+                        ..default()
+                    }))
+                    .with_children(|table| {
+                        let names = ["Item", "Mode", "Released by", "Status"];
+                        let columns: Vec<(f32, &str)> =
+                            REGISTER_COLUMNS.iter().copied().zip(names).collect();
+                        drawing::header(table, &columns, false);
+                        for (index, unlock) in Unlock::ALL.into_iter().enumerate() {
+                            let last = index + 1 == count;
+                            drawing::row(table, drawing::ROW, !last, |row| {
+                                drawing::cell(row, REGISTER_COLUMNS[0], true, |cell| {
+                                    let item = (index + 1).to_string();
+                                    cell.spawn(theme::figure(item, theme::VALUE, theme::TEXT));
+                                });
+                                drawing::cell(row, REGISTER_COLUMNS[1], true, |cell| {
                                     let name = unlocks::name(unlock);
-                                    heading.spawn(theme::old::title(name, 20.0, theme::TEXT));
-                                    if new {
-                                        heading.spawn(new_tag());
+                                    cell.spawn(drawing::value(name, theme::TEXT));
+                                    if unlocks.is_unseen(unlock) {
+                                        cell.spawn(new_tag());
                                     }
                                 });
-                            let condition = unlocks::condition(unlock);
-                            entry.spawn(theme::old::text(condition, 16.0, theme::TEXT_DIM));
-                            entry.spawn(theme::old::label(state, 13.0, color));
-                        });
-                }
-                line(
-                    parent,
-                    "A run earns them on a seed that the game drew for it, alone or with others.",
-                    theme::TEXT_DIM,
-                );
-                button(parent, "Back", Press::Abandon);
+                                drawing::cell(row, REGISTER_COLUMNS[2], true, |cell| {
+                                    let condition = unlocks::condition(unlock);
+                                    cell.spawn(drawing::value(condition, theme::TEXT));
+                                });
+                                drawing::cell(row, REGISTER_COLUMNS[3], false, |cell| {
+                                    // What isn't built yet says so, before a player sets out
+                                    // to earn it.
+                                    if unlocks.has(unlock) {
+                                        cell.spawn(released());
+                                    } else if unlocks::built(unlock) {
+                                        let said = "In preparation";
+                                        cell.spawn(theme::label(
+                                            said,
+                                            theme::LABEL,
+                                            theme::TEXT_DIM,
+                                        ));
+                                    } else {
+                                        let said = "Planned";
+                                        cell.spawn(theme::label(
+                                            said,
+                                            theme::LABEL,
+                                            theme::TEXT_DIM,
+                                        ));
+                                    }
+                                });
+                            });
+                        }
+                    });
+                parent
+                    .spawn(Node {
+                        flex_direction: FlexDirection::Column,
+                        flex_shrink: 0.0,
+                        width: px(MENU_WIDTH),
+                        margin: UiRect::top(px(10)),
+                        ..default()
+                    })
+                    .with_children(|list| {
+                        drawing::list_row(list, 1, "Back", Press::Abandon, false);
+                    });
             });
+            // What the register has to say, as the notes of a drawing stand near its title
+            // block.
+            let right = SHEET_EDGE + drawing::title_width_of(&REGISTER_TITLE) + 24.0;
+            root.spawn(drawing::notes(drawing::LEFT, right))
+                .with_children(|notes| {
+                    let planned = Unlock::ALL
+                        .into_iter()
+                        .filter(|unlock| !unlocks::built(*unlock));
+                    for unlock in planned {
+                        let name = unlocks::name(unlock).to_lowercase();
+                        let said = format!("Planned: {name} is not in the game yet.");
+                        note(notes, said, theme::TEXT_DIM);
+                    }
+                    let earned = "A run earns them on a seed that the game drew for it, alone or \
+                                  with others.";
+                    note(notes, earned, theme::TEXT_DIM);
+                });
+            let [owner, title, creator, rev] = REGISTER_TITLE;
+            let upper = vec![
+                drawing::Field::new(owner, "Legal owner", Holds::Owner(None)),
+                drawing::Field::new(
+                    title,
+                    "Title",
+                    Holds::Titled(
+                        "Achievements".to_string(),
+                        "Register \u{b7} solo".to_string(),
+                    ),
+                ),
+                drawing::Field::new(creator, "Created by", Holds::Balloon(0)),
+                drawing::Field::new(rev, "Rev", Holds::Value(VERSION.to_string(), theme::TEXT)),
+            ];
+            let lower = vec![
+                drawing::Field::new(
+                    owner + title,
+                    "Status",
+                    Holds::Value(format!("{had} of {count} released"), theme::TEXT),
+                ),
+                drawing::Field::new(
+                    creator + rev,
+                    "Date of issue",
+                    Holds::Value(sheet::day_of_issue(), theme::TEXT),
+                ),
+            ];
+            drawing::title_block(root, upper, lower);
         });
 }
 
