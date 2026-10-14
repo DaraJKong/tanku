@@ -25,9 +25,12 @@ const E4: u8 = A4 - 5;
 const E5: u8 = A4 + 7;
 const A5: u8 = A4 + 12;
 const E6: u8 = A5 + 7;
+const A6: u8 = A5 + 12;
 
 /// Seconds between two notes of the fall of a loss.
 const LOSS_STEP: f32 = 0.15;
+/// When the knock of a stamp is heard: as the stamp lands on the sheet.
+const STAMP_LANDS: f32 = 0.08;
 
 /// Seconds that the glide of a sector that is entered takes to climb, before its clack.
 const ENTERED_CLIMB: f32 = 0.3;
@@ -85,11 +88,14 @@ pub enum Cue {
     /// player. The fall of a loss, one note further. The end of a run falls the same way, an
     /// octave lower and slower.
     Last,
+    /// A run has earned something: a knock as a stamp lands, then two notes that go on up from
+    /// where the cue of a cleared sector stops.
+    Stamp,
 }
 
 impl Cue {
     /// Every cue, in the order of their numbers.
-    pub const ALL: [Cue; 21] = [
+    pub const ALL: [Cue; 22] = [
         Cue::Shot,
         Cue::EnemyShot,
         Cue::Ricochet,
@@ -111,6 +117,7 @@ impl Cue {
         Cue::Entered,
         Cue::Down,
         Cue::Last,
+        Cue::Stamp,
     ];
 
     /// How long the cue lasts.
@@ -137,6 +144,7 @@ impl Cue {
             Cue::Entered => 0.52,
             Cue::Down => 0.6,
             Cue::Last => 0.95,
+            Cue::Stamp => 1.4,
         }
     }
 
@@ -226,6 +234,10 @@ impl Cue {
                 let fall =
                     pluck(t, 0.0, A5) + pluck(t, LOSS_STEP, E5) + pluck(t, 2.0 * LOSS_STEP, A4);
                 0.3 * fall + 0.22 * knock(t, 0.0, noise)
+            }
+            Cue::Stamp => {
+                let notes = ring(t, 0.42, E6, 6.0) + ring(t, 0.6, A6, 5.0);
+                0.5 * knock(t, STAMP_LANDS, noise) + 0.24 * notes
             }
         }
     }
@@ -344,7 +356,7 @@ mod tests {
 
     #[test]
     fn cues_play_the_tonic_of_the_music_and_its_fifth() {
-        let played: [(Cue, &[u8]); 8] = [
+        let played: [(Cue, &[u8]); 9] = [
             (Cue::MinePlaced, &[E5]),
             (Cue::ShieldBlocked, &[A5, E6]),
             (Cue::Cleared, &[A2, E5, A5]),
@@ -353,6 +365,7 @@ mod tests {
             (Cue::RunOver, &[A3, E4, A4]),
             (Cue::Down, &[E3, E5, A5]),
             (Cue::Last, &[E3, A4, E5, A5]),
+            (Cue::Stamp, &[E3, E6, A6]),
         ];
         for (cue, notes) in played {
             // Of all the notes from two octaves below the A of 440 Hz to two above, the
@@ -447,6 +460,26 @@ mod tests {
         let high = |cue: Cue| power(cue, 400.0, 5000.0) / power(cue, 0.0, 5000.0);
         assert!(high(Cue::Down) > 0.6, "{}", high(Cue::Down));
         assert!(high(Cue::Blast) < 0.2, "{}", high(Cue::Blast));
+    }
+
+    #[test]
+    fn a_stamp_goes_on_up_from_where_the_cue_of_a_cleared_sector_stops() {
+        // Both come in the frame of the last kill of a sector. The cleared sector rings an E
+        // then an A, and the stamp knocks as it lands, then rings the E and the A above them,
+        // as far apart: one figure of four notes that climbs.
+        let strongest = |cue: Cue, from: f32, to: f32| {
+            let samples = cue.samples();
+            let part = &samples[(from * RATE) as usize..(to * RATE) as usize];
+            let strength = |pitch: &u8| amount(part, frequency(*pitch));
+            [E3, E5, A5, E6, A6]
+                .into_iter()
+                .max_by(|a, b| strength(a).total_cmp(&strength(b)))
+        };
+        assert_eq!(strongest(Cue::Cleared, 0.06, 0.24), Some(E5));
+        assert_eq!(strongest(Cue::Cleared, 0.24, 0.42), Some(A5));
+        assert_eq!(strongest(Cue::Stamp, STAMP_LANDS, 0.2), Some(E3));
+        assert_eq!(strongest(Cue::Stamp, 0.42, 0.6), Some(E6));
+        assert_eq!(strongest(Cue::Stamp, 0.6, 0.78), Some(A6));
     }
 
     #[test]
