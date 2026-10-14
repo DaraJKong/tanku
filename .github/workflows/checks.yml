@@ -20,8 +20,7 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   # Lines for a backtrace and no more: with full debug information, the checks of Linux leave
-  # 11 GB in `target`, nearly all that a machine of GitHub has free, and they would fill the
-  # cache.
+  # 11 GB in `target`, and the cache of a repository holds 10 GB in all.
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
@@ -31,13 +30,6 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # The machine comes with the tools of other languages, which leave little room for a
-      # build of the engine and its tests.
-      - name: Make room on the disk
-        run: |
-          df -h /
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
-          df -h /
       # The linker of development builds (clang with mold, see .cargo/config.toml), and the
       # libraries that the engine is built against: sound, gamepads, windows.
       - name: Install what the system lends the build
