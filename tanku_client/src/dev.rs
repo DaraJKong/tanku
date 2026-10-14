@@ -20,7 +20,7 @@
 //! `look X Y`, `zoom METERS`, `clear`, `reach DX DY`, which puts the tank that far from the life
 //! that an arena left, `lives NUMBER`, `cross`, which carries the tank through the barrier of
 //! its sector,
-//! `bubble`, `die`, `pause`,
+//! `bubble`, `die`, `wreck SEAT`, which destroys the tank of the player of a seat, `pause`,
 //! `settings`, `resume`,
 //! `lose ENEMY`, `blast X Y`, which sets off a mine at a point of the map, `rout`, which sets
 //! one off under each enemy of the sector of the player, `warn X Y`, which
@@ -459,13 +459,14 @@ fn run_script(
     mut run: Option<ResMut<Run>>,
     mut field: Option<ResMut<Field>>,
     mut casualties: ResMut<Casualties>,
-    (enemies, mut player, lives, exhibits, mut shields, barriers): (
+    (enemies, mut player, lives, exhibits, mut shields, barriers, crew): (
         Query<(Entity, &Tank, &Position), With<Enemy>>,
         Query<(Entity, &mut Position), (With<Own>, Without<Enemy>)>,
         Query<&Position, (With<Life>, Without<Own>)>,
         Query<Entity, With<Exhibit>>,
         Query<(&Tank, &mut Shield)>,
         Query<&Barrier>,
+        Query<(Entity, &tanku_core::sim::Player)>,
     ),
     (mut images, mut camera): (
         ResMut<Assets<Image>>,
@@ -698,6 +699,12 @@ fn run_script(
         "die" => casualties
             .tanks
             .extend(player.iter().map(|(entity, _)| entity)),
+        // Destroys the tank of the player of a seat, a teammate's among several players.
+        "wreck" => {
+            let seat = number(1) as u8;
+            let tanks = crew.iter().filter(|(_, player)| player.seat == seat);
+            casualties.tanks.extend(tanks.map(|(entity, _)| entity));
+        }
         // Destroys the enemies of the sector the player is in.
         "clear" => {
             let sector = run.as_ref().map_or(0, |run| run.sector);

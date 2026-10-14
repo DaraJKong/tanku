@@ -36,9 +36,8 @@ use crate::{
     unlocks::{self, Fair, Unlocks},
 };
 
-/// Seconds a message stays on screen, and the size of its words.
+/// Seconds a message stays on screen.
 const TOAST_TIME: f32 = 2.5;
-pub const TOAST_SIZE: f32 = 20.0;
 /// The last seconds of a lull of arena mode that a message counts down. The first one is left
 /// to the message that says that a group is cleared.
 const LULL_COUNTED: u8 = 2;
@@ -136,6 +135,10 @@ enum Readout {
 #[derive(Component)]
 struct Toast(f32);
 
+/// The rule under the message at the top of the screen.
+#[derive(Component)]
+struct ToastRule;
+
 /// What the display tells the player in the middle of the screen: what to do about a wreck,
 /// and the controls where a run starts.
 #[derive(Component)]
@@ -178,44 +181,47 @@ fn seat_notes(run: Option<Res<Run>>, mut held: Single<&mut Node, With<Notes>>) {
 #[derive(Component)]
 struct EnemyMarker(usize);
 
-/// The bar under the name on the marker of the tank of a seat, which fills as its wreck is
-/// repaired.
-#[derive(Component)]
-struct RepairBar(u8);
-
 /// How far the repair of a wreck has got, from nothing to done.
 fn repaired(wreck: Option<&Wreck>) -> f32 {
     wreck.map_or(0.0, |wreck| (wreck.repair / REPAIR_TIME).clamp(0.0, 1.0))
 }
 
-/// The tag that follows the tank of the player of a seat, among several players: their tanks
-/// look alike, and the tag tells whose each one is.
+/// The balloon that names the player of a teammate's tank, among several players, as an item
+/// of an assembly is named: it stands at the end of a leader that ends in a dot on the tank.
+/// The player's own tank has none: their balloon is in the title block.
 #[derive(Component)]
 struct PlayerTag(u8);
 
-/// How far over the middle of a tank its tag stands, in meters of ground, and how wide the
-/// tag is on screen.
-const TAG_RISE: f32 = 1.9;
-const TAG_WIDTH: f32 = 30.0;
+/// The parts of a tag: the leader, the dot at its end on the tank, and what holds the balloon.
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
+enum TagPart {
+    Leader,
+    Dot,
+    Head,
+}
 
-/// The marker at the edge of the screen that points to the tank of the player of a seat while
-/// it is out of view, among several players.
+/// How wide the balloon of a teammate is, on a tank and at the edge of the screen, how far its
+/// middle stands from the middle of the tank along its leader, and how wide the dot is.
+const TAG_BALLOON: f32 = 48.0;
+const TAG_LEAD: f32 = 110.0;
+const TAG_DOT: f32 = 8.0;
+/// The room that a tank takes on the screen around its middle, which no balloon covers.
+const TAG_TANK: f32 = 40.0;
+
+/// The balloon at the edge of the screen that stands for the tank of the player of a seat
+/// while it is out of view, among several players, without its leader.
 #[derive(Component)]
 struct MateMarker(u8);
 
-/// How far inside the edge of the screen the middle of a marker stands, in pixels: between the
-/// line that frames the sheet and the panels, and clear of what is written at the bottom of
-/// the screen.
+/// How far inside the edge of the screen the middle of a marker stands, in pixels: a
+/// teammate's balloon inside the frame, and an enemy's square between the frame and the
+/// panels.
+const MATE_EDGE: f32 = 48.0;
 const EDGE_MARGIN: f32 = 28.0;
 /// The size of the marker of an enemy on screen: a square on its corner.
 const ENEMY_MARKER: f32 = 16.0;
-/// The size of the marker of a teammate on screen, and the least gap between two markers.
-const MATE_MARKER: Vec2 = Vec2::new(TAG_WIDTH, 20.0);
-/// The red ring that closes on the marker of a tank that was just destroyed: how far from the
-/// marker it starts, and how long it takes to close.
-const RING_REACH: f32 = 10.0;
-const RING_TIME: f32 = 0.6;
-const MARKER_GAP: f32 = 3.0;
+/// The least gap between two markers that stand side by side.
+const MARKER_GAP: f32 = 6.0;
 
 /// How a player is named for short: by the number of their seat.
 pub fn short_name(seat: u8) -> String {
@@ -253,8 +259,38 @@ struct DialParts {
     loading: Handle<StandardMaterial>,
 }
 
+/// The systems that put the balloons of the players on the screen, after which [`Heads`]
+/// tells where they stand.
+#[derive(SystemSet, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Tagging;
+
+/// Where the balloon of the player of each seat stands on the screen, over its tank or at the
+/// edge of the screen, and the way that a note that hangs from it runs across: away from
+/// one's own tank, or into the screen from its edge.
+#[derive(Resource, Default)]
+pub struct Heads {
+    over: [Option<(Vec2, f32)>; MAX_PLAYERS as usize],
+    edge: [Option<(Vec2, f32)>; MAX_PLAYERS as usize],
+}
+
+impl Heads {
+    /// The middle of the balloon of a seat, and the way a note hangs from it, if it shows.
+    pub fn of(&self, seat: u8) -> Option<(Vec2, f32)> {
+        let seat = seat as usize;
+        self.over
+            .get(seat)
+            .copied()
+            .flatten()
+            .or(self.edge.get(seat).copied().flatten())
+    }
+}
+
+/// How wide the balloon of a teammate is: a note that hangs from it starts past its edge.
+pub const HEAD_WIDTH: f32 = TAG_BALLOON;
+
 pub fn plugin(app: &mut App) {
-    app.add_systems(Startup, setup)
+    app.init_resource::<Heads>()
+        .add_systems(Startup, setup)
         .add_systems(OnEnter(Screen::Playing), build)
         .add_systems(
             Update,
@@ -263,8 +299,7 @@ pub fn plugin(app: &mut App) {
                 seat_notes,
                 weapons,
                 toasts,
-                (mark_enemies, mark_mates).chain(),
-                tag_players,
+                ((mark_enemies, mark_mates).chain(), tag_players).in_set(Tagging),
                 instruments,
                 (attach_dial, turn_dial, light_dial).chain(),
             )
@@ -806,13 +841,32 @@ fn build(mut commands: Commands) {
                     justify_content: JustifyContent::Center,
                     ..default()
                 },
+                // The heading of a general note: its words over a rule as long as they are.
                 // Over the game, which may have a block or a crate there: it has a dark edge.
-                children![theme::old::edged(
-                    Toast(0.0),
-                    theme::old::Face::Title,
-                    "",
-                    TOAST_SIZE,
-                    theme::TEXT
+                children![(
+                    Node {
+                        flex_direction: FlexDirection::Column,
+                        row_gap: px(3),
+                        ..default()
+                    },
+                    children![
+                        theme::edged(
+                            Toast(0.0),
+                            theme::Face::Title,
+                            "",
+                            theme::VALUE,
+                            theme::TEXT
+                        ),
+                        (
+                            ToastRule,
+                            Node {
+                                width: percent(100),
+                                height: px(1),
+                                ..default()
+                            },
+                            BackgroundColor(Color::NONE),
+                        ),
+                    ],
                 )],
             ),
             parts_list(),
@@ -855,58 +909,70 @@ fn build(mut commands: Commands) {
         ],
     ));
     for seat in 0..MAX_PLAYERS as u8 {
+        // A point without a size on the middle of the tank, which holds the dot, the leader
+        // and the balloon around it.
+        let part = |part: TagPart| (part, UiTransform::IDENTITY);
         commands.spawn((
             DespawnOnExit(Screen::Playing),
             PlayerTag(seat),
             Node {
                 position_type: PositionType::Absolute,
-                width: px(TAG_WIDTH),
-                justify_content: JustifyContent::Center,
-                padding: UiRect::axes(px(0), px(1)),
-                border: UiRect::all(px(1)),
+                width: px(0),
+                height: px(0),
                 display: Display::None,
                 ..default()
             },
-            BackgroundColor(theme::SURFACE),
-            BorderColor::all(theme::PLAYER),
+            // Under the blocks of the display, as what is drawn on the game is.
+            GlobalZIndex(-1),
             Pickable::IGNORE,
-            children![theme::old::label(short_name(seat), 12.0, theme::TEXT)],
+            children![
+                (
+                    part(TagPart::Leader),
+                    Node {
+                        position_type: PositionType::Absolute,
+                        width: px(TAG_LEAD - TAG_BALLOON / 2.0),
+                        height: px(balloons::LINE),
+                        ..default()
+                    },
+                    BackgroundColor(theme::PLAYER),
+                ),
+                (
+                    part(TagPart::Dot),
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: px(-TAG_DOT / 2.0),
+                        top: px(-TAG_DOT / 2.0),
+                        width: px(TAG_DOT),
+                        height: px(TAG_DOT),
+                        border: UiRect::all(px(1.5)),
+                        border_radius: BorderRadius::MAX,
+                        ..default()
+                    },
+                    BackgroundColor(theme::TEXT),
+                    BorderColor::all(theme::PLAYER),
+                ),
+                (
+                    part(TagPart::Head),
+                    Node {
+                        position_type: PositionType::Absolute,
+                        ..default()
+                    },
+                    children![balloons::balloon(seat, TAG_BALLOON, theme::VALUE)],
+                ),
+            ],
         ));
     }
     for seat in 0..MAX_PLAYERS as u8 {
-        let (fill, _) = mate_look(false);
         commands.spawn((
             DespawnOnExit(Screen::Playing),
             MateMarker(seat),
             Node {
                 position_type: PositionType::Absolute,
-                width: px(MATE_MARKER.x),
-                height: px(MATE_MARKER.y),
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                border: UiRect::all(px(1)),
                 display: Display::None,
                 ..default()
             },
-            BackgroundColor(fill),
-            BorderColor::all(theme::PLAYER),
-            Outline::new(px(0), px(0), Color::NONE),
             Pickable::IGNORE,
-            children![
-                theme::old::label(short_name(seat), 12.0, theme::TEXT_ON_ACCENT),
-                (
-                    RepairBar(seat),
-                    Node {
-                        position_type: PositionType::Absolute,
-                        left: px(0),
-                        bottom: px(0),
-                        width: percent(0),
-                        height: px(3),
-                        ..default()
-                    },
-                    BackgroundColor(theme::PLAYER),
-                ),
-            ],
+            children![balloons::balloon(seat, TAG_BALLOON, theme::VALUE)],
         ));
     }
     for index in 0..MARKED_ENEMIES {
@@ -1320,6 +1386,7 @@ fn toasts(
     run: Option<Res<Run>>,
     mut events: MessageReader<SimEvent>,
     mut toast: Single<(&mut Toast, &mut Text, &mut TextColor)>,
+    mut rule: Single<&mut BackgroundColor, With<ToastRule>>,
     (barriers, running, seat): (
         Query<&Barrier>,
         Query<(&Player, &Position), Without<Wreck>>,
@@ -1407,7 +1474,9 @@ fn toasts(
         *shown = u8::MAX;
     }
     toast.0 = (toast.0 - time.delta_secs()).max(0.0);
-    color.set_if_neq(TextColor(theme::TEXT.with_alpha((toast.0 / 0.5).min(1.0))));
+    let shown = (toast.0 / 0.5).min(1.0);
+    color.set_if_neq(TextColor(theme::TEXT.with_alpha(shown)));
+    rule.set_if_neq(BackgroundColor(theme::TEXT_DIM.with_alpha(shown)));
 }
 
 /// Points to the last enemies of the sector when they are out of view.
@@ -1455,28 +1524,6 @@ fn edge_place(at: Vec2, size: Vec2, margin: f32) -> Option<Vec2> {
     out_of_view.then(|| at.clamp(Vec2::splat(margin), size - margin))
 }
 
-/// The fill of the marker of a teammate and the color of its number: full for a tank that
-/// runs and hollow for a wreck, as the squares of the team are in the corner of the screen.
-fn mate_look(wreck: bool) -> (Color, Color) {
-    if wreck {
-        (theme::SURFACE, theme::TEXT)
-    } else {
-        (theme::PLAYER, theme::TEXT_ON_ACCENT)
-    }
-}
-
-/// The edge of the marker of a tank, and the ring around it: a red ring closes on the marker
-/// of a tank that was destroyed this long ago, and the marker is red until it has.
-fn closing(since: Option<f32>) -> (Color, Outline) {
-    match since.filter(|since| *since < RING_TIME) {
-        Some(since) => {
-            let reach = RING_REACH * (1.0 - since / RING_TIME);
-            (theme::DANGER, Outline::new(px(2), px(reach), theme::DANGER))
-        }
-        None => (theme::PLAYER, Outline::new(px(0), px(0), Color::NONE)),
-    }
-}
-
 /// Whether a tank gets a marker when it is out of view. The tanks of the other players do. The
 /// tank of the player at this screen is in view for as long as it runs: it gets one as a
 /// wreck, when the view follows a teammate.
@@ -1502,7 +1549,7 @@ fn clear_place(
     wanted: Vec2,
     marker: Vec2,
     along: Vec2,
-    screen: Vec2,
+    (screen, margin): (Vec2, f32),
     taken: &[(Vec2, Vec2)],
 ) -> Vec2 {
     let clear = |at: &Vec2| {
@@ -1512,7 +1559,7 @@ fn clear_place(
         })
     };
     let on_screen = |at: &Vec2| {
-        let margin = Vec2::splat(EDGE_MARGIN);
+        let margin = Vec2::splat(margin);
         at.cmpge(margin).all() && at.cmple(screen - margin).all()
     };
     let step = (marker * along).length() + MARKER_GAP;
@@ -1524,25 +1571,16 @@ fn clear_place(
 }
 
 /// Among several players, points to the tanks of the players that are out of view, each by
-/// the number of its player. Markers that would hide each other, or the marker of an enemy,
-/// stand side by side instead.
+/// the balloon of its player at the edge of the screen. Markers that would hide each other,
+/// or the marker of an enemy, stand side by side instead.
 fn mark_mates(
     run: Option<Res<Run>>,
     ui_scale: Res<UiScale>,
-    alarms: Res<Alarms>,
     camera: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
-    tanks: Query<(&Player, &Position, Has<Own>, Option<&Wreck>)>,
+    tanks: Query<(&Player, &Position, Has<Own>, Has<Wreck>)>,
     enemies: Query<&Node, (With<EnemyMarker>, Without<MateMarker>)>,
-    mut bars: Query<(&RepairBar, &mut Node), (Without<MateMarker>, Without<EnemyMarker>)>,
-    mut markers: Query<(
-        &MateMarker,
-        &mut Node,
-        &mut BackgroundColor,
-        &mut BorderColor,
-        &mut Outline,
-        &Children,
-    )>,
-    mut numbers: Query<&mut TextColor>,
+    mut markers: Query<(&MateMarker, &mut Node)>,
+    mut heads: ResMut<Heads>,
 ) {
     let (camera, camera_transform) = *camera;
     let several = run.is_some_and(|run| !run.solo);
@@ -1559,19 +1597,11 @@ fn mark_mates(
         }
     }
     // The tanks that are out of view, in the order of their seats, each with its place.
-    let mut marked: Vec<(u8, Vec2, bool)> = Vec::new();
+    let mut marked: Vec<(u8, Vec2)> = Vec::new();
     let mut seats: Vec<_> = tanks.iter().collect();
     seats.sort_by_key(|(player, ..)| player.seat);
-    // The marker of a wreck fills a bar under its name as it is repaired.
-    for (bar, mut node) in &mut bars {
-        let wreck = seats.iter().find(|(player, ..)| player.seat == bar.0);
-        let wanted = percent(100.0 * repaired(wreck.and_then(|(.., wreck)| *wreck)));
-        if node.width != wanted {
-            node.width = wanted;
-        }
-    }
+    let balloon = Vec2::splat(TAG_BALLOON);
     for (player, position, own, wreck) in seats {
-        let wreck = wreck.is_some();
         let Some(screen) = screen.filter(|_| is_marked(own, wreck)) else {
             continue;
         };
@@ -1580,83 +1610,170 @@ fn mark_mates(
             continue;
         };
         let at = at / ui_scale.0;
-        let Some(edge) = edge_place(at, screen, EDGE_MARGIN) else {
+        let Some(edge) = edge_place(at, screen, MATE_EDGE) else {
             continue;
         };
-        let place = clear_place(edge, MATE_MARKER, edge_run(at, screen), screen, &taken);
-        taken.push((place, MATE_MARKER));
-        marked.push((player.seat, place, wreck));
+        let run = edge_run(at, screen);
+        let place = clear_place(edge, balloon, run, (screen, MATE_EDGE), &taken);
+        taken.push((place, balloon));
+        marked.push((player.seat, place));
     }
-    for (marker, mut node, mut fill, mut border, mut outline, children) in &mut markers {
-        // A red ring closes on the marker of a tank that was just destroyed.
-        let (edge, ring) = closing(alarms.lost(marker.0));
-        border.set_if_neq(BorderColor::all(edge));
-        if *outline != ring {
-            *outline = ring;
-        }
-        let Some(&(_, place, wreck)) = marked.iter().find(|(seat, ..)| *seat == marker.0) else {
-            if node.display != Display::None {
-                node.display = Display::None;
-            }
+    let mut edge = [None; MAX_PLAYERS as usize];
+    for (marker, mut node) in &mut markers {
+        let Some(&(_, place)) = marked.iter().find(|(seat, ..)| *seat == marker.0) else {
+            show(&mut node, false);
             continue;
         };
-        let corner = (place - MATE_MARKER / 2.0).round();
-        put(&mut node, corner);
-        let (wanted, ink) = mate_look(wreck);
-        if fill.0 != wanted {
-            fill.0 = wanted;
+        put(&mut node, (place - balloon / 2.0).round());
+        // A note hangs from it into the screen.
+        let middle = screen.map_or(place.x, |screen| screen.x / 2.0);
+        let inward = if place.x > middle { -1.0 } else { 1.0 };
+        if let Some(head) = edge.get_mut(marker.0 as usize) {
+            *head = Some((place, inward));
         }
-        for child in children.iter() {
-            if let Ok(mut color) = numbers.get_mut(child)
-                && color.0 != ink
-            {
-                color.0 = ink;
-            }
-        }
+    }
+    if heads.edge != edge {
+        heads.edge = edge;
     }
 }
 
-/// Where the tag of a tank goes on the screen: over the tank, by so many meters of ground,
-/// and centered on it. `meter` is how long a meter of ground is on the screen there.
-fn tag_place(tank: Vec2, meter: f32) -> Vec2 {
-    tank - Vec2::new(TAG_WIDTH / 2.0, TAG_RISE * meter)
+/// Which way the balloon of a teammate's tank stands from the middle of the tank, on the
+/// screen: at 45° to its edges, on the side away from one's own tank, up where there is room
+/// and down where not, and clear of the other tanks and of the balloons placed already. The
+/// first way that is clear is taken, and the first one if none is.
+fn tag_way(tank: Vec2, own: Option<Vec2>, screen: Vec2, tanks: &[Vec2], placed: &[Vec2]) -> Vec2 {
+    let away = if own.is_some_and(|own| own.x > tank.x) {
+        -1.0
+    } else {
+        1.0
+    };
+    let ways = [(away, -1.0), (-away, -1.0), (away, 1.0), (-away, 1.0)];
+    let ways = ways.map(|(x, y)| Vec2::new(x, y).normalize());
+    let room = SHEET_EDGE + FRAME_WIDTH + TAG_BALLOON / 2.0;
+    let fits = |way: Vec2| {
+        let at = tank + way * TAG_LEAD;
+        let inside = at.cmpge(Vec2::splat(room)).all() && at.cmple(screen - room).all();
+        let near = TAG_BALLOON / 2.0 + TAG_TANK;
+        let off_tanks = tanks.iter().all(|other| other.distance(at) >= near);
+        let off_balloons = placed
+            .iter()
+            .all(|other| other.distance(at) >= TAG_BALLOON + MARKER_GAP);
+        inside && off_tanks && off_balloons
+    };
+    ways.into_iter().find(|way| fits(*way)).unwrap_or(ways[0])
 }
 
-/// Among several players, puts over each of their tanks the number of its player: the tanks
-/// all have one color, and a wreck keeps its tag.
+/// Among several players, puts a balloon on each teammate's tank that is in view, which names
+/// its player: the tanks all have one color. A wreck keeps its balloon, in dashes.
 fn tag_players(
     run: Option<Res<Run>>,
     ui_scale: Res<UiScale>,
     alarms: Res<Alarms>,
     camera: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
-    tanks: Query<(&Player, &GlobalTransform)>,
-    mut tags: Query<(&PlayerTag, &mut Node, &mut BorderColor)>,
+    tanks: Query<(&Player, &GlobalTransform, Has<Own>)>,
+    enemies: Query<&GlobalTransform, With<Enemy>>,
+    mut tags: Query<(&PlayerTag, &mut Node, &Children)>,
+    mut parts: Query<
+        (
+            &TagPart,
+            &mut UiTransform,
+            Option<&mut BackgroundColor>,
+            Option<&mut BorderColor>,
+        ),
+        Without<PlayerTag>,
+    >,
+    mut heads: ResMut<Heads>,
 ) {
     let (camera, camera_transform) = *camera;
     let several = run.is_some_and(|run| !run.solo);
-    for (tag, mut node, mut border) in &mut tags {
-        // The tag of a tank that was just destroyed is in the color of danger, for as long
-        // as its alert shows.
-        let color = if alarms.lost(tag.0).is_some() {
+    let size = camera.logical_viewport_size().unwrap_or(Vec2::ONE) / ui_scale.0;
+    let on_screen = |world: Vec3| {
+        let at = camera.world_to_viewport(camera_transform, world).ok()? / ui_scale.0;
+        (at.cmpge(Vec2::ZERO).all() && at.cmple(size).all()).then_some(at)
+    };
+    // Where the tanks are on the screen, the players' in the order of their seats.
+    let mut players: Vec<(u8, Vec2, bool)> = tanks
+        .iter()
+        .filter_map(|(player, at, own)| Some((player.seat, on_screen(at.translation())?, own)))
+        .collect();
+    players.sort_by_key(|(seat, ..)| *seat);
+    let own = players.iter().find(|(.., own)| *own).map(|(_, at, _)| *at);
+    let mut others: Vec<Vec2> = players.iter().map(|(_, at, _)| *at).collect();
+    others.extend(enemies.iter().filter_map(|at| on_screen(at.translation())));
+    let mut placed: Vec<Vec2> = Vec::new();
+    let mut ways: Vec<(u8, Vec2, Vec2)> = Vec::new();
+    for &(seat, at, own_tank) in &players {
+        if !several || own_tank {
+            continue;
+        }
+        // The tank is clear of its own balloon.
+        let near: Vec<Vec2> = others
+            .iter()
+            .copied()
+            .filter(|other| *other != at)
+            .collect();
+        let way = tag_way(at, own, size, &near, &placed);
+        placed.push(at + way * TAG_LEAD);
+        ways.push((seat, at, way));
+    }
+    let mut over = [None; MAX_PLAYERS as usize];
+    for &(seat, at, way) in &ways {
+        if let Some(head) = over.get_mut(seat as usize) {
+            *head = Some((at + way * TAG_LEAD, way.x.signum()));
+        }
+    }
+    if heads.over != over {
+        heads.over = over;
+    }
+    for (tag, mut node, children) in &mut tags {
+        let Some(&(seat, at, way)) = ways.iter().find(|(seat, ..)| *seat == tag.0) else {
+            show(&mut node, false);
+            continue;
+        };
+        put(&mut node, at.round());
+        // A tank just destroyed has its leader in the color of danger, for as long as its
+        // alert shows.
+        let ink = if alarms.lost(seat).is_some() {
             theme::DANGER
         } else {
             theme::PLAYER
         };
-        border.set_if_neq(BorderColor::all(color));
-        let tank = tanks.iter().find(|(player, _)| player.seat == tag.0);
-        let place = tank.filter(|_| several).and_then(|(_, tank)| {
-            let middle = tank.translation();
-            // A meter of ground across the screen, at the tank.
-            let aside = middle + camera_transform.rotation() * Vec3::X;
-            let at = camera.world_to_viewport(camera_transform, middle).ok()?;
-            let beside = camera.world_to_viewport(camera_transform, aside).ok()?;
-            Some(tag_place(at, at.distance(beside)))
-        });
-        let Some(place) = place else {
-            show(&mut node, false);
-            continue;
-        };
-        put(&mut node, place / ui_scale.0);
+        for child in children.iter() {
+            let Ok((part, mut transform, fill, edge)) = parts.get_mut(child) else {
+                continue;
+            };
+            let (place, turn) = match part {
+                // From the edge of the balloon to the middle of the tank, turned along the
+                // way, around its own middle.
+                TagPart::Leader => {
+                    let length = TAG_LEAD - TAG_BALLOON / 2.0;
+                    let middle = way * length / 2.0;
+                    (
+                        middle - Vec2::new(length / 2.0, balloons::LINE / 2.0),
+                        way.to_angle(),
+                    )
+                }
+                TagPart::Dot => (Vec2::ZERO, 0.0),
+                TagPart::Head => (way * TAG_LEAD - Vec2::splat(TAG_BALLOON / 2.0), 0.0),
+            };
+            let wanted = Val2::px(place.x.round(), place.y.round());
+            if transform.translation != wanted {
+                transform.translation = wanted;
+            }
+            let turn = Rot2::radians(turn);
+            if transform.rotation != turn {
+                transform.rotation = turn;
+            }
+            match (part, fill, edge) {
+                (TagPart::Leader, Some(mut fill), _) => {
+                    fill.set_if_neq(BackgroundColor(ink));
+                }
+                (TagPart::Dot, _, Some(mut edge)) => {
+                    edge.set_if_neq(BorderColor::all(ink));
+                }
+                _ => {}
+            }
+        }
     }
 }
 
@@ -1838,26 +1955,49 @@ mod tests {
     }
 
     #[test]
-    fn the_marker_of_a_teammate_tells_a_tank_that_runs_from_a_wreck() {
-        // Full for a tank that runs, in the color of the players, and hollow for a wreck.
-        let ((runs, on_full), (wreck, on_hollow)) = (mate_look(false), mate_look(true));
-        assert_eq!(runs, theme::PLAYER);
-        assert_ne!(wreck, runs);
-        assert_ne!(on_full, on_hollow);
+    fn the_balloon_of_a_teammate_tells_a_tank_that_runs_from_a_wreck() {
         // Every other player's tank is pointed to, and one's own once it is a wreck.
         assert!(is_marked(false, false) && is_marked(false, true));
         assert!(is_marked(true, true) && !is_marked(true, false));
-        // A marker fits between the line that frames the sheet and the panels.
-        let half = MATE_MARKER.y / 2.0;
-        assert!(EDGE_MARGIN - half >= SHEET_EDGE && EDGE_MARGIN + half <= MARGIN);
+        // A balloon at the edge stands inside the frame, and an enemy's square between the
+        // frame and the panels.
+        let half = TAG_BALLOON / 2.0;
+        assert!(MATE_EDGE - half >= SHEET_EDGE + FRAME_WIDTH);
+        let diamond = ENEMY_MARKER * std::f32::consts::SQRT_2 / 2.0;
+        assert!(EDGE_MARGIN - diamond >= SHEET_EDGE - 1.0 && EDGE_MARGIN + diamond <= MARGIN);
+        // The balloons of the team tell how each tank is: a wreck that is being repaired, a
+        // tank just destroyed, a player who just left.
+        let alarms = Alarms::default();
+        let wreck = Wreck {
+            repair: REPAIR_TIME / 4.0,
+            ..default()
+        };
+        assert_eq!(
+            team_state(1, Some(None), &alarms),
+            Some(balloons::State::Runs)
+        );
+        assert_eq!(
+            team_state(1, Some(Some(&wreck)), &alarms),
+            Some(balloons::State::Wreck(0.25))
+        );
+        assert_eq!(team_state(1, None, &alarms), None);
+        let mut alarms = Alarms::default();
+        alarms.lost[1] = Some(0.2);
+        alarms.left[2] = Some(1.0);
+        assert_eq!(
+            team_state(1, Some(Some(&wreck)), &alarms),
+            Some(balloons::State::Lost(0.2))
+        );
+        assert_eq!(team_state(2, None, &alarms), Some(balloons::State::Left));
     }
 
     #[test]
     fn markers_that_would_hide_each_other_stand_side_by_side() {
         let screen = Vec2::new(1920.0, 1080.0);
-        let (marker, across) = (MATE_MARKER, Vec2::X);
-        let wanted = Vec2::new(900.0, 1080.0 - EDGE_MARGIN);
-        let place = |taken: &[(Vec2, Vec2)]| clear_place(wanted, marker, across, screen, taken);
+        let (marker, across) = (Vec2::splat(TAG_BALLOON), Vec2::X);
+        let wanted = Vec2::new(900.0, 1080.0 - MATE_EDGE);
+        let edge = (screen, MATE_EDGE);
+        let place = |taken: &[(Vec2, Vec2)]| clear_place(wanted, marker, across, edge, taken);
         // Alone, a marker stands where its tank is.
         assert_eq!(place(&[]), wanted);
         // Three wrecks that lie together behind the player: three markers in a row along
@@ -1876,8 +2016,8 @@ mod tests {
         assert_eq!(place(&[(wanted + Vec2::X * 60.0, marker)]), wanted);
 
         // Along a side of the screen, markers step up and down, and stay on the screen.
-        let corner = Vec2::new(EDGE_MARGIN, 1080.0 - EDGE_MARGIN);
-        let down = clear_place(corner, marker, Vec2::Y, screen, &[(corner, marker)]);
+        let corner = Vec2::new(MATE_EDGE, 1080.0 - MATE_EDGE);
+        let down = clear_place(corner, marker, Vec2::Y, edge, &[(corner, marker)]);
         assert_eq!(down, corner - Vec2::Y * (marker.y + MARKER_GAP));
         // The top and the bottom edges run across, and the two sides run down.
         assert_eq!(edge_run(Vec2::new(500.0, 1300.0), screen), Vec2::X);
@@ -1888,16 +2028,34 @@ mod tests {
     }
 
     #[test]
-    fn a_tag_stands_over_its_tank_and_names_its_player_by_number() {
+    fn a_teammate_s_balloon_stands_away_from_one_s_own_tank_and_clear_of_the_others() {
         assert_eq!(short_name(0), "P1");
         assert_eq!(short_name(3), "P4");
-        // With 36 pixels to the meter, the tag is centered on the tank and well over it.
-        let place = tag_place(Vec2::new(400.0, 300.0), 36.0);
-        assert_eq!(place.x + TAG_WIDTH / 2.0, 400.0);
-        assert!(
-            place.y < 300.0 - 1.3 * 36.0,
-            "the tag would cover the barrel"
+        let screen = Vec2::new(1920.0, 1080.0);
+        let diagonal = |x: f32, y: f32| Vec2::new(x, y).normalize();
+        // Up, and away from one's own tank, at 45°.
+        let tank = Vec2::new(800.0, 600.0);
+        let own = Some(Vec2::new(900.0, 600.0));
+        assert_eq!(tag_way(tank, own, screen, &[], &[]), diagonal(-1.0, -1.0));
+        let own = Some(Vec2::new(700.0, 600.0));
+        assert_eq!(tag_way(tank, own, screen, &[], &[]), diagonal(1.0, -1.0));
+        // Down, where there is no room above.
+        let high = Vec2::new(800.0, 90.0);
+        assert_eq!(tag_way(high, own, screen, &[], &[]), diagonal(1.0, 1.0));
+        // Clear of a tank that stands where the balloon would.
+        let blocking = [tank + diagonal(1.0, -1.0) * TAG_LEAD];
+        assert_eq!(
+            tag_way(tank, own, screen, &blocking, &[]),
+            diagonal(-1.0, -1.0)
         );
+        // Clear of another balloon.
+        let placed = [tank + diagonal(1.0, -1.0) * TAG_LEAD + Vec2::X * 10.0];
+        assert_eq!(
+            tag_way(tank, own, screen, &[], &placed),
+            diagonal(-1.0, -1.0)
+        );
+        // The leader is long enough to keep the balloon off the tank.
+        const { assert!(TAG_LEAD - TAG_BALLOON / 2.0 >= TAG_TANK) };
     }
 
     #[test]
@@ -2125,24 +2283,7 @@ mod tests {
     }
 
     #[test]
-    fn a_red_ring_closes_on_the_marker_of_a_tank_just_destroyed() {
-        // Far from it at first, then on it, and gone once it has closed.
-        let (edge, ring) = closing(Some(0.0));
-        assert_eq!(
-            (edge, ring.offset, ring.width),
-            (theme::DANGER, px(RING_REACH), px(2))
-        );
-        assert_eq!(
-            closing(Some(RING_TIME / 2.0)).1.offset,
-            px(RING_REACH / 2.0)
-        );
-        let (edge, ring) = closing(Some(RING_TIME));
-        assert_eq!((edge, ring.width), (theme::PLAYER, px(0)));
-        assert_eq!(closing(None).0, theme::PLAYER);
-    }
-
-    #[test]
-    fn the_square_and_the_marker_of_a_wreck_fill_as_it_is_repaired() {
+    fn the_balloons_of_a_wreck_are_inked_as_it_is_repaired() {
         let wreck = |repair: f32| Wreck {
             repair,
             ..default()

@@ -79,8 +79,14 @@ struct Caption {
 #[derive(Component)]
 struct CaptionText;
 
+/// Where the tags of the barriers stand on the screen, in the pixels of the interface: what the
+/// stamps of the notices keep clear of.
+#[derive(Resource, Default)]
+pub struct TagMarks(pub Vec<Rect>);
+
 pub fn plugin(app: &mut App) {
-    app.add_systems(OnEnter(Screen::Playing), build)
+    app.init_resource::<TagMarks>()
+        .add_systems(OnEnter(Screen::Playing), build)
         .add_systems(
             Update,
             place
@@ -412,6 +418,7 @@ fn place(
             Without<Caption>,
         ),
     >,
+    mut marks: ResMut<TagMarks>,
 ) {
     let Some(size) = screen.size() else {
         return;
@@ -429,6 +436,18 @@ fn place(
         let outside = Vec2::splat(OUTSIDE);
         at.cmpgt(-outside).all() && at.cmplt(size + outside).all()
     };
+    // Where the balloons and their arrows stand, for what keeps clear of them.
+    let mut taken: Vec<Rect> = Vec::new();
+    for (barrier, spots) in shown.iter().flatten() {
+        for spot in spots.iter().filter(|spot| in_view(spot.at)) {
+            let reach = extent(barrier, spot, Vec2::X).max(extent(barrier, spot, Vec2::Y));
+            let reach = reach + ARROW.0 + ARROW.1;
+            taken.push(Rect::from_center_half_size(spot.at, Vec2::splat(reach)));
+        }
+    }
+    if marks.0 != taken {
+        marks.0 = taken;
+    }
 
     for (balloon, mut transform, mut visibility, children) in &mut balloons {
         let found = shown[balloon.slot].as_ref();

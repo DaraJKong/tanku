@@ -61,6 +61,19 @@ fn size(
     }
 }
 
+/// The day, as a title block dates a sheet and a stamp dates a release: by the clock of the
+/// machine, or of the browser, in universal time.
+pub fn day_of_issue() -> String {
+    #[cfg(target_arch = "wasm32")]
+    let seconds = (web_sys::js_sys::Date::now() / 1000.0) as u64;
+    #[cfg(not(target_arch = "wasm32"))]
+    let seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs());
+    let stamp = tanku_core::journal::stamp(seconds);
+    stamp.chars().take(10).collect()
+}
+
 /// The width of the frame of the sheet: the wide line of the interface.
 pub const FRAME_WIDTH: f32 = 2.0;
 /// How many zones the frame is divided into, across and down, as ISO 5457 divides a sheet:

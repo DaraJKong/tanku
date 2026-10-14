@@ -146,6 +146,11 @@ pub const NAME: f32 = 84.0;
 const CAPITALS_PITCH: f32 = 1.25;
 const SENTENCE_PITCH: f32 = 1.6;
 
+/// How high the box of a line of capitals of this size is: its capitals stand in its middle.
+pub fn capitals_height(size: f32) -> f32 {
+    size * CAPITALS_PITCH
+}
+
 /// Keeps the faces at hand: text asks for them by the name of their family.
 #[derive(Resource)]
 struct Faces(#[expect(dead_code, reason = "held so that the fonts stay loaded")] Vec<Handle<Font>>);
@@ -231,45 +236,6 @@ pub mod old {
     pub fn code(content: impl Into<String>, size: f32, color: Color) -> impl Bundle {
         lettered(content.into(), (LETTERING, HEAVY), (size, TRACKING), color)
     }
-
-    /// How a text is set: as a label, a title, or a number.
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    pub enum Face {
-        Label,
-        Title,
-        Figure,
-    }
-
-    impl Face {
-        pub fn set(self, content: String, size: f32, color: Color) -> impl Bundle {
-            let (face, tracking) = match self {
-                Face::Label => ((LETTERING, PLAIN), TRACKING),
-                Face::Title => ((LETTERING, HEAVY), TRACKING),
-                Face::Figure => ((FIGURES, FontWeight::NORMAL), 0.0),
-            };
-            let content = match self {
-                Face::Label | Face::Title => content.to_uppercase(),
-                Face::Figure => content,
-            };
-            lettered(content, face, (size, tracking), color)
-        }
-    }
-
-    /// Text drawn over the game with a dark edge, in these faces: see [`super::edged`].
-    pub fn edged(
-        marker: impl Bundle,
-        face: Face,
-        content: impl Into<String>,
-        size: f32,
-        color: Color,
-    ) -> impl Bundle {
-        super::edged_with(
-            marker,
-            move |words, ink| face.set(words, size, ink),
-            content.into(),
-            color,
-        )
-    }
 }
 
 fn lettered(content: String, size: f32, pitch: f32, color: Color) -> impl Bundle {
@@ -321,12 +287,7 @@ pub fn code(content: impl Into<String>, size: f32, color: Color) -> impl Bundle 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Face {
     Label,
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the notices take it as they are drawn again")
-    )]
     Title,
-    #[expect(dead_code, reason = "the notices take it as they are drawn again")]
     Figure,
 }
 

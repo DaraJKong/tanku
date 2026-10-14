@@ -1,15 +1,18 @@
 //! The messages of a run that must not be missed.
 //!
-//! A tank of the players that is destroyed, or that comes back, is told by an alert under the
-//! tank that the player at this screen watches, where their eyes are: few words, no panel that
-//! would hide a bullet, and gone in 2.2 s. The frame of the sheet flashes red with a loss, the
-//! circle of the wreck is inked in red for a moment, the squares of the display blink, and a
-//! loss that leaves one tank running, or one life, has a cue of its own.
+//! A tank of the players that is destroyed, or that comes back, is told by an alert where the
+//! player's eyes are, shaped as the leader note of a drawing (ISO 128-22): a leader from a dot
+//! on what it tells of, or from the balloon of a teammate, to a reference line with the words
+//! on it and under it. Few words, no panel that would hide a bullet, and gone in 2.2 s. The
+//! frame of the sheet flashes red with a loss, the circle of the wreck is inked in red for a
+//! moment, the balloons and the squares of the display tell it too, and a loss that leaves one
+//! tank running, or one life, has a cue of its own.
 //!
-//! What a run earns, an achievement or a record, is stamped on the sheet above the tank, as the
-//! game over screen stamps a run that is lost, with a cue and a green flash of the frame. It
-//! comes with the last kill of a sector, when the fight is over. The routine news of a run stays
-//! on the line at the top of the screen.
+//! What a run earns, an achievement or a record, is stamped on the sheet above the tank, as a
+//! drawing that is released is stamped: a double frame, turned a little, with the day of its
+//! release. It comes with a cue and a green flash of the frame, with the last kill of a sector,
+//! when the fight is over. The routine news of a run stays on the line at the top of the
+//! screen.
 
 use bevy::prelude::*;
 use tanku_audio::cues::Cue;
@@ -22,13 +25,16 @@ use tanku_core::{
 use crate::{
     Screen,
     audio::{self, Sound},
+    balloons,
     camera::{self, MainCamera},
     crew::Own,
     draft::{Draft, LIFT},
-    hud::{self, SHEET_EDGE},
+    hud::{self, Heads, SHEET_EDGE},
     report, scene,
     settings::{League, Records, Settings},
-    theme::{self, old::Face},
+    sheet,
+    tags::TagMarks,
+    theme::{self, Face},
     unlocks::{self, Unlocked},
 };
 
@@ -37,12 +43,9 @@ pub const ALERT_TIME: f32 = 2.2;
 const ALERT_FADE: f32 = 0.4;
 /// Two losses this close together are told by one alert.
 const MERGE_TIME: f32 = 1.0;
-/// How far under the middle of a tank its alert starts, in meters of ground: under the arc of
-/// its rounds.
+/// How far under the middle of a tank the balloon of an alert stands when its player has none
+/// on the screen, in meters of ground: under the arc of its rounds.
 const ALERT_DROP: f32 = 2.65;
-/// How far an alert keeps from the edges of the screen, in pixels of the interface: its middle
-/// from the sides, and its top from the top and from the bottom.
-const ALERT_ROOM: Vec2 = Vec2::new(240.0, 170.0);
 /// How long a square of the display or a marker blinks for a loss, and each step of it.
 pub const BLINK_TIME: f32 = 0.9;
 /// How long the square of a player who left the game stays, struck out, before it goes.
@@ -77,33 +80,46 @@ const STAMP_STEP: f32 = 0.25;
 /// How dark the inside of a stamp is: enough to read it over a block, little enough to see a
 /// bullet through it.
 const STAMP_FILL: f32 = 0.5;
+/// The double frame of a stamp: its outer line, the gap, and its inner line, which also parts
+/// its two fields.
+const STAMP_FRAME: (f32, f32, f32) = (3.0, 3.0, 1.0);
+/// How far over a tag of a barrier the stamps stand, when one is under where they stand, and
+/// how far from the top of the screen they keep at least.
+const STAMP_CLEAR: (f32, f32) = (16.0, 80.0);
 
-/// What an alert says, in these faces and sizes: its headline, its second line, the tag of a
-/// player and the distance to a wreck.
-const HEADLINE: (Face, f32) = (Face::Title, 30.0);
-const LINE: (Face, f32) = (Face::Title, 16.0);
-const TAG: f32 = 22.0;
-const DISTANCE: f32 = 17.0;
-/// What a stamp says: what it is for, large or in brief, what it is about, and what more.
-const EARNED: (Face, f32) = (Face::Title, 40.0);
-const EARNED_BRIEF: (Face, f32) = (Face::Title, 26.0);
-const ABOUT: (Face, f32) = (Face::Label, 13.0);
-const MORE: (Face, f32) = (Face::Label, 15.0);
-/// Every face and size that a notice says something in, and the messages of the display: see
-/// `rehearse`. Words are in capitals in the lettering, and figures in their own face.
-const SAID: [(Face, f32); 9] = [
-    HEADLINE,
-    LINE,
-    (Face::Title, TAG),
-    (Face::Figure, DISTANCE),
-    EARNED,
-    EARNED_BRIEF,
-    ABOUT,
-    MORE,
-    (Face::Title, hud::TOAST_SIZE),
-];
-const CAPITALS: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,:;!?'-+%/()";
-const FIGURES: &str = "0123456789.,:-+%/() abcdefghijklmnopqrstuvwxyz";
+/// What an alert says, in these faces and sizes: its headline over its reference line, and its
+/// lines under it.
+const HEADLINE: (Face, f32) = (Face::Title, theme::ALERT);
+const LINE: (Face, f32) = (Face::Label, theme::LABEL);
+/// What a stamp says: what it is about, what was earned, large or in brief, what more, and the
+/// day of its release.
+const ABOUT: (Face, f32) = (Face::Label, theme::LABEL);
+const EARNED: (Face, f32) = (Face::Title, theme::ALERT);
+const EARNED_BRIEF: (Face, f32) = (Face::Title, theme::VALUE);
+const MORE: (Face, f32) = (Face::Label, theme::LABEL);
+const DAY: (Face, f32) = (Face::Figure, theme::VALUE);
+/// Every size that a notice says something in, and the messages of the display: see
+/// `rehearse`. Words are in capitals.
+const SAID: [f32; 3] = [theme::LABEL, theme::VALUE, theme::ALERT];
+const CAPITALS: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,:;!?'-+%/()\u{b7}";
+/// The leader of an alert: from the dot on what it tells of, at 60° to the edges of the
+/// screen, to the bend where its reference line starts, and the dot.
+const LEADER: Vec2 = Vec2::new(54.0, 94.0);
+const DOT: f32 = 8.0;
+/// The reference line: its width, how far in from its start its words stand, how far the
+/// baseline of the headline stands over it, and how far the capitals of the lines under it
+/// stand under it.
+const REFERENCE: f32 = 2.0;
+const WORDS_INSET: f32 = 8.0;
+const OVER_LINE: f32 = 10.0;
+const UNDER_LINE: f32 = 10.0;
+/// How far from the middle of a balloon the reference line that hangs from it starts: past
+/// the red ring that closes on it.
+const HEAD_REACH: f32 = hud::HEAD_WIDTH / 2.0 + 7.0;
+/// Where a note points from on the screen, as shares of its size: past these, it turns to
+/// the left, or points up from under what it tells of.
+const TURN_LEFT: f32 = 0.6;
+const TURN_UP: f32 = 0.62;
 
 /// The losses that the display tells for a moment: how long ago the tank of each seat was
 /// destroyed, and which life of a single player was lost, with how long ago. And the life
@@ -171,14 +187,18 @@ enum Told {
     },
 }
 
-/// Where an alert stands.
+/// What an alert points at, or hangs from.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Anchor {
-    /// Under the tank that the view follows, wherever it goes on the screen.
+    /// The tank that the view follows, wherever it goes on the screen: a dot on it.
     Watched,
-    /// Under the place on the screen where the player's own tank was destroyed. The view
-    /// leaves that place, and the alert stays there.
+    /// The place on the screen where the player's own tank was destroyed: a dot on it. The
+    /// view leaves that place, and the alert stays there.
     Pinned { ground: Vec2, screen: Option<Vec2> },
+    /// The balloon of the player of a seat, over its tank or at the edge of the screen. Where
+    /// it doesn't show, the alert stands under the tank that the view follows, headed by a
+    /// balloon of its own.
+    Balloon(u8),
 }
 
 /// The alert on the screen, if there is one.
@@ -225,11 +245,19 @@ impl Inked {
     }
 }
 
-/// The arrow of an alert, which points to the last wreck it tells of.
-#[derive(Component)]
-struct Pointer;
+/// The parts of an alert, which [`place`] lays out around what it tells of.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+enum Piece {
+    /// The leader from the dot to the bend of the reference line.
+    Leader,
+    Dot,
+    /// The balloon that heads an alert whose player has none on the screen.
+    Head,
+    /// The words, with the reference line between them.
+    Words,
+}
 
-/// How far that wreck is, in an alert.
+/// How far the wreck of a teammate is, in an alert.
 #[derive(Component)]
 struct Distance;
 
@@ -362,7 +390,7 @@ fn build(mut commands: Commands) {
 /// and are laid out again when the interface changes size, for its new size.
 fn rehearse(mut commands: Commands, mut rehearsed: Local<(usize, Option<Entity>)>) {
     let (done, root) = &mut *rehearsed;
-    let Some(&(face, size)) = SAID.get(*done) else {
+    let Some(&size) = SAID.get(*done) else {
         return;
     };
     let root = *root.get_or_insert_with(|| {
@@ -374,11 +402,8 @@ fn rehearse(mut commands: Commands, mut rehearsed: Local<(usize, Option<Entity>)
         };
         commands.spawn((aside, Visibility::Hidden)).id()
     });
-    let said = match face {
-        Face::Figure => FIGURES,
-        Face::Label | Face::Title => CAPITALS,
-    };
-    commands.spawn((ChildOf(root), face.set(said.to_string(), size, theme::TEXT)));
+    let said = Face::Label.set(CAPITALS.to_string(), size, theme::TEXT);
+    commands.spawn((ChildOf(root), said));
     *done += 1;
 }
 
@@ -609,9 +634,11 @@ fn tell(
     }
     if let Some(&(_, wreck)) = lost.last() {
         cue = cue.or(loss_cue(running.len()));
-        let seats = lost.iter().map(|(seat, _)| *seat).collect();
+        let seats: Vec<u8> = lost.iter().map(|(seat, _)| *seat).collect();
+        // It hangs from the balloon of the last of them.
+        let anchor = Anchor::Balloon(seats[seats.len() - 1]);
         let told_lost = Told::Lost { seats, wreck, last };
-        told.push((told_lost, Anchor::Watched));
+        told.push((told_lost, anchor));
     }
     // One's own loss is told before a teammate's that comes with it.
     if let Some(ground) = own_loss {
@@ -639,7 +666,12 @@ fn tell(
     for entity in repaired.read() {
         if let Ok((player, own, false)) = players.get(entity) {
             let back = Told::Back((!own).then_some(player.seat));
-            told.push((back, Anchor::Watched));
+            let anchor = if own {
+                Anchor::Watched
+            } else {
+                Anchor::Balloon(player.seat)
+            };
+            told.push((back, anchor));
         }
     }
     // A player who leaves the run takes their tank away, and the run counts one player less.
@@ -659,7 +691,7 @@ fn tell(
                 players: run.players,
                 arena: run.arena,
             };
-            told.push((left, Anchor::Watched));
+            told.push((left, Anchor::Balloon(seat)));
         }
     }
     *before = Some((run.seed, run.ticks, run.players, seats));
@@ -688,11 +720,12 @@ fn tell(
     });
 }
 
-/// A row of the parts of an alert, side by side.
+/// A row of the lines under the reference line of an alert, side by side.
 fn row(commands: &mut Commands, column: Entity, gap: f32) -> Entity {
     let row = Node {
         column_gap: px(gap),
         align_items: AlignItems::Center,
+        margin: UiRect::horizontal(px(WORDS_INSET)),
         ..default()
     };
     commands.spawn((ChildOf(column), row)).id()
@@ -706,34 +739,8 @@ fn words(
     content: impl Into<String>,
     color: Color,
 ) {
-    let edged = theme::old::edged(Inked::text(root, color), face, content, size, color);
+    let edged = theme::edged(Inked::text(root, color), face, content, size, color);
     commands.spawn((ChildOf(parent), edged));
-}
-
-/// The tag of a player in an alert: the one that stands over their tank, larger.
-fn tag(commands: &mut Commands, (parent, root): (Entity, Entity), seat: u8) {
-    let tag = commands
-        .spawn((
-            ChildOf(parent),
-            Inked {
-                border: Some(theme::PLAYER),
-                back: Some(theme::VOID),
-                ..Inked::new(root)
-            },
-            Node {
-                border: UiRect::all(px(2)),
-                padding: UiRect::new(px(8), px(5), px(0), px(0)),
-                ..default()
-            },
-            BorderColor::all(theme::PLAYER),
-            BackgroundColor(theme::VOID),
-        ))
-        .id();
-    commands.spawn((
-        ChildOf(tag),
-        Inked::text(root, theme::TEXT),
-        theme::old::title(named(seat), TAG, theme::TEXT),
-    ));
 }
 
 /// A small square of a color, with a dark edge: the color of the tank behind a blow, or a life.
@@ -743,7 +750,7 @@ fn square(
     size: f32,
     (fill, border): (Color, Option<Color>),
 ) {
-    let width = if border.is_some() { 1.0 } else { 0.0 };
+    let width = if border.is_some() { 1.5 } else { 0.0 };
     commands.spawn((
         ChildOf(parent),
         Inked {
@@ -764,61 +771,31 @@ fn square(
     ));
 }
 
-/// The arrow of an alert: a needle with its head, pointing up until it is turned toward a
-/// wreck.
-fn arrow(commands: &mut Commands, (parent, root): (Entity, Entity)) {
-    let arrow = commands
-        .spawn((
-            ChildOf(parent),
-            Pointer,
-            Node {
-                width: px(18),
-                height: px(18),
-                ..default()
-            },
-            UiTransform::IDENTITY,
-        ))
-        .id();
-    let part = |node: Node, turn: f32| {
-        (
-            ChildOf(arrow),
-            Inked {
-                back: Some(theme::TEXT),
-                outline: Some(theme::VOID),
-                ..Inked::new(root)
-            },
-            Node {
-                position_type: PositionType::Absolute,
-                ..node
-            },
-            BackgroundColor(theme::TEXT),
-            Outline::new(px(1.5), px(0), theme::VOID),
-            UiTransform::from_rotation(Rot2::degrees(turn)),
-        )
-    };
-    commands.spawn(part(
-        Node {
-            left: px(8),
-            top: px(4),
-            width: px(2),
-            height: px(13),
-            ..default()
-        },
-        0.0,
-    ));
-    commands.spawn(part(
-        Node {
-            left: px(5),
-            top: px(1),
-            width: px(8),
-            height: px(8),
-            ..default()
-        },
-        45.0,
-    ));
+/// What an alert says over its reference line, and in which color: red for a loss, blue for a
+/// return.
+fn headline(told: &Told) -> (&'static str, Color) {
+    match told {
+        Told::Lost { .. } => ("Destroyed", theme::DANGER),
+        Told::Back(Some(_)) => ("Is back", theme::ACCENT_HOVERED),
+        Told::Back(None) => ("Your tank is back", theme::ACCENT_HOVERED),
+        Told::Left { .. } => ("Left the game", theme::TEXT),
+        Told::Own { solo: true, .. } => ("Tank destroyed", theme::DANGER),
+        Told::Own { solo: false, .. } => ("Your tank is destroyed", theme::DANGER),
+    }
 }
 
-/// Draws an alert, at no place yet: [`place`] puts it under its tank.
+/// The balloon that heads an alert whose player has none on the screen: the one of a player
+/// who left, struck out, or of a teammate out of view.
+fn head_state(told: &Told) -> Option<(u8, balloons::State)> {
+    match told {
+        Told::Left { seat, .. } => Some((*seat, balloons::State::Left)),
+        Told::Lost { seats, .. } => Some((seats[seats.len() - 1], balloons::State::Lost(0.0))),
+        Told::Back(Some(seat)) => Some((*seat, balloons::State::Runs)),
+        _ => None,
+    }
+}
+
+/// Draws an alert, at no place yet: [`place`] lays it out around what it tells of.
 fn spawn(commands: &mut Commands, told: &Told) -> Entity {
     let root = commands
         .spawn((
@@ -834,81 +811,120 @@ fn spawn(commands: &mut Commands, told: &Told) -> Entity {
             Pickable::IGNORE,
         ))
         .id();
-    let column = commands
-        .spawn((
+    let (said, ink) = headline(told);
+    let piece = |piece: Piece| {
+        (
             ChildOf(root),
-            Node {
-                position_type: PositionType::Absolute,
-                flex_direction: FlexDirection::Column,
-                align_items: AlignItems::Center,
-                row_gap: px(7),
-                ..default()
-            },
-            // Its middle under the point it hangs from.
-            UiTransform::from_translation(Val2::percent(-50.0, 0.0)),
-        ))
-        .id();
-    let heading = match told {
-        Told::Back(_) => theme::ACCENT_HOVERED,
-        Told::Left { .. } => theme::TEXT,
-        _ => theme::DANGER,
+            piece,
+            UiTransform::IDENTITY,
+            Visibility::Hidden,
+        )
     };
-    let rule = heading.with_alpha(0.75);
     commands.spawn((
-        ChildOf(column),
+        piece(Piece::Leader),
         Inked {
-            back: Some(rule),
+            back: Some(ink),
             ..Inked::new(root)
         },
         Node {
-            width: px(168),
-            height: px(1),
+            position_type: PositionType::Absolute,
+            width: px(LEADER.length()),
+            height: px(REFERENCE),
             ..default()
         },
-        BackgroundColor(rule),
+        BackgroundColor(ink),
     ));
-    let (big, line) = (HEADLINE, LINE);
-    let first = row(commands, column, 12.0);
+    commands.spawn((
+        piece(Piece::Dot),
+        Inked {
+            back: Some(ink),
+            ..Inked::new(root)
+        },
+        Node {
+            position_type: PositionType::Absolute,
+            width: px(DOT),
+            height: px(DOT),
+            border_radius: BorderRadius::MAX,
+            ..default()
+        },
+        BackgroundColor(ink),
+    ));
+    if let Some((seat, state)) = head_state(told) {
+        let head = commands
+            .spawn((
+                piece(Piece::Head),
+                Node {
+                    position_type: PositionType::Absolute,
+                    ..default()
+                },
+            ))
+            .id();
+        let balloon = balloons::balloon(seat, hud::HEAD_WIDTH, theme::VALUE);
+        commands.spawn((ChildOf(head), balloon)).insert(state);
+    }
+    // The words, with the reference line between them, as long as the longest of them.
+    let column = commands
+        .spawn((
+            piece(Piece::Words),
+            Node {
+                position_type: PositionType::Absolute,
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Start,
+                ..default()
+            },
+        ))
+        .id();
+    let over = commands
+        .spawn((
+            ChildOf(column),
+            Node {
+                margin: UiRect {
+                    left: px(WORDS_INSET),
+                    right: px(WORDS_INSET),
+                    // The baseline of the headline stands so far over the line.
+                    bottom: px(OVER_LINE - REFERENCE / 2.0 - capitals_room(HEADLINE.1)),
+                    ..default()
+                },
+                ..default()
+            },
+        ))
+        .id();
+    words(commands, (over, root), HEADLINE, said, ink);
+    commands.spawn((
+        ChildOf(column),
+        Inked {
+            back: Some(ink),
+            ..Inked::new(root)
+        },
+        Node {
+            width: percent(100),
+            height: px(REFERENCE),
+            margin: UiRect::bottom(px(UNDER_LINE - REFERENCE / 2.0 - capitals_room(LINE.1))),
+            ..default()
+        },
+        BackgroundColor(ink),
+    ));
     match told {
-        Told::Lost { seats, last, .. } => {
-            for seat in seats {
-                tag(commands, (first, root), *seat);
-            }
-            words(commands, (first, root), big, "Destroyed", heading);
-            let second = row(commands, column, 9.0);
-            arrow(commands, (second, root));
-            let distance = theme::old::edged(
-                (Distance, Inked::text(root, theme::TEXT)),
-                Face::Figure,
+        Told::Lost { last, .. } => {
+            let first = row(commands, column, 9.0);
+            let distance = theme::edged(
+                (Distance, Inked::text(root, theme::LINE)),
+                Face::Label,
                 "",
-                DISTANCE,
-                theme::TEXT,
+                LINE.1,
+                theme::LINE,
             );
-            commands.spawn((ChildOf(second), distance));
+            commands.spawn((ChildOf(first), distance));
             if let Some(last) = last {
-                square(commands, (second, root), 3.0, (theme::TEXT_DIM, None));
-                words(commands, (second, root), line, last_words(*last), heading);
+                let second = row(commands, column, 9.0);
+                words(commands, (second, root), LINE, last_words(*last), ink);
             }
         }
-        Told::Back(seat) => {
-            match seat {
-                Some(seat) => {
-                    tag(commands, (first, root), *seat);
-                    words(commands, (first, root), big, "Is back", heading);
-                }
-                None => words(commands, (first, root), big, "Your tank is back", heading),
-            };
-        }
-        Told::Left {
-            seat,
-            players,
-            arena,
-        } => {
-            tag(commands, (first, root), *seat);
-            words(commands, (first, root), big, "Left the game", heading);
-            let second = row(commands, column, 9.0);
+        Told::Back(_) => {}
+        Told::Left { players, arena, .. } => {
+            let first = row(commands, column, 9.0);
             let said = left_words(*players, *arena);
-            words(commands, (second, root), line, said, theme::TEXT);
+            words(commands, (first, root), LINE, said, theme::LINE);
         }
         Told::Own {
             blow,
@@ -916,35 +932,24 @@ fn spawn(commands: &mut Commands, told: &Told) -> Entity {
             lives,
             menders,
         } => {
-            let title = if *solo {
-                "Tank destroyed"
-            } else {
-                "Your tank is destroyed"
-            };
-            words(commands, (first, root), big, title, heading);
             // What destroyed it, and among several players who can repair it, on one line.
             let menders = menders_words(menders);
             if blow.is_some() || menders.is_some() {
-                let second = row(commands, column, 9.0);
+                let first = row(commands, column, 9.0);
                 if let Some(blow) = blow {
-                    square(commands, (second, root), 11.0, (report::color(blow), None));
-                    words(
-                        commands,
-                        (second, root),
-                        line,
-                        cause(blow, *solo),
-                        theme::TEXT,
-                    );
+                    square(commands, (first, root), 11.0, (report::color(blow), None));
+                    let cause = cause(blow, *solo);
+                    words(commands, (first, root), LINE, cause, theme::LINE);
                 }
                 if let Some(said) = menders {
                     if blow.is_some() {
-                        square(commands, (second, root), 3.0, (theme::TEXT_DIM, None));
+                        square(commands, (first, root), 3.0, (theme::TEXT_DIM, None));
                     }
-                    words(commands, (second, root), line, said, theme::TEXT);
+                    words(commands, (first, root), LINE, said, theme::LINE);
                 }
             }
             if let Some((left, (said, color))) = lives.and_then(|n| Some((n, lives_words(n)?))) {
-                let third = row(commands, column, 7.0);
+                let lives = row(commands, column, 6.0);
                 for life in 1..=tanku_core::rules::SOLO_LIVES {
                     let look = if life <= left {
                         (theme::PLAYER, None)
@@ -953,13 +958,19 @@ fn spawn(commands: &mut Commands, told: &Told) -> Entity {
                     } else {
                         (theme::VOID, Some(theme::RULE))
                     };
-                    square(commands, (third, root), 14.0, look);
+                    square(commands, (lives, root), 15.0, look);
                 }
-                words(commands, (third, root), line, said, color);
+                words(commands, (lives, root), LINE, said, color);
             }
         }
     }
     root
+}
+
+/// The room between the capitals of a line of capitals and the edges of its box, over and
+/// under them: their box is higher than they are.
+fn capitals_room(size: f32) -> f32 {
+    (theme::capitals_height(size) - size) / 2.0
 }
 
 /// Where a point of the ground is on the screen, in pixels of the interface, and how long a
@@ -975,27 +986,66 @@ fn on_screen(
     Some((here / scale, here.distance(there) / scale))
 }
 
-/// The turn of an arrow that points up, to point from one place of the screen to another.
-fn bearing(from: Vec2, to: Vec2) -> Rot2 {
-    let way = to - from;
-    if way.length_squared() < 1.0 {
-        return Rot2::IDENTITY;
-    }
-    // The screen counts down: up is the way of negative y.
-    Rot2::radians(way.x.atan2(-way.y))
+/// How an alert stands on the screen: the dot and the bend of its leader, if it has one, the
+/// middle of the balloon that heads it, if it draws one, where its reference line starts, and
+/// which way it runs across.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Layout {
+    leader: Option<(Vec2, Vec2)>,
+    head: Option<Vec2>,
+    start: Vec2,
+    way: f32,
 }
 
-/// Ages the alert, and puts it under the tank that the view follows, or where the player's own
-/// tank was destroyed. An alert of a loss points to the wreck, and says how far it is.
+/// The layout of an alert with a dot on a point of the screen: its leader goes down at 60°
+/// to the right of it, or to the left past the most of the screen, and up from the bottom of
+/// the screen.
+fn pointing(at: Vec2, screen: Vec2) -> Layout {
+    let way = if at.x > screen.x * TURN_LEFT {
+        -1.0
+    } else {
+        1.0
+    };
+    let down = if at.y > screen.y * TURN_UP { -1.0 } else { 1.0 };
+    let bend = at + Vec2::new(LEADER.x * way, LEADER.y * down);
+    Layout {
+        leader: Some((at, bend)),
+        head: None,
+        start: bend,
+        way,
+    }
+}
+
+/// The layout of an alert that hangs from a balloon: its reference line runs from past the
+/// balloon, the way that it is given.
+fn hanging(head: Vec2, way: f32, drawn: bool) -> Layout {
+    Layout {
+        leader: None,
+        head: drawn.then_some(head),
+        start: head + Vec2::X * HEAD_REACH * way,
+        way,
+    }
+}
+
+/// Ages the alert, and lays it out around what it tells of: a dot on the tank that the view
+/// follows or on the place where the player's own tank was destroyed, or the balloon of a
+/// teammate. An alert of a teammate's loss says how far the wreck is.
 fn place(
     time: Res<Time>,
     ui_scale: Res<UiScale>,
     camera: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
     tanks: Query<(&Player, &GlobalTransform, Has<Own>, Has<Wreck>)>,
+    heads: Res<Heads>,
     mut shown: ResMut<Shown>,
     mut alarms: ResMut<Alarms>,
-    mut roots: Query<(&mut Node, &mut Notice, &mut Visibility)>,
-    mut pointers: Query<&mut UiTransform, With<Pointer>>,
+    mut roots: Query<(&mut Notice, &mut Visibility), Without<Piece>>,
+    mut pieces: Query<(
+        &Piece,
+        &ChildOf,
+        &mut Node,
+        &mut UiTransform,
+        &mut Visibility,
+    )>,
     mut distances: Query<&mut Text, With<Distance>>,
     mut commands: Commands,
 ) {
@@ -1020,7 +1070,7 @@ fn place(
         return;
     };
     alert.age += seconds;
-    let Ok((mut node, mut notice, mut visibility)) = roots.get_mut(alert.root) else {
+    let Ok((mut notice, mut visibility)) = roots.get_mut(alert.root) else {
         shown.0 = None;
         return;
     };
@@ -1032,6 +1082,7 @@ fn place(
     notice.0 = ((ALERT_TIME - alert.age) / ALERT_FADE).min(1.0);
     let (camera, transform) = *camera;
     let scale = ui_scale.0;
+    let screen = camera.logical_viewport_size().unwrap_or(Vec2::ONE) / scale;
     // The tank that the view follows: the player's own while it runs, or else a teammate's.
     let own = tanks.iter().find(|(.., own, _)| *own);
     let watched = match own {
@@ -1043,47 +1094,93 @@ fn place(
         }
     };
     let watched = watched.map(|at| at.translation());
-    let under = |point: Vec3| {
-        on_screen((camera, transform), scale, point)
-            .map(|(at, meter)| at + Vec2::Y * ALERT_DROP * meter)
-    };
-    let wanted = match &mut alert.anchor {
-        Anchor::Watched => watched.and_then(under),
-        Anchor::Pinned { ground, screen } => {
-            if screen.is_none() {
-                *screen = under(scene::to_world(*ground, 0.0));
+    let seen = |point: Vec3| on_screen((camera, transform), scale, point);
+    let layout = match &mut alert.anchor {
+        Anchor::Watched => watched.and_then(seen).map(|(at, _)| pointing(at, screen)),
+        Anchor::Pinned { ground, screen: at } => {
+            if at.is_none() {
+                *at = seen(scene::to_world(*ground, 0.0)).map(|(at, _)| at);
             }
-            *screen
+            at.map(|at| pointing(at, screen))
         }
+        Anchor::Balloon(seat) => match heads.of(*seat) {
+            Some((head, way)) => Some(hanging(head, way, false)),
+            // Under the tank that the view follows, with a balloon of its own.
+            None => watched.and_then(seen).map(|(at, meter)| {
+                let head = at + Vec2::new(-HEAD_REACH, ALERT_DROP * meter);
+                hanging(head, 1.0, true)
+            }),
+        },
     };
-    let Some(wanted) = wanted else {
+    let Some(layout) = layout else {
         *visibility = Visibility::Hidden;
         return;
     };
-    let size = camera.logical_viewport_size().unwrap_or(Vec2::ONE) / scale;
-    let high = (size - ALERT_ROOM).max(ALERT_ROOM);
-    let at = wanted
-        .clamp(Vec2::new(ALERT_ROOM.x, ALERT_ROOM.y / 3.0), high)
-        .round();
-    (node.left, node.top) = (px(at.x), px(at.y));
     *visibility = Visibility::Inherited;
-    // An alert of a loss points from the tank that the view follows to the last wreck.
-    if let (Told::Lost { wreck, .. }, Some(from)) = (&alert.told, watched) {
-        let wreck = scene::to_world(*wreck, 0.0);
-        let ends = (
-            on_screen((camera, transform), scale, from),
-            on_screen((camera, transform), scale, wreck),
-        );
-        if let (Some((from_at, _)), Some((to_at, _))) = ends {
-            for mut pointer in &mut pointers {
-                pointer.rotation = bearing(from_at, to_at);
-            }
+    for (piece, parent, mut node, mut moved, mut shows) in &mut pieces {
+        if parent.parent() != alert.root {
+            continue;
         }
-        let meters = scene::to_ground(from)
-            .distance(scene::to_ground(wreck))
-            .round();
+        let (at, turn, wanted) = match *piece {
+            Piece::Leader => match layout.leader {
+                Some((dot, bend)) => {
+                    let along = bend - dot;
+                    let middle = (dot + bend) / 2.0;
+                    let corner = middle - Vec2::new(along.length(), REFERENCE) / 2.0;
+                    (corner, along.to_angle(), true)
+                }
+                None => (Vec2::ZERO, 0.0, false),
+            },
+            Piece::Dot => match layout.leader {
+                Some((dot, _)) => (dot - Vec2::splat(DOT / 2.0), 0.0, true),
+                None => (Vec2::ZERO, 0.0, false),
+            },
+            Piece::Head => match layout.head {
+                Some(head) => (head - Vec2::splat(hud::HEAD_WIDTH / 2.0), 0.0, true),
+                None => (Vec2::ZERO, 0.0, false),
+            },
+            Piece::Words => {
+                // The reference line runs through the point where it starts, and the words
+                // stand on the side it runs to.
+                let over = theme::capitals_height(HEADLINE.1) + OVER_LINE
+                    - REFERENCE / 2.0
+                    - capitals_room(HEADLINE.1);
+                let (align, left) = if layout.way > 0.0 {
+                    (AlignItems::Start, percent(0))
+                } else {
+                    (AlignItems::End, percent(-100))
+                };
+                if node.align_items != align {
+                    node.align_items = align;
+                }
+                let held = Val2::new(left, px(0));
+                if moved.translation.x != held.x {
+                    moved.translation.x = held.x;
+                }
+                (layout.start - Vec2::Y * over, 0.0, true)
+            }
+        };
+        let (left, top) = (px(at.x.round()), px(at.y.round()));
+        if node.left != left || node.top != top {
+            (node.left, node.top) = (left, top);
+        }
+        let turn = Rot2::radians(turn);
+        if moved.rotation != turn {
+            moved.rotation = turn;
+        }
+        let visible = if wanted {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+        shows.set_if_neq(visible);
+    }
+    // An alert of a teammate's loss says how far the wreck is from the tank that the view
+    // follows.
+    if let (Told::Lost { wreck, .. }, Some(from)) = (&alert.told, watched) {
+        let meters = scene::to_ground(from).distance(*wreck).round();
         for mut text in &mut distances {
-            let said = format!("{meters} m");
+            let said = format!("{meters} m from you").to_uppercase();
             if text.0 != said {
                 text.0 = said;
             }
@@ -1253,8 +1350,10 @@ fn earn(
     }
 }
 
-/// A stamp, which comes down in its column after this many seconds. A record next to an
-/// achievement takes a smaller stamp, on one line.
+/// A stamp, which comes down in its column after this many seconds: an approval stamp, its
+/// double frame turned a little, with what was earned in one field and its release, and the
+/// day of it, in the other. A record next to an achievement takes a smaller stamp, on one
+/// line.
 fn card(commands: &mut Commands, column: Entity, said: &StampWords, delay: f32, beside: bool) {
     let brief = said.brief.as_ref().filter(|_| beside);
     let fill = theme::VOID.with_alpha(STAMP_FILL);
@@ -1263,22 +1362,10 @@ fn card(commands: &mut Commands, column: Entity, said: &StampWords, delay: f32, 
             ChildOf(column),
             StampCard(delay),
             Notice(0.0),
-            match brief {
-                Some(_) => Node {
-                    align_items: AlignItems::Baseline,
-                    column_gap: px(16),
-                    border: UiRect::all(px(2)),
-                    padding: UiRect::new(px(26), px(22), px(7), px(9)),
-                    ..default()
-                },
-                None => Node {
-                    flex_direction: FlexDirection::Column,
-                    align_items: AlignItems::Center,
-                    row_gap: px(3),
-                    border: UiRect::all(px(2)),
-                    padding: UiRect::new(px(30), px(26), px(10), px(14)),
-                    ..default()
-                },
+            Node {
+                border: UiRect::all(px(STAMP_FRAME.0)),
+                padding: UiRect::all(px(STAMP_FRAME.1)),
+                ..default()
             },
             BorderColor::all(theme::GOOD),
             BackgroundColor(fill),
@@ -1294,15 +1381,83 @@ fn card(commands: &mut Commands, column: Entity, said: &StampWords, delay: f32, 
         border: Some(theme::GOOD),
         ..Inked::new(card)
     });
-    let parts = (card, card);
+    let ruled = |commands: &mut Commands, parent: Entity, node: Node| {
+        commands
+            .spawn((
+                ChildOf(parent),
+                Inked {
+                    border: Some(theme::GOOD),
+                    ..Inked::new(card)
+                },
+                node,
+                BorderColor::all(theme::GOOD),
+            ))
+            .id()
+    };
+    let inner = ruled(
+        commands,
+        card,
+        Node {
+            border: UiRect::all(px(STAMP_FRAME.2)),
+            ..default()
+        },
+    );
+    let field = ruled(
+        commands,
+        inner,
+        Node {
+            flex_direction: FlexDirection::Column,
+            row_gap: px(6),
+            padding: UiRect::new(px(16), px(16), px(8), px(9)),
+            border: UiRect::right(px(STAMP_FRAME.2)),
+            ..default()
+        },
+    );
+    let parts = (field, card);
     if let Some(brief) = brief {
-        words(commands, parts, EARNED_BRIEF, &said.earned, theme::GOOD);
-        words(commands, parts, MORE, brief, theme::TEXT);
-        return;
+        let line = commands
+            .spawn((
+                ChildOf(field),
+                Node {
+                    column_gap: px(14),
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+            ))
+            .id();
+        words(
+            commands,
+            (line, card),
+            EARNED_BRIEF,
+            &said.earned,
+            theme::GOOD,
+        );
+        words(commands, (line, card), MORE, brief, theme::LINE);
+    } else {
+        words(commands, parts, ABOUT, &said.about, theme::GOOD);
+        words(commands, parts, EARNED, &said.earned, theme::GOOD);
+        words(commands, parts, MORE, &said.more, theme::LINE);
     }
-    words(commands, parts, ABOUT, &said.about, theme::GOOD);
-    words(commands, parts, EARNED, &said.earned, theme::GOOD);
-    words(commands, parts, MORE, &said.more, theme::TEXT);
+    let release = commands
+        .spawn((
+            ChildOf(inner),
+            Node {
+                flex_direction: FlexDirection::Column,
+                justify_content: JustifyContent::Center,
+                row_gap: px(8),
+                padding: UiRect::axes(px(14), px(8)),
+                ..default()
+            },
+        ))
+        .id();
+    words(commands, (release, card), ABOUT, "Released", theme::GOOD);
+    words(
+        commands,
+        (release, card),
+        DAY,
+        sheet::day_of_issue(),
+        theme::GOOD,
+    );
 }
 
 /// Brings the stamps down: what waits comes once the stamps on the screen are gone, all of it
@@ -1315,8 +1470,31 @@ fn stamp(
     mut flash: ResMut<Flash>,
     mut sounds: MessageWriter<Sound>,
     mut cards: Query<(&StampCard, &mut Notice, &mut UiTransform)>,
+    (marks, mut columns): (
+        Option<Res<TagMarks>>,
+        Query<(&mut Node, &ComputedNode, &UiGlobalTransform), Without<StampCard>>,
+    ),
+    (ui_scale, camera): (
+        Option<Res<UiScale>>,
+        Option<Single<&Camera, With<MainCamera>>>,
+    ),
 ) {
     let seconds = time.delta_secs();
+    // The stamps move up out of the way of a tag of a barrier that stands under them.
+    if let Some((column, ..)) = stamps.column
+        && let Ok((mut node, computed, at)) = columns.get_mut(column)
+        && let (Some(marks), Some(scale), Some(camera)) = (marks, ui_scale, camera)
+        && let Some(screen) = camera.logical_viewport_size()
+    {
+        let scale = scale.0;
+        let half = computed.size / scale / 2.0;
+        let screen = screen / scale;
+        let home = Vec2::new(at.translation.x / scale, screen.y * STAMP_HEIGHT / 100.0);
+        let wanted = clear_of(home, half, &marks.0);
+        if node.top != wanted {
+            node.top = wanted;
+        }
+    }
     if let Some((column, age, count)) = stamps.column {
         let age = age + seconds;
         if age >= STAMP_TIME + STAMP_STEP * count.saturating_sub(1) as f32 {
@@ -1374,6 +1552,33 @@ fn stamp(
         let (shown, scale) = landing(age - card.0);
         notice.0 = shown;
         transform.scale = Vec2::splat(scale);
+    }
+}
+
+/// Where the middle of the stamps stands from the top of the screen, from where they stand when
+/// nothing is in their way: there, or over the tags of barriers that stand under them, by
+/// their middle and half their size. They keep clear of the top of the screen.
+fn clear_of(home: Vec2, half: Vec2, tags: &[Rect]) -> Val {
+    let room = |top: f32| Rect::from_center_half_size(Vec2::new(home.x, top), half);
+    let mut top = home.y;
+    // A tag that the stamps are moved over may be in the way of another one.
+    for _ in 0..tags.len() {
+        let mut moved = false;
+        for tag in tags {
+            if !room(top).inflate(STAMP_CLEAR.0).intersect(*tag).is_empty() {
+                top = tag.min.y - STAMP_CLEAR.0 - half.y - 0.5;
+                moved = true;
+            }
+        }
+        if !moved {
+            break;
+        }
+    }
+    let top = top.max(STAMP_CLEAR.1 + half.y);
+    if top >= home.y {
+        percent(STAMP_HEIGHT)
+    } else {
+        px(top.round())
     }
 }
 
@@ -1507,13 +1712,45 @@ mod tests {
     }
 
     #[test]
-    fn an_arrow_points_the_way_to_a_wreck() {
-        let turned = |to: Vec2| bearing(Vec2::ZERO, to).as_degrees().round();
-        // Up the screen, the way it is drawn, then to the right, down and to the left.
-        assert_eq!(turned(Vec2::new(0.0, -10.0)), 0.0);
-        assert_eq!(turned(Vec2::new(10.0, 0.0)), 90.0);
-        assert_eq!(turned(Vec2::new(0.0, 10.0)).abs(), 180.0);
-        assert_eq!(turned(Vec2::new(-10.0, 0.0)), -90.0);
+    fn an_alert_points_at_what_it_tells_of_from_a_note_that_stays_on_the_screen() {
+        let screen = Vec2::new(1920.0, 1080.0);
+        // Down at 60° to the right of the dot, as a leader note is drawn.
+        let middle = pointing(Vec2::new(800.0, 400.0), screen);
+        let (dot, bend) = middle.leader.unwrap();
+        assert_eq!(bend - dot, LEADER);
+        assert!(((bend - dot).to_angle().to_degrees() - 60.0).abs() < 0.2);
+        assert_eq!((middle.start, middle.way), (bend, 1.0));
+        // To the left past the most of the screen, and up from its bottom.
+        let low_right = pointing(Vec2::new(1700.0, 900.0), screen);
+        let (dot, bend) = low_right.leader.unwrap();
+        assert_eq!(bend - dot, Vec2::new(-LEADER.x, -LEADER.y));
+        assert_eq!(low_right.way, -1.0);
+        // From a balloon, the line starts past its red ring, and draws no leader.
+        let hung = hanging(Vec2::new(500.0, 500.0), -1.0, false);
+        assert_eq!(hung.start, Vec2::new(500.0 - HEAD_REACH, 500.0));
+        assert_eq!((hung.leader, hung.head), (None, None));
+        const { assert!(HEAD_REACH > hud::HEAD_WIDTH / 2.0 + balloons::LINE) };
+    }
+
+    #[test]
+    fn stamps_stand_over_the_tags_of_barriers_that_are_under_them() {
+        let (home, half) = (Vec2::new(960.0, 300.0), Vec2::new(300.0, 60.0));
+        // Nothing in the way: where they stand.
+        assert_eq!(clear_of(home, half, &[]), percent(STAMP_HEIGHT));
+        let far = Rect::from_center_half_size(Vec2::new(200.0, 300.0), Vec2::splat(40.0));
+        assert_eq!(clear_of(home, half, &[far]), percent(STAMP_HEIGHT));
+        // A tag under them: over it, by a gap.
+        let under = Rect::from_center_half_size(Vec2::new(960.0, 330.0), Vec2::splat(40.0));
+        let Val::Px(top) = clear_of(home, half, &[under]) else {
+            panic!("the stamps don't move");
+        };
+        assert!(top + half.y + STAMP_CLEAR.0 <= under.min.y);
+        // Never into the top of the screen.
+        let high = Rect::from_center_half_size(Vec2::new(960.0, 120.0), Vec2::splat(40.0));
+        let Val::Px(top) = clear_of(Vec2::new(960.0, 150.0), half, &[high]) else {
+            panic!("the stamps don't move");
+        };
+        assert_eq!(top, STAMP_CLEAR.1 + half.y);
     }
 
     /// A run of several players with the tanks of these seats, the one of the first seat being

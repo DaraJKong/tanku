@@ -37,7 +37,7 @@
 # Figures. A flag on the 1 and an oval 0 keep a typed seed from being misread, the 4 is open,
 # the 3 round-topped, and all of them are as wide, so that a counter does not jitter.
 0 5 A2.5,5,2.5,5,0,360
-1 5 M0.9,7.6 L2.5,10 L2.5,0
+1 5 M1.7,7.6 L3.3,10 L3.3,0
 2 5 A2.5,7.5,2.5,2.5,165,-38 L0,0 L5,0
 3 5 A2.5,7.6,2.4,2.4,155,-90 A2.5,2.6,2.5,2.6,90,-155
 4 5 M3.3,10 L0,2.8 L5,2.8 M3.9,6.4 L3.9,0
