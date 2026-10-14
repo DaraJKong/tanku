@@ -328,8 +328,11 @@ fn pointers(callouts: &Callouts, screen: &OnScreen) -> Option<Vec<Pointer>> {
     let middle = callouts.stand.point(false, Vec3::Y * models::TURRET_HEIGHT);
     let center = screen.point(middle)?;
     let meter = screen.point(middle + Vec3::X)?.distance(center);
+    // The ellipse keeps inside the room around the middle of the tank, wherever in the room
+    // that is.
     let room = callouts.room;
-    let reach = (room.half_size() - ROOM_EDGE).max(Vec2::splat(CALLOUT));
+    let reach = (center - room.min).min(room.max - center) - ROOM_EDGE;
+    let reach = reach.max(Vec2::splat(CALLOUT));
     let mut radii = Vec2::splat(meter * CIRCLE).min(reach);
     let mut parts = Vec::with_capacity(callouts.parts.len());
     for part in &callouts.parts {

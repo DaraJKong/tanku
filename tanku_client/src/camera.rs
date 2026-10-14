@@ -227,6 +227,12 @@ fn run_ahead(distance: f32) -> f32 {
     PAST_BARRIER * closeness * closeness * (3.0 - 2.0 * closeness)
 }
 
+/// How many times as many pixels a meter of ground takes across the screen as up it, at the
+/// point the view looks at: the ground is seen slanted, which shortens it from bottom to top.
+pub fn widening() -> f32 {
+    1.0 / PITCH.to_radians().sin()
+}
+
 /// Where the camera stands to look at a point of the ground, with this many meters of
 /// ground from the bottom to the top of the screen.
 fn eye(focus: Vec2, yaw: f32, span: f32) -> Transform {

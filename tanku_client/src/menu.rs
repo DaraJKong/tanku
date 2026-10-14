@@ -22,7 +22,7 @@ use tanku_core::{
 
 use crate::{
     Overlay, Screen,
-    camera::{MainCamera, View},
+    camera::{self, MainCamera, View},
     cli::Options,
     crew::LocalSeat,
     drawing::{self, Holds},
@@ -1145,10 +1145,11 @@ fn staging(screen: Screen, sheet: Vec2, parts: usize) -> (f32, Vec2, Rect) {
 
 /// How much ground a screen shows, and where its tank stands in meters from the middle of the
 /// screen, for the tank to stand in the middle of a room of the sheet with what is around it.
+/// A meter of the slanted ground takes more pixels across the screen than up it.
 pub fn stage_in(room: Rect, sheet: Vec2) -> (f32, Vec2) {
     let meter = (room.size().min_element() / (2.0 * EXHIBIT_REACH)).max(1.0);
     let span = (sheet.y / meter).clamp(EXHIBIT_SPANS.0, EXHIBIT_SPANS.1);
-    let meter = sheet.y / span;
+    let meter = Vec2::new(camera::widening(), 1.0) * sheet.y / span;
     let middle = room.center();
     let place = Vec2::new(middle.x - sheet.x / 2.0, sheet.y / 2.0 - middle.y) / meter;
     (span, place)
