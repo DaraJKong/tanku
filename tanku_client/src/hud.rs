@@ -172,6 +172,10 @@ const EDGE_MARGIN: f32 = 28.0;
 const ENEMY_MARKER: f32 = 16.0;
 /// The size of the marker of a teammate on screen, and the least gap between two markers.
 const MATE_MARKER: Vec2 = Vec2::new(TAG_WIDTH, 20.0);
+/// The red ring that closes on the marker of a tank that was just destroyed: how far from the
+/// marker it starts, and how long it takes to close.
+const RING_REACH: f32 = 10.0;
+const RING_TIME: f32 = 0.6;
 const MARKER_GAP: f32 = 3.0;
 
 /// How a player is named for short: by the number of their seat.
@@ -749,6 +753,7 @@ fn build(mut commands: Commands) {
             },
             BackgroundColor(fill),
             BorderColor::all(theme::PLAYER),
+            Outline::new(px(0), px(0), Color::NONE),
             Pickable::IGNORE,
             children![
                 theme::label(short_name(seat), 12.0, theme::TEXT_ON_ACCENT),
@@ -1222,6 +1227,18 @@ fn mate_look(wreck: bool) -> (Color, Color) {
     }
 }
 
+/// The edge of the marker of a tank, and the ring around it: a red ring closes on the marker
+/// of a tank that was destroyed this long ago, and the marker is red until it has.
+fn closing(since: Option<f32>) -> (Color, Outline) {
+    match since.filter(|since| *since < RING_TIME) {
+        Some(since) => {
+            let reach = RING_REACH * (1.0 - since / RING_TIME);
+            (theme::DANGER, Outline::new(px(2), px(reach), theme::DANGER))
+        }
+        None => (theme::PLAYER, Outline::new(px(0), px(0), Color::NONE)),
+    }
+}
+
 /// Whether a tank gets a marker when it is out of view. The tanks of the other players do. The
 /// tank of the player at this screen is in view for as long as it runs: it gets one as a
 /// wreck, when the view follows a teammate.
@@ -1284,6 +1301,7 @@ fn mark_mates(
         &mut Node,
         &mut BackgroundColor,
         &mut BorderColor,
+        &mut Outline,
         &Children,
     )>,
     mut numbers: Query<&mut TextColor>,
@@ -1331,11 +1349,13 @@ fn mark_mates(
         taken.push((place, MATE_MARKER));
         marked.push((player.seat, place, wreck));
     }
-    for (marker, mut node, mut fill, mut border, children) in &mut markers {
-        // The marker of a tank that was just destroyed blinks in the color of danger.
-        let blinks = Alarms::blink(alarms.lost(marker.0)) == Some(true);
-        let edge = if blinks { theme::DANGER } else { theme::PLAYER };
+    for (marker, mut node, mut fill, mut border, mut outline, children) in &mut markers {
+        // A red ring closes on the marker of a tank that was just destroyed.
+        let (edge, ring) = closing(alarms.lost(marker.0));
         border.set_if_neq(BorderColor::all(edge));
+        if *outline != ring {
+            *outline = ring;
+        }
         let Some(&(_, place, wreck)) = marked.iter().find(|(seat, ..)| *seat == marker.0) else {
             if node.display != Display::None {
                 node.display = Display::None;
@@ -1833,6 +1853,23 @@ mod tests {
             "WASD move, mouse aim, Left click shoot\n\
              Space shield, hold Left Shift to repair, Q/E turn the view, Esc menu"
         );
+    }
+
+    #[test]
+    fn a_red_ring_closes_on_the_marker_of_a_tank_just_destroyed() {
+        // Far from it at first, then on it, and gone once it has closed.
+        let (edge, ring) = closing(Some(0.0));
+        assert_eq!(
+            (edge, ring.offset, ring.width),
+            (theme::DANGER, px(RING_REACH), px(2))
+        );
+        assert_eq!(
+            closing(Some(RING_TIME / 2.0)).1.offset,
+            px(RING_REACH / 2.0)
+        );
+        let (edge, ring) = closing(Some(RING_TIME));
+        assert_eq!((edge, ring.width), (theme::PLAYER, px(0)));
+        assert_eq!(closing(None).0, theme::PLAYER);
     }
 
     #[test]
