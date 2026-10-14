@@ -228,12 +228,6 @@ pub mod old {
         let face = (FIGURES, FontWeight::NORMAL);
         lettered(content.into(), face, (size, 0.0), color)
     }
-
-    /// A seed: letters and figures that must not be taken for each other, so they are set
-    /// in the lettering, heavy and apart.
-    pub fn code(content: impl Into<String>, size: f32, color: Color) -> impl Bundle {
-        lettered(content.into(), (LETTERING, HEAVY), (size, TRACKING), color)
-    }
 }
 
 fn lettered(content: String, size: f32, pitch: f32, color: Color) -> impl Bundle {

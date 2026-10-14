@@ -434,8 +434,6 @@ fn margin(
 const MARGIN_TOP: f32 = 56.0;
 /// How wide the list of the main menu and its records are.
 const MENU_WIDTH: f32 = 500.0;
-/// How wide the forms of the other screens are: their rows, their choices and their notes.
-const FORM_WIDTH: f32 = 640.0;
 
 /// How wide the table of the garage is, its edges included.
 fn garage_width() -> f32 {
@@ -636,28 +634,6 @@ fn small_with(parent: &mut ChildSpawnerCommands, words: impl Bundle, width: f32,
     ));
 }
 
-/// One of the choices of a row. The one that is chosen stands in the accent and takes no
-/// press, and each of the others is a small button.
-fn choice(
-    parent: &mut ChildSpawnerCommands,
-    content: &str,
-    width: f32,
-    press: Press,
-    chosen: bool,
-) {
-    if !chosen {
-        return small(parent, content, width, press);
-    }
-    parent.spawn((
-        Node {
-            padding: UiRect::axes(px(6), px(5)),
-            ..button_node(px(width))
-        },
-        BorderColor::all(theme::ACCENT),
-        children![theme::old::text(content, 16.0, theme::ACCENT)],
-    ));
-}
-
 fn on_off(on: bool) -> &'static str {
     if on { "On" } else { "Off" }
 }
@@ -719,11 +695,6 @@ fn level_line(run: &Run) -> String {
         level.push_str(", arena mode");
     }
     level
-}
-
-/// A line that tells the player how a game of several players goes.
-fn status_line(parent: &mut ChildSpawnerCommands) {
-    parent.spawn((StatusLine, theme::old::text("", 17.0, theme::DANGER)));
 }
 
 /// The line that tells the player how a game of several players goes, as a note of a screen
@@ -1143,7 +1114,7 @@ fn staging(screen: Screen, sheet: Vec2, parts: usize) -> (f32, Vec2, Rect) {
         Screen::Garage => drawing::LEFT + garage_width() + 24.0,
         Screen::Lobby => drawing::LEFT + lobby_width() + JOIN_WIDTH + 48.0,
         Screen::Achievements => drawing::LEFT + register_width() + 24.0,
-        _ => drawing::LEFT + FORM_WIDTH,
+        _ => drawing::LEFT + form_width() + 24.0,
     };
     let room = Rect::new(left, edge, sheet.x - edge, sheet.y - SHEET_EDGE - below);
     let (span, place) = stage_in(room, sheet);
@@ -1572,6 +1543,126 @@ fn show_seed(
     }
 }
 
+/// The columns of the forms of the menus: the name of what a row asks, and what answers it.
+const FORM_COLUMNS: [f32; 2] = [250.0, 470.0];
+/// The fields of the upper row of the title block of a form.
+const FORM_TITLE: [f32; 4] = [160.0, 252.0, 144.0, 90.0];
+
+/// How wide a form is, its edges included.
+fn form_width() -> f32 {
+    drawing::title_width_of(&FORM_COLUMNS)
+}
+
+/// A row of a form: the name of what it asks, tagged if what it offers is new to the player,
+/// and what answers it.
+type FormRow<'a> = (
+    &'a str,
+    bool,
+    Box<dyn FnOnce(&mut ChildSpawnerCommands) + 'a>,
+);
+
+/// A form, as a request for a drawing is filled in: a ruled block of rows, each 56 px high or
+/// as high as what answers it, with its choices as boxes 44 px high.
+fn form(parent: &mut ChildSpawnerCommands, rows: Vec<FormRow>) {
+    parent
+        .spawn(drawing::block(Node {
+            align_self: AlignSelf::Start,
+            ..default()
+        }))
+        .with_children(|table| {
+            let last = rows.len().saturating_sub(1);
+            for (index, (name, new, holds)) in rows.into_iter().enumerate() {
+                table
+                    .spawn((
+                        Node {
+                            min_height: px(drawing::ROW),
+                            flex_shrink: 0.0,
+                            border: drawing::rules(false, index < last),
+                            ..default()
+                        },
+                        BorderColor::all(theme::RULE_DIM),
+                    ))
+                    .with_children(|row| {
+                        drawing::cell(row, FORM_COLUMNS[0], true, |cell| {
+                            cell.spawn(drawing::value(name, theme::TEXT));
+                            if new {
+                                cell.spawn(new_tag());
+                            }
+                        });
+                        drawing::cell(row, FORM_COLUMNS[1], false, holds);
+                    });
+            }
+        });
+}
+
+/// The keys under a form: what it is for, filled, and what leaves it.
+fn form_keys(
+    parent: &mut ChildSpawnerCommands,
+    (word, press): (&str, impl Bundle),
+    (back, leave): (&str, Press),
+) {
+    parent
+        .spawn(Node {
+            column_gap: px(12),
+            margin: UiRect::top(px(4)),
+            ..default()
+        })
+        .with_children(|keys| {
+            let width = px((form_width() - 12.0) / 2.0);
+            drawing::key_button(keys, word, width, (press, Primary), true);
+            drawing::key_button(keys, back, width, leave, false);
+        });
+}
+
+/// What a row of a form says of an option that the player has not unlocked yet: what
+/// unlocks it, dim.
+fn locked_choice(cell: &mut ChildSpawnerCommands, unlock: Unlock) {
+    let condition = unlocks::condition(unlock);
+    cell.spawn(drawing::value(condition, theme::TEXT_DIM));
+}
+
+/// The title block of a form: what it is, who fills it in if a seat says so, and a field of
+/// its own in the lower row.
+fn form_title_block(
+    parent: &mut ChildSpawnerCommands,
+    (title, kind): (&str, String),
+    seat: Option<u8>,
+    (label, holds): (&'static str, Holds),
+) {
+    let [owner, named, creator, rev] = FORM_TITLE;
+    let titled = Holds::Titled(title.to_string(), kind);
+    let mut upper = vec![drawing::Field::new(
+        owner,
+        "Legal owner",
+        Holds::Owner(None),
+    )];
+    match seat {
+        Some(seat) => {
+            upper.push(drawing::Field::new(named, "Title", titled));
+            upper.push(drawing::Field::new(
+                creator,
+                "Created by",
+                Holds::Balloon(seat),
+            ));
+        }
+        None => upper.push(drawing::Field::new(named + creator, "Title", titled)),
+    }
+    upper.push(drawing::Field::new(
+        rev,
+        "Rev",
+        Holds::Value(VERSION.to_string(), theme::TEXT),
+    ));
+    let lower = vec![
+        drawing::Field::new(owner + named, label, holds),
+        drawing::Field::new(
+            creator + rev,
+            "Date of issue",
+            Holds::Value(sheet::day_of_issue(), theme::TEXT),
+        ),
+    ];
+    drawing::title_block(parent, upper, lower);
+}
+
 /// The screen where a single player sets up a run: its difficulty, its seed and its options.
 /// What is locked says what unlocks it.
 fn solo_screen(
@@ -1594,6 +1685,8 @@ fn solo_screen(
     let (free, brought) = (is_free(&setup, &options), options.tank.is_some());
     let frees = open(&unlocks, &options, Unlock::FreeMode);
     let rooms = open(&unlocks, &options, Unlock::ArenaMode);
+    let new = |unlock| unlocks.is_unused(unlock);
+    let switch = [("Off", false), ("On", true)];
     commands
         .spawn((
             SoloRoot,
@@ -1607,125 +1700,152 @@ fn solo_screen(
             children![sheet::frame()],
         ))
         .with_children(|root| {
-            margin(root, 460.0, |parent| {
-                parent.spawn(theme::old::label(
-                    "Run of a single player",
-                    13.0,
-                    theme::TEXT_DIM,
+            margin(root, form_width(), |parent| {
+                parent.spawn(drawing::key("Run of a single player"));
+                parent.spawn(theme::label("Solo", theme::HEADING, theme::TEXT));
+                let mut rows: Vec<FormRow> = Vec::new();
+                // A player who has a single difficulty has nothing to choose, and is told what
+                // unlocks the other.
+                rows.push((
+                    "Difficulty",
+                    hard && new(Unlock::HardMode),
+                    Box::new(|cell: &mut ChildSpawnerCommands| {
+                        if !hard {
+                            cell.spawn(drawing::value("Normal", theme::TEXT));
+                            return;
+                        }
+                        for difficulty in Difficulty::ALL {
+                            let name = unlocks::difficulty_name(difficulty);
+                            let chosen = setup.difficulty == difficulty;
+                            let press = Press::Difficulty(difficulty);
+                            drawing::choice(cell, name, RUN_CHOICE, press, chosen);
+                        }
+                    }),
                 ));
-                parent.spawn(theme::old::title("Solo", 84.0, theme::TEXT));
-                section(parent, "Run");
-                let new = |unlock| unlocks.is_unused(unlock);
-                flagged_row(parent, "Difficulty", hard && new(Unlock::HardMode), |row| {
-                    // A player who has a single difficulty has nothing to choose.
-                    if !hard {
-                        row.spawn(theme::old::text("Normal", 16.0, theme::TEXT));
-                        return;
-                    }
-                    for difficulty in Difficulty::ALL {
-                        let name = unlocks::difficulty_name(difficulty);
-                        let chosen = setup.difficulty == difficulty;
-                        choice(row, name, 90.0, Press::Difficulty(difficulty), chosen);
-                    }
-                });
                 if !hard {
-                    row(parent, "Hard mode", |row| {
-                        let unlock = unlocks::condition(Unlock::HardMode);
-                        row.spawn(theme::old::text(unlock, 16.0, theme::TEXT_DIM));
-                    });
-                } else if setup.difficulty == Difficulty::Hard {
-                    line(parent, HARD_MODE, theme::TEXT_DIM);
+                    rows.push((
+                        "Hard mode",
+                        false,
+                        Box::new(|cell: &mut ChildSpawnerCommands| {
+                            locked_choice(cell, Unlock::HardMode);
+                        }),
+                    ));
                 }
-                flagged_row(
-                    parent,
+                rows.push((
                     "Arena mode",
                     rooms && new(Unlock::ArenaMode),
-                    |row| {
-                        if rooms {
-                            for (name, on) in [("Off", false), ("On", true)] {
-                                choice(row, name, 90.0, Press::Arena(on), setup.arena == on);
+                    Box::new(|cell: &mut ChildSpawnerCommands| {
+                        if !rooms {
+                            locked_choice(cell, Unlock::ArenaMode);
+                            return;
+                        }
+                        for (name, on) in switch {
+                            let press = Press::Arena(on);
+                            drawing::choice(cell, name, RUN_CHOICE, press, setup.arena == on);
+                        }
+                    }),
+                ));
+                rows.push((
+                    "Free mode",
+                    frees && new(Unlock::FreeMode),
+                    Box::new(|cell: &mut ChildSpawnerCommands| {
+                        if brought {
+                            let told = "On, in the tank of this playtest";
+                            cell.spawn(drawing::value(told, theme::TEXT));
+                        } else if frees {
+                            for (name, on) in switch {
+                                let press = Press::Free(on);
+                                drawing::choice(cell, name, RUN_CHOICE, press, setup.free == on);
                             }
                         } else {
-                            let unlock = unlocks::condition(Unlock::ArenaMode);
-                            row.spawn(theme::old::text(unlock, 16.0, theme::TEXT_DIM));
+                            locked_choice(cell, Unlock::FreeMode);
                         }
-                    },
-                );
-                if setup.arena {
-                    line(parent, ARENA_MODE, theme::TEXT_DIM);
-                }
-                flagged_row(parent, "Free mode", frees && new(Unlock::FreeMode), |row| {
-                    if brought {
-                        let told = "On, in the tank of this playtest";
-                        row.spawn(theme::old::text(told, 16.0, theme::TEXT));
-                    } else if frees {
-                        for (name, on) in [("Off", false), ("On", true)] {
-                            choice(row, name, 90.0, Press::Free(on), setup.free == on);
-                        }
-                    } else {
-                        let unlock = unlocks::condition(Unlock::FreeMode);
-                        row.spawn(theme::old::text(unlock, 16.0, theme::TEXT_DIM));
-                    }
-                });
+                    }),
+                ));
                 // In free mode, the player's tank is the one of their garage.
                 if free && !brought {
-                    row(parent, "Tank", |row| {
-                        let spent = format!("{} of {PLAYER_BUDGET} points", garage.tank.cost());
-                        row.spawn((
-                            Node {
-                                min_width: px(130),
-                                ..default()
-                            },
-                            children![theme::old::text(spent, 16.0, theme::TEXT)],
-                        ));
-                        small(row, "Garage", 110.0, Press::OpenGarage);
-                    });
+                    rows.push((
+                        "Your tank",
+                        false,
+                        Box::new(|cell: &mut ChildSpawnerCommands| {
+                            let spent = format!("{} of {PLAYER_BUDGET}", garage.tank.cost());
+                            cell.spawn(drawing::value(spent, theme::TEXT));
+                            let press = Press::OpenGarage;
+                            drawing::choice(cell, "Garage", RUN_CHOICE, press, false);
+                        }),
+                    ));
                 }
                 // A playtest brings teammates that the game drives, for a game of several
                 // players with nobody else at hand.
+                let teammates = setup.teammates;
                 if options.playtest {
-                    let teammates = setup.teammates;
-                    row(parent, "Teammates", |row| {
-                        for count in 0..MAX_PLAYERS as u8 {
-                            let name = match count {
-                                0 => "None".to_string(),
-                                count => count.to_string(),
-                            };
-                            let chosen = teammates.count == count;
-                            choice(row, &name, 60.0, Press::Teammates(count), chosen);
-                        }
-                    });
-                    if teammates.count > 0 {
-                        row(parent, "Skill", |row| {
-                            for player in Reference::ALL {
-                                let chosen = teammates.player == player;
-                                let name = hands_name(player);
-                                choice(row, name, 90.0, Press::Hands(player), chosen);
+                    rows.push((
+                        "Teammates",
+                        false,
+                        Box::new(move |cell: &mut ChildSpawnerCommands| {
+                            for count in 0..MAX_PLAYERS as u8 {
+                                let name = match count {
+                                    0 => "None".to_string(),
+                                    count => count.to_string(),
+                                };
+                                let chosen = teammates.count == count;
+                                let press = Press::Teammates(count);
+                                drawing::choice(cell, name, TEAM_CHOICE, press, chosen);
                             }
-                        });
-                        line(parent, TEAMMATES, theme::TEXT_DIM);
+                        }),
+                    ));
+                    if teammates.count > 0 {
+                        rows.push((
+                            "Skill",
+                            false,
+                            Box::new(move |cell: &mut ChildSpawnerCommands| {
+                                for player in Reference::ALL {
+                                    let chosen = teammates.player == player;
+                                    let name = hands_name(player);
+                                    let press = Press::Hands(player);
+                                    drawing::choice(cell, name, SKILL_CHOICE, press, chosen);
+                                }
+                            }),
+                        ));
                     }
                 }
-                flagged_row(parent, "Seed", types && new(Unlock::ChosenSeed), |row| {
-                    row.spawn((
-                        Node {
-                            min_width: px(130),
-                            ..default()
-                        },
-                        children![(
-                            SeedField,
-                            theme::old::code(setup.seed.clone(), 16.0, theme::TEXT)
-                        )],
-                    ));
-                    small(row, "New seed", 110.0, Press::Redraw);
-                });
+                rows.push((
+                    "Seed",
+                    types && new(Unlock::ChosenSeed),
+                    Box::new(|cell: &mut ChildSpawnerCommands| {
+                        cell.spawn((
+                            Node {
+                                flex_grow: 1.0,
+                                ..default()
+                            },
+                            children![(
+                                SeedField,
+                                theme::code(setup.seed.clone(), theme::VALUE, theme::TEXT)
+                            )],
+                        ));
+                        let width = RUN_CHOICE + 24.0;
+                        drawing::choice(cell, "New seed", width, Press::Redraw, false);
+                    }),
+                ));
+                form(parent, rows);
+                form_keys(parent, ("Start", Press::Begin), ("Back", Press::Abandon));
+                // What the options mean, and what the run earns.
+                if hard && setup.difficulty == Difficulty::Hard {
+                    note(parent, HARD_MODE, theme::TEXT_DIM);
+                }
+                if setup.arena {
+                    note(parent, ARENA_MODE, theme::TEXT_DIM);
+                }
+                if options.playtest && teammates.count > 0 {
+                    note(parent, TEAMMATES, theme::TEXT_DIM);
+                }
                 let hint = if types {
                     "Type a seed of your own, in letters and digits.".to_string()
                 } else {
                     let unlock = unlocks::condition(Unlock::ChosenSeed).to_lowercase();
                     format!("To type a seed of your own: {unlock}.")
                 };
-                line(parent, hint, theme::TEXT_DIM);
+                note(parent, hint, theme::TEXT_DIM);
                 // A playtest earns nothing either way, and says what it is elsewhere, unless it
                 // fakes achievements.
                 let unearned = match (setup.arena, free, setup.typed) {
@@ -1736,11 +1856,16 @@ fn solo_screen(
                 };
                 let told = unlocks.wanting() && (!options.playtest || unlocks.fake);
                 if let Some(why) = unearned.filter(|_| told) {
-                    line(parent, why, theme::TEXT);
+                    note(parent, why, theme::TEXT);
                 }
-                primary(parent, "Start", Press::Begin);
-                button(parent, "Back", Press::Abandon);
             });
+            let hard = unlocks::difficulty_name(setup.difficulty).to_lowercase();
+            form_title_block(
+                root,
+                ("Solo", format!("Run of one \u{b7} {hard}")),
+                Some(0),
+                ("Seed", Holds::Value(setup.seed.clone(), theme::TEXT)),
+            );
         });
 }
 
@@ -2426,60 +2551,48 @@ fn show_what_is_typed(
     }
 }
 
-/// The box of a field that takes what is typed, around the text that shows it. Where a
-/// screen has several, each is a button that gives the field the keys, and the one that has
-/// them is edged with the accent.
+/// The box of a field that takes what is typed, at least 44 px high, around the text that
+/// shows it, which runs on to more lines when it is long. Where a screen has several, each is
+/// a button that gives the field the keys, and the one that has them is edged with the
+/// accent.
 fn field_box(parent: &mut ChildSpawnerCommands, text: impl Bundle, among: Option<(Press, bool)>) {
     let node = Node {
         flex_grow: 1.0,
-        padding: UiRect::axes(px(12), px(10)),
-        min_height: px(48),
+        flex_basis: px(0),
+        min_height: px(drawing::CONTROL),
+        margin: UiRect::vertical(px(6)),
+        padding: UiRect::axes(px(12), px(6)),
         align_items: AlignItems::Center,
         border: UiRect::all(px(1)),
         ..default()
     };
+    let text = (
+        text,
+        TextLayout::default().with_linebreak(LineBreak::WordOrCharacter),
+    );
+    let ground = BackgroundColor(theme::SURFACE_RAISED);
     match among {
         None => {
-            parent.spawn((ruled(node), children![text]));
+            let edge = BorderColor::all(theme::RULE);
+            parent.spawn((node, ground, edge, children![text]));
         }
         Some((press, false)) => {
-            let ground = BackgroundColor(theme::SURFACE_RAISED);
             let edge = BorderColor::all(theme::RULE);
             parent.spawn((Button, press, node, ground, edge, children![text]));
         }
         Some((press, true)) => {
-            let ground = BackgroundColor(theme::SURFACE_RAISED);
             let edge = BorderColor::all(theme::ACCENT);
             parent.spawn((Button, Lit, press, node, ground, edge, children![text]));
         }
     }
 }
 
-/// The field of a password, next to the button that shows what is typed or hides it again.
-fn password_row(parent: &mut ChildSpawnerCommands, shown: bool, among: Option<(Press, bool)>) {
-    let row = Node {
-        column_gap: px(6),
-        align_items: AlignItems::Stretch,
-        ..default()
-    };
-    parent.spawn(row).with_children(|row| {
-        let text = (PasswordField, theme::old::text("", 22.0, theme::TEXT));
-        field_box(row, text, among);
-        // As tall as the field, with its word in the middle.
-        let reveal = if shown { "Hide" } else { "Show" };
-        row.spawn((
-            Button,
-            Press::Reveal,
-            Node {
-                padding: UiRect::axes(px(6), px(5)),
-                align_items: AlignItems::Center,
-                ..button_node(px(76))
-            },
-            BackgroundColor(theme::SURFACE_RAISED),
-            BorderColor::all(theme::RULE),
-            children![theme::old::text(reveal, 16.0, theme::TEXT)],
-        ));
-    });
+/// The field of a password, next to the choice that shows what is typed or hides it again.
+fn password_field(cell: &mut ChildSpawnerCommands, shown: bool, among: Option<(Press, bool)>) {
+    let text = (PasswordField, theme::figure("", theme::VALUE, theme::TEXT));
+    field_box(cell, text, among);
+    let reveal = if shown { "Hide" } else { "Show" };
+    drawing::choice(cell, reveal, REVEAL_CHOICE, Press::Reveal, false);
 }
 
 /// A host who opens the host screen finds the name of the game that they hosted last, and no
@@ -2522,39 +2635,53 @@ fn host_screen(
             children![sheet::frame()],
         ))
         .with_children(|root| {
-            margin(root, 440.0, |parent| {
-                parent.spawn(theme::old::label(
-                    "Game of several players",
-                    13.0,
-                    theme::TEXT_DIM,
-                ));
-                parent.spawn((
-                    theme::old::title("Host a game", 64.0, theme::TEXT),
-                    Node {
-                        margin: UiRect::bottom(px(8)),
-                        ..default()
-                    },
-                ));
-                section(parent, "Name of the game");
+            margin(root, form_width(), |parent| {
+                parent.spawn(drawing::key("Game of several players"));
+                parent.spawn(theme::label("Host a game", theme::HEADING, theme::TEXT));
                 let named = opening.field == Field::Name;
-                let text = (NameField, theme::old::text("", 22.0, theme::TEXT));
-                parent.spawn(Node::default()).with_children(|row| {
-                    field_box(row, text, Some((Press::Field(Field::Name), named)))
-                });
-                section(parent, "Password");
-                let among = (Press::Field(Field::Password), !named);
-                password_row(parent, opening.password.shown, Some(among));
-                line(
+                let shown = opening.password.shown;
+                let rows: Vec<FormRow> = vec![
+                    (
+                        "Name",
+                        false,
+                        Box::new(move |cell: &mut ChildSpawnerCommands| {
+                            let text = (NameField, theme::figure("", theme::VALUE, theme::TEXT));
+                            field_box(cell, text, Some((Press::Field(Field::Name), named)));
+                        }),
+                    ),
+                    (
+                        "Password",
+                        false,
+                        Box::new(move |cell: &mut ChildSpawnerCommands| {
+                            let among = (Press::Field(Field::Password), !named);
+                            password_field(cell, shown, Some(among));
+                        }),
+                    ),
+                ];
+                form(parent, rows);
+                form_keys(
+                    parent,
+                    ("Open the game", Press::Host),
+                    ("Back", Press::Abandon),
+                );
+                status_note(parent);
+                note(
                     parent,
                     "The others find the game under its name on their join screen. With a \
                      password, only those who type it get in. A game needs neither. Tab changes \
                      the field, and Enter opens the game.",
                     theme::TEXT_DIM,
                 );
-                primary(parent, "Open the game", Press::Host);
-                button(parent, "Back", Press::Abandon);
-                status_line(parent);
             });
+            form_title_block(
+                root,
+                ("Host a game", "Several players".to_string()),
+                Some(0),
+                (
+                    "Status",
+                    Holds::Value("In preparation".to_string(), theme::TEXT),
+                ),
+            );
         });
 }
 
@@ -2602,6 +2729,7 @@ fn join_screen(
     for root in &roots {
         commands.entity(root).despawn();
     }
+    let status = |said: &str| ("Status", Holds::Value(said.to_string(), theme::TEXT));
     commands
         .spawn((
             JoinRoot,
@@ -2615,76 +2743,99 @@ fn join_screen(
             children![sheet::frame()],
         ))
         .with_children(|root| {
-            margin(root, 440.0, |parent| {
-                parent.spawn(theme::old::label(
-                    "Game of several players",
-                    13.0,
-                    theme::TEXT_DIM,
-                ));
-                parent.spawn((
-                    theme::old::title("Join a game", 64.0, theme::TEXT),
-                    Node {
-                        margin: UiRect::bottom(px(8)),
-                        ..default()
-                    },
-                ));
+            let title = ("Join a game", "Several players".to_string());
+            margin(root, form_width(), |parent| {
+                parent.spawn(drawing::key("Game of several players"));
+                parent.spawn(theme::label("Join a game", theme::HEADING, theme::TEXT));
                 // A game that has a password asks for it before anything else.
                 if let Some(shut) = &asked.0 {
-                    section(parent, "Password of the game");
-                    line(parent, shut_words(shut), theme::TEXT);
-                    password_row(parent, entry.0.shown, None);
+                    let (game, shown) = (shut_words(shut), entry.0.shown);
+                    let rows: Vec<FormRow> = vec![
+                        (
+                            "Game",
+                            false,
+                            Box::new(move |cell: &mut ChildSpawnerCommands| {
+                                cell.spawn((
+                                    drawing::value(game, theme::TEXT),
+                                    TextLayout::default()
+                                        .with_linebreak(LineBreak::WordOrCharacter),
+                                ));
+                            }),
+                        ),
+                        (
+                            "Password",
+                            false,
+                            Box::new(move |cell: &mut ChildSpawnerCommands| {
+                                password_field(cell, shown, None);
+                            }),
+                        ),
+                    ];
+                    form(parent, rows);
+                    form_keys(parent, ("Join", Press::Join), ("Back", Press::Forget));
+                    status_note(parent);
                     let hint = "Its host gives it to those who may join. Enter joins.";
-                    line(parent, hint, theme::TEXT_DIM);
-                    primary(parent, "Join", Press::Join);
-                    button(parent, "Back", Press::Forget);
-                    status_line(parent);
+                    note(parent, hint, theme::TEXT_DIM);
                     return;
                 }
                 // A browser neither looks around a network nor joins by an address alone.
                 if cfg!(target_arch = "wasm32") {
-                    section(parent, "Link of the host");
+                    parent.spawn(drawing::key("Link of the host"));
                     for told in [
                         "A browser joins a game by the link that its host hands out.",
                         "Open that link in this browser, or paste it into this page.",
                     ] {
-                        line(parent, told, theme::TEXT_DIM);
+                        note(parent, told, theme::TEXT);
                     }
                     // A link that was followed before can be followed again.
                     if net::link().is_some() {
-                        primary(parent, "Join the game of the link", Press::Join);
+                        let link = ("Join the game of the link", Press::Join);
+                        form_keys(parent, link, ("Back", Press::Abandon));
+                    } else {
+                        parent
+                            .spawn(Node {
+                                margin: UiRect::top(px(4)),
+                                ..default()
+                            })
+                            .with_children(|keys| {
+                                let width = px((form_width() - 12.0) / 2.0);
+                                drawing::key_button(keys, "Back", width, Press::Abandon, false);
+                            });
                     }
-                    button(parent, "Back", Press::Abandon);
-                    status_line(parent);
+                    status_note(parent);
                     return;
                 }
-                section(parent, "Games on this network");
+                parent.spawn(drawing::key("Games on this network"));
                 parent.spawn((
                     FoundList,
                     Node {
                         flex_direction: FlexDirection::Column,
-                        row_gap: px(6),
+                        flex_shrink: 0.0,
                         ..default()
                     },
                 ));
-                section(parent, "Address of the host");
-                parent.spawn((
-                    ruled(Node {
-                        padding: UiRect::axes(px(12), px(10)),
-                        min_height: px(48),
-                        align_items: AlignItems::Center,
-                        ..default()
+                let rows: Vec<FormRow> = vec![(
+                    "Address",
+                    false,
+                    Box::new(|cell: &mut ChildSpawnerCommands| {
+                        let text = (AddressField, theme::figure("", theme::VALUE, theme::TEXT));
+                        field_box(cell, text, None);
                     }),
-                    children![(AddressField, theme::old::figure("", 22.0, theme::TEXT))],
-                ));
-                line(
+                )];
+                form(parent, rows);
+                form_keys(parent, ("Join", Press::Join), ("Back", Press::Abandon));
+                status_note(parent);
+                note(
                     parent,
                     "For a game that isn't listed: the lobby of its host shows it. Enter joins.",
                     theme::TEXT_DIM,
                 );
-                primary(parent, "Join", Press::Join);
-                button(parent, "Back", Press::Abandon);
-                status_line(parent);
             });
+            let said = if asked.0.is_some() {
+                "Asked for its password"
+            } else {
+                "In preparation"
+            };
+            form_title_block(root, title, None, status(said));
         });
 }
 
@@ -2708,54 +2859,71 @@ fn found_words(game: &Game) -> String {
     }
 }
 
-/// The row of a game that was found: its name over its address, or its address alone, and
-/// what a player can do about it. One that can be joined is a button.
-fn found_row(parent: &mut ChildSpawnerCommands, game: &Game) {
+/// The row of a game that was found, as a row of a list with a note: its name, or its address
+/// alone, over its address and what a player can do about it. One that can be joined is a
+/// button; the others are dim.
+fn found_row(parent: &mut ChildSpawnerCommands, number: usize, game: &Game) {
     let open = game.standing == Standing::Open;
-    let ink = if open { theme::TEXT } else { theme::TEXT_DIM };
-    let node = Node {
-        flex_direction: FlexDirection::Column,
-        row_gap: px(2),
-        padding: UiRect::axes(px(16), px(8)),
-        border: UiRect::all(px(1)),
-        ..default()
-    };
-    let (address, words) = (game.address.clone(), found_words(game));
-    let content = |row: &mut ChildSpawnerCommands| {
-        let below = Node {
-            justify_content: JustifyContent::SpaceBetween,
-            align_items: AlignItems::Center,
-            column_gap: px(16),
-            ..default()
-        };
-        if game.name.is_empty() {
-            row.spawn(theme::old::figure(address, 20.0, ink));
-            row.spawn(theme::old::text(words, 15.0, theme::TEXT_DIM));
-        } else {
-            row.spawn(theme::old::text(game.name.clone(), 18.0, ink));
-            row.spawn((
-                below,
-                children![
-                    theme::old::figure(address, 15.0, theme::TEXT_DIM),
-                    theme::old::text(words, 15.0, theme::TEXT_DIM),
-                ],
-            ));
-        }
+    let (name, note) = match game.name.as_str() {
+        "" => (game.address.clone(), found_words(game)),
+        name => (
+            name.to_string(),
+            format!("{} \u{b7} {}", game.address, found_words(game)),
+        ),
     };
     if open {
-        let button = (
-            Button,
+        drawing::noted_row(
+            parent,
+            number,
+            (name, note),
             Press::JoinFound(game.id),
-            node,
-            BackgroundColor(theme::SURFACE_RAISED),
-            BorderColor::all(theme::RULE),
+            false,
         );
-        parent.spawn(button).with_children(content);
-    } else {
-        parent
-            .spawn((node, BorderColor::all(theme::RULE_DIM)))
-            .with_children(content);
+        return;
     }
+    parent
+        .spawn((
+            Node {
+                height: px(drawing::NOTED_ROW),
+                flex_shrink: 0.0,
+                border: UiRect::all(px(1)),
+                ..default()
+            },
+            UiTransform::from_translation(Val2::px(0.0, 1.0 - number as f32)),
+            BorderColor::all(theme::RULE_DIM),
+        ))
+        .with_children(|row| {
+            row.spawn((
+                Node {
+                    width: px(drawing::ROW),
+                    flex_shrink: 0.0,
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    border: UiRect::right(px(1)),
+                    ..default()
+                },
+                BorderColor::all(theme::RULE_DIM),
+                children![theme::figure(
+                    format!("{number:02}"),
+                    theme::LABEL,
+                    theme::TEXT_DIM
+                )],
+            ));
+            row.spawn((
+                Node {
+                    flex_grow: 1.0,
+                    flex_direction: FlexDirection::Column,
+                    justify_content: JustifyContent::Center,
+                    row_gap: px(4),
+                    padding: UiRect::horizontal(px(18)),
+                    ..default()
+                },
+                children![
+                    drawing::value(name, theme::TEXT_DIM),
+                    theme::label(note, theme::LABEL, theme::TEXT_DIM),
+                ],
+            ));
+        });
 }
 
 /// Lists the games that were found on the local network, again whenever one comes, goes or
@@ -2769,12 +2937,12 @@ fn list_games(mut commands: Commands, found: Res<Found>, lists: Query<(Entity, R
             .entity(list)
             .despawn_related::<Children>()
             .with_children(|rows| {
-                for game in &found.0 {
-                    found_row(rows, game);
+                for (index, game) in found.0.iter().enumerate() {
+                    found_row(rows, index + 1, game);
                 }
                 if found.0.is_empty() {
                     let none = "None so far. A game that is hosted on this network shows here.";
-                    line(rows, none, theme::TEXT_DIM);
+                    note(rows, none, theme::TEXT_DIM);
                 }
             });
     }
@@ -3030,6 +3198,11 @@ const RUN_COLUMNS: [f32; 2] = [200.0, 360.0];
 /// The balloon of a seat, and a choice of the run.
 const SEAT_BALLOON: f32 = 48.0;
 const RUN_CHOICE: f32 = 144.0;
+/// The choices of the teammates of a playtest, of how well they play, and of showing a
+/// password.
+const TEAM_CHOICE: f32 = 96.0;
+const SKILL_CHOICE: f32 = 140.0;
+const REVEAL_CHOICE: f32 = 96.0;
 /// The column right of the tables of the lobby, which tells how the others join, and the key
 /// that copies what it tells.
 const JOIN_WIDTH: f32 = 374.0;
@@ -5951,7 +6124,7 @@ mod tests {
         // Locked: nothing to choose, and the screen says what unlocks it.
         let locked = |app: &mut App| build(app, solo_screen);
         assert_eq!(offers(locked), [] as [bool; 0]);
-        assert!(says(&texts(locked), "Clear sector 10"));
+        assert!(says(&texts(locked), "CLEAR SECTOR 10"));
         // Unlocked and off: it can be turned on.
         let off = |app: &mut App| {
             app.insert_resource(Unlocks::of(&[Unlock::ArenaMode]));
@@ -7323,7 +7496,7 @@ mod tests {
             .insert_resource(Unlocks::fake());
             build(app, solo_screen);
         };
-        assert!(says(&texts(first_time), "Clear sector 10"));
+        assert!(says(&texts(first_time), "CLEAR SECTOR 10"));
         // The records of its runs are kept, in memory.
         let mut records = Records::fake();
         let run = Run {
