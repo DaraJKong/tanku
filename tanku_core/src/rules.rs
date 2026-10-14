@@ -87,6 +87,7 @@ pub const APPEAR_APART: f32 = BALANCE.room.apart;
 
 /// In arena mode, the share of a group that comes with it, in percent and rounded up. The
 /// room holds no more of the group at once: each of the others comes when one is destroyed.
+/// A group of two comes whole, whatever the share.
 pub const ROOM_AT_ONCE: u32 = BALANCE.room.at_once;
 /// In arena mode, the time between the end of a group and the coming of the next one, and the
 /// time before the first group of a run.

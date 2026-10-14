@@ -231,7 +231,7 @@ room    at-once 50%  lull 3s  life-every 5  rise 2s  apart 2m  cover 150%  size 
 
 | Word of `room` | What it says |
 |---|---|
-| `at-once` | The share of a group that the room holds at once, rounded up |
+| `at-once` | The share of a group that the room holds at once, rounded up. A group of two comes whole, whatever the share. |
 | `lull` | The time before a group comes |
 | `life-every` | A single player gets a life back for every so many groups cleared |
 | `rise` | How long the place of a block or of a crate is drawn before it stands there |

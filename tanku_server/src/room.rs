@@ -1,9 +1,9 @@
 //! A run in arena mode: one room, and one group after another without end.
 //!
 //! The run never leaves the room, so nothing unlocks and nothing is crossed. A group is the
-//! group of the sector of its number. Half of it comes when the group does, and then a tank
-//! for each one that is destroyed: the room stays as full until the group has no more to
-//! send. Between two groups there is a short lull: the room is laid out anew, and the next
+//! group of the sector of its number. Half of it comes when the group does, or both tanks of
+//! a group of two, and then a tank for each one that is destroyed: the room stays as full
+//! until the group has no more to send. Between two groups there is a short lull: the room is laid out anew, and the next
 //! group stands in reserve outside the south wall, where the players read it as they read a
 //! group through a barrier.
 

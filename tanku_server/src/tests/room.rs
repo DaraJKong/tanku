@@ -326,6 +326,42 @@ fn put_to_sleep(app: &mut App, group: u32) {
 }
 
 #[test]
+fn a_group_of_two_comes_whole() {
+    // Group 7 has two tanks against a single player.
+    let mut app = before_group("TEST", 1, 7);
+    shelter(&mut app);
+    stand_aside(&mut app);
+    // During the lull, both wait in reserve side by side, as the tanks that come first of a
+    // larger group do: no gap parts one from the other.
+    let row: Vec<f32> = reserves(&mut app).iter().map(|(_, at)| at.x).collect();
+    let three = room_of("TEST").reserve(&[2, 1]);
+    assert_eq!(row.len(), 2);
+    assert!((row[1] - row[0] - (three[1].x - three[0].x)).abs() < 1e-4);
+
+    // When the lull is over, the group is announced and both places are marked at once.
+    wait_for_the_group(&mut app);
+    tick(&mut app, 2);
+    let news = events(&mut app);
+    assert_eq!(count(&news, announced), 1);
+    assert_eq!(count(&news, incoming), 2);
+    assert!(reserves(&mut app).is_empty());
+    tick(&mut app, seconds(APPEAR_TIME) + 2);
+    put_to_sleep(&mut app, 7);
+    assert_eq!(there(&mut app, 7), [0, 1]);
+
+    // Nobody comes for the first one that is destroyed, and the other one clears the group.
+    let first = enemies(&mut app, 7)[0];
+    destroy(&mut app, first);
+    tick(&mut app, seconds(APPEAR_TIME) + 2);
+    assert_eq!(told(&mut app, incoming), 0);
+    assert_eq!(there(&mut app, 7).len(), 1);
+    assert_eq!(run(&app).cleared, 6);
+    destroy_enemies(&mut app, 7);
+    tick(&mut app, 1);
+    assert_eq!(run(&app).cleared, 7);
+}
+
+#[test]
 fn the_room_holds_half_of_a_group_for_as_long_as_a_tank_waits_in_reserve() {
     for (players, group) in [(1, 15), (1, 7), (4, 15), (2, 3)] {
         let mut app = before_group("BRAVO", players, group);

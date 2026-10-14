@@ -112,9 +112,13 @@ pub fn wave_sizes(count: u32, waves: u32) -> Vec<u32> {
 
 /// How many tanks of a group of arena mode come with it, and how many wait in reserve, each
 /// to take the place of one that is destroyed. The first are a share of the group, rounded
-/// up: the room holds no more of a group at once.
+/// up: the room holds no more of a group at once. A group of two comes whole, since one tank
+/// and then the other would be fought as two groups of one.
 pub fn room_parts(count: u32) -> (u32, u32) {
-    let first = (count * ROOM_AT_ONCE).div_ceil(100);
+    let first = match count {
+        2 => 2,
+        _ => (count * ROOM_AT_ONCE).div_ceil(100),
+    };
     (first, count - first)
 }
 
@@ -237,19 +241,24 @@ mod tests {
         assert_eq!(room_parts(6), (3, 3));
         assert_eq!(room_parts(5), (3, 2));
         assert_eq!(room_parts(15), (8, 7));
-        // A tank that is alone has nobody to take its place.
+        assert_eq!(room_parts(3), (2, 1));
+        // A tank that is alone has nobody to take its place, and two tanks come together:
+        // one and then the other would be two groups of one.
         assert_eq!(room_parts(1), (1, 0));
+        assert_eq!(room_parts(2), (2, 0));
         assert_eq!(room_parts(0), (0, 0));
         // The group of a sector, of which half is there at once, and the group of an arena,
         // which is half as large again and comes in three waves: the most tanks that the
-        // players face together are the same. And nobody waits longer than a tank is there
-        // to be destroyed for them.
+        // players face together are the same, but for a pair: the arena of its sector has
+        // three tanks, and sends them one at a time. And nobody waits longer than a tank is
+        // there to be destroyed for them.
         for sector in 1..=40 {
             for players in 1..=4 {
                 let count = enemy_count(sector, players, false);
                 let (first, held) = room_parts(count);
                 let arena = wave_sizes(enemy_count(sector, players, true), ARENA_WAVES);
-                assert_eq!(first, arena[0], "sector {sector}, {players} players");
+                let wave = if count == 2 { 1 } else { first };
+                assert_eq!(wave, arena[0], "sector {sector}, {players} players");
                 assert!(first + held == count && held <= first);
             }
         }

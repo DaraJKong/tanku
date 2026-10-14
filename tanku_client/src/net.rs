@@ -1166,15 +1166,15 @@ pub(crate) mod tests {
         let run = guest.world().resource::<Run>().clone();
         assert!(run.arena && !run.earns && run.lull.is_some());
         assert_eq!((run.sector, run.players, run.solo), (0, 2, false));
-        // Two players call for two tanks, which come one at a time.
+        // Two players call for two tanks, which come together.
         assert_eq!(reserves(&mut guest).len(), 2);
 
-        // After the lull, the group is on for both, and its first tank is in the room.
+        // After the lull, the group is on for both, and both of its tanks are in the room.
         run_until("the group", &mut [&mut host, &mut guest], |games| {
             let run = games[1].world().resource::<Run>();
-            (run.sector, run.lull) == (1, None) && enemies(games[1]) == 1
+            (run.sector, run.lull) == (1, None) && enemies(games[1]) == 2
         });
-        assert_eq!(reserves(&mut guest).len(), 1);
+        assert!(reserves(&mut guest).is_empty());
 
         // The host's game clears the group. The room is laid out anew: the guest is told of
         // what is planned, and then of what stands, as the next group goes into reserve.

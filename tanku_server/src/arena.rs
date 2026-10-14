@@ -6,8 +6,9 @@
 //! The place of each tank is marked for a moment before the tank is there.
 //!
 //! A group of arena mode is held back the same way, in the same room as the one before it.
-//! It doesn't come in waves: half of it comes at first, and then a tank for each one that is
-//! destroyed, so that the room stays as full until nothing is held back.
+//! It doesn't come in waves: half of it comes at first, or the whole of a group of two, and
+//! then a tank for each one that is destroyed, so that the room stays as full until nothing
+//! is held back.
 
 use bevy::prelude::*;
 use tanku_core::{

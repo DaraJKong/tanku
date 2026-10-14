@@ -107,7 +107,7 @@ pub enum Order {
 /// The enemies that an arena still holds back. An arena is empty when the players come in:
 /// its enemies appear in waves, each when the one before it is destroyed, at places that are
 /// marked for a moment first. A group of arena mode is held back the same way, and comes
-/// half at first, then a tank for each one that is destroyed.
+/// half at first, or whole for a group of two, then a tank for each one that is destroyed.
 #[derive(Clone, Debug)]
 pub struct Arena {
     /// The tanks that have not come, the next ones first, in the waves that they were drawn
