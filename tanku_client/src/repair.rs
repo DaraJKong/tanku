@@ -146,8 +146,11 @@ fn clear_circles(mut commands: Commands, circles: Query<Entity, With<Circle>>) {
 
 /// Keeps the top of a circle at the top of the screen, whichever way the view is turned.
 fn turn_circles(view: Res<View>, mut circles: Query<&mut Transform, With<Circle>>) {
+    let turn = Quat::from_rotation_y(view.yaw());
     for mut transform in &mut circles {
-        transform.rotation = Quat::from_rotation_y(view.yaw());
+        if transform.rotation != turn {
+            transform.rotation = turn;
+        }
     }
 }
 

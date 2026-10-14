@@ -837,6 +837,24 @@ fn shown(visible: bool) -> Display {
     }
 }
 
+/// Shows a node or hides it. A node that is touched is laid out again, with the whole
+/// interface around it: one that doesn't change is left alone.
+fn show(node: &mut Mut<Node>, visible: bool) {
+    let display = shown(visible);
+    if node.display != display {
+        node.display = display;
+    }
+}
+
+/// Shows a node at a place of the screen, in the pixels of the interface, touching it only if
+/// it moves or comes back.
+fn put(node: &mut Mut<Node>, at: Vec2) {
+    let (left, top) = (px(at.x), px(at.y));
+    if node.display != Display::Flex || node.left != left || node.top != top {
+        (node.display, node.left, node.top) = (Display::Flex, left, top);
+    }
+}
+
 /// How a run is played, as the display says it under the name of the game: alone or with
 /// others, in arena mode, and in free mode. A playtest says that it is one, because it sets
 /// no record.
@@ -1030,15 +1048,18 @@ fn status(
             text.0 = wanted;
         }
     }
-    for (pip, mut color, mut border, mut node) in &mut pips {
+    for (pip, mut color_of, mut border_of, mut node) in &mut pips {
+        // The square is colored here, and its colors are only touched if they change: the
+        // engine draws a square that is touched again.
+        let (mut color, mut border) = (*color_of, *border_of);
         match *pip {
             // A single player has lives.
             Pip::Life(life) => {
-                node.display = shown(run.solo && !infinite_lives);
+                show(&mut node, run.solo && !infinite_lives);
                 light(life <= run.lives, theme::ACCENT, &mut color, &mut border);
                 // The last one is edged in the color of danger.
                 if last_life && life == 1 {
-                    *border = BorderColor::all(theme::DANGER);
+                    border = BorderColor::all(theme::DANGER);
                 }
                 // The life that was just lost blinks red, and one that was taken back green.
                 let lost = alarms.life.filter(|(lost, _)| *lost == life);
@@ -1047,7 +1068,7 @@ fn status(
                 }
                 let back = alarms.back.filter(|(back, _)| *back == life);
                 if Alarms::blink(back.map(|(_, since)| since)) == Some(true) {
-                    (color.0, *border) = (theme::GOOD_FILL, BorderColor::all(theme::GOOD));
+                    (color.0, border) = (theme::GOOD_FILL, BorderColor::all(theme::GOOD));
                 }
             }
             // Several players have each other: a square for each tank, with the number of
@@ -1056,11 +1077,11 @@ fn status(
                 let mate = crew.iter().find(|(player, _)| player.seat == seat);
                 // The square of a player who left the game stays a moment, struck out.
                 let leaving = mate.is_none() && alarms.left(seat).is_some();
-                node.display = shown(!run.solo && (mate.is_some() || leaving));
+                show(&mut node, !run.solo && (mate.is_some() || leaving));
                 let runs = mate.is_some_and(|(_, wreck)| !wreck);
                 light(runs, theme::ACCENT, &mut color, &mut border);
                 if leaving {
-                    *border = BorderColor::all(theme::RULE_DIM);
+                    border = BorderColor::all(theme::RULE_DIM);
                 }
                 // The square of a tank that was just destroyed blinks.
                 if let Some(on) = Alarms::blink(alarms.lost(seat)) {
@@ -1069,6 +1090,8 @@ fn status(
             }
             _ => {}
         }
+        color_of.set_if_neq(color);
+        border_of.set_if_neq(border);
     }
     for (number, mut ink) in &mut numbers {
         let mut mates = crew.iter().filter(|(player, _)| player.seat == number.0);
@@ -1113,19 +1136,25 @@ fn weapons(
             Pip::Mine(mine) => (mine <= genome.mines(), mine + armed <= genome.mines()),
             Pip::Life(_) | Pip::Mate(_) => continue,
         };
-        node.display = shown(fitted);
-        light(on, theme::TEXT, &mut color, &mut border);
+        show(&mut node, fitted);
+        let (mut fill, mut edge) = (*color, *border);
+        light(on, theme::TEXT, &mut fill, &mut edge);
+        color.set_if_neq(fill);
+        border.set_if_neq(edge);
     }
     let has_shield = genome.level(Stat::Shield) > 0;
     let cooldown = genome.shield_cooldown().unwrap_or(1.0);
     let (fill, shield_color, state) = shield_gauge(shield, cooldown, theme::ACCENT);
     for (bar, mut color, mut node) in &mut bars {
-        match bar {
-            Bar::Reload => node.width = percent(100.0 * gun.reload / genome.reload_time()),
+        let width = match bar {
+            Bar::Reload => percent(100.0 * gun.reload / genome.reload_time()),
             Bar::Shield => {
-                node.width = percent(if has_shield { 100.0 * fill } else { 0.0 });
-                color.0 = shield_color;
+                color.set_if_neq(BackgroundColor(shield_color));
+                percent(if has_shield { 100.0 * fill } else { 0.0 })
             }
+        };
+        if node.width != width {
+            node.width = width;
         }
     }
     for (readout, mut text) in &mut readouts {
@@ -1231,7 +1260,7 @@ fn toasts(
         *shown = u8::MAX;
     }
     toast.0 = (toast.0 - time.delta_secs()).max(0.0);
-    color.0 = theme::TEXT.with_alpha((toast.0 / 0.5).min(1.0));
+    color.set_if_neq(TextColor(theme::TEXT.with_alpha((toast.0 / 0.5).min(1.0))));
 }
 
 /// Points to the last enemies of the sector when they are out of view.
@@ -1264,13 +1293,11 @@ fn mark_enemies(
         // An enemy behind the camera has no place on the screen, but that never happens when
         // looking down from above.
         let Some(edge) = on_screen.and_then(|at| edge_place(at, size, EDGE_MARGIN)) else {
-            node.display = Display::None;
+            show(&mut node, false);
             continue;
         };
         let edge = edge - Vec2::splat(ENEMY_MARKER / 2.0);
-        node.display = Display::Flex;
-        node.left = px(edge.x / ui_scale.0);
-        node.top = px(edge.y / ui_scale.0);
+        put(&mut node, edge / ui_scale.0);
     }
 }
 
@@ -1427,8 +1454,7 @@ fn mark_mates(
             continue;
         };
         let corner = (place - MATE_MARKER / 2.0).round();
-        node.display = Display::Flex;
-        (node.left, node.top) = (px(corner.x), px(corner.y));
+        put(&mut node, corner);
         let (wanted, ink) = mate_look(wreck);
         if fill.0 != wanted {
             fill.0 = wanted;
@@ -1480,12 +1506,10 @@ fn tag_players(
             Some(tag_place(at, at.distance(beside)))
         });
         let Some(place) = place else {
-            node.display = Display::None;
+            show(&mut node, false);
             continue;
         };
-        node.display = Display::Flex;
-        node.left = px(place.x / ui_scale.0);
-        node.top = px(place.y / ui_scale.0);
+        put(&mut node, place / ui_scale.0);
     }
 }
 
@@ -1584,8 +1608,11 @@ fn turn_dial(
     mut dials: Query<(&mut Transform, &mut Visibility, &ChildOf), With<Dial>>,
     wrecks: Query<(), With<Wreck>>,
 ) {
+    let turn = Quat::from_rotation_y(view.yaw());
     for (mut transform, mut visibility, tank) in &mut dials {
-        transform.rotation = Quat::from_rotation_y(view.yaw());
+        if transform.rotation != turn {
+            transform.rotation = turn;
+        }
         let wanted = if wrecks.contains(tank.parent()) {
             Visibility::Hidden
         } else {

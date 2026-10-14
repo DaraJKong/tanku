@@ -1719,10 +1719,14 @@ pub fn place(
     let progress = fixed.overstep_fraction();
     for (position, previous, mut transform, bullet, nudge) in &mut moving {
         let at = previous.0.lerp(position.0, progress) + nudge.map_or(Vec2::ZERO, |nudge| nudge.0);
-        transform.translation = to_world(at, transform.translation.y);
-        if let Some(bullet) = bullet {
-            transform.rotation = facing(bullet.velocity.to_angle());
-        }
+        let bullet = bullet.map(|bullet| facing(bullet.velocity.to_angle()));
+        // What stands still keeps its transform untouched: the engine works out again the
+        // transforms of everything under a transform that is touched.
+        transform.set_if_neq(Transform {
+            translation: to_world(at, transform.translation.y),
+            rotation: bullet.unwrap_or(transform.rotation),
+            ..*transform
+        });
     }
 }
 
@@ -1746,7 +1750,10 @@ fn roll_bullets(
     for (bullet, children) in &bullets {
         for child in children.iter() {
             if let Ok(mut shell) = shells.get_mut(child) {
-                shell.rotation = roll_toward(bullet, camera.translation);
+                let rotation = roll_toward(bullet, camera.translation);
+                if shell.rotation != rotation {
+                    shell.rotation = rotation;
+                }
             }
         }
     }
@@ -1768,7 +1775,10 @@ fn stretch_trails(
             continue;
         };
         let flown = to_ground(bullet.translation).distance(trail.from);
-        transform.scale.x = trail_length(flown);
+        let length = trail_length(flown);
+        if transform.scale.x != length {
+            transform.scale.x = length;
+        }
     }
 }
 

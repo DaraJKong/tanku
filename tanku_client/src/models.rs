@@ -1242,12 +1242,20 @@ fn pose(
     mut turrets: Query<&mut Transform, (With<Turret>, Without<Hull>)>,
 ) {
     for (motion, children) in &tanks {
+        let (hull_facing, turret_facing) =
+            (scene::facing(motion.hull), scene::facing(motion.turret));
+        // A part that doesn't turn is left alone, so that the engine doesn't work out its
+        // transforms again.
         for child in children.iter() {
-            if let Ok(mut hull) = hulls.get_mut(child) {
-                hull.rotation = scene::facing(motion.hull);
+            if let Ok(mut hull) = hulls.get_mut(child)
+                && hull.rotation != hull_facing
+            {
+                hull.rotation = hull_facing;
             }
-            if let Ok(mut turret) = turrets.get_mut(child) {
-                turret.rotation = scene::facing(motion.turret);
+            if let Ok(mut turret) = turrets.get_mut(child)
+                && turret.rotation != turret_facing
+            {
+                turret.rotation = turret_facing;
             }
         }
     }
@@ -1261,11 +1269,11 @@ fn shield(
     for (shield, children) in &tanks {
         for child in children.iter() {
             if let Ok(mut visibility) = bubbles.get_mut(child) {
-                *visibility = if shield.is_active() {
+                visibility.set_if_neq(if shield.is_active() {
                     Visibility::Inherited
                 } else {
                     Visibility::Hidden
-                };
+                });
             }
         }
     }

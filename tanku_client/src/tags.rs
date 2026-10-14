@@ -282,18 +282,20 @@ fn spots(barrier: &Barrier, screen: &OnScreen) -> Option<[Spot; 2]> {
     Some([spot(barrier.from)?, spot(barrier.to)?])
 }
 
-/// Moves a node of the display to a point of the screen, or hides it.
-fn show(at: Option<Vec2>, transform: &mut UiTransform, visibility: &mut Visibility) {
+/// Moves a node of the display to a point of the screen, or hides it. What doesn't change is
+/// left untouched: the engine draws again what is touched.
+fn show(at: Option<Vec2>, transform: &mut Mut<UiTransform>, visibility: &mut Mut<Visibility>) {
     let wanted = match at {
         Some(at) => {
-            transform.translation = Val2::px(at.x.round(), at.y.round());
+            let place = Val2::px(at.x.round(), at.y.round());
+            if transform.translation != place {
+                transform.translation = place;
+            }
             Visibility::Inherited
         }
         None => Visibility::Hidden,
     };
-    if *visibility != wanted {
-        *visibility = wanted;
-    }
+    visibility.set_if_neq(wanted);
 }
 
 /// Puts the tags on the barriers that are loaded, and tells what they close.
