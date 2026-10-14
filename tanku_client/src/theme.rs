@@ -3,7 +3,7 @@
 //!
 //! Nothing is lit, so a color on screen is the color written here.
 
-use bevy::{prelude::*, text::LetterSpacing, ui::UiSystems};
+use bevy::{prelude::*, text::LineHeight, ui::UiSystems};
 
 /// A color from its hexadecimal code.
 const fn hex(code: u32) -> Color {
@@ -45,6 +45,11 @@ pub const FIRE: Color = hex(0xFF8C26);
 /// The background of a panel, through which the game shows a little.
 pub const SURFACE: Color = Color::srgba(0.039, 0.059, 0.086, 0.86);
 pub const SURFACE_RAISED: Color = hex(0x111A26);
+/// The ground of a block of the sheet, a title block or a parts list, and of a balloon,
+/// through which the lettering of the void doesn't show. The engine blends colors in linear
+/// light, where a ground of 92 % lets a quarter of a pale line through to the eye: 98 % lets
+/// as little through as 92 % does in a browser.
+pub const BLOCK_GROUND: Color = Color::srgba(0.039, 0.059, 0.086, 0.98);
 pub const SURFACE_HOVERED: Color = hex(0x1D2A3C);
 /// The lines of the interface: the edges of panels, cells and buttons.
 pub const RULE: Color = hex(0x5E7391);
@@ -104,107 +109,234 @@ pub fn over(ground: Color, line: Color, strength: f32) -> Color {
     )
 }
 
-/// The lettering of a drawing: a narrow face, for everything that is read as words. Its
-/// regular weight is too thin for the small labels of the interface, so the medium one stands
-/// in for it.
-const LETTERING: &str = "Barlow Semi Condensed";
-const PLAIN: FontWeight = FontWeight::MEDIUM;
-const HEAVY: FontWeight = FontWeight::SEMIBOLD;
-/// A face whose characters all have the same width, for numbers: counts, times and versions.
-/// It draws B like 8, S like 5 and Z like 2, so nothing that mixes letters and figures is set
-/// in it: a seed that is read wrong gives another map.
-const FIGURES: &str = "Share Tech Mono";
-/// How far apart the letters of a label or of a title stand, as a share of their size.
-const TRACKING: f32 = 0.14;
+/// The lettering of the interface: Tanku Lettering, the strokes that the floor is lettered
+/// with made into a font, so that the sheet and its margin are lettered by one hand. It has
+/// one weight, the pen of ISO 3098 type B, a tenth of the height of a capital: a larger text
+/// is a heavier one. Its figures are all as wide, its 1 has a flag and its 0 is oval, so that
+/// numbers don't jitter and a seed is not misread. Its letters stand as far apart as ISO 3098
+/// sets them.
+const LETTERING: &str = "Tanku Lettering";
 
-/// The font files. The game carries them in itself, so that there is nothing to load, on a
-/// desktop or in a browser. Their licenses are next to them.
-const FACES: [&[u8]; 3] = [
-    include_bytes!("../assets/fonts/barlow_semi_condensed/BarlowSemiCondensed-Medium.ttf"),
-    include_bytes!("../assets/fonts/barlow_semi_condensed/BarlowSemiCondensed-SemiBold.ttf"),
-    include_bytes!("../assets/fonts/share_tech_mono/ShareTechMono-Regular.ttf"),
-];
+/// The font file. The game carries it in itself, so that there is nothing to load, on a
+/// desktop or in a browser. `dev/lettering_font.py` makes it from the strokes.
+const FACE: &[u8] = include_bytes!("../assets/fonts/tanku_lettering/TankuLettering-Regular.ttf");
+
+/// The heights of the capitals of the interface, in its pixels: the steps of ISO 3098 from
+/// 3.5 mm to 20 mm, at 4.2 pixels to a millimeter of the sheet, which is a 1080p screen at
+/// the size of the interface that the settings start from. The size of a text in this font is
+/// the height of its capitals. Nothing is lettered smaller than the first, which reads.
+///
+/// The labels of fields, captions, hints and notes: 3.5 mm.
+pub const LABEL: f32 = 14.8;
+/// Values, buttons, the rows of a list and the figures of balloons: 5 mm.
+pub const VALUE: f32 = 21.0;
+/// Alerts and stamps: 7 mm.
+pub const ALERT: f32 = 29.7;
+/// The sector, and the figures of a report: 10 mm.
+pub const LARGE: f32 = 42.0;
+/// The title of a screen: 14 mm.
+#[expect(dead_code, reason = "the menus take it as they are drawn again")]
+pub const HEADING: f32 = 59.0;
+/// The name of the game: 20 mm.
+#[expect(dead_code, reason = "the main menu takes it as it is drawn again")]
+pub const NAME: f32 = 84.0;
+
+/// The pitch of the lines of a text, in heights of its capitals: those of capitals alone, and
+/// those of sentences, whose small letters have tails, after ISO 3098.
+const CAPITALS_PITCH: f32 = 1.25;
+const SENTENCE_PITCH: f32 = 1.6;
 
 /// Keeps the faces at hand: text asks for them by the name of their family.
 #[derive(Resource)]
-struct Faces(#[expect(dead_code, reason = "held so that the fonts stay loaded")] [Handle<Font>; 3]);
+struct Faces(#[expect(dead_code, reason = "held so that the fonts stay loaded")] Vec<Handle<Font>>);
 
 pub fn plugin(app: &mut App) {
     let mut fonts = app.world_mut().resource_mut::<Assets<Font>>();
-    let faces = FACES.map(|file| fonts.add(Font::from_bytes(file.to_vec())));
-    app.insert_resource(Faces(faces))
+    let faces = [FACE].into_iter().chain(old::FACES);
+    let faces = faces.map(|file| fonts.add(Font::from_bytes(file.to_vec())));
+    let faces = Faces(faces.collect());
+    app.insert_resource(faces)
         .add_systems(PostUpdate, follow_edges.before(UiSystems::Prepare));
 }
 
-fn lettered(
-    content: String,
-    (family, weight): (&str, FontWeight),
-    (size, tracking): (f32, f32),
-    color: Color,
-) -> impl Bundle {
+/// The faces that the interface was lettered in before Tanku Lettering, Barlow Semi Condensed
+/// and Share Tech Mono, for the screens that are not drawn again yet.
+pub mod old {
+    use bevy::{prelude::*, text::LetterSpacing};
+
+    /// A narrow face, for everything that is read as words. Its regular weight is too thin
+    /// for the small labels of the interface, so the medium one stands in for it.
+    pub(super) const LETTERING: &str = "Barlow Semi Condensed";
+    pub(super) const PLAIN: FontWeight = FontWeight::MEDIUM;
+    pub(super) const HEAVY: FontWeight = FontWeight::SEMIBOLD;
+    /// A face whose characters all have the same width, for numbers: counts, times and
+    /// versions. It draws B like 8, S like 5 and Z like 2, so nothing that mixes letters and
+    /// figures is set in it: a seed that is read wrong gives another map.
+    pub(super) const FIGURES: &str = "Share Tech Mono";
+    /// How far apart the letters of a label or of a title stand, as a share of their size.
+    const TRACKING: f32 = 0.14;
+
+    /// The font files, with their licenses next to them.
+    pub(super) const FACES: [&[u8]; 3] = [
+        include_bytes!("../assets/fonts/barlow_semi_condensed/BarlowSemiCondensed-Medium.ttf"),
+        include_bytes!("../assets/fonts/barlow_semi_condensed/BarlowSemiCondensed-SemiBold.ttf"),
+        include_bytes!("../assets/fonts/share_tech_mono/ShareTechMono-Regular.ttf"),
+    ];
+
+    fn lettered(
+        content: String,
+        (family, weight): (&str, FontWeight),
+        (size, tracking): (f32, f32),
+        color: Color,
+    ) -> impl Bundle {
+        (
+            Text::new(content),
+            TextFont {
+                font: family.into(),
+                font_size: FontSize::Px(size),
+                weight,
+                ..default()
+            },
+            // Whole pixels: small letters would stand unevenly apart otherwise.
+            LetterSpacing::Px((size * tracking).round()),
+            TextColor(color),
+        )
+    }
+
+    /// Running text: a sentence, a hint.
+    pub fn text(content: impl Into<String>, size: f32, color: Color) -> impl Bundle {
+        lettered(content.into(), (LETTERING, PLAIN), (size, 0.0), color)
+    }
+
+    /// A label: the name of what stands next to it, in capitals that stand apart.
+    pub fn label(content: impl Into<String>, size: f32, color: Color) -> impl Bundle {
+        let face = (LETTERING, PLAIN);
+        lettered(content.into().to_uppercase(), face, (size, TRACKING), color)
+    }
+
+    /// A title, or the name of a button: a heavier label.
+    pub fn title(content: impl Into<String>, size: f32, color: Color) -> impl Bundle {
+        let face = (LETTERING, HEAVY);
+        lettered(content.into().to_uppercase(), face, (size, TRACKING), color)
+    }
+
+    /// A number, or a word that stands among numbers.
+    pub fn figure(content: impl Into<String>, size: f32, color: Color) -> impl Bundle {
+        let face = (FIGURES, FontWeight::NORMAL);
+        lettered(content.into(), face, (size, 0.0), color)
+    }
+
+    /// A seed: letters and figures that must not be taken for each other, so they are set
+    /// in the lettering, heavy and apart.
+    pub fn code(content: impl Into<String>, size: f32, color: Color) -> impl Bundle {
+        lettered(content.into(), (LETTERING, HEAVY), (size, TRACKING), color)
+    }
+
+    /// How a text is set: as a label, a title, or a number.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum Face {
+        Label,
+        Title,
+        Figure,
+    }
+
+    impl Face {
+        pub fn set(self, content: String, size: f32, color: Color) -> impl Bundle {
+            let (face, tracking) = match self {
+                Face::Label => ((LETTERING, PLAIN), TRACKING),
+                Face::Title => ((LETTERING, HEAVY), TRACKING),
+                Face::Figure => ((FIGURES, FontWeight::NORMAL), 0.0),
+            };
+            let content = match self {
+                Face::Label | Face::Title => content.to_uppercase(),
+                Face::Figure => content,
+            };
+            lettered(content, face, (size, tracking), color)
+        }
+    }
+
+    /// Text drawn over the game with a dark edge, in these faces: see [`super::edged`].
+    pub fn edged(
+        marker: impl Bundle,
+        face: Face,
+        content: impl Into<String>,
+        size: f32,
+        color: Color,
+    ) -> impl Bundle {
+        super::edged_with(
+            marker,
+            move |words, ink| face.set(words, size, ink),
+            content.into(),
+            color,
+        )
+    }
+}
+
+fn lettered(content: String, size: f32, pitch: f32, color: Color) -> impl Bundle {
     (
         Text::new(content),
         TextFont {
-            font: family.into(),
+            font: LETTERING.into(),
             font_size: FontSize::Px(size),
-            weight,
             ..default()
         },
-        // Whole pixels: small letters would stand unevenly apart otherwise.
-        LetterSpacing::Px((size * tracking).round()),
+        LineHeight::RelativeToFont(pitch),
         TextColor(color),
     )
 }
 
-/// Running text: a sentence, a hint.
+/// Running text: a sentence, a hint, as it is written.
 pub fn text(content: impl Into<String>, size: f32, color: Color) -> impl Bundle {
-    lettered(content.into(), (LETTERING, PLAIN), (size, 0.0), color)
+    lettered(content.into(), size, SENTENCE_PITCH, color)
 }
 
-/// A label: the name of what stands next to it, in capitals that stand apart.
+/// A label: the name of what stands next to it, in capitals.
 pub fn label(content: impl Into<String>, size: f32, color: Color) -> impl Bundle {
-    let face = (LETTERING, PLAIN);
-    lettered(content.into().to_uppercase(), face, (size, TRACKING), color)
+    lettered(content.into().to_uppercase(), size, CAPITALS_PITCH, color)
 }
 
-/// A title, or the name of a button: a heavier label.
+/// A title, or the name of a button, in capitals: a title is told by its size.
 pub fn title(content: impl Into<String>, size: f32, color: Color) -> impl Bundle {
-    let face = (LETTERING, HEAVY);
-    lettered(content.into().to_uppercase(), face, (size, TRACKING), color)
+    label(content, size, color)
 }
 
-/// A number, or a word that stands among numbers.
+/// A number, or a word that stands among numbers, as it is written.
 pub fn figure(content: impl Into<String>, size: f32, color: Color) -> impl Bundle {
-    let face = (FIGURES, FontWeight::NORMAL);
-    lettered(content.into(), face, (size, 0.0), color)
+    lettered(content.into(), size, CAPITALS_PITCH, color)
 }
 
-/// A seed: letters and figures that must not be taken for each other, so they are set in the
-/// lettering, heavy and apart.
+/// A number alone on its line, in a box as high as its figures: its baseline is the bottom of
+/// the box, to line up with what stands next to it.
+pub fn lone(content: impl Into<String>, size: f32, color: Color) -> impl Bundle {
+    lettered(content.into(), size, 1.0, color)
+}
+
+/// A seed: letters and figures that must not be taken for each other. The lettering tells
+/// them apart: the 1 has a flag and the 0 is oval.
 pub fn code(content: impl Into<String>, size: f32, color: Color) -> impl Bundle {
-    lettered(content.into(), (LETTERING, HEAVY), (size, TRACKING), color)
+    figure(content, size, color)
 }
 
 /// How a text is set: as a label, a title, or a number.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Face {
     Label,
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the notices take it as they are drawn again")
+    )]
     Title,
+    #[expect(dead_code, reason = "the notices take it as they are drawn again")]
     Figure,
 }
 
 impl Face {
     pub fn set(self, content: String, size: f32, color: Color) -> impl Bundle {
-        let (face, tracking) = match self {
-            Face::Label => ((LETTERING, PLAIN), TRACKING),
-            Face::Title => ((LETTERING, HEAVY), TRACKING),
-            Face::Figure => ((FIGURES, FontWeight::NORMAL), 0.0),
-        };
         let content = match self {
             Face::Label | Face::Title => content.to_uppercase(),
             Face::Figure => content,
         };
-        lettered(content, face, (size, tracking), color)
+        lettered(content, size, CAPITALS_PITCH, color)
     }
 }
 
@@ -239,7 +371,21 @@ pub fn edged(
     size: f32,
     color: Color,
 ) -> impl Bundle {
-    let content: String = content.into();
+    edged_with(
+        marker,
+        move |words, ink| face.set(words, size, ink),
+        content.into(),
+        color,
+    )
+}
+
+/// Text with a dark edge, set by `set` from its words and its ink.
+fn edged_with<B: Bundle>(
+    marker: impl Bundle,
+    set: impl Fn(String, Color) -> B,
+    content: String,
+    color: Color,
+) -> impl Bundle {
     let ink = VOID.with_alpha(color.alpha());
     let copy = |(left, top): (f32, f32)| {
         (
@@ -250,7 +396,7 @@ pub fn edged(
                 top: px(top),
                 ..default()
             },
-            face.set(content.clone(), size, ink),
+            set(content.clone(), ink),
         )
     };
     (
@@ -264,7 +410,7 @@ pub fn edged(
             copy(EDGE[5]),
             copy(EDGE[6]),
             copy(EDGE[7]),
-            (marker, Edged, face.set(content.clone(), size, color)),
+            (marker, Edged, set(content.clone(), color)),
         ],
     )
 }
@@ -304,7 +450,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_font_files_hold_the_faces_that_text_asks_for() {
+    fn the_font_file_holds_the_face_that_text_asks_for() {
         let mut app = App::new();
         app.init_resource::<Assets<Font>>()
             .init_resource::<FontCx>()
@@ -324,8 +470,36 @@ mod tests {
             weights.sort_by(f32::total_cmp);
             weights
         };
-        assert_eq!(weights(LETTERING), [PLAIN.0 as f32, HEAVY.0 as f32]);
-        assert_eq!(weights(FIGURES), [FontWeight::NORMAL.0 as f32]);
+        assert_eq!(weights(LETTERING), [FontWeight::NORMAL.0 as f32]);
+        let (plain, heavy) = (old::PLAIN.0 as f32, old::HEAVY.0 as f32);
+        assert_eq!(weights(old::LETTERING), [plain, heavy]);
+        assert_eq!(weights(old::FIGURES), [FontWeight::NORMAL.0 as f32]);
+    }
+
+    /// FNV-1a of a text, with the ends of its lines as Unix writes them, as the script that
+    /// makes the font hashes the strokes.
+    fn hashed(text: &str) -> String {
+        let text = text.replace("\r\n", "\n");
+        let hash = text.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+            (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
+        });
+        format!("{hash:016x}")
+    }
+
+    #[test]
+    fn the_font_is_made_from_the_strokes_of_the_floor() {
+        // The script that makes the font writes the hash of the strokes into the name of its
+        // version, which a font file keeps in UTF-16. A font that was not made again after a
+        // change of the strokes doesn't have it.
+        let version = format!("strokes {}", hashed(crate::lettering::STROKES));
+        let wide: Vec<u8> = version.encode_utf16().flat_map(u16::to_be_bytes).collect();
+        let found = FACE
+            .windows(wide.len())
+            .any(|window| window == wide.as_slice());
+        assert!(
+            found,
+            "run tanku_client/dev/lettering_font.py: the font is older than the strokes"
+        );
     }
 
     #[test]

@@ -840,4 +840,6 @@ MUSIC_EDITOR_SCRIPT="tab patterns; wait 1; shot target/patterns.png; quit" cargo
 
 Dual-licensed under MIT or Apache-2.0, at your option.
 
-The fonts in `tanku_client/assets/fonts` are not ours and keep their own license, the SIL Open Font License 1.1, whose text is next to each of them: Barlow Semi Condensed, by The Barlow Project Authors, and Share Tech Mono, by Carrois Type Design. The game carries them in its binary.
+Tanku Lettering, the font of the interface in `tanku_client/assets/fonts/tanku_lettering`, is ours and under the license of the game: `tanku_client/dev/lettering_font.py` makes it, with fontTools, from the strokes that the floor of the game is lettered with, which are in the same folder. Run it after a change of the strokes; a test fails until the font is made again.
+
+The other fonts in `tanku_client/assets/fonts` are not ours and keep their own license, the SIL Open Font License 1.1, whose text is next to each of them: Barlow Semi Condensed, by The Barlow Project Authors, and Share Tech Mono, by Carrois Type Design. The music editor uses them. The game carries the fonts that it uses in its binary.

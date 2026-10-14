@@ -61,10 +61,28 @@ fn size(
     }
 }
 
-/// The fine line around the screen, as around a drawing.
+/// The width of the frame of the sheet: the wide line of the interface.
+pub const FRAME_WIDTH: f32 = 2.0;
+/// How many zones the frame is divided into, across and down, as ISO 5457 divides a sheet:
+/// numbered across the top, lettered down the sides.
+const ZONES: (usize, usize) = (8, 6);
+/// The centring marks: how wide they are, and how far into the sheet they reach from the
+/// edge of the screen.
+const CENTRING: (f32, f32) = (3.0, 34.0);
+/// The trimming marks: how far along each edge the triangle in a corner reaches.
+const TRIMMING: f32 = 12.0;
+
+/// What belongs to the frame of the sheet: the line, the zones in the margin and the marks.
+/// It is drawn in the margin, where nothing else goes.
+#[derive(Component)]
+pub struct Frame;
+
+/// The frame around the screen, as around a drawing after ISO 5457: a wide line at the edge
+/// of the sheet, the numbers and the letters of the zones in the margin, a centring mark at the
+/// middle of each side and a trimming mark in each corner.
 ///
-/// It is four strokes, one for each side. As the border of a box as large as the sheet, it
-/// was about a sixth of what the graphics card did in each frame (measured 2026-10-14): the
+/// The line is four strokes, one for each side. As the border of a box as large as the sheet,
+/// it was about a sixth of what the graphics card did in each frame (measured 2026-10-14): the
 /// engine works out every pixel of a box that has a border to find those that are on it. The
 /// strokes of the left and the right stand between those of the top and the bottom, so that
 /// no corner is drawn twice.
@@ -73,7 +91,7 @@ fn size(
 /// stroke and the margin, across and down, and each stroke as wide as its edge. The engine
 /// rounds where a piece lies from where the one that holds it lies, so a stroke held by a box
 /// that starts inside a pixel, as the sheet does in a small window, would be a pixel off.
-pub fn fine_line() -> impl Bundle {
+pub fn frame() -> impl Bundle {
     let stroke = |border, grid_row, grid_column| {
         (
             Node {
@@ -82,7 +100,7 @@ pub fn fine_line() -> impl Bundle {
                 grid_column,
                 ..default()
             },
-            BorderColor::all(theme::RULE.with_alpha(0.35)),
+            BorderColor::all(theme::RULE),
         )
     };
     let tracks = || {
@@ -100,7 +118,9 @@ pub fn fine_line() -> impl Bundle {
         GridPlacement::start(4),
     );
     let across = GridPlacement::start_end(2, 5);
+    let width = px(FRAME_WIDTH);
     (
+        Frame,
         Node {
             position_type: PositionType::Absolute,
             left: px(0),
@@ -112,11 +132,182 @@ pub fn fine_line() -> impl Bundle {
             grid_template_rows: tracks(),
             ..default()
         },
+        Pickable::IGNORE,
         children![
-            stroke(UiRect::top(px(1)), first, across),
-            stroke(UiRect::bottom(px(1)), last, across),
-            stroke(UiRect::left(px(1)), between, first),
-            stroke(UiRect::right(px(1)), between, last),
+            stroke(UiRect::top(width), first, across),
+            stroke(UiRect::bottom(width), last, across),
+            stroke(UiRect::left(width), between, first),
+            stroke(UiRect::right(width), between, last),
+            zones(),
+            marks(),
+        ],
+    )
+}
+
+/// The numbers of the zones across the top margin and their letters down the two side ones,
+/// each in the middle of its zone.
+fn zones() -> impl Bundle {
+    let name = |content: String| {
+        (
+            Node {
+                flex_grow: 1.0,
+                flex_basis: px(0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            children![(
+                theme::label(content, theme::LABEL, theme::RULE),
+                TextLayout::no_wrap()
+            )],
+        )
+    };
+    let strip = |node: Node, names: Vec<String>| {
+        (
+            Node {
+                position_type: PositionType::Absolute,
+                ..node
+            },
+            Children::spawn(SpawnIter(names.into_iter().map(name))),
+        )
+    };
+    let numbers = (1..=ZONES.0).map(|zone| zone.to_string()).collect();
+    let letters = || {
+        (0..ZONES.1)
+            .map(|zone| char::from(b'A' + zone as u8).to_string())
+            .collect()
+    };
+    let side = |left: Val, right: Val| Node {
+        left,
+        right,
+        top: px(SHEET_EDGE),
+        bottom: px(SHEET_EDGE),
+        width: px(SHEET_EDGE),
+        flex_direction: FlexDirection::Column,
+        ..default()
+    };
+    (
+        Node {
+            position_type: PositionType::Absolute,
+            left: px(0),
+            right: px(0),
+            top: px(0),
+            bottom: px(0),
+            ..default()
+        },
+        children![
+            strip(
+                Node {
+                    left: px(SHEET_EDGE),
+                    right: px(SHEET_EDGE),
+                    top: px(0),
+                    height: px(SHEET_EDGE),
+                    ..default()
+                },
+                numbers,
+            ),
+            strip(side(px(0), auto()), letters()),
+            strip(side(auto(), px(0)), letters()),
+        ],
+    )
+}
+
+/// The centring mark at the middle of each side, from the edge of the screen across the line,
+/// and the trimming mark in each corner: a triangle, which is a square turned on its corner
+/// with its middle on the corner of the screen, the rest of it off the screen.
+fn marks() -> impl Bundle {
+    let (thick, reach) = CENTRING;
+    // A mark is held by its middle where it has to be, as the engine can't lay out half of
+    // the screen less half of a mark.
+    let mark = |node: Node, held: Val2| {
+        (
+            Node {
+                position_type: PositionType::Absolute,
+                ..node
+            },
+            UiTransform::from_translation(held),
+            BackgroundColor(theme::RULE),
+        )
+    };
+    let across = Val2::new(percent(-50), px(0));
+    let down = Val2::new(px(0), percent(-50));
+    let corner = |left: Val, top: Val| {
+        let side = px(TRIMMING * std::f32::consts::SQRT_2);
+        let (node, held) = (
+            Node {
+                left,
+                top,
+                width: side,
+                height: side,
+                ..default()
+            },
+            Val2::new(percent(-50), percent(-50)),
+        );
+        let (node, transform, color) = mark(node, held);
+        (
+            node,
+            UiTransform {
+                rotation: Rot2::degrees(45.0),
+                ..transform
+            },
+            color,
+        )
+    };
+    (
+        Node {
+            position_type: PositionType::Absolute,
+            left: px(0),
+            right: px(0),
+            top: px(0),
+            bottom: px(0),
+            overflow: Overflow::clip(),
+            ..default()
+        },
+        children![
+            mark(
+                Node {
+                    left: percent(50),
+                    top: px(0),
+                    width: px(thick),
+                    height: px(reach),
+                    ..default()
+                },
+                across,
+            ),
+            mark(
+                Node {
+                    left: percent(50),
+                    bottom: px(0),
+                    width: px(thick),
+                    height: px(reach),
+                    ..default()
+                },
+                across,
+            ),
+            mark(
+                Node {
+                    top: percent(50),
+                    left: px(0),
+                    width: px(reach),
+                    height: px(thick),
+                    ..default()
+                },
+                down,
+            ),
+            mark(
+                Node {
+                    top: percent(50),
+                    right: px(0),
+                    width: px(reach),
+                    height: px(thick),
+                    ..default()
+                },
+                down,
+            ),
+            corner(px(0), px(0)),
+            corner(percent(100), px(0)),
+            corner(px(0), percent(100)),
+            corner(percent(100), percent(100)),
         ],
     )
 }
@@ -474,7 +665,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn the_fine_line_paints_what_the_border_of_one_box_did() {
+    fn the_frame_paints_what_the_border_of_one_box_did() {
         let windows = [
             (UVec2::new(1280, 720), 1.0, 1.0),
             (UVec2::new(1366, 768), 1.0, 1.0),
@@ -494,11 +685,11 @@ pub(crate) mod tests {
                 right: px(SHEET_EDGE),
                 top: px(SHEET_EDGE),
                 bottom: px(SHEET_EDGE),
-                border: UiRect::all(px(1)),
+                border: UiRect::all(px(FRAME_WIDTH)),
                 ..default()
             };
             let ruled = app.world_mut().spawn(ruled).id();
-            app.world_mut().spawn(fine_line());
+            app.world_mut().spawn(frame());
             app.update();
             let world = app.world_mut();
             let mut pieces = world.query::<(Entity, &Node)>();

@@ -459,7 +459,7 @@ fn panel(
 
 fn heading(parent: &mut ChildSpawnerCommands, content: &str) {
     parent.spawn((
-        theme::title(content, 40.0, theme::TEXT),
+        theme::old::title(content, 40.0, theme::TEXT),
         Node {
             margin: UiRect::bottom(px(8)),
             ..default()
@@ -468,13 +468,13 @@ fn heading(parent: &mut ChildSpawnerCommands, content: &str) {
 }
 
 fn line(parent: &mut ChildSpawnerCommands, content: impl Into<String>, color: Color) {
-    parent.spawn(theme::text(content, 17.0, color));
+    parent.spawn(theme::old::text(content, 17.0, color));
 }
 
 /// The name of a group of rows, a little apart from what comes before it.
 fn section(parent: &mut ChildSpawnerCommands, content: &str) {
     parent.spawn((
-        theme::label(content, 13.0, theme::TEXT_DIM),
+        theme::old::label(content, 13.0, theme::TEXT_DIM),
         Node {
             margin: UiRect::top(px(8)),
             ..default()
@@ -499,7 +499,7 @@ fn button(parent: &mut ChildSpawnerCommands, content: impl Into<String>, press: 
         button_node(Val::Auto),
         BackgroundColor(theme::SURFACE_RAISED),
         BorderColor::all(theme::RULE),
-        children![theme::title(content, 20.0, theme::TEXT)],
+        children![theme::old::title(content, 20.0, theme::TEXT)],
     ));
 }
 
@@ -512,7 +512,7 @@ fn primary(parent: &mut ChildSpawnerCommands, content: impl Into<String>, press:
         button_node(Val::Auto),
         BackgroundColor(theme::ACCENT),
         BorderColor::all(theme::ACCENT),
-        children![theme::title(content, 20.0, theme::TEXT_ON_ACCENT)],
+        children![theme::old::title(content, 20.0, theme::TEXT_ON_ACCENT)],
     ));
 }
 
@@ -546,7 +546,7 @@ fn flagged_row(
                 ..default()
             })
             .with_children(|labelled| {
-                labelled.spawn(theme::text(label, 16.0, theme::TEXT));
+                labelled.spawn(theme::old::text(label, 16.0, theme::TEXT));
                 if new {
                     labelled.spawn(new_tag());
                 }
@@ -565,7 +565,7 @@ fn new_tag() -> impl Bundle {
             ..default()
         },
         BorderColor::all(theme::GOOD),
-        children![theme::label("New", 11.0, theme::GOOD)],
+        children![theme::old::label("New", 11.0, theme::GOOD)],
     )
 }
 
@@ -573,7 +573,7 @@ fn new_tag() -> impl Bundle {
 fn small(parent: &mut ChildSpawnerCommands, content: impl Into<String>, width: f32, press: Press) {
     small_with(
         parent,
-        theme::text(content, 16.0, theme::TEXT),
+        theme::old::text(content, 16.0, theme::TEXT),
         width,
         press,
     );
@@ -612,7 +612,7 @@ fn choice(
             ..button_node(px(width))
         },
         BorderColor::all(theme::ACCENT),
-        children![theme::text(content, 16.0, theme::ACCENT)],
+        children![theme::old::text(content, 16.0, theme::ACCENT)],
     ));
 }
 
@@ -633,8 +633,8 @@ fn figure(parent: &mut ChildSpawnerCommands, name: &str, value: String, last: bo
         },
         BorderColor::all(theme::RULE),
         children![
-            theme::label(name, 12.0, theme::TEXT_DIM),
-            theme::figure(value, 36.0, theme::TEXT),
+            theme::old::label(name, 12.0, theme::TEXT_DIM),
+            theme::old::figure(value, 36.0, theme::TEXT),
         ],
     ));
 }
@@ -704,7 +704,7 @@ fn level_line(run: &Run) -> String {
 
 /// A line that tells the player how a game of several players goes.
 fn status_line(parent: &mut ChildSpawnerCommands) {
-    parent.spawn((StatusLine, theme::text("", 17.0, theme::DANGER)));
+    parent.spawn((StatusLine, theme::old::text("", 17.0, theme::DANGER)));
 }
 
 /// The main menu opens on what the player chose last for a run of their own: it draws the
@@ -745,7 +745,7 @@ fn league_switch(parent: &mut ChildSpawnerCommands, name: &str, to: League, lit:
         node,
         BackgroundColor(theme::SURFACE_RAISED),
         BorderColor::all(edge),
-        children![theme::label(name, 12.0, ink)],
+        children![theme::old::label(name, 12.0, ink)],
     );
     if lit {
         parent.spawn((button, Lit));
@@ -800,7 +800,7 @@ fn list_records(
                             flex_grow: 1.0,
                             ..default()
                         },
-                        children![theme::label("RECORD", 12.0, theme::TEXT_DIM)],
+                        children![theme::old::label("RECORD", 12.0, theme::TEXT_DIM)],
                     ));
                     if offers_hard {
                         let difficulty = if hard {
@@ -830,7 +830,7 @@ fn list_records(
                     }
                 });
                 for line in lines {
-                    record.spawn(theme::text(line, 16.0, theme::TEXT));
+                    record.spawn(theme::old::text(line, 16.0, theme::TEXT));
                 }
             });
     }
@@ -859,18 +859,18 @@ fn main_menu(
                 ..default()
             },
             GlobalZIndex(10),
-            children![sheet::fine_line()],
+            children![sheet::frame()],
         ))
         .with_children(|root| {
             // The menu is the left margin of the sheet. The tank is drawn on its right.
             margin(root, 400.0, |parent| {
-                parent.spawn(theme::figure(
+                parent.spawn(theme::old::figure(
                     format!("VERSION {VERSION}"),
                     15.0,
                     theme::TEXT_DIM,
                 ));
                 parent.spawn((
-                    theme::title("TANKU", 112.0, theme::TEXT),
+                    theme::old::title("TANKU", 112.0, theme::TEXT),
                     Node {
                         margin: UiRect::bottom(px(14)),
                         ..default()
@@ -940,8 +940,8 @@ fn main_menu(
                         },
                         BorderColor::all(theme::RULE),
                         children![
-                            theme::label("DRAWING", 12.0, theme::TEXT_DIM),
-                            theme::title(drawn, 18.0, theme::TEXT),
+                            theme::old::label("DRAWING", 12.0, theme::TEXT_DIM),
+                            theme::old::title(drawn, 18.0, theme::TEXT),
                         ],
                     ),
                     (
@@ -952,8 +952,8 @@ fn main_menu(
                             ..default()
                         },
                         children![
-                            theme::label("BUDGET", 12.0, theme::TEXT_DIM),
-                            theme::figure(budget, 18.0, theme::TEXT),
+                            theme::old::label("BUDGET", 12.0, theme::TEXT_DIM),
+                            theme::old::figure(budget, 18.0, theme::TEXT),
                         ],
                     ),
                 ],
@@ -1448,22 +1448,22 @@ fn solo_screen(
                 ..default()
             },
             GlobalZIndex(10),
-            children![sheet::fine_line()],
+            children![sheet::frame()],
         ))
         .with_children(|root| {
             margin(root, 460.0, |parent| {
-                parent.spawn(theme::label(
+                parent.spawn(theme::old::label(
                     "Run of a single player",
                     13.0,
                     theme::TEXT_DIM,
                 ));
-                parent.spawn(theme::title("Solo", 84.0, theme::TEXT));
+                parent.spawn(theme::old::title("Solo", 84.0, theme::TEXT));
                 section(parent, "Run");
                 let new = |unlock| unlocks.is_unused(unlock);
                 flagged_row(parent, "Difficulty", hard && new(Unlock::HardMode), |row| {
                     // A player who has a single difficulty has nothing to choose.
                     if !hard {
-                        row.spawn(theme::text("Normal", 16.0, theme::TEXT));
+                        row.spawn(theme::old::text("Normal", 16.0, theme::TEXT));
                         return;
                     }
                     for difficulty in Difficulty::ALL {
@@ -1475,7 +1475,7 @@ fn solo_screen(
                 if !hard {
                     row(parent, "Hard mode", |row| {
                         let unlock = unlocks::condition(Unlock::HardMode);
-                        row.spawn(theme::text(unlock, 16.0, theme::TEXT_DIM));
+                        row.spawn(theme::old::text(unlock, 16.0, theme::TEXT_DIM));
                     });
                 } else if setup.difficulty == Difficulty::Hard {
                     line(parent, HARD_MODE, theme::TEXT_DIM);
@@ -1491,7 +1491,7 @@ fn solo_screen(
                             }
                         } else {
                             let unlock = unlocks::condition(Unlock::ArenaMode);
-                            row.spawn(theme::text(unlock, 16.0, theme::TEXT_DIM));
+                            row.spawn(theme::old::text(unlock, 16.0, theme::TEXT_DIM));
                         }
                     },
                 );
@@ -1501,14 +1501,14 @@ fn solo_screen(
                 flagged_row(parent, "Free mode", frees && new(Unlock::FreeMode), |row| {
                     if brought {
                         let told = "On, in the tank of this playtest";
-                        row.spawn(theme::text(told, 16.0, theme::TEXT));
+                        row.spawn(theme::old::text(told, 16.0, theme::TEXT));
                     } else if frees {
                         for (name, on) in [("Off", false), ("On", true)] {
                             choice(row, name, 90.0, Press::Free(on), setup.free == on);
                         }
                     } else {
                         let unlock = unlocks::condition(Unlock::FreeMode);
-                        row.spawn(theme::text(unlock, 16.0, theme::TEXT_DIM));
+                        row.spawn(theme::old::text(unlock, 16.0, theme::TEXT_DIM));
                     }
                 });
                 // In free mode, the player's tank is the one of their garage.
@@ -1520,7 +1520,7 @@ fn solo_screen(
                                 min_width: px(130),
                                 ..default()
                             },
-                            children![theme::text(spent, 16.0, theme::TEXT)],
+                            children![theme::old::text(spent, 16.0, theme::TEXT)],
                         ));
                         small(row, "Garage", 110.0, Press::OpenGarage);
                     });
@@ -1558,7 +1558,7 @@ fn solo_screen(
                         },
                         children![(
                             SeedField,
-                            theme::code(setup.seed.clone(), 16.0, theme::TEXT)
+                            theme::old::code(setup.seed.clone(), 16.0, theme::TEXT)
                         )],
                     ));
                     small(row, "New seed", 110.0, Press::Redraw);
@@ -1622,7 +1622,7 @@ fn step(parent: &mut ChildSpawnerCommands, garage: &Garage, stat: Stat, by: i8) 
             ..button_node(px(34.0))
         },
         BorderColor::all(theme::RULE_DIM),
-        children![theme::text(sign, 16.0, theme::RULE)],
+        children![theme::old::text(sign, 16.0, theme::RULE)],
     ));
 }
 
@@ -1676,8 +1676,8 @@ fn ammo_choice(parent: &mut ChildSpawnerCommands, garage: &Garage, ammo: Ammo) {
         ..button_node(Val::Auto)
     };
     let content = children![
-        theme::text(ammo_name(ammo), 16.0, words),
-        theme::figure(ammo.price().to_string(), 16.0, price),
+        theme::old::text(ammo_name(ammo), 16.0, words),
+        theme::old::figure(ammo.price().to_string(), 16.0, price),
     ];
     let mut choice = parent.spawn((node, BorderColor::all(edge), content));
     if !chosen && garage.loaded(ammo).is_some() {
@@ -1715,12 +1715,16 @@ fn garage_screen(
                 ..default()
             },
             GlobalZIndex(10),
-            children![sheet::fine_line()],
+            children![sheet::frame()],
         ))
         .with_children(|root| {
             margin(root, 500.0, |parent| {
-                parent.spawn(theme::label("Tank of free mode", 13.0, theme::TEXT_DIM));
-                parent.spawn(theme::title("Garage", 84.0, theme::TEXT));
+                parent.spawn(theme::old::label(
+                    "Tank of free mode",
+                    13.0,
+                    theme::TEXT_DIM,
+                ));
+                parent.spawn(theme::old::title("Garage", 84.0, theme::TEXT));
                 let table = Node {
                     flex_direction: FlexDirection::Column,
                     row_gap: px(4),
@@ -1733,7 +1737,7 @@ fn garage_screen(
                         align_items: AlignItems::Center,
                         ..default()
                     };
-                    let head = |name: &'static str| theme::label(name, 12.0, theme::TEXT_DIM);
+                    let head = |name: &'static str| theme::old::label(name, 12.0, theme::TEXT_DIM);
                     table.spawn(line.clone()).with_children(|names| {
                         cell(names, GARAGE_COLUMNS[0], head("Stat"));
                         cell(names, GARAGE_COLUMNS[1], head("Level"));
@@ -1749,7 +1753,11 @@ fn garage_screen(
                         let next = next.map_or(String::new(), |price| format!("+{price}"));
                         let name = report::stat_name(stat);
                         table.spawn(line.clone()).with_children(|row| {
-                            cell(row, GARAGE_COLUMNS[0], theme::text(name, 16.0, theme::TEXT));
+                            cell(
+                                row,
+                                GARAGE_COLUMNS[0],
+                                theme::old::text(name, 16.0, theme::TEXT),
+                            );
                             let steps = Node {
                                 width: px(GARAGE_COLUMNS[1]),
                                 column_gap: px(6),
@@ -1758,7 +1766,8 @@ fn garage_screen(
                             };
                             row.spawn(steps).with_children(|steps| {
                                 step(steps, &garage, stat, -1);
-                                let figure = theme::figure(level.to_string(), 16.0, theme::TEXT);
+                                let figure =
+                                    theme::old::figure(level.to_string(), 16.0, theme::TEXT);
                                 steps.spawn((
                                     Node {
                                         width: px(20),
@@ -1773,18 +1782,18 @@ fn garage_screen(
                             cell(
                                 row,
                                 GARAGE_COLUMNS[2],
-                                theme::text(gives, 16.0, theme::TEXT),
+                                theme::old::text(gives, 16.0, theme::TEXT),
                             );
                             let price = stat.price(level).to_string();
                             cell(
                                 row,
                                 GARAGE_COLUMNS[3],
-                                theme::figure(price, 16.0, theme::TEXT),
+                                theme::old::figure(price, 16.0, theme::TEXT),
                             );
                             cell(
                                 row,
                                 GARAGE_COLUMNS[4],
-                                theme::figure(next, 16.0, theme::TEXT_DIM),
+                                theme::old::figure(next, 16.0, theme::TEXT_DIM),
                             );
                         });
                     }
@@ -1800,16 +1809,16 @@ fn garage_screen(
                     table
                         .spawn((fired, BorderColor::all(theme::RULE_DIM)))
                         .with_children(|row| {
-                            let name = theme::text("Bullets", 16.0, theme::TEXT);
+                            let name = theme::old::text("Bullets", 16.0, theme::TEXT);
                             cell(row, GARAGE_COLUMNS[0], name);
                             let wide = GARAGE_COLUMNS[1] + GARAGE_COLUMNS[2] + 6.0;
-                            let does = theme::text(ammo_gives(ammo), 16.0, theme::TEXT);
+                            let does = theme::old::text(ammo_gives(ammo), 16.0, theme::TEXT);
                             cell(row, wide, does);
                             let price = ammo.price().to_string();
                             cell(
                                 row,
                                 GARAGE_COLUMNS[3],
-                                theme::figure(price, 16.0, theme::TEXT),
+                                theme::old::figure(price, 16.0, theme::TEXT),
                             );
                         });
                     table.spawn(line.clone()).with_children(|types| {
@@ -1818,7 +1827,7 @@ fn garage_screen(
                         }
                     });
                     if let Some(why) = garage.wasted() {
-                        table.spawn(theme::text(why, 16.0, theme::DANGER));
+                        table.spawn(theme::old::text(why, 16.0, theme::DANGER));
                     }
                 });
                 parent
@@ -1848,16 +1857,16 @@ fn achievements_screen(mut commands: Commands, unlocks: Res<Unlocks>) {
                 ..default()
             },
             GlobalZIndex(10),
-            children![sheet::fine_line()],
+            children![sheet::frame()],
         ))
         .with_children(|root| {
             margin(root, 460.0, |parent| {
-                parent.spawn(theme::label(
+                parent.spawn(theme::old::label(
                     "What a run unlocks for solo",
                     13.0,
                     theme::TEXT_DIM,
                 ));
-                parent.spawn(theme::title("Achievements", 64.0, theme::TEXT));
+                parent.spawn(theme::old::title("Achievements", 64.0, theme::TEXT));
                 for unlock in Unlock::ALL {
                     let (state, color) = if unlocks.has(unlock) {
                         ("Unlocked", theme::GOOD)
@@ -1887,14 +1896,14 @@ fn achievements_screen(mut commands: Commands, unlocks: Res<Unlocks>) {
                                 })
                                 .with_children(|heading| {
                                     let name = unlocks::name(unlock);
-                                    heading.spawn(theme::title(name, 20.0, theme::TEXT));
+                                    heading.spawn(theme::old::title(name, 20.0, theme::TEXT));
                                     if new {
                                         heading.spawn(new_tag());
                                     }
                                 });
                             let condition = unlocks::condition(unlock);
-                            entry.spawn(theme::text(condition, 16.0, theme::TEXT_DIM));
-                            entry.spawn(theme::label(state, 13.0, color));
+                            entry.spawn(theme::old::text(condition, 16.0, theme::TEXT_DIM));
+                            entry.spawn(theme::old::label(state, 13.0, color));
                         });
                 }
                 line(
@@ -2081,7 +2090,7 @@ fn password_row(parent: &mut ChildSpawnerCommands, shown: bool, among: Option<(P
         ..default()
     };
     parent.spawn(row).with_children(|row| {
-        let text = (PasswordField, theme::text("", 22.0, theme::TEXT));
+        let text = (PasswordField, theme::old::text("", 22.0, theme::TEXT));
         field_box(row, text, among);
         // As tall as the field, with its word in the middle.
         let reveal = if shown { "Hide" } else { "Show" };
@@ -2095,7 +2104,7 @@ fn password_row(parent: &mut ChildSpawnerCommands, shown: bool, among: Option<(P
             },
             BackgroundColor(theme::SURFACE_RAISED),
             BorderColor::all(theme::RULE),
-            children![theme::text(reveal, 16.0, theme::TEXT)],
+            children![theme::old::text(reveal, 16.0, theme::TEXT)],
         ));
     });
 }
@@ -2137,17 +2146,17 @@ fn host_screen(
                 ..default()
             },
             GlobalZIndex(10),
-            children![sheet::fine_line()],
+            children![sheet::frame()],
         ))
         .with_children(|root| {
             margin(root, 440.0, |parent| {
-                parent.spawn(theme::label(
+                parent.spawn(theme::old::label(
                     "Game of several players",
                     13.0,
                     theme::TEXT_DIM,
                 ));
                 parent.spawn((
-                    theme::title("Host a game", 64.0, theme::TEXT),
+                    theme::old::title("Host a game", 64.0, theme::TEXT),
                     Node {
                         margin: UiRect::bottom(px(8)),
                         ..default()
@@ -2155,7 +2164,7 @@ fn host_screen(
                 ));
                 section(parent, "Name of the game");
                 let named = opening.field == Field::Name;
-                let text = (NameField, theme::text("", 22.0, theme::TEXT));
+                let text = (NameField, theme::old::text("", 22.0, theme::TEXT));
                 parent.spawn(Node::default()).with_children(|row| {
                     field_box(row, text, Some((Press::Field(Field::Name), named)))
                 });
@@ -2230,17 +2239,17 @@ fn join_screen(
                 ..default()
             },
             GlobalZIndex(10),
-            children![sheet::fine_line()],
+            children![sheet::frame()],
         ))
         .with_children(|root| {
             margin(root, 440.0, |parent| {
-                parent.spawn(theme::label(
+                parent.spawn(theme::old::label(
                     "Game of several players",
                     13.0,
                     theme::TEXT_DIM,
                 ));
                 parent.spawn((
-                    theme::title("Join a game", 64.0, theme::TEXT),
+                    theme::old::title("Join a game", 64.0, theme::TEXT),
                     Node {
                         margin: UiRect::bottom(px(8)),
                         ..default()
@@ -2292,7 +2301,7 @@ fn join_screen(
                         align_items: AlignItems::Center,
                         ..default()
                     }),
-                    children![(AddressField, theme::figure("", 22.0, theme::TEXT))],
+                    children![(AddressField, theme::old::figure("", 22.0, theme::TEXT))],
                 ));
                 line(
                     parent,
@@ -2347,15 +2356,15 @@ fn found_row(parent: &mut ChildSpawnerCommands, game: &Game) {
             ..default()
         };
         if game.name.is_empty() {
-            row.spawn(theme::figure(address, 20.0, ink));
-            row.spawn(theme::text(words, 15.0, theme::TEXT_DIM));
+            row.spawn(theme::old::figure(address, 20.0, ink));
+            row.spawn(theme::old::text(words, 15.0, theme::TEXT_DIM));
         } else {
-            row.spawn(theme::text(game.name.clone(), 18.0, ink));
+            row.spawn(theme::old::text(game.name.clone(), 18.0, ink));
             row.spawn((
                 below,
                 children![
-                    theme::figure(address, 15.0, theme::TEXT_DIM),
-                    theme::text(words, 15.0, theme::TEXT_DIM),
+                    theme::old::figure(address, 15.0, theme::TEXT_DIM),
+                    theme::old::text(words, 15.0, theme::TEXT_DIM),
                 ],
             ));
         }
@@ -2464,14 +2473,14 @@ fn ways_to_join(
     if let (Some(code), Some(port)) = (code, invitation.web_port) {
         let [place, first, second] = link_ending(code);
         section(parent, "Link for a browser");
-        parent.spawn(theme::figure(place, 20.0, theme::TEXT));
+        parent.spawn(theme::old::figure(place, 20.0, theme::TEXT));
         // Nobody types the print: a button copies the lot.
-        parent.spawn(theme::figure(first, 15.0, theme::TEXT));
-        parent.spawn(theme::figure(second, 15.0, theme::TEXT));
+        parent.spawn(theme::old::figure(first, 15.0, theme::TEXT));
+        parent.spawn(theme::old::figure(second, 15.0, theme::TEXT));
         parent.spawn(buttons).with_children(|row| {
             let words = (
                 CopyLabel,
-                theme::text(copy_label(copied), 16.0, theme::TEXT),
+                theme::old::text(copy_label(copied), 16.0, theme::TEXT),
             );
             small_with(row, words, 120.0, Press::Copy);
             small(row, "For a desktop", 140.0, Press::Show(Way::Desktop));
@@ -2489,7 +2498,7 @@ fn ways_to_join(
     section(parent, "Address");
     match &invitation.address {
         Some(address) => {
-            parent.spawn(theme::figure(address.clone(), 24.0, theme::TEXT));
+            parent.spawn(theme::old::figure(address.clone(), 24.0, theme::TEXT));
         }
         None => line(
             parent,
@@ -2622,9 +2631,9 @@ fn seat_row(
 ) {
     let taken = member.is_some();
     let word = match (taken, ready) {
-        (false, _) => theme::label("", 13.0, theme::TEXT_DIM),
-        (true, false) => theme::label("Not ready", 13.0, theme::TEXT_DIM),
-        (true, true) => theme::label("Ready", 13.0, theme::GOOD),
+        (false, _) => theme::old::label("", 13.0, theme::TEXT_DIM),
+        (true, false) => theme::old::label("Not ready", 13.0, theme::TEXT_DIM),
+        (true, true) => theme::old::label("Ready", 13.0, theme::GOOD),
     };
     let color = theme::PLAYER;
     let who = match (member, own) {
@@ -2664,7 +2673,7 @@ fn seat_row(
                     width: px(110),
                     ..default()
                 },
-                children![theme::label(format!("Player {}", seat + 1), 13.0, ink)],
+                children![theme::old::label(format!("Player {}", seat + 1), 13.0, ink)],
             ),
             // The word of the player stands at the end of the row.
             (
@@ -2672,7 +2681,7 @@ fn seat_row(
                     flex_grow: 1.0,
                     ..default()
                 },
-                children![theme::text(who, 16.0, ink)],
+                children![theme::old::text(who, 16.0, ink)],
             ),
             word,
         ],
@@ -2752,7 +2761,7 @@ fn lobby_screen(
                 ..default()
             },
             GlobalZIndex(10),
-            children![sheet::fine_line()],
+            children![sheet::frame()],
         ))
         .with_children(|root| {
             margin(root, 460.0, |parent| {
@@ -2764,12 +2773,12 @@ fn lobby_screen(
                 };
                 // A game that has a password says so: whoever is to join needs it.
                 let lock = if lobby.locked { " \u{b7} locked" } else { "" };
-                parent.spawn(theme::label(
+                parent.spawn(theme::old::label(
                     format!("{game} \u{b7} {role}{lock}"),
                     13.0,
                     theme::TEXT_DIM,
                 ));
-                parent.spawn(theme::title("Lobby", 84.0, theme::TEXT));
+                parent.spawn(theme::old::title("Lobby", 84.0, theme::TEXT));
                 section(parent, "Players");
                 parent
                     .spawn(ruled(Node {
@@ -2787,7 +2796,7 @@ fn lobby_screen(
                 row(parent, "Difficulty", |row| {
                     if !host {
                         let name = unlocks::difficulty_name(lobby.difficulty);
-                        row.spawn(theme::text(name, 16.0, theme::TEXT));
+                        row.spawn(theme::old::text(name, 16.0, theme::TEXT));
                         return;
                     }
                     for difficulty in Difficulty::ALL {
@@ -2798,7 +2807,7 @@ fn lobby_screen(
                 });
                 row(parent, "Arena mode", |row| {
                     if !host {
-                        row.spawn(theme::text(on_off(lobby.arena), 16.0, theme::TEXT));
+                        row.spawn(theme::old::text(on_off(lobby.arena), 16.0, theme::TEXT));
                         return;
                     }
                     for (name, on) in [("Off", false), ("On", true)] {
@@ -2807,7 +2816,7 @@ fn lobby_screen(
                 });
                 row(parent, "Free mode", |row| {
                     if !host {
-                        row.spawn(theme::text(on_off(lobby.free), 16.0, theme::TEXT));
+                        row.spawn(theme::old::text(on_off(lobby.free), 16.0, theme::TEXT));
                         return;
                     }
                     for (name, on) in [("Off", false), ("On", true)] {
@@ -2819,7 +2828,7 @@ fn lobby_screen(
                     row(parent, "Your tank", |row| {
                         if host && brought {
                             let told = "The tank of this playtest";
-                            row.spawn(theme::text(told, 16.0, theme::TEXT));
+                            row.spawn(theme::old::text(told, 16.0, theme::TEXT));
                             return;
                         }
                         let spent = format!("{} of {PLAYER_BUDGET} points", garage.tank.cost());
@@ -2828,7 +2837,7 @@ fn lobby_screen(
                                 min_width: px(130),
                                 ..default()
                             },
-                            children![theme::text(spent, 16.0, theme::TEXT)],
+                            children![theme::old::text(spent, 16.0, theme::TEXT)],
                         ));
                         small(row, "Garage", 110.0, Press::OpenGarage);
                     });
@@ -2841,7 +2850,7 @@ fn lobby_screen(
                         },
                         children![(
                             SeedField,
-                            theme::code(lobby.seed.clone(), 16.0, theme::TEXT)
+                            theme::old::code(lobby.seed.clone(), 16.0, theme::TEXT)
                         )],
                     ));
                     if reseeds {
@@ -3035,7 +3044,7 @@ fn earned_stamps(unlocked: &[Unlock], record: bool) -> Vec<(String, Option<Strin
 /// A stamp of the report of a run, with a line under its words if it has one, in a color and
 /// turned a few degrees.
 fn stamp((words, under): (String, Option<String>), (color, turn): (Color, f32)) -> impl Bundle {
-    let under = under.map(|under| theme::label(under, 13.0, theme::TEXT));
+    let under = under.map(|under| theme::old::label(under, 13.0, theme::TEXT));
     (
         Node {
             flex_direction: FlexDirection::Column,
@@ -3047,7 +3056,7 @@ fn stamp((words, under): (String, Option<String>), (color, turn): (Color, f32)) 
         BackgroundColor(theme::SURFACE),
         UiTransform::from_rotation(Rot2::degrees(turn)),
         Children::spawn((
-            Spawn(theme::title(words, 24.0, color)),
+            Spawn(theme::old::title(words, 24.0, color)),
             SpawnIter(under.into_iter()),
         )),
     )
@@ -3100,7 +3109,7 @@ fn game_over(
                 ..default()
             },
             GlobalZIndex(10),
-            children![sheet::fine_line()],
+            children![sheet::frame()],
         ))
         .with_children(|root| {
             root.spawn(Node {
@@ -3114,12 +3123,12 @@ fn game_over(
                 ..default()
             })
             .with_children(|parent| {
-                parent.spawn(theme::label(
+                parent.spawn(theme::old::label(
                     format!("Run report \u{b7} {mode}"),
                     13.0,
                     theme::TEXT_DIM,
                 ));
-                parent.spawn(theme::title("Game over", 84.0, theme::TEXT));
+                parent.spawn(theme::old::title("Game over", 84.0, theme::TEXT));
                 if let Some(run) = &run {
                     // A stamp across the sheet, as on a drawing that was turned down, and beside
                     // it one in green for each thing that the run earned.
@@ -3266,7 +3275,7 @@ fn settings_menu(mut commands: Commands, settings: Res<Settings>, capture: Res<C
                             });
                         }
                         row(controls, "Menu", |row| {
-                            row.spawn(theme::text("Esc", 16.0, theme::TEXT_DIM));
+                            row.spawn(theme::old::text("Esc", 16.0, theme::TEXT_DIM));
                         });
                         button(controls, "Reset the controls", Press::ResetBindings);
                     });
@@ -3286,7 +3295,7 @@ fn settings_menu(mut commands: Commands, settings: Res<Settings>, capture: Res<C
                         section(options, "Audio");
                         row(options, "Volume", |row| {
                             small(row, "-", 34.0, Press::Volume(-0.1));
-                            row.spawn(theme::figure(
+                            row.spawn(theme::old::figure(
                                 format!("{:.0}%", settings.volume * 100.0),
                                 15.0,
                                 theme::TEXT,
@@ -3295,7 +3304,7 @@ fn settings_menu(mut commands: Commands, settings: Res<Settings>, capture: Res<C
                         });
                         row(options, "Music", |row| {
                             small(row, "-", 34.0, Press::Music(-0.1));
-                            row.spawn(theme::figure(
+                            row.spawn(theme::old::figure(
                                 format!("{:.0}%", settings.music * 100.0),
                                 15.0,
                                 theme::TEXT,
@@ -3311,7 +3320,7 @@ fn settings_menu(mut commands: Commands, settings: Res<Settings>, capture: Res<C
                         });
                         row(options, "Interface size", |row| {
                             small(row, "-", 34.0, Press::Scale(-0.25));
-                            row.spawn(theme::figure(
+                            row.spawn(theme::old::figure(
                                 format!("{:.0}%", settings.ui_scale * 100.0),
                                 15.0,
                                 theme::TEXT,
@@ -4512,12 +4521,18 @@ mod tests {
             Entity,
             (&Node, &ComputedNode, &UiGlobalTransform),
             Option<&Text>,
-            Has<Button>,
+            (Has<Button>, Has<sheet::Frame>),
             Option<&ChildOf>,
         )>();
         let parents: HashMap<Entity, Entity> = nodes
             .iter(world)
             .filter_map(|(entity, .., parent)| Some((entity, parent?.parent())))
+            .collect();
+        // The frame of the sheet is drawn in the margin, where nothing else goes.
+        let frames: Vec<Entity> = nodes
+            .iter(world)
+            .filter(|(.., (_, frame), _)| *frame)
+            .map(|(entity, ..)| entity)
             .collect();
         let inside = |entity: Entity| -> Vec<Entity> {
             std::iter::successors(parents.get(&entity).copied(), |parent| {
@@ -4532,27 +4547,31 @@ mod tests {
             .collect();
         nodes
             .iter(world)
-            .map(|(entity, (node, computed, transform), text, button, _)| {
-                // A piece goes by its own words, or by the first words inside it.
-                let words = texts
-                    .iter()
-                    .find(|(holder, _)| *holder == entity || inside(*holder).contains(&entity));
-                Piece {
-                    entity,
-                    name: words.map_or("an empty box".to_string(), |(_, text)| format!("{text:?}")),
-                    lies: Rect::from_center_size(transform.translation, computed.size),
-                    marks: button || text.is_some_and(|text| !text.0.is_empty()),
-                    lost_an_edge: [
-                        (node.border.left, computed.border.min_inset.x),
-                        (node.border.right, computed.border.max_inset.x),
-                        (node.border.top, computed.border.min_inset.y),
-                        (node.border.bottom, computed.border.max_inset.y),
-                    ]
-                    .into_iter()
-                    .any(|(drawn, laid_out)| drawn != Val::ZERO && laid_out < 1.0),
-                    inside: inside(entity),
-                }
-            })
+            .map(
+                |(entity, (node, computed, transform), text, (button, _), _)| {
+                    // A piece goes by its own words, or by the first words inside it.
+                    let words = texts
+                        .iter()
+                        .find(|(holder, _)| *holder == entity || inside(*holder).contains(&entity));
+                    let framing = inside(entity).iter().any(|holder| frames.contains(holder));
+                    Piece {
+                        entity,
+                        name: words
+                            .map_or("an empty box".to_string(), |(_, text)| format!("{text:?}")),
+                        lies: Rect::from_center_size(transform.translation, computed.size),
+                        marks: !framing && (button || text.is_some_and(|text| !text.0.is_empty())),
+                        lost_an_edge: [
+                            (node.border.left, computed.border.min_inset.x),
+                            (node.border.right, computed.border.max_inset.x),
+                            (node.border.top, computed.border.min_inset.y),
+                            (node.border.bottom, computed.border.max_inset.y),
+                        ]
+                        .into_iter()
+                        .any(|(drawn, laid_out)| drawn != Val::ZERO && laid_out < 1.0),
+                        inside: inside(entity),
+                    }
+                },
+            )
             .collect()
     }
 

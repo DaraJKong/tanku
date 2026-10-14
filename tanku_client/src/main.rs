@@ -4,6 +4,7 @@
 
 mod ahead;
 mod audio;
+mod balloons;
 mod camera;
 mod cli;
 mod crew;
@@ -190,7 +191,7 @@ fn main() {
             repair::plugin,
         ))
         .add_plugins((audio::plugin, music::plugin, notices::plugin))
-        .add_plugins(margin::plugin);
+        .add_plugins((margin::plugin, balloons::plugin));
     // A browser joins games and hosts none.
     app.add_plugins(net::NetPlugin);
     // A page keeps no journal: nothing outside the browser could read it. And a page is

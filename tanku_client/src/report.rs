@@ -363,7 +363,11 @@ fn stage(
                     piece(Piece::Ring(index), ring),
                     BorderColor::all(theme::TEXT),
                     BackgroundColor(theme::FLOOR),
-                    children![theme::figure((index + 1).to_string(), 14.0, theme::TEXT)],
+                    children![theme::old::figure(
+                        (index + 1).to_string(),
+                        14.0,
+                        theme::TEXT
+                    )],
                 ));
             }
         });
@@ -473,22 +477,22 @@ fn row(list: &mut ChildSpawnerCommands, number: usize, part: &Part) {
         children![
             (
                 cell(20.0),
-                children![theme::figure(number.to_string(), 14.0, theme::TEXT)]
+                children![theme::old::figure(number.to_string(), 14.0, theme::TEXT)]
             ),
             (
                 Node {
                     flex_grow: 1.0,
                     ..default()
                 },
-                children![theme::title(part.name.clone(), 15.0, theme::TEXT)],
+                children![theme::old::title(part.name.clone(), 15.0, theme::TEXT)],
             ),
-            theme::text(part.gives.clone(), 16.0, theme::TEXT_DIM),
+            theme::old::text(part.gives.clone(), 16.0, theme::TEXT_DIM),
             (
                 Node {
                     justify_content: JustifyContent::End,
                     ..cell(26.0)
                 },
-                children![theme::figure(part.cost.to_string(), 14.0, theme::TEXT)],
+                children![theme::old::figure(part.cost.to_string(), 14.0, theme::TEXT)],
             ),
         ],
     ));
@@ -511,8 +515,8 @@ pub fn panels(sheet: &mut ChildSpawnerCommands, blow: &Blow, solo: bool) {
             ..default()
         }),
         children![
-            theme::label("Destroyed by", 12.0, theme::TEXT_DIM),
-            theme::title(build(blow, solo), 22.0, theme::TEXT),
+            theme::old::label("Destroyed by", 12.0, theme::TEXT_DIM),
+            theme::old::title(build(blow, solo), 22.0, theme::TEXT),
             (
                 Node {
                     column_gap: px(10),
@@ -528,10 +532,10 @@ pub fn panels(sheet: &mut ChildSpawnerCommands, blow: &Blow, solo: bool) {
                         },
                         BackgroundColor(color(blow)),
                     ),
-                    theme::figure(points, 14.0, theme::TEXT_DIM),
+                    theme::old::figure(points, 14.0, theme::TEXT_DIM),
                 ],
             ),
-            theme::text(means(blow, solo), 17.0, theme::TEXT),
+            theme::old::text(means(blow, solo), 17.0, theme::TEXT),
         ],
     ));
 
@@ -556,8 +560,8 @@ pub fn panels(sheet: &mut ChildSpawnerCommands, blow: &Blow, solo: bool) {
                     ..default()
                 },
                 children![
-                    theme::label("Parts and their level", 12.0, theme::TEXT_DIM),
-                    theme::label("What they give, and their points", 12.0, theme::TEXT_DIM),
+                    theme::old::label("Parts and their level", 12.0, theme::TEXT_DIM),
+                    theme::old::label("What they give, and their points", 12.0, theme::TEXT_DIM),
                 ],
             ));
             list.spawn(Node {

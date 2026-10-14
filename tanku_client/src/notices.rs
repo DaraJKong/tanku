@@ -28,7 +28,7 @@ use crate::{
     hud::{self, SHEET_EDGE},
     report, scene,
     settings::{League, Records, Settings},
-    theme::{self, Face},
+    theme::{self, old::Face},
     unlocks::{self, Unlocked},
 };
 
@@ -706,7 +706,7 @@ fn words(
     content: impl Into<String>,
     color: Color,
 ) {
-    let edged = theme::edged(Inked::text(root, color), face, content, size, color);
+    let edged = theme::old::edged(Inked::text(root, color), face, content, size, color);
     commands.spawn((ChildOf(parent), edged));
 }
 
@@ -732,7 +732,7 @@ fn tag(commands: &mut Commands, (parent, root): (Entity, Entity), seat: u8) {
     commands.spawn((
         ChildOf(tag),
         Inked::text(root, theme::TEXT),
-        theme::title(named(seat), TAG, theme::TEXT),
+        theme::old::title(named(seat), TAG, theme::TEXT),
     ));
 }
 
@@ -877,7 +877,7 @@ fn spawn(commands: &mut Commands, told: &Told) -> Entity {
             words(commands, (first, root), big, "Destroyed", heading);
             let second = row(commands, column, 9.0);
             arrow(commands, (second, root));
-            let distance = theme::edged(
+            let distance = theme::old::edged(
                 (Distance, Inked::text(root, theme::TEXT)),
                 Face::Figure,
                 "",

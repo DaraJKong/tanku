@@ -1,5 +1,5 @@
-//! The ruler: ticks along the edge of the sheet that give the distance to the barrier of the
-//! sector the player is in.
+//! The ruler: the graduation of the frame of the sheet, ticks inside its line that give the
+//! distance to the barrier of the sector the player is in.
 //!
 //! The distance is measured along the sector, the way it runs. The ruler lies along the edge
 //! of the screen that runs the same way: the left edge while the sector goes up or down the
@@ -16,12 +16,15 @@ use crate::{
     Screen,
     camera::{self, OnScreen, View},
     hud::SHEET_EDGE,
-    scene, theme,
+    scene,
+    sheet::FRAME_WIDTH,
+    theme,
 };
 
-/// How far the short and the long ticks stick out of the edge of the sheet, toward the edge
-/// of the screen.
-const TICK: (f32, f32) = (5.0, 10.0);
+/// Where the graduation starts: inside the line of the frame.
+const INSIDE: f32 = SHEET_EDGE + FRAME_WIDTH;
+/// How far the short and the long ticks reach into the sheet from the line of the frame.
+const TICK: (f32, f32) = (9.0, 14.0);
 /// The steps between two ticks, in meters, and how many of them make a long tick with its
 /// number. The first one whose ticks are far enough apart is used.
 const STEPS: [(f32, u32); 4] = [(1.0, 5), (5.0, 2), (10.0, 5), (50.0, 2)];
@@ -30,13 +33,13 @@ const TICK_SPACING: f32 = 10.0;
 /// How many short and long ticks there are to place.
 const SHORT_TICKS: usize = 120;
 const LONG_TICKS: usize = 40;
-/// Thickness of the mark that shows where the barrier is along the ruler, and its least
-/// length.
-const BARRIER_MARK: (f32, f32) = (3.0, 8.0);
-/// The gap between the edge of the sheet and the numbers.
-const NUMBER_GAP: f32 = 5.0;
+/// The least length of the mark that shows where the barrier is along the ruler, and how far
+/// it reaches into the sheet, past the long ticks.
+const BARRIER_MARK: (f32, f32) = (8.0, 18.0);
+/// The gap between the barrier mark and the numbers.
+const NUMBER_GAP: f32 = 4.0;
 /// The room that the caption takes in the corner of the sheet, where no number goes.
-const CAPTION_ROOM: Vec2 = Vec2::new(120.0, 24.0);
+const CAPTION_ROOM: Vec2 = Vec2::new(190.0, 30.0);
 
 /// A part of the ruler.
 #[derive(Component, Clone, Copy)]
@@ -185,6 +188,8 @@ fn build(mut commands: Commands) {
                 height: percent(100),
                 ..default()
             },
+            // Under the blocks of the display, which stand on the frame too.
+            GlobalZIndex(-1),
             Pickable::IGNORE,
         ))
         .with_children(|ruler| {
@@ -198,7 +203,7 @@ fn build(mut commands: Commands) {
                 ruler.spawn((
                     hidden(Mark::Number(index)),
                     children![(
-                        theme::figure("", 11.0, theme::TEXT_DIM),
+                        theme::figure("", theme::LABEL, theme::TEXT_DIM),
                         TextLayout::no_wrap(),
                         Node {
                             position_type: PositionType::Absolute,
@@ -211,16 +216,16 @@ fn build(mut commands: Commands) {
             ruler.spawn((hidden(Mark::Barrier), BackgroundColor(theme::DANGER)));
             ruler.spawn((
                 hidden(Mark::Caption),
-                theme::label("m to barrier", 11.0, theme::TEXT_DIM),
+                theme::label("m to barrier", theme::LABEL, theme::TEXT_DIM),
                 TextLayout::no_wrap(),
             ));
         });
 }
 
 /// A bar of the ruler: where its corner goes and how large it is, from its place along the
-/// edge, its length along it and how far it sticks out of the sheet.
-fn bar(upright: bool, from: f32, length: f32, out: f32) -> (Vec2, Vec2) {
-    let (corner, size) = (Vec2::new(SHEET_EDGE - out, from), Vec2::new(out, length));
+/// edge, its length along it and how far it reaches into the sheet from the line of the frame.
+fn bar(upright: bool, from: f32, length: f32, reach: f32) -> (Vec2, Vec2) {
+    let (corner, size) = (Vec2::new(INSIDE, from), Vec2::new(reach, length));
     if upright {
         (corner, size)
     } else {
@@ -231,7 +236,8 @@ fn bar(upright: bool, from: f32, length: f32, out: f32) -> (Vec2, Vec2) {
 /// Where a mark of the ruler goes and, for a bar, how large it is. Nothing if it doesn't show.
 fn lay(mark: Mark, reading: &Reading) -> Option<(Vec2, Option<Vec2>)> {
     let upright = reading.upright;
-    let inside = SHEET_EDGE + NUMBER_GAP;
+    // The numbers stand past the longest mark.
+    let inside = INSIDE + BARRIER_MARK.1 + NUMBER_GAP;
     let sized = |(corner, size): (Vec2, Vec2)| (corner, Some(size));
     match mark {
         Mark::Short(index) => {
@@ -250,22 +256,22 @@ fn lay(mark: Mark, reading: &Reading) -> Option<(Vec2, Option<Vec2>)> {
                 Vec2::new(at, inside)
             };
             // The caption has the corner of the sheet to itself.
-            let free = at.x > SHEET_EDGE + CAPTION_ROOM.x || at.y > SHEET_EDGE + CAPTION_ROOM.y;
+            let free = at.x > INSIDE + CAPTION_ROOM.x || at.y > INSIDE + CAPTION_ROOM.y;
             free.then_some((at.round(), None))
         }
         Mark::Barrier => {
             let (from, to) = reading.barrier?;
             let (from, to) = (from.min(to), from.max(to));
-            let length = (to - from).max(BARRIER_MARK.1);
+            let length = (to - from).max(BARRIER_MARK.0);
             let from = (from + to - length) / 2.0;
             Some(sized(bar(
                 upright,
                 from.round(),
                 length.round(),
-                BARRIER_MARK.0,
+                BARRIER_MARK.1,
             )))
         }
-        Mark::Caption => Some((Vec2::new(inside + 1.0, inside), None)),
+        Mark::Caption => Some((Vec2::new(inside, INSIDE + 10.0), None)),
     }
 }
 
@@ -458,17 +464,17 @@ mod tests {
 
     #[test]
     fn a_bar_lies_along_the_edge_it_belongs_to() {
-        // Along the left edge, a tick sticks out to the left of the sheet.
-        let (corner, size) = bar(true, 300.0, 1.0, 5.0);
+        // Along the left edge, a tick reaches right into the sheet from the line of the frame.
+        let (corner, size) = bar(true, 300.0, 1.0, 9.0);
         assert_eq!(
             (corner, size),
-            (Vec2::new(SHEET_EDGE - 5.0, 300.0), Vec2::new(5.0, 1.0))
+            (Vec2::new(INSIDE, 300.0), Vec2::new(9.0, 1.0))
         );
-        // Along the top edge, it sticks out above it.
-        let (corner, size) = bar(false, 300.0, 1.0, 5.0);
+        // Along the top edge, it reaches down.
+        let (corner, size) = bar(false, 300.0, 1.0, 9.0);
         assert_eq!(
             (corner, size),
-            (Vec2::new(300.0, SHEET_EDGE - 5.0), Vec2::new(1.0, 5.0))
+            (Vec2::new(300.0, INSIDE), Vec2::new(1.0, 9.0))
         );
     }
 }

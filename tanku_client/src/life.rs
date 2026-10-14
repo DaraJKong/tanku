@@ -176,7 +176,7 @@ fn build(mut commands: Commands) {
         Pickable::IGNORE,
         children![(
             CaptionText,
-            theme::label("", 12.0, theme::PLAYER),
+            theme::label("", theme::LABEL, theme::PLAYER),
             // Its point has no width for a line to fit in.
             TextLayout::no_wrap(),
             Node {

@@ -3,8 +3,9 @@
 //!
 //! Each character is drawn with the pen of the drawing, in strokes, after lettering type B of
 //! ISO 3098: the line is a tenth of the height of a capital, two lines part two characters and
-//! six part two words. Only capitals, figures and the signs of dimensions are drawn, as on a
-//! plan.
+//! six part two words. The strokes are those of the font of the interface, which is made from
+//! the same file, so that the sheet and its margin are lettered by one hand. The floor writes
+//! in capitals, as a plan does.
 
 use std::{collections::HashMap, f32::consts::TAU};
 
@@ -12,116 +13,33 @@ use bevy::prelude::*;
 
 use crate::draft::Draft;
 
-/// The strokes of each character, in tenths of the height of a capital, with the baseline at
-/// 0 and the line of the capitals at 10. `M` lifts the pen to a point, `L` draws a line to a
-/// point, and `A` draws an arc of an ellipse: its center, its two radii, and the angles in
-/// degrees, counterclockwise, from which and to which it goes. An arc that starts where the
-/// pen is goes on from there. The number before the strokes is the width of the character,
-/// from the middle of its leftmost line to the middle of its rightmost one.
-const GLYPHS: &[(char, f32, &str)] = &[
-    ('0', 5.0, "A2.5,5,2.5,5,0,360"),
-    ('1', 5.0, "M0.9,7.6 L2.5,10 L2.5,0"),
-    ('2', 5.0, "A2.5,7.5,2.5,2.5,165,-38 L0,0 L5,0"),
-    (
-        '3',
-        5.0,
-        "A2.5,7.6,2.4,2.4,155,-90 A2.5,2.6,2.5,2.6,90,-155",
-    ),
-    ('4', 5.0, "M3.3,10 L0,2.8 L5,2.8 M3.9,6.4 L3.9,0"),
-    (
-        '5',
-        5.0,
-        "M4.7,10 L0.7,10 L0.45,5.35 A2.5,3.05,2.5,3.05,130,-152",
-    ),
-    (
-        '6',
-        5.0,
-        "A2.5,2.7,2.5,2.7,0,360 M0,2.7 A4.9,2.7,4.9,7.3,180,103",
-    ),
-    ('7', 5.0, "M0,10 L5,10 L1.4,0"),
-    (
-        '8',
-        5.0,
-        "A2.5,7.65,2.2,2.35,0,360 A2.5,2.65,2.5,2.65,0,360",
-    ),
-    (
-        '9',
-        5.0,
-        "A2.5,7.3,2.5,2.7,0,360 M5,7.3 A0.1,7.3,4.9,7.3,0,-77",
-    ),
-    ('A', 6.0, "M0,0 L3,10 L6,0 M0.95,3.2 L5.05,3.2"),
-    (
-        'B',
-        5.0,
-        "M0,0 L0,10 L3.2,10 A3.2,7.6,1.6,2.4,90,-90 L0,5.2 M0,5.2 L3.3,5.2 \
-         A3.3,2.6,1.7,2.6,90,-90 L0,0",
-    ),
-    ('C', 5.0, "A3,5,3,5,47,313"),
-    ('D', 5.0, "M0,0 L0,10 L2,10 A2,5,3,5,90,-90 L0,0"),
-    ('E', 4.5, "M4.5,10 L0,10 L0,0 L4.5,0 M0,5.2 L3.6,5.2"),
-    ('F', 4.5, "M4.5,10 L0,10 L0,0 M0,5.2 L3.6,5.2"),
-    ('G', 5.5, "A3.1,5,3.1,5,48,318 L5.45,4.5 L3.2,4.5"),
-    ('H', 5.0, "M0,0 L0,10 M5,0 L5,10 M0,5.2 L5,5.2"),
-    ('I', 0.0, "M0,0 L0,10"),
-    ('J', 4.5, "M4.5,10 L4.5,2.4 A2.25,2.4,2.25,2.4,0,-172"),
-    ('K', 5.0, "M0,0 L0,10 M5,10 L0,3.6 M1.9,6.03 L5,0"),
-    ('L', 4.5, "M0,10 L0,0 L4.5,0"),
-    ('M', 6.5, "M0,0 L0,10 L3.25,2.2 L6.5,10 L6.5,0"),
-    ('N', 5.0, "M0,0 L0,10 L5,0 L5,10"),
-    ('O', 6.5, "A3.25,5,3.25,5,0,360"),
-    (
-        'P',
-        5.0,
-        "M0,0 L0,10 L3.2,10 A3.2,7.3,1.8,2.7,90,-90 L0,4.6",
-    ),
-    ('Q', 6.5, "A3.25,5,3.25,5,0,360 M3.9,2.3 L6.5,-0.4"),
-    (
-        'R',
-        5.0,
-        "M0,0 L0,10 L3.2,10 A3.2,7.4,1.8,2.6,90,-90 L0,4.8 M2.7,4.8 L5,0",
-    ),
-    (
-        'S',
-        5.0,
-        "A2.5,7.55,2.4,2.45,18,270 A2.5,2.55,2.5,2.55,90,-162",
-    ),
-    ('T', 5.0, "M0,10 L5,10 M2.5,10 L2.5,0"),
-    ('U', 5.0, "M0,10 L0,2.5 A2.5,2.5,2.5,2.5,180,360 L5,10"),
-    ('V', 6.0, "M0,10 L3,0 L6,10"),
-    ('W', 8.0, "M0,10 L2,0 L4,7.5 L6,0 L8,10"),
-    ('X', 5.5, "M0,0 L5.5,10 M0,10 L5.5,0"),
-    ('Y', 6.0, "M0,10 L3,5 L6,10 M3,5 L3,0"),
-    ('Z', 5.0, "M0,10 L5,10 L0,0 L5,0"),
-    (' ', 3.0, ""),
-    ('.', 0.0, "M0,0 L0,0.01"),
-    (',', 0.8, "M0.8,0.4 L0,-1.8"),
-    (':', 0.0, "M0,0 L0,0.01 M0,6 L0,6.01"),
-    ('-', 3.0, "M0,5 L3,5"),
-    ('+', 5.0, "M0,5 L5,5 M2.5,2.5 L2.5,7.5"),
-    ('=', 5.0, "M0,3.6 L5,3.6 M0,6.4 L5,6.4"),
-    ('/', 4.0, "M0,-0.5 L4,10.5"),
-    ('(', 2.0, "A4.5,5,4.5,6.4,128,232"),
-    (')', 2.0, "A-2.5,5,4.5,6.4,52,-52"),
-    ('°', 2.5, "A1.25,8.75,1.25,1.25,0,360"),
-    ('′', 1.0, "M1,10 L0,7.4"),
-    ('″', 3.0, "M1,10 L0,7.4 M3,10 L2,7.4"),
-    ('×', 4.0, "M0,3 L4,7 M0,7 L4,3"),
-    ('·', 0.0, "M0,5 L0,5.01"),
-    ('⌀', 6.0, "A3,5,3,3.3,0,360 M0.5,0.7 L5.5,9.3"),
-    (
-        '%',
-        6.0,
-        "M0,0 L6,10 A1.3,8.2,1.3,1.8,0,360 A4.7,1.8,1.3,1.8,0,360",
-    ),
-    (
-        '?',
-        4.5,
-        "A2.25,7.6,2.25,2.4,165,-62 L2.25,4.2 L2.25,2.8 M2.25,0 L2.25,0.01",
-    ),
-    ('!', 0.0, "M0,10 L0,3 M0,0 L0,0.01"),
-    ('∞', 8.0, "A2,5,2,2.2,0,360 A6,5,2,2.2,180,-180"),
-    ('\'', 0.0, "M0,10 L0,7.4"),
-];
+/// The strokes of every character, in tenths of the height of a capital, with the baseline
+/// at 0 and the line of the capitals at 10. The file says how they are written. The floor
+/// draws the characters that are drawn as themselves; those made of others, the accented
+/// letters, are the interface's.
+pub const STROKES: &str = include_str!("../assets/fonts/tanku_lettering/strokes.txt");
+
+/// The character that a line of [`STROKES`] is about, written as itself or as U+ and its
+/// code.
+pub fn character(spec: &str) -> Option<char> {
+    match spec.strip_prefix("U+") {
+        Some(code) if !code.is_empty() => {
+            u32::from_str_radix(code, 16).ok().and_then(char::from_u32)
+        }
+        _ => {
+            let mut chars = spec.chars();
+            let first = chars.next()?;
+            chars.next().is_none().then_some(first)
+        }
+    }
+}
+
+/// The lines of [`STROKES`] that say something: neither empty nor notes.
+pub fn written() -> impl Iterator<Item = &'static str> {
+    STROKES
+        .lines()
+        .filter(|line| !line.trim().is_empty() && !line.starts_with('#'))
+}
 
 /// The line of the pen, the gap between two characters and the width of a space, in tenths
 /// of the height of a capital.
@@ -144,18 +62,25 @@ pub struct Lettering {
 
 impl Default for Lettering {
     fn default() -> Self {
-        let glyphs = GLYPHS
-            .iter()
-            .map(|&(character, width, path)| {
-                let strokes = strokes(path);
-                (character, Glyph { width, strokes })
-            })
-            .collect();
+        let mut glyphs = HashMap::new();
+        for line in written() {
+            let mut words = line.split_whitespace();
+            let (Some(spec), Some(width)) = (words.next(), words.next()) else {
+                continue;
+            };
+            // Marks, and characters made of others, are not drawn as themselves.
+            let (Some(character), Ok(width)) = (character(spec), width.parse()) else {
+                continue;
+            };
+            let path: Vec<&str> = words.collect();
+            let strokes = strokes(&path.join(" "));
+            glyphs.insert(character, Glyph { width, strokes });
+        }
         Self { glyphs }
     }
 }
 
-/// The lines of a path of [`GLYPHS`].
+/// The lines of a path of [`STROKES`].
 fn strokes(path: &str) -> Vec<Vec<Vec2>> {
     let mut lines: Vec<Vec<Vec2>> = Vec::new();
     let numbers = |token: &str| -> Vec<f32> {
@@ -294,10 +219,38 @@ mod tests {
     #[test]
     fn every_character_has_lines_but_the_space() {
         let lettering = Lettering::default();
-        for &(character, _, _) in GLYPHS {
-            let lines = lettering.lines(&character.to_string(), 1.0);
-            assert_eq!(lines.is_empty(), character == ' ', "{character:?}");
+        assert!(lettering.glyphs.len() > 100);
+        for (character, glyph) in &lettering.glyphs {
+            assert_eq!(glyph.strokes.is_empty(), *character == ' ', "{character:?}");
         }
+        // The floor letters in capitals, so it needs every capital, figure and sign of a plan.
+        for character in "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 .,:-+=/()%?!'\u{b0}\u{b7}\u{d7}\u{2032}\u{2033}\u{221e}\u{2300}".chars() {
+            assert!(lettering.glyphs.contains_key(&character), "{character:?}");
+        }
+    }
+
+    #[test]
+    fn every_letter_that_a_player_types_for_others_is_drawn() {
+        // What the interface draws: the characters of the file, as themselves or of others.
+        let drawn: Vec<char> = written()
+            .filter_map(|line| line.split_whitespace().next().and_then(character))
+            .collect();
+        for letter in (' '..='\u{17f}').filter(|letter| tanku_core::protocol::lettered(*letter)) {
+            assert!(drawn.contains(&letter), "{letter:?} is typed and not drawn");
+        }
+        // And the dots that stand for the letters of a hidden password.
+        assert!(drawn.contains(&'\u{2022}'));
+    }
+
+    #[test]
+    fn a_character_is_written_as_itself_or_by_its_code() {
+        assert_eq!(character("A"), Some('A'));
+        assert_eq!(character("\u{e9}"), Some('\u{e9}'));
+        assert_eq!(character("U+0020"), Some(' '));
+        assert_eq!(character("U+0023"), Some('#'));
+        assert_eq!(character("U+"), None);
+        assert_eq!(character("mark"), None);
+        assert_eq!(character(""), None);
     }
 
     #[test]

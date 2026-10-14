@@ -76,10 +76,14 @@ const ROOM_COVER: u32 = BALANCE.room.cover;
 const RESERVE_ROW: f32 = 2.2;
 const RESERVE_ROWS_APART: f32 = 2.6;
 const RESERVE_SPACING: f32 = 3.0;
-/// The most tanks that a row of the reserve holds, and how far apart its two ends are at
-/// most: it stands between the two panels at the bottom of the display.
+/// The most tanks that a row of the reserve holds, how far apart its two ends are at most, and
+/// how far west of the middle of the room its middle is: it stands between the parts list and
+/// the title block at the bottom of the display, which leave about 15 m of the bottom of the
+/// view between them on a screen of 16 by 9, west of its middle, as the title block is the
+/// wider of the two.
 const RESERVE_ROW_MOST: u32 = 8;
-const RESERVE_SPAN: f32 = 20.0;
+const RESERVE_SPAN: f32 = 12.0;
+const RESERVE_WEST: f32 = 3.3;
 /// How far south of the room the ground that one row of the reserve takes reaches, and the
 /// ground that two rows take.
 const RESERVE_DEPTH: (f32, f32) = (4.2, 6.5);
@@ -1174,7 +1178,8 @@ impl Room {
             let along = place as f32 - (places - 1) as f32 / 2.0;
             let spacing = RESERVE_SPACING.min(RESERVE_SPAN / (places.max(2) - 1) as f32);
             let behind = RESERVE_ROW + row as f32 * RESERVE_ROWS_APART;
-            Vec2::new((min.x + max.x) / 2.0 + along * spacing, min.y - behind)
+            let middle = (min.x + max.x) / 2.0 - RESERVE_WEST;
+            Vec2::new(middle + along * spacing, min.y - behind)
         };
         let tanks: u32 = parts.iter().sum();
         let gaps = parts.len().saturating_sub(1) as u32;
@@ -1767,7 +1772,7 @@ mod room_tests {
         for seed in SEEDS {
             let room = Room::new(seed);
             let (min, max) = (room.plan().min.as_vec2(), room.plan().max.as_vec2());
-            let middle = (min.x + max.x) / 2.0;
+            let middle = (min.x + max.x) / 2.0 - RESERVE_WEST;
             let rows = |parts: &[u32]| -> Vec<f32> {
                 let mut rows: Vec<f32> = room.reserve(parts).iter().map(|at| at.y).collect();
                 rows.dedup();
@@ -1789,13 +1794,20 @@ mod room_tests {
                 for (number, place) in places.iter().enumerate() {
                     // Outside the room, and a tank is 2 m long.
                     assert!(place.y <= min.y - 2.0 && place.y >= min.y - depth + 1.5);
-                    assert!((place.x - middle).abs() <= 10.0, "seed {seed}: {parts:?}");
-                    // A tank is 1.6 m wide.
+                    assert!((place.x - middle).abs() <= 6.0, "seed {seed}: {parts:?}");
+                    // A tank is 1.6 m wide. The fullest rows, those of four players, have
+                    // their tanks 1.7 m apart, and a single player's 2 m at least.
+                    let least = if parts.iter().sum::<u32>() > 6 {
+                        1.7
+                    } else {
+                        2.0
+                    };
                     for other in &places[..number] {
-                        assert!(place.distance(*other) >= 2.5, "seed {seed}: {parts:?}");
+                        let apart = place.distance(*other);
+                        assert!(apart >= least - 1e-3, "seed {seed}: {parts:?}");
                     }
                 }
-                // A row is centered on the room.
+                // A row is centered where the reserve stands, west of the middle of the room.
                 let first_row: Vec<f32> = places
                     .iter()
                     .filter(|place| place.y == places[0].y)

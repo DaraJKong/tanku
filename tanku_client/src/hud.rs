@@ -1,29 +1,38 @@
 //! The heads-up display: rounds, mines, shield, sector and lives.
 //!
-//! It is laid out as the margin of a drawing: a table of the tank's weapons in one corner, the
-//! title block of the sheet in the other, with a scale and a north arrow. What changes fastest
-//! is also drawn on the ground under the player's tank, where the player is looking.
+//! The screen is a sheet, framed as a drawing is. In its corners stand the blocks of a drawing,
+//! flush with the frame: the parts list of the tank, after ISO 7573, which lists the parts that
+//! show what it reads, and the title block, after ISO 7200, which names the run, the sector,
+//! the lives or the team, the seed, the version and the scale with its north arrow. In play,
+//! both make two exceptions to their norms so that they hide less of the fight: the parts
+//! list has no item numbers, and the title block has no field of its own for its author, whose
+//! balloon stands with the team's. What changes fastest is also drawn on the ground under the
+//! player's tank, where the player is looking.
 
 use bevy::prelude::*;
 use tanku_core::{
+    map::{SectorKind, SectorLayout},
+    progression,
     rules::{MAX_PLAYERS, REPAIR_TIME, SOLO_LIVES},
     seed::VERSION,
     sim::{
-        Barrier, Enemy, Gun, Player, Playtest, Position, Run, Shield, ShieldState, SimEvent, Tank,
-        TankCommand, Wreck,
+        Barrier, Enemy, Gun, Player, Playtest, Position, Run, Sector, Shield, ShieldState,
+        SimEvent, Tank, TankCommand, Wreck,
     },
     stats::{Genome, Stat},
 };
 
 use crate::{
     Screen,
+    balloons::{self, Balloon},
     camera::{MainCamera, View},
     crew::{LocalSeat, Own},
     draft::{Draft, LIFT},
     notices::Alarms,
     repair, scene,
     settings::{Action, Settings},
-    sheet, tags, theme,
+    sheet::{self, FRAME_WIDTH},
+    tags, theme,
     unlocks::{self, Fair, Unlocks},
 };
 
@@ -35,12 +44,30 @@ pub const TOAST_SIZE: f32 = 20.0;
 const LULL_COUNTED: u8 = 2;
 /// Markers point to the last enemies of a sector when this many remain, or fewer.
 const MARKED_ENEMIES: usize = 2;
-/// Distance between the panels and the edge of the screen, and between that edge and the
-/// fine line that frames the sheet.
+/// How far from the edges of the screen what is written over the game keeps.
 const MARGIN: f32 = 48.0;
+/// Distance between the edge of the screen and the frame of the sheet.
 pub const SHEET_EDGE: f32 = 16.0;
-/// Length that the scale shows, in meters.
-const SCALE: f32 = 5.0;
+/// Length that the bar of the scale shows, in meters, in four marks.
+const SCALE: f32 = 2.0;
+/// The parts list: the widths of its columns, the part and what it reads, and the height of
+/// its rows, its header too.
+const PARTS_COLUMNS: [f32; 2] = [112.0, 286.0];
+const PARTS_ROW: f32 = 42.0;
+/// How wide the name of what a part reads is, so that the gauges line up.
+const READS: f32 = 78.0;
+/// The title block: the widths of the fields of its upper row (the legal owner, the title,
+/// the lives or the team) and of its lower one (the seed, the revision, the scale), and the
+/// heights of the two. Each field is as wide as the longest text it holds: PLAYTEST · NORMAL,
+/// CORRIDOR · 15 TANKS, four balloons, a seed of ten W.
+const TITLE_UPPER: [f32; 3] = [216.0, 232.0, 196.0];
+const TITLE_LOWER: [f32; 3] = [254.0, 180.0, 210.0];
+const TITLE_ROWS: [f32; 2] = [104.0, 70.0];
+/// The space on each side of what a field holds, and between its label and its value.
+const FIELD_PAD: f32 = 10.0;
+/// The balloons of the team in the title block, and the room that each takes.
+const TEAM_BALLOON: f32 = 36.0;
+const TEAM_ROOM: f32 = 44.0;
 /// The dial around the player's tank: its radius, and the width of its arc.
 const DIAL_RADIUS: f32 = 1.75;
 const DIAL_WIDTH: f32 = 0.16;
@@ -50,14 +77,30 @@ const DIAL_ROUND: f32 = 11.0;
 const DIAL_GAP: f32 = 3.0;
 const DIAL_STEPS: u8 = 4;
 
-/// A square that is lit or not: a round, a mine, a life, or the tank of the player of a seat.
+/// A square that is lit or not: a round, a mine or a life.
 #[derive(Component, Clone, Copy)]
 enum Pip {
     Round(u8),
     Mine(u8),
     Life(u32),
-    Mate(u8),
 }
+
+/// A row of the parts list that a tank may not have: the disk of a shield, the rack of
+/// mines.
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
+enum PartRow {
+    Disk,
+    Rack,
+}
+
+/// The place in the team field of the title block of the balloon of a seat, with the word
+/// under the balloon of the player at this screen.
+#[derive(Component)]
+struct TeamSeat(u8);
+
+/// The word under one's own balloon.
+#[derive(Component)]
+struct You(u8);
 
 /// A bar that fills up.
 #[derive(Component, Clone, Copy)]
@@ -69,9 +112,7 @@ enum Bar {
 /// A text that follows the game.
 #[derive(Component, Clone, Copy)]
 enum Readout {
-    /// Which player the weapons are those of.
-    Player,
-    /// How the game is played: alone, with others, or as a playtest.
+    /// How the game is played, alone, with others or as a playtest, and how hard.
     Mode,
     /// What the squares next to it count: the lives of a single player, or the team.
     Crew,
@@ -79,13 +120,13 @@ enum Readout {
     /// arena mode.
     Unit,
     Sector,
+    /// What the sector is, and how many tanks its group has.
+    Kind,
     /// What stands for the lives when a playtest doesn't count them.
     Lives,
     Seed,
-    /// Says that the run earns no achievement, when it earns none.
+    /// The note over the title block that the run earns no achievement, when it earns none.
     Earning,
-    /// How hard the run is.
-    Difficulty,
     Shield,
     Hint,
     /// What to do about a wreck, among several players.
@@ -100,19 +141,25 @@ struct Toast(f32);
 #[derive(Component)]
 struct Notes;
 
-/// Where those notes stand: at the bottom of the screen, or under the messages at its top
-/// in arena mode, where the tanks in reserve stand at the bottom.
+/// Where those notes stand: at the bottom of the screen, between the parts list and the
+/// title block, or under the messages at its top in arena mode, where the tanks in reserve
+/// stand at the bottom.
 fn notes(in_a_room: bool) -> Node {
     let (top, bottom) = if in_a_room {
         (px(MARGIN + 28.0), auto())
     } else {
         (auto(), px(MARGIN))
     };
+    let (left, right) = (
+        SHEET_EDGE + parts_width() + SHEET_EDGE,
+        SHEET_EDGE + title_width() + SHEET_EDGE,
+    );
     Node {
         position_type: PositionType::Absolute,
         top,
         bottom,
-        width: percent(100),
+        left: px(left),
+        right: px(right),
         flex_direction: FlexDirection::Column,
         align_items: AlignItems::Center,
         row_gap: px(10),
@@ -130,20 +177,6 @@ fn seat_notes(run: Option<Res<Run>>, mut held: Single<&mut Node, With<Notes>>) {
 
 #[derive(Component)]
 struct EnemyMarker(usize);
-
-/// The number of the player of a seat, next to the square of their tank.
-#[derive(Component)]
-struct MateNumber(u8);
-
-/// The fill of the square of the tank of a seat, which rises as its wreck is repaired, as its
-/// circle is inked.
-#[derive(Component)]
-struct RepairFill(u8);
-
-/// The line that strikes out the square of a player who left the game, for a moment before
-/// it goes.
-#[derive(Component)]
-struct Strike(u8);
 
 /// The bar under the name on the marker of the tank of a seat, which fills as its wreck is
 /// repaired.
@@ -192,6 +225,10 @@ pub fn short_name(seat: u8) -> String {
 /// The bar of the scale, which is as long as [`SCALE`] meters of ground.
 #[derive(Component)]
 struct ScaleBar;
+
+/// The note over the title block.
+#[derive(Component)]
+struct Note;
 
 #[derive(Component)]
 struct NorthArrow;
@@ -273,68 +310,49 @@ fn setup(
     });
 }
 
-/// A see-through sheet with a ruled edge, which holds its rows in a column.
-fn panel(node: Node) -> impl Bundle {
+/// A block of the sheet, flush with the frame in a corner: edged with the wide line, ruled
+/// inside with the narrow one, and see-through a little.
+fn block(node: Node) -> impl Bundle {
     (
         Node {
+            position_type: PositionType::Absolute,
             flex_direction: FlexDirection::Column,
-            border: UiRect::all(px(1)),
+            border: UiRect::all(px(FRAME_WIDTH)),
             ..node
         },
-        BackgroundColor(theme::SURFACE),
+        BackgroundColor(theme::BLOCK_GROUND),
         BorderColor::all(theme::RULE),
     )
 }
 
-/// A row of a panel, with a rule under it unless it is the last one.
-fn row(last: bool) -> impl Bundle {
-    (
-        Node {
-            column_gap: px(6),
-            align_items: AlignItems::Center,
-            padding: UiRect::axes(px(12), px(8)),
-            border: if last {
-                UiRect::ZERO
-            } else {
-                UiRect::bottom(px(1))
-            },
-            ..default()
-        },
-        BorderColor::all(theme::RULE_DIM),
-    )
+/// The rules of a field: the narrow line on its right and under it, where another follows.
+fn ruled(right: bool, below: bool) -> UiRect {
+    let line = |on: bool| if on { px(1) } else { px(0) };
+    UiRect {
+        right: line(right),
+        bottom: line(below),
+        ..default()
+    }
 }
 
-/// A cell of the title block, with a rule on its right unless it is the last one.
-fn cell(grow: f32, last: bool) -> impl Bundle {
-    (
-        Node {
-            flex_grow: grow,
-            flex_basis: px(0),
-            flex_direction: FlexDirection::Column,
-            row_gap: px(4),
-            padding: UiRect::axes(px(12), px(8)),
-            border: if last {
-                UiRect::ZERO
-            } else {
-                UiRect::right(px(1))
-            },
-            ..default()
-        },
-        BorderColor::all(theme::RULE),
-    )
+/// How wide the parts list and the title block are, their edges included.
+fn parts_width() -> f32 {
+    PARTS_COLUMNS.iter().sum::<f32>() + 2.0 * FRAME_WIDTH
 }
 
-fn caption(content: &str) -> impl Bundle {
-    theme::label(content, 12.0, theme::TEXT_DIM)
+fn title_width() -> f32 {
+    TITLE_UPPER.iter().sum::<f32>() + 2.0 * FRAME_WIDTH
 }
 
-fn label(content: &str) -> impl Bundle {
+/// The name of what a part reads, as wide for every part, so that the gauges line up.
+fn reads(content: &str) -> impl Bundle {
     (
         Node {
-            width: px(78),
+            width: px(READS),
+            flex_shrink: 0.0,
             ..default()
         },
-        children![theme::label(content, 13.0, theme::TEXT_DIM)],
+        children![theme::label(content, theme::LABEL, theme::TEXT_DIM)],
     )
 }
 
@@ -344,6 +362,7 @@ fn pip(pip: Pip) -> impl Bundle {
         Node {
             width: px(16),
             height: px(16),
+            flex_shrink: 0.0,
             border: UiRect::all(px(1)),
             // Mines are round.
             border_radius: if matches!(pip, Pip::Mine(_)) {
@@ -358,59 +377,10 @@ fn pip(pip: Pip) -> impl Bundle {
     )
 }
 
-/// The square of the tank of the player of a seat, which bears their number: the tanks of
-/// the players all have one color.
-fn mate(seat: u8) -> impl Bundle {
-    (
-        Pip::Mate(seat),
-        Node {
-            width: px(20),
-            height: px(18),
-            border: UiRect::all(px(1)),
-            justify_content: JustifyContent::Center,
-            align_items: AlignItems::Center,
-            ..default()
-        },
-        BackgroundColor(Color::NONE),
-        BorderColor::all(theme::RULE),
-        children![
-            (
-                RepairFill(seat),
-                Node {
-                    position_type: PositionType::Absolute,
-                    left: px(0),
-                    right: px(0),
-                    bottom: px(0),
-                    height: percent(0),
-                    ..default()
-                },
-                BackgroundColor(theme::PLAYER.with_alpha(0.55)),
-            ),
-            (
-                MateNumber(seat),
-                theme::label((seat + 1).to_string(), 12.0, theme::TEXT_DIM),
-            ),
-            (
-                Strike(seat),
-                Node {
-                    position_type: PositionType::Absolute,
-                    left: px(1),
-                    right: px(1),
-                    top: px(8),
-                    height: px(1),
-                    ..default()
-                },
-                BackgroundColor(theme::TEXT_DIM),
-                Visibility::Hidden,
-            ),
-        ],
-    )
-}
-
 fn bar(bar: Bar) -> impl Bundle {
     (
         Node {
-            width: px(126),
+            flex_grow: 1.0,
             height: px(8),
             border: UiRect::all(px(1)),
             ..default()
@@ -428,245 +398,389 @@ fn bar(bar: Bar) -> impl Bundle {
     )
 }
 
-/// The table of the player's weapons.
-fn weapons_panel() -> impl Bundle {
+/// A row of the parts list: the part, and what it reads. The last one has no rule under it:
+/// the header has one over it.
+fn part(name: &str, last: bool, reads: impl Bundle) -> impl Bundle {
     (
-        panel(Node {
-            position_type: PositionType::Absolute,
-            left: px(MARGIN),
-            bottom: px(MARGIN),
+        Node {
+            height: px(PARTS_ROW),
+            flex_shrink: 0.0,
+            border: ruled(false, !last),
             ..default()
-        }),
-        children![
-            (
-                row(false),
-                children![
-                    (
-                        Node {
-                            width: px(12),
-                            height: px(12),
-                            margin: UiRect::right(px(4)),
-                            ..default()
-                        },
-                        BackgroundColor(theme::ACCENT),
-                    ),
-                    (Readout::Player, theme::title("", 15.0, theme::TEXT)),
-                ],
-            ),
-            (
-                row(false),
-                children![
-                    label("ROUNDS"),
-                    pip(Pip::Round(1)),
-                    pip(Pip::Round(2)),
-                    pip(Pip::Round(3)),
-                    pip(Pip::Round(4)),
-                    pip(Pip::Round(5)),
-                    pip(Pip::Round(6)),
-                ],
-            ),
-            (row(false), children![label("RELOAD"), bar(Bar::Reload)]),
-            (
-                row(false),
-                children![
-                    label("MINES"),
-                    pip(Pip::Mine(1)),
-                    pip(Pip::Mine(2)),
-                    pip(Pip::Mine(3)),
-                    pip(Pip::Mine(4)),
-                ],
-            ),
-            (
-                row(true),
-                children![
-                    label("SHIELD"),
-                    bar(Bar::Shield),
-                    (
-                        Readout::Shield,
-                        theme::label("", 13.0, theme::TEXT_DIM),
-                        Node {
-                            margin: UiRect::left(px(6)),
-                            ..default()
-                        },
-                    ),
-                ],
-            ),
-        ],
-    )
-}
-
-/// The title block of the sheet: the game and its mode, the sector, the lives, and the seed
-/// with its version.
-fn title_block() -> impl Bundle {
-    (
-        panel(Node {
-            width: px(430),
-            ..default()
-        }),
+        },
+        BorderColor::all(theme::RULE_DIM),
         children![
             (
                 Node {
-                    border: UiRect::bottom(px(1)),
+                    width: px(PARTS_COLUMNS[0]),
+                    align_items: AlignItems::Center,
+                    padding: UiRect::horizontal(px(FIELD_PAD)),
+                    border: ruled(true, false),
                     ..default()
                 },
-                BorderColor::all(theme::RULE),
-                children![
-                    (
-                        cell(1.3, false),
-                        children![
-                            caption("GAME"),
-                            theme::title("TANKU", 26.0, theme::TEXT),
-                            (Readout::Mode, theme::label("", 13.0, theme::ACCENT)),
-                        ],
-                    ),
-                    (
-                        cell(1.0, false),
-                        children![
-                            (Readout::Unit, caption("")),
-                            (Readout::Sector, theme::figure("", 40.0, theme::TEXT)),
-                        ],
-                    ),
-                    (
-                        cell(1.0, true),
-                        children![
-                            (Readout::Crew, caption("")),
-                            (
-                                Node {
-                                    column_gap: px(6),
-                                    margin: UiRect::top(px(10)),
-                                    ..default()
-                                },
-                                children![
-                                    pip(Pip::Life(1)),
-                                    pip(Pip::Life(2)),
-                                    pip(Pip::Life(3)),
-                                    mate(0),
-                                    mate(1),
-                                    mate(2),
-                                    mate(3),
-                                    (Readout::Lives, theme::label("", 13.0, theme::ACCENT)),
-                                ],
-                            ),
-                        ],
-                    ),
-                ],
+                BorderColor::all(theme::RULE_DIM),
+                children![theme::label(name, theme::VALUE, theme::TEXT)],
             ),
             (
-                Node::default(),
-                children![
-                    (
-                        cell(1.3, false),
-                        children![
-                            caption("SEED"),
-                            (Readout::Seed, theme::code("", 16.0, theme::TEXT)),
-                            (Readout::Earning, theme::label("", 11.0, theme::TEXT_DIM)),
-                        ],
-                    ),
-                    (
-                        cell(1.0, false),
-                        children![
-                            caption("DIFFICULTY"),
-                            (Readout::Difficulty, theme::title("", 15.0, theme::TEXT)),
-                        ],
-                    ),
-                    (
-                        cell(1.0, true),
-                        children![
-                            caption("VERSION"),
-                            theme::figure(VERSION, 15.0, theme::TEXT)
-                        ],
-                    ),
-                ],
+                Node {
+                    flex_grow: 1.0,
+                    align_items: AlignItems::Center,
+                    column_gap: px(FIELD_PAD),
+                    padding: UiRect::horizontal(px(FIELD_PAD)),
+                    ..default()
+                },
+                reads,
             ),
         ],
     )
 }
 
-/// The scale and the north arrow, as on the corner of a plan.
-fn instruments_row() -> impl Bundle {
-    let mark = |filled: bool| {
+/// The parts list of the tank, in the corner left of the title block: the parts that show what
+/// it reads, listed up from the header, as a list above a title block is. In play it has no
+/// item numbers, which nobody needs in a fight.
+fn parts_list() -> impl Bundle {
+    let gauges = |gap: f32| Node {
+        column_gap: px(gap),
+        align_items: AlignItems::Center,
+        ..default()
+    };
+    let header = |content: &'static str, right: bool| {
         (
             Node {
-                flex_grow: 1.0,
+                width: px(PARTS_COLUMNS[usize::from(!right)]),
+                align_items: AlignItems::Center,
+                padding: UiRect::horizontal(px(FIELD_PAD)),
+                border: ruled(right, false),
                 ..default()
             },
-            BackgroundColor(if filled { theme::TEXT_DIM } else { Color::NONE }),
+            BorderColor::all(theme::RULE_DIM),
+            children![theme::label(content, theme::LABEL, theme::TEXT_DIM)],
         )
     };
     (
+        block(Node {
+            left: px(SHEET_EDGE),
+            bottom: px(SHEET_EDGE),
+            width: px(parts_width()),
+            ..default()
+        }),
+        children![
+            (
+                PartRow::Disk,
+                part(
+                    "Disk",
+                    false,
+                    children![
+                        reads("Shield"),
+                        bar(Bar::Shield),
+                        (
+                            Readout::Shield,
+                            theme::label("", theme::LABEL, theme::TEXT),
+                            TextLayout::no_wrap(),
+                        ),
+                    ],
+                ),
+            ),
+            (
+                PartRow::Rack,
+                part(
+                    "Rack",
+                    false,
+                    children![
+                        reads("Mines"),
+                        (
+                            gauges(7.0),
+                            children![
+                                pip(Pip::Mine(1)),
+                                pip(Pip::Mine(2)),
+                                pip(Pip::Mine(3)),
+                                pip(Pip::Mine(4)),
+                            ],
+                        ),
+                    ],
+                ),
+            ),
+            part("Vents", false, children![reads("Reload"), bar(Bar::Reload)]),
+            part(
+                "Drum",
+                true,
+                children![
+                    reads("Rounds"),
+                    (
+                        gauges(7.0),
+                        children![
+                            pip(Pip::Round(1)),
+                            pip(Pip::Round(2)),
+                            pip(Pip::Round(3)),
+                            pip(Pip::Round(4)),
+                            pip(Pip::Round(5)),
+                            pip(Pip::Round(6)),
+                        ],
+                    ),
+                ],
+            ),
+            (
+                Node {
+                    height: px(PARTS_ROW),
+                    flex_shrink: 0.0,
+                    border: UiRect::top(px(1)),
+                    ..default()
+                },
+                BorderColor::all(theme::RULE),
+                children![header("Part", true), header("Reads", false)],
+            ),
+        ],
+    )
+}
+
+/// The label of a field.
+fn key(content: &str) -> impl Bundle {
+    theme::label(content, theme::LABEL, theme::TEXT_DIM)
+}
+
+/// A field of the title block: its label over what it holds, ruled on its right unless it is
+/// the last of its row.
+fn field(width: f32, last: bool, label: impl Bundle, holds: impl Bundle) -> impl Bundle {
+    (
         Node {
-            column_gap: px(18),
-            align_items: AlignItems::End,
+            width: px(width),
+            flex_shrink: 0.0,
+            flex_direction: FlexDirection::Column,
+            row_gap: px(4),
+            padding: UiRect::axes(px(FIELD_PAD), px(8)),
+            border: ruled(!last, false),
             ..default()
         },
+        BorderColor::all(theme::RULE_DIM),
         children![
+            label,
             (
                 Node {
                     flex_direction: FlexDirection::Column,
                     row_gap: px(4),
                     ..default()
                 },
+                holds,
+            ),
+        ],
+    )
+}
+
+/// The place of a seat in the team field: its balloon, and YOU under the balloon of the player
+/// at this screen.
+fn team_seat(seat: u8) -> impl Bundle {
+    (
+        TeamSeat(seat),
+        Node {
+            width: px(TEAM_ROOM),
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Center,
+            row_gap: px(2),
+            display: Display::None,
+            ..default()
+        },
+        children![
+            (
+                Node {
+                    padding: UiRect::vertical(px((TEAM_ROOM - TEAM_BALLOON) / 2.0)),
+                    ..default()
+                },
+                children![balloons::balloon(seat, TEAM_BALLOON, theme::LABEL)],
+            ),
+            (
+                You(seat),
+                theme::label("You", theme::LABEL, theme::ACCENT),
+                Visibility::Hidden,
+            ),
+        ],
+    )
+}
+
+/// The title block of the sheet, in its bottom right corner: the game as its legal owner, with
+/// how the run is played; the sector as its title, with what it is; the lives, or the team;
+/// the seed; the version as its revision; and the scale with its bar and the north arrow.
+fn title_block() -> impl Bundle {
+    let row = |height: f32, below: bool| {
+        (
+            Node {
+                height: px(height),
+                flex_shrink: 0.0,
+                border: ruled(false, below),
+                ..default()
+            },
+            BorderColor::all(theme::RULE_DIM),
+        )
+    };
+    let mark = |filled: bool| {
+        (
+            Node {
+                flex_grow: 1.0,
+                ..default()
+            },
+            BackgroundColor(if filled { theme::LINE } else { Color::NONE }),
+        )
+    };
+    (
+        block(Node {
+            right: px(SHEET_EDGE),
+            bottom: px(SHEET_EDGE),
+            width: px(title_width()),
+            ..default()
+        }),
+        children![
+            (
+                row(TITLE_ROWS[0], true),
                 children![
-                    (
-                        ScaleBar,
-                        Node {
-                            width: px(180),
-                            height: px(8),
-                            border: UiRect::all(px(1)),
-                            ..default()
-                        },
-                        BorderColor::all(theme::TEXT_DIM),
-                        children![mark(true), mark(false), mark(true), mark(false), mark(true)],
-                    ),
-                    (
-                        Node {
-                            justify_content: JustifyContent::SpaceBetween,
-                            ..default()
-                        },
+                    field(
+                        TITLE_UPPER[0],
+                        false,
+                        key("Legal owner"),
                         children![
-                            theme::figure("0", 12.0, theme::TEXT_DIM),
-                            theme::figure("5 m", 12.0, theme::TEXT_DIM),
+                            theme::title("Tanku", theme::ALERT, theme::TEXT),
+                            (Readout::Mode, theme::label("", theme::LABEL, theme::ACCENT)),
+                        ],
+                    ),
+                    field(
+                        TITLE_UPPER[1],
+                        false,
+                        key("Title"),
+                        children![
+                            (
+                                Node {
+                                    column_gap: px(FIELD_PAD),
+                                    align_items: AlignItems::End,
+                                    ..default()
+                                },
+                                children![
+                                    (Readout::Unit, theme::label("", theme::LABEL, theme::TEXT)),
+                                    (Readout::Sector, theme::lone("", theme::LARGE, theme::TEXT)),
+                                ],
+                            ),
+                            (
+                                Readout::Kind,
+                                theme::label("", theme::LABEL, theme::TEXT_DIM),
+                                TextLayout::no_wrap(),
+                            ),
+                        ],
+                    ),
+                    field(
+                        TITLE_UPPER[2],
+                        true,
+                        (Readout::Crew, key("")),
+                        children![
+                            (
+                                Node {
+                                    column_gap: px(8),
+                                    align_items: AlignItems::Center,
+                                    margin: UiRect::top(px(4)),
+                                    ..default()
+                                },
+                                children![
+                                    pip(Pip::Life(1)),
+                                    pip(Pip::Life(2)),
+                                    pip(Pip::Life(3)),
+                                    (
+                                        Readout::Lives,
+                                        theme::label("", theme::LABEL, theme::ACCENT)
+                                    ),
+                                ],
+                            ),
+                            (
+                                Node::default(),
+                                children![team_seat(0), team_seat(1), team_seat(2), team_seat(3)],
+                            ),
                         ],
                     ),
                 ],
             ),
-            theme::title("N", 13.0, theme::TEXT_DIM),
-            // A needle from the middle of a ring to its edge, which points north.
             (
-                NorthArrow,
-                UiTransform::IDENTITY,
-                Node {
-                    width: px(44),
-                    height: px(44),
-                    border: UiRect::all(px(1)),
-                    border_radius: BorderRadius::MAX,
-                    justify_content: JustifyContent::Center,
-                    ..default()
-                },
-                BorderColor::all(theme::RULE),
+                row(TITLE_ROWS[1], false),
                 children![
-                    (
-                        Node {
-                            position_type: PositionType::Absolute,
-                            top: px(4),
-                            width: px(2),
-                            height: px(18),
-                            ..default()
-                        },
-                        BackgroundColor(theme::TEXT),
+                    field(
+                        TITLE_LOWER[0],
+                        false,
+                        key("Seed"),
+                        children![(
+                            Readout::Seed,
+                            theme::code("", theme::VALUE, theme::TEXT),
+                            TextLayout::no_wrap(),
+                        )],
                     ),
-                    (
-                        Node {
-                            position_type: PositionType::Absolute,
-                            top: px(1),
-                            width: px(8),
-                            height: px(8),
-                            ..default()
-                        },
-                        BackgroundColor(theme::TEXT),
-                        UiTransform::from_rotation(Rot2::degrees(45.0)),
+                    field(
+                        TITLE_LOWER[1],
+                        false,
+                        key("Rev"),
+                        children![theme::figure(VERSION, theme::VALUE, theme::TEXT)],
+                    ),
+                    field(
+                        TITLE_LOWER[2],
+                        true,
+                        key("Scale"),
+                        children![(
+                            Node {
+                                column_gap: px(12),
+                                align_items: AlignItems::Center,
+                                ..default()
+                            },
+                            children![
+                                theme::figure("1:100", theme::VALUE, theme::TEXT),
+                                (
+                                    ScaleBar,
+                                    Node {
+                                        width: px(60),
+                                        height: px(6),
+                                        border: UiRect::all(px(1)),
+                                        ..default()
+                                    },
+                                    BorderColor::all(theme::LINE),
+                                    children![mark(true), mark(false), mark(true), mark(false),],
+                                ),
+                                north_arrow(),
+                            ],
+                        )],
                     ),
                 ],
+            ),
+        ],
+    )
+}
+
+/// A needle from the middle of a ring to its edge, which points north.
+fn north_arrow() -> impl Bundle {
+    (
+        NorthArrow,
+        UiTransform::IDENTITY,
+        Node {
+            width: px(30),
+            height: px(30),
+            flex_shrink: 0.0,
+            border: UiRect::all(px(1.5)),
+            border_radius: BorderRadius::MAX,
+            justify_content: JustifyContent::Center,
+            ..default()
+        },
+        BorderColor::all(theme::LINE),
+        children![
+            (
+                Node {
+                    position_type: PositionType::Absolute,
+                    top: px(5),
+                    width: px(2),
+                    height: px(10),
+                    ..default()
+                },
+                BackgroundColor(theme::LINE),
+            ),
+            (
+                Node {
+                    position_type: PositionType::Absolute,
+                    top: px(2),
+                    width: px(7),
+                    height: px(7),
+                    ..default()
+                },
+                BackgroundColor(theme::LINE),
+                UiTransform::from_rotation(Rot2::degrees(45.0)),
             ),
         ],
     )
@@ -683,7 +797,7 @@ fn build(mut commands: Commands) {
         // The display never takes a click away from the game.
         Pickable::IGNORE,
         children![
-            sheet::fine_line(),
+            sheet::frame(),
             (
                 Node {
                     position_type: PositionType::Absolute,
@@ -693,33 +807,49 @@ fn build(mut commands: Commands) {
                     ..default()
                 },
                 // Over the game, which may have a block or a crate there: it has a dark edge.
-                children![theme::edged(
+                children![theme::old::edged(
                     Toast(0.0),
-                    theme::Face::Title,
+                    theme::old::Face::Title,
                     "",
                     TOAST_SIZE,
                     theme::TEXT
                 )],
             ),
-            weapons_panel(),
+            parts_list(),
+            title_block(),
+            // The note of a run that earns nothing stands over the title block, as the notes
+            // of a drawing stand over its title block.
             (
                 Node {
                     position_type: PositionType::Absolute,
-                    right: px(MARGIN),
-                    bottom: px(MARGIN),
-                    flex_direction: FlexDirection::Column,
-                    align_items: AlignItems::End,
-                    row_gap: px(16),
+                    right: px(SHEET_EDGE),
+                    bottom: px(SHEET_EDGE
+                        + TITLE_ROWS[0]
+                        + TITLE_ROWS[1]
+                        + 2.0 * FRAME_WIDTH
+                        + 8.0),
                     ..default()
                 },
-                children![instruments_row(), title_block()],
+                children![theme::edged(
+                    (Readout::Earning, Note),
+                    theme::Face::Label,
+                    "",
+                    theme::LABEL,
+                    theme::TEXT_DIM
+                )],
             ),
             (
                 Notes,
                 notes(false),
                 children![
-                    (Readout::Repair, theme::title("", 18.0, theme::TEXT)),
-                    (Readout::Hint, theme::text("", 15.0, theme::TEXT_DIM)),
+                    (
+                        Readout::Repair,
+                        theme::label("", theme::LABEL, theme::TEXT_DIM)
+                    ),
+                    (
+                        Readout::Hint,
+                        theme::text("", theme::LABEL, theme::TEXT_DIM)
+                    ),
                 ],
             ),
         ],
@@ -740,7 +870,7 @@ fn build(mut commands: Commands) {
             BackgroundColor(theme::SURFACE),
             BorderColor::all(theme::PLAYER),
             Pickable::IGNORE,
-            children![theme::label(short_name(seat), 12.0, theme::TEXT)],
+            children![theme::old::label(short_name(seat), 12.0, theme::TEXT)],
         ));
     }
     for seat in 0..MAX_PLAYERS as u8 {
@@ -763,7 +893,7 @@ fn build(mut commands: Commands) {
             Outline::new(px(0), px(0), Color::NONE),
             Pickable::IGNORE,
             children![
-                theme::label(short_name(seat), 12.0, theme::TEXT_ON_ACCENT),
+                theme::old::label(short_name(seat), 12.0, theme::TEXT_ON_ACCENT),
                 (
                     RepairBar(seat),
                     Node {
@@ -844,25 +974,6 @@ fn put(node: &mut Mut<Node>, at: Vec2) {
     }
 }
 
-/// How a run is played, as the display says it under the name of the game: alone or with
-/// others, in arena mode, and in free mode. A playtest says that it is one, because it sets
-/// no record.
-fn mode(run: &Run) -> String {
-    let mut told = match (run.playtest, run.solo) {
-        (true, _) => "PLAYTEST",
-        (false, true) => "SOLO",
-        (false, false) => "CO-OP",
-    }
-    .to_string();
-    if run.arena {
-        told.push_str(" \u{b7} ARENA");
-    }
-    if run.free && !run.playtest {
-        told.push_str(" \u{b7} FREE");
-    }
-    told
-}
-
 /// The group of arena mode that a run is at: the one that is on, or the next one during the
 /// lull before it.
 fn group(run: &Run) -> u32 {
@@ -871,13 +982,12 @@ fn group(run: &Run) -> u32 {
 
 /// What the display counts, and the number that it shows: the sector that the players have
 /// reached, or the start bay. In arena mode, the group that is on, or the next one during
-/// the lull before it.
+/// the lull before it, which the line under it tells.
 fn place(run: &Run) -> (&'static str, String) {
-    match (run.arena, run.lull, run.sector) {
-        (true, Some(_), _) => ("NEXT GROUP", group(run).to_string()),
-        (true, None, _) => ("GROUP", group(run).to_string()),
-        (false, _, 0) => ("SECTOR", "BAY".to_string()),
-        (false, _, sector) => ("SECTOR", sector.to_string()),
+    match (run.arena, run.sector) {
+        (true, _) => ("GROUP", group(run).to_string()),
+        (false, 0) => ("START", "BAY".to_string()),
+        (false, sector) => ("SECTOR", sector.to_string()),
     }
 }
 
@@ -923,43 +1033,118 @@ fn controls(key: impl Fn(Action) -> String, tank: &Genome, solo: bool) -> String
     )
 }
 
+/// How a run is played, as the title block says it under the name of the game: alone, with
+/// others or as a playtest, which sets no record, and how hard.
+fn mode(run: &Run) -> String {
+    let played = match (run.playtest, run.solo) {
+        (true, _) => "Playtest",
+        (false, true) => "Solo",
+        (false, false) => "Co-op",
+    };
+    let difficulty = unlocks::difficulty_name(run.difficulty);
+    format!("{played} \u{b7} {difficulty}").to_uppercase()
+}
+
+/// What the title of the sheet is under its number: what the sector is and how many tanks its
+/// group has, as it was drawn for the players that the run has. In arena mode, the group that
+/// is on, in the room, or the next one during the lull before it.
+fn kind(run: &Run, plan: Option<&SectorLayout>) -> String {
+    let tanks = |count: u32| {
+        let plural = if count == 1 { "" } else { "s" };
+        format!("{count} tank{plural}")
+    };
+    let told = match (run.arena, run.lull, plan) {
+        (true, lull, _) => {
+            let count = progression::enemy_count(group(run), run.team.max(1), false);
+            let when = if lull.is_some() { "Next" } else { "Room" };
+            format!("{when} \u{b7} {}", tanks(count))
+        }
+        (false, _, _) if run.sector == 0 => "Before sector 1".to_string(),
+        (false, _, Some(layout)) => {
+            let arena = layout.plan.kind == SectorKind::Arena;
+            let count = progression::enemy_count(run.sector, run.team.max(1), arena);
+            let count = count.min(layout.spawns.len() as u32);
+            let what = if arena { "Arena" } else { "Corridor" };
+            format!("{what} \u{b7} {}", tanks(count))
+        }
+        (false, _, None) => String::new(),
+    };
+    told.to_uppercase()
+}
+
+/// The note over the title block of a run that earns no achievement, which says why, and of a
+/// playtest that fakes them.
+fn earning(run: &Run, unlocks: &Unlocks, fair: Fair) -> &'static str {
+    match (run.playtest, run.earns) {
+        (true, _) if !unlocks.fake => "",
+        (true, _) if unlocks::earns(run, unlocks, fair) => "This playtest earns fake achievements",
+        (true, _) => "This playtest earns no achievement",
+        (false, true) => "",
+        (false, false) if run.arena => "A run in arena mode earns no achievement",
+        (false, false) if run.free => "A run in free mode earns no achievement",
+        (false, false) => "A run on a chosen seed earns no achievement",
+    }
+}
+
+/// How the balloon of a seat in the title block draws the player's tank, if the seat has one:
+/// the tank of a player who just left stays a moment, struck out.
+fn team_state(seat: u8, tank: Option<Option<&Wreck>>, alarms: &Alarms) -> Option<balloons::State> {
+    match tank {
+        None => alarms.left(seat).map(|_| balloons::State::Left),
+        Some(wreck) => Some(match (alarms.lost(seat), wreck) {
+            (Some(since), _) => balloons::State::Lost(since),
+            (None, Some(wreck)) => balloons::State::Wreck(repaired(Some(wreck))),
+            (None, None) => balloons::State::Runs,
+        }),
+    }
+}
+
 fn status(
-    run: Option<Res<Run>>,
-    playtest: Option<Res<Playtest>>,
-    settings: Res<Settings>,
-    seat: Res<LocalSeat>,
-    crew: Query<(&Player, Has<Wreck>)>,
+    (run, playtest, settings, seat): (
+        Option<Res<Run>>,
+        Option<Res<Playtest>>,
+        Res<Settings>,
+        Res<LocalSeat>,
+    ),
+    crew: Query<(&Player, Option<&Wreck>)>,
     own: Query<&Tank, With<Own>>,
     tanks: Query<(&Position, Option<&Wreck>, &TankCommand, Has<Own>), With<Player>>,
+    sectors: Query<&Sector>,
     (alarms, unlocks, fair): (Res<Alarms>, Res<Unlocks>, Res<Fair>),
-    mut readouts: Query<(&Readout, &mut Text, &mut TextColor), Without<MateNumber>>,
+    mut readouts: Query<(&Readout, &mut Text, &mut TextColor)>,
     mut pips: Query<(&Pip, &mut BackgroundColor, &mut BorderColor, &mut Node)>,
-    mut numbers: Query<(&MateNumber, &mut TextColor), Without<Readout>>,
-    (wrecks, mut fills, mut strikes): (
-        Query<(&Player, &Wreck)>,
-        Query<(&RepairFill, &mut Node), Without<Pip>>,
-        Query<(&Strike, &mut Visibility)>,
+    (mut seats, mut balloons, mut yous): (
+        Query<(&TeamSeat, &mut Node), Without<Pip>>,
+        Query<(&Balloon, &mut balloons::State)>,
+        Query<(&You, &mut Visibility)>,
     ),
 ) {
     let Some(run) = run else {
         return;
     };
-    for (strike, mut visibility) in &mut strikes {
-        let gone = !crew.iter().any(|(player, _)| player.seat == strike.0);
-        let wanted = if gone && alarms.left(strike.0).is_some() {
+    // The balloons of the team, in the order of the seats, each as its tank is, and YOU under
+    // one's own.
+    let tank_of = |seat: u8| {
+        crew.iter()
+            .find(|(player, _)| player.seat == seat)
+            .map(|(_, wreck)| wreck)
+    };
+    for (place, mut node) in &mut seats {
+        let state = team_state(place.0, tank_of(place.0), &alarms);
+        show(&mut node, !run.solo && state.is_some());
+    }
+    for (balloon, mut drawn) in &mut balloons {
+        if let Some(state) = team_state(balloon.seat, tank_of(balloon.seat), &alarms) {
+            drawn.set_if_neq(state);
+        }
+    }
+    for (you, mut visibility) in &mut yous {
+        let shown = if you.0 == seat.0 {
             Visibility::Inherited
         } else {
             Visibility::Hidden
         };
-        visibility.set_if_neq(wanted);
-    }
-    // The square of a wreck fills as it is repaired.
-    for (fill, mut node) in &mut fills {
-        let wreck = wrecks.iter().find(|(player, _)| player.seat == fill.0);
-        let wanted = percent(100.0 * repaired(wreck.map(|(_, wreck)| wreck)));
-        if node.height != wanted {
-            node.height = wanted;
-        }
+        visibility.set_if_neq(shown);
     }
     let infinite_lives = playtest.is_some_and(|playtest| playtest.infinite_lives);
     let key = |action| {
@@ -979,7 +1164,7 @@ fn status(
         // The teammates whose tanks run can repair it, and those at it are named.
         let menders = crew
             .iter()
-            .filter(|(player, wreck)| !wreck && player.seat != seat.0);
+            .filter(|(player, wreck)| wreck.is_none() && player.seat != seat.0);
         let menders = menders.fold(0, |seats, (player, _)| seats | 1 << player.seat);
         let wreck = wreck.map(|wreck| (wreck.repair, wreck.repairers));
         let own = (place.0, wreck, command.repair);
@@ -988,6 +1173,10 @@ fn status(
     // A single player on their last life is told so, in the color of danger, for as long as
     // it lasts.
     let last_life = run.solo && !infinite_lives && run.lives == 1;
+    let layout = sectors
+        .iter()
+        .map(|sector| &sector.layout)
+        .find(|layout| layout.plan.index == run.sector);
     for (readout, mut text, mut ink) in &mut readouts {
         if matches!(readout, Readout::Crew) {
             let color = if last_life {
@@ -998,28 +1187,17 @@ fn status(
             ink.set_if_neq(TextColor(color));
         }
         let wanted = match readout {
-            Readout::Player => format!("PLAYER {}", seat.0 + 1),
             Readout::Mode => mode(&run),
             Readout::Crew if last_life => "LAST LIFE".to_string(),
             Readout::Crew if run.solo => "LIVES".to_string(),
             Readout::Crew => "TEAM".to_string(),
             Readout::Unit => place(&run).0.to_string(),
             Readout::Sector => place(&run).1,
+            Readout::Kind => kind(&run, layout),
             Readout::Lives if infinite_lives && run.solo => "INFINITE".to_string(),
             Readout::Lives => String::new(),
             Readout::Seed => run.seed_text.clone(),
-            // A playtest says what it is next to the name of the game, and whether the
-            // achievements that it earns are fake ones.
-            Readout::Earning if run.playtest && unlocks.fake => {
-                match unlocks::earns(&run, &unlocks, *fair) {
-                    true => "FAKE ACHIEVEMENTS",
-                    false => "NO ACHIEVEMENTS",
-                }
-                .to_string()
-            }
-            Readout::Earning if !run.earns && !run.playtest => "NO ACHIEVEMENTS".to_string(),
-            Readout::Earning => String::new(),
-            Readout::Difficulty => unlocks::difficulty_name(run.difficulty).to_uppercase(),
+            Readout::Earning => earning(&run, &unlocks, *fair).to_uppercase(),
             // The controls are shown where a run starts.
             Readout::Hint if run.sector == 0 => {
                 let tank = own.single().map_or(Genome::PLAYER, |tank| tank.genome);
@@ -1038,59 +1216,30 @@ fn status(
         }
     }
     for (pip, mut color_of, mut border_of, mut node) in &mut pips {
+        // A single player has lives.
+        let Pip::Life(life) = *pip else {
+            continue;
+        };
         // The square is colored here, and its colors are only touched if they change: the
         // engine draws a square that is touched again.
         let (mut color, mut border) = (*color_of, *border_of);
-        match *pip {
-            // A single player has lives.
-            Pip::Life(life) => {
-                show(&mut node, run.solo && !infinite_lives);
-                light(life <= run.lives, theme::ACCENT, &mut color, &mut border);
-                // The last one is edged in the color of danger.
-                if last_life && life == 1 {
-                    border = BorderColor::all(theme::DANGER);
-                }
-                // The life that was just lost blinks red, and one that was taken back green.
-                let lost = alarms.life.filter(|(lost, _)| *lost == life);
-                if let Some(on) = Alarms::blink(lost.map(|(_, since)| since)) {
-                    alarm(on, &mut color, &mut border);
-                }
-                let back = alarms.back.filter(|(back, _)| *back == life);
-                if Alarms::blink(back.map(|(_, since)| since)) == Some(true) {
-                    (color.0, border) = (theme::GOOD_FILL, BorderColor::all(theme::GOOD));
-                }
-            }
-            // Several players have each other: a square for each tank, with the number of
-            // its player, lit while the tank runs and empty while it is a wreck.
-            Pip::Mate(seat) => {
-                let mate = crew.iter().find(|(player, _)| player.seat == seat);
-                // The square of a player who left the game stays a moment, struck out.
-                let leaving = mate.is_none() && alarms.left(seat).is_some();
-                show(&mut node, !run.solo && (mate.is_some() || leaving));
-                let runs = mate.is_some_and(|(_, wreck)| !wreck);
-                light(runs, theme::ACCENT, &mut color, &mut border);
-                if leaving {
-                    border = BorderColor::all(theme::RULE_DIM);
-                }
-                // The square of a tank that was just destroyed blinks.
-                if let Some(on) = Alarms::blink(alarms.lost(seat)) {
-                    alarm(on, &mut color, &mut border);
-                }
-            }
-            _ => {}
+        show(&mut node, run.solo && !infinite_lives);
+        light(life <= run.lives, theme::ACCENT, &mut color, &mut border);
+        // The last one is edged in the color of danger.
+        if last_life && life == 1 {
+            border = BorderColor::all(theme::DANGER);
+        }
+        // The life that was just lost blinks red, and one that was taken back green.
+        let lost = alarms.life.filter(|(lost, _)| *lost == life);
+        if let Some(on) = Alarms::blink(lost.map(|(_, since)| since)) {
+            alarm(on, &mut color, &mut border);
+        }
+        let back = alarms.back.filter(|(back, _)| *back == life);
+        if Alarms::blink(back.map(|(_, since)| since)) == Some(true) {
+            (color.0, border) = (theme::GOOD_FILL, BorderColor::all(theme::GOOD));
         }
         color_of.set_if_neq(color);
         border_of.set_if_neq(border);
-    }
-    for (number, mut ink) in &mut numbers {
-        let mut mates = crew.iter().filter(|(player, _)| player.seat == number.0);
-        let runs = mates.any(|(_, wreck)| !wreck);
-        let blinks = Alarms::blink(alarms.lost(number.0)) == Some(true);
-        ink.set_if_neq(TextColor(match (blinks, runs) {
-            (true, _) => theme::DANGER,
-            (false, true) => theme::TEXT_ON_ACCENT,
-            (false, false) => theme::TEXT_DIM,
-        }));
     }
 }
 
@@ -1112,18 +1261,27 @@ fn weapons(
     player: Query<(&Tank, &Gun, &Shield), With<Own>>,
     mut pips: Query<(&Pip, &mut BackgroundColor, &mut BorderColor, &mut Node)>,
     mut bars: Query<(&Bar, &mut BackgroundColor, &mut Node), Without<Pip>>,
+    mut rows: Query<(&PartRow, &mut Node), (Without<Pip>, Without<Bar>)>,
     mut readouts: Query<(&Readout, &mut Text)>,
 ) {
     let Ok((tank, gun, shield)) = player.single() else {
         return;
     };
     let genome = &tank.genome;
+    // A tank lists the parts that it has.
+    for (row, mut node) in &mut rows {
+        let fitted = match row {
+            PartRow::Disk => genome.level(Stat::Shield) > 0,
+            PartRow::Rack => genome.mines() > 0,
+        };
+        show(&mut node, fitted);
+    }
     let armed = gun.mines;
     for (pip, mut color, mut border, mut node) in &mut pips {
         let (fitted, on) = match *pip {
             Pip::Round(round) => (round <= genome.magazine(), round <= gun.rounds),
             Pip::Mine(mine) => (mine <= genome.mines(), mine + armed <= genome.mines()),
-            Pip::Life(_) | Pip::Mate(_) => continue,
+            Pip::Life(_) => continue,
         };
         show(&mut node, fitted);
         let (mut fill, mut edge) = (*color, *border);
@@ -1802,24 +1960,51 @@ mod tests {
             lull: None,
             paused: false,
         };
-        assert_eq!(mode(&run(true, false, false)), "SOLO");
-        assert_eq!(mode(&run(false, false, false)), "CO-OP");
-        assert_eq!(mode(&run(true, true, false)), "SOLO \u{b7} FREE");
-        assert_eq!(mode(&run(false, true, false)), "CO-OP \u{b7} FREE");
-        // A playtest says that it is one, in a tank of its own or not.
-        assert_eq!(mode(&run(true, false, true)), "PLAYTEST");
-        assert_eq!(mode(&run(true, true, true)), "PLAYTEST");
-        // A run in arena mode says so, whoever plays it.
-        let in_a_room = |solo: bool, free: bool, playtest: bool| Run {
-            arena: true,
-            ..run(solo, free, playtest)
+        assert_eq!(mode(&run(true, false, false)), "SOLO \u{b7} NORMAL");
+        assert_eq!(mode(&run(false, false, false)), "CO-OP \u{b7} NORMAL");
+        let hard = Run {
+            difficulty: tanku_core::modes::Difficulty::Hard,
+            ..run(false, true, false)
         };
-        assert_eq!(mode(&in_a_room(true, false, false)), "SOLO \u{b7} ARENA");
+        assert_eq!(mode(&hard), "CO-OP \u{b7} HARD");
+        // A playtest says that it is one, in a tank of its own or not.
+        assert_eq!(mode(&run(true, false, true)), "PLAYTEST \u{b7} NORMAL");
+        assert_eq!(mode(&run(true, true, true)), "PLAYTEST \u{b7} NORMAL");
+        // A run that earns nothing says why over the title block, and a playtest only if it
+        // fakes the achievements.
+        let (real, fake) = (Unlocks::of(&[]), Unlocks::fake());
+        let fair = Fair(true);
+        assert_eq!(earning(&run(true, false, false), &real, fair), "");
         assert_eq!(
-            mode(&in_a_room(false, true, false)),
-            "CO-OP \u{b7} ARENA \u{b7} FREE"
+            earning(&run(true, true, false), &real, fair),
+            "A run in free mode earns no achievement"
         );
-        assert_eq!(mode(&in_a_room(true, true, true)), "PLAYTEST \u{b7} ARENA");
+        let in_a_room = Run {
+            arena: true,
+            earns: false,
+            ..run(true, false, false)
+        };
+        assert_eq!(
+            earning(&in_a_room, &real, fair),
+            "A run in arena mode earns no achievement"
+        );
+        let chosen = Run {
+            earns: false,
+            ..run(true, false, false)
+        };
+        assert_eq!(
+            earning(&chosen, &real, fair),
+            "A run on a chosen seed earns no achievement"
+        );
+        assert_eq!(earning(&run(true, false, true), &real, fair), "");
+        assert_eq!(
+            earning(&run(true, false, true), &fake, fair),
+            "This playtest earns fake achievements"
+        );
+        assert_eq!(
+            earning(&run(true, false, true), &fake, Fair(false)),
+            "This playtest earns no achievement"
+        );
     }
 
     #[test]
@@ -1850,14 +2035,18 @@ mod tests {
             let (unit, number) = place(run);
             format!("{unit} {number}")
         };
-        assert_eq!(told(&run(false, 0, None)), "SECTOR BAY");
+        assert_eq!(told(&run(false, 0, None)), "START BAY");
         assert_eq!(told(&run(false, 7, None)), "SECTOR 7");
         // In arena mode, the group that is on. During a lull, the one that comes next: the
-        // first one when the run starts.
-        assert_eq!(told(&run(true, 0, Some(3))), "NEXT GROUP 1");
+        // first one when the run starts. The line under it says which.
+        assert_eq!(told(&run(true, 0, Some(3))), "GROUP 1");
+        assert_eq!(kind(&run(true, 0, Some(3)), None), "NEXT \u{b7} 1 TANK");
         assert_eq!(told(&run(true, 1, None)), "GROUP 1");
-        assert_eq!(told(&run(true, 7, Some(2))), "NEXT GROUP 8");
+        assert_eq!(kind(&run(true, 1, None), None), "ROOM \u{b7} 1 TANK");
+        assert_eq!(told(&run(true, 7, Some(2))), "GROUP 8");
         assert_eq!(told(&run(true, 8, None)), "GROUP 8");
+        assert_eq!(kind(&run(true, 8, None), None), "ROOM \u{b7} 3 TANKS");
+        assert_eq!(kind(&run(false, 0, None), None), "BEFORE SECTOR 1");
 
         // A wave of an arena of the corridor is counted. A group of arena mode is named: it
         // has no waves to count.
