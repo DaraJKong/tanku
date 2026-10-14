@@ -135,7 +135,6 @@ pub const ALERT: f32 = 29.7;
 /// The sector, and the figures of a report: 10 mm.
 pub const LARGE: f32 = 42.0;
 /// The title of a screen: 14 mm.
-#[expect(dead_code, reason = "the menus take it as they are drawn again")]
 pub const HEADING: f32 = 59.0;
 /// The name of the game: 20 mm.
 pub const NAME: f32 = 84.0;

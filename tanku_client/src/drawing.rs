@@ -225,6 +225,78 @@ pub fn list_row(
         });
 }
 
+/// A row of a list with a note under its name, which says what pressing it means: 70 px
+/// high.
+pub fn noted_row(
+    parent: &mut ChildSpawnerCommands,
+    number: usize,
+    (name, note): (String, String),
+    press: impl Bundle,
+    filled: bool,
+) {
+    let (fill, edge, ink, number_ink) = if filled {
+        (
+            theme::ACCENT,
+            theme::ACCENT,
+            theme::TEXT_ON_ACCENT,
+            theme::TEXT_ON_ACCENT,
+        )
+    } else {
+        (
+            theme::SURFACE_RAISED,
+            theme::RULE,
+            theme::TEXT,
+            theme::TEXT_DIM,
+        )
+    };
+    parent
+        .spawn((
+            Button,
+            press,
+            Node {
+                height: px(NOTED_ROW),
+                flex_shrink: 0.0,
+                border: UiRect::all(px(1)),
+                ..default()
+            },
+            UiTransform::from_translation(Val2::px(0.0, 1.0 - number as f32)),
+            BackgroundColor(fill),
+            BorderColor::all(edge),
+        ))
+        .with_children(|row| {
+            row.spawn((
+                Node {
+                    width: px(ROW),
+                    flex_shrink: 0.0,
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    border: UiRect::right(px(1)),
+                    ..default()
+                },
+                BorderColor::all(if filled { theme::VOID } else { theme::RULE_DIM }),
+                children![theme::figure(
+                    format!("{number:02}"),
+                    theme::LABEL,
+                    number_ink
+                )],
+            ));
+            row.spawn((
+                Node {
+                    flex_grow: 1.0,
+                    flex_direction: FlexDirection::Column,
+                    justify_content: JustifyContent::Center,
+                    row_gap: px(4),
+                    padding: UiRect::horizontal(px(18)),
+                    ..default()
+                },
+                children![value(name, ink), theme::label(note, theme::LABEL, ink),],
+            ));
+        });
+}
+
+/// The height of a row of a list with a note.
+pub const NOTED_ROW: f32 = 70.0;
+
 /// One of the choices of a row, 44 px high: the chosen one is edged in the accent and takes no
 /// press, each of the others is a button.
 #[expect(dead_code, reason = "the screens take it as they are drawn again")]
@@ -307,7 +379,6 @@ pub enum Holds {
     /// A title and the line that says what it is.
     Titled(String, String),
     /// The balloon of the player of a seat, who the sheet is drawn for.
-    #[expect(dead_code, reason = "the screens take it as they are drawn again")]
     Balloon(u8),
 }
 
@@ -418,7 +489,11 @@ pub struct Part {
 /// The parts list of a tank drawn as an assembly, over the title block of its screen and as
 /// wide as it: its items numbered up from its header, which is at its bottom (ISO 7573). The
 /// numbers are those of the balloons on the drawing.
-pub fn parts_list(parent: &mut ChildSpawnerCommands, parts: &[Part], columns: [f32; 6]) {
+pub fn parts_list(
+    parent: &mut ChildSpawnerCommands,
+    parts: &[Part],
+    (columns, height): ([f32; 6], f32),
+) {
     let width = columns.iter().sum::<f32>() + 2.0 * FRAME_WIDTH;
     parent
         .spawn(block(Node {
@@ -438,7 +513,7 @@ pub fn parts_list(parent: &mut ChildSpawnerCommands, parts: &[Part], columns: [f
                     part.gives.clone(),
                     part.points.clone(),
                 ];
-                row(list, PART_ROW, index > 0, |row| {
+                row(list, height, index > 0, |row| {
                     for (column, word) in said.into_iter().enumerate() {
                         cell(row, columns[column], column < 5, |cell| {
                             cell.spawn(theme::label(word, theme::LABEL, theme::TEXT));
@@ -448,13 +523,36 @@ pub fn parts_list(parent: &mut ChildSpawnerCommands, parts: &[Part], columns: [f
             }
             let names = ["Item", "Part", "Stat", "Level", "Gives", "Points"];
             let header: Vec<(f32, &str)> = columns.iter().copied().zip(names).collect();
-            header_row(list, &header);
+            header_at(list, &header, height);
         });
 }
 
-/// The header of a parts list, at its bottom, over a rule.
-fn header_row(parent: &mut ChildSpawnerCommands, columns: &[(f32, &str)]) {
-    header(parent, columns, true);
+/// The height of a parts list of this many parts, in rows this high, its edges included.
+pub fn parts_height(parts: usize, row: f32) -> f32 {
+    row * (parts + 1) as f32 + 2.0 * FRAME_WIDTH
+}
+
+/// A header at the bottom of a table, over a rule, as high as its rows.
+fn header_at(parent: &mut ChildSpawnerCommands, columns: &[(f32, &str)], height: f32) {
+    parent
+        .spawn((
+            Node {
+                height: px(height),
+                flex_shrink: 0.0,
+                border: UiRect::top(px(1)),
+                ..default()
+            },
+            BorderColor::all(theme::RULE),
+        ))
+        .with_children(|row| {
+            let last = columns.len().saturating_sub(1);
+            for (index, (width, word)) in columns.iter().enumerate() {
+                let word = word.to_string();
+                cell(row, *width, index < last, |cell| {
+                    cell.spawn(key(word));
+                });
+            }
+        });
 }
 
 /// The notes of a screen: what it has to say that is no control, at the bottom of the sheet

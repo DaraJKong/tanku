@@ -217,11 +217,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_character_has_lines_but_the_space() {
+    fn every_character_has_lines_but_the_spaces() {
         let lettering = Lettering::default();
         assert!(lettering.glyphs.len() > 100);
         for (character, glyph) in &lettering.glyphs {
-            assert_eq!(glyph.strokes.is_empty(), *character == ' ', "{character:?}");
+            let space = matches!(character, ' ' | '\u{a0}');
+            assert_eq!(glyph.strokes.is_empty(), space, "{character:?}");
         }
         // The floor letters in capitals, so it needs every capital, figure and sign of a plan.
         for character in "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 .,:-+=/()%?!'\u{b0}\u{b7}\u{d7}\u{2032}\u{2033}\u{221e}\u{2300}".chars() {

@@ -6,6 +6,7 @@ use bevy::{
         keyboard::{Key, KeyboardInput},
     },
     prelude::*,
+    ui::DefaultUiCamera,
 };
 use tanku_core::{
     discovery::Standing,
@@ -931,7 +932,7 @@ fn tank_title_block(parent: &mut ChildSpawnerCommands, (name, kind, budget): (&s
     let upper = vec![
         drawing::Field::new(156.0, "Legal owner", Holds::Owner(None)),
         drawing::Field::new(
-            300.0,
+            313.0,
             "Title",
             Holds::Titled(name.to_string(), kind.to_string()),
         ),
@@ -945,7 +946,7 @@ fn tank_title_block(parent: &mut ChildSpawnerCommands, (name, kind, budget): (&s
             Holds::Value("1:25".to_string(), theme::TEXT),
         ),
         drawing::Field::new(
-            544.0,
+            557.0,
             "Date of issue",
             Holds::Value(sheet::day_of_issue(), theme::TEXT),
         ),
@@ -954,7 +955,7 @@ fn tank_title_block(parent: &mut ChildSpawnerCommands, (name, kind, budget): (&s
 }
 
 /// The columns of the parts list of a tank drawn as an assembly: as wide as its title block.
-pub const PART_COLUMNS: [f32; 6] = [64.0, 120.0, 126.0, 80.0, 222.0, 88.0];
+pub const PART_COLUMNS: [f32; 6] = [64.0, 120.0, 126.0, 80.0, 235.0, 88.0];
 
 fn main_menu(
     mut commands: Commands,
@@ -1060,7 +1061,7 @@ fn main_menu(
                     }
                 }
             });
-            drawing::parts_list(root, &parts, PART_COLUMNS);
+            drawing::parts_list(root, &parts, (PART_COLUMNS, drawing::PART_ROW));
             tank_title_block(root, drawn);
         });
 }
@@ -1094,7 +1095,7 @@ fn exhibit(
     *shown = Some(wanted);
     let sheet = camera.logical_viewport_size().unwrap_or(sheet::LEAST) / ui_scale.0;
     let named = report::named_parts(&genome, tanku_core::sim::Team::Players);
-    let (span, place) = staging(wanted.0, sheet, named.len());
+    let (span, place, room) = staging(wanted.0, sheet, named.len());
     let show = Show {
         genome,
         color: theme::PLAYER,
@@ -1114,7 +1115,7 @@ fn exhibit(
     );
     // The main menu and the garage draw it as an assembly.
     if matches!(wanted.0, Screen::Menu | Screen::Garage) {
-        exhibit::call_out(&mut commands, stand, &named, wanted.0);
+        exhibit::call_out(&mut commands, (stand, room), &named, wanted.0);
     }
 }
 
@@ -1122,8 +1123,8 @@ fn exhibit(
 /// its sheet leaves it, as large as that room lets it be with its balloons around it. On the
 /// main menu, that is over its parts list, which lists `parts` parts; in the garage, right of
 /// the table that edits it; behind the other screens, right of what they hold. Each is over
-/// the title block. The sheet is given in the pixels of the interface.
-fn staging(screen: Screen, sheet: Vec2, parts: usize) -> (f32, Vec2) {
+/// the title block. The sheet is given in the pixels of the interface, and so is the room.
+fn staging(screen: Screen, sheet: Vec2, parts: usize) -> (f32, Vec2, Rect) {
     let edge = SHEET_EDGE + sheet::FRAME_WIDTH;
     let below = match screen {
         Screen::Menu => {
@@ -1138,7 +1139,13 @@ fn staging(screen: Screen, sheet: Vec2, parts: usize) -> (f32, Vec2) {
         _ => drawing::LEFT + FORM_WIDTH,
     };
     let room = Rect::new(left, edge, sheet.x - edge, sheet.y - SHEET_EDGE - below);
-    // A meter of ground on the sheet, so that the tank and what is around it fit the room.
+    let (span, place) = stage_in(room, sheet);
+    (span, place, room)
+}
+
+/// How much ground a screen shows, and where its tank stands in meters from the middle of the
+/// screen, for the tank to stand in the middle of a room of the sheet with what is around it.
+pub fn stage_in(room: Rect, sheet: Vec2) -> (f32, Vec2) {
     let meter = (room.size().min_element() / (2.0 * EXHIBIT_REACH)).max(1.0);
     let span = (sheet.y / meter).clamp(EXHIBIT_SPANS.0, EXHIBIT_SPANS.1);
     let meter = sheet.y / span;
@@ -3166,7 +3173,8 @@ fn ending(run: &Run) -> String {
 
 /// The green stamps of the report of a run: one for each mode or option that it unlocked,
 /// and one for a new record. A run that unlocked more than two at once has them on one stamp,
-/// which names them.
+/// which names them. A list that is too long for its stamp goes on after a dot, never inside
+/// a name.
 fn earned_stamps(unlocked: &[Unlock], record: bool) -> Vec<(String, Option<String>)> {
     let names = unlocked.iter().map(|unlock| unlocks::name(*unlock));
     let mut stamps: Vec<(String, Option<String>)> = if unlocked.len() <= 2 {
@@ -3174,7 +3182,8 @@ fn earned_stamps(unlocked: &[Unlock], record: bool) -> Vec<(String, Option<Strin
             .map(|name| (format!("{name} unlocked"), None))
             .collect()
     } else {
-        let listed = names.collect::<Vec<_>>().join(" \u{b7} ");
+        let whole = names.map(|name| name.replace(' ', "\u{a0}"));
+        let listed = whole.collect::<Vec<_>>().join("\u{a0}\u{b7} ");
         vec![(format!("{} unlocked", unlocked.len()), Some(listed))]
     };
     if record {
@@ -3183,37 +3192,118 @@ fn earned_stamps(unlocked: &[Unlock], record: bool) -> Vec<(String, Option<Strin
     stamps
 }
 
-/// A stamp of the report of a run, with a line under its words if it has one, in a color and
-/// turned a few degrees.
-fn stamp((words, under): (String, Option<String>), (color, turn): (Color, f32)) -> impl Bundle {
-    let under = under.map(|under| theme::old::label(under, 13.0, theme::TEXT));
+/// A stamp of the report of a run, as a drawing that is released is stamped: a double frame,
+/// turned a few degrees, with what was earned and a line under it if it has one in one field,
+/// and RELEASED with the day in the other.
+fn stamp((words, under): (String, Option<String>), turn: f32) -> impl Bundle {
+    let ink = theme::GOOD;
+    // What is under the words can be a list that runs over two lines: its lines are spaced as
+    // those of a sentence.
+    let under = under.map(|under| theme::text(under.to_uppercase(), theme::LABEL, theme::LINE));
     (
         Node {
-            flex_direction: FlexDirection::Column,
-            padding: UiRect::axes(px(14), px(6)),
-            border: UiRect::all(px(2)),
+            border: UiRect::all(px(3)),
+            padding: UiRect::all(px(3)),
             ..default()
         },
-        BorderColor::all(color),
-        BackgroundColor(theme::SURFACE),
+        BorderColor::all(ink),
+        BackgroundColor(theme::VOID.with_alpha(0.6)),
         UiTransform::from_rotation(Rot2::degrees(turn)),
-        Children::spawn((
-            Spawn(theme::old::title(words, 24.0, color)),
-            SpawnIter(under.into_iter()),
-        )),
+        children![(
+            Node {
+                border: UiRect::all(px(1)),
+                ..default()
+            },
+            BorderColor::all(ink),
+            children![
+                (
+                    Node {
+                        flex_direction: FlexDirection::Column,
+                        justify_content: JustifyContent::Center,
+                        row_gap: px(6),
+                        padding: UiRect::new(px(16), px(16), px(8), px(9)),
+                        border: UiRect::right(px(1)),
+                        ..default()
+                    },
+                    BorderColor::all(ink),
+                    Children::spawn((
+                        Spawn(theme::label(words, theme::ALERT, ink)),
+                        SpawnIter(under.into_iter()),
+                    )),
+                ),
+                (
+                    Node {
+                        flex_direction: FlexDirection::Column,
+                        justify_content: JustifyContent::Center,
+                        row_gap: px(8),
+                        padding: UiRect::axes(px(14), px(8)),
+                        ..default()
+                    },
+                    children![
+                        theme::label("Released", theme::LABEL, ink),
+                        theme::figure(sheet::day_of_issue(), theme::VALUE, ink),
+                    ],
+                ),
+            ],
+        )],
     )
 }
 
-/// The report of a run that is over. It is the left margin of a sheet on which the tank that
-/// ended the run is drawn, with the list of its parts.
+/// The columns of the result of a run: what it cleared, its time and its kills.
+const RESULT_COLUMNS: [f32; 3] = [200.0, 204.0, 156.0];
+/// How wide the report of a run is in the left of its sheet.
+const REPORT_WIDTH: f32 = 600.0;
+/// How far the stamps of a report are turned, in degrees, one way and the other in turn.
+const STAMP_TURNS: [f32; 2] = [-3.0, 2.0];
+
+/// The room between two stamps of a report, so that the corners of two that are turned
+/// toward each other stay clear of each other, however wide the report lets them be.
+fn stamp_gap() -> f32 {
+    let [one, other] = STAMP_TURNS.map(|turn| turn.to_radians().sin().abs());
+    REPORT_WIDTH / 2.0 * (one + other) + 4.0
+}
+
+/// What the report of a run says of how it was played, after its name and in its title block:
+/// alone or with how many, how hard, and in which modes.
+fn played(run: Option<&Run>, playtest: bool, team: u32) -> (String, String) {
+    let who = match team {
+        _ if playtest => "Playtest".to_string(),
+        1 => "Solo".to_string(),
+        team => format!("Co-op \u{b7} {team} players"),
+    };
+    let league = run.map(League::of).unwrap_or_default();
+    let mut modes = String::new();
+    if league.arena {
+        modes.push_str(" \u{b7} arena");
+    }
+    if league.free && !playtest {
+        modes.push_str(" \u{b7} free");
+    }
+    let hard = unlocks::difficulty_name(league.difficulty).to_lowercase();
+    let short = match team {
+        _ if playtest => "Playtest",
+        1 => "Solo",
+        _ => "Co-op",
+    };
+    (
+        format!("{who} \u{b7} {hard}{modes}"),
+        format!("{short} \u{b7} {hard}"),
+    )
+}
+
+/// The report of a run that is over, in sections, each a ruled block with a label over it:
+/// the result of the run, what it earned stamped as a release, what comes next as the rows of
+/// a list. The tank that ended the run is drawn on the right of the sheet, as an assembly, with
+/// its parts list over the title block of the report.
 fn game_over(
     mut commands: Commands,
     run: Option<Res<Run>>,
     records: Res<Records>,
     outcome: Res<Outcome>,
-    session: Res<Session>,
+    (session, seat): (Res<Session>, Res<LocalSeat>),
     (unlocks, options, fair): (Res<Unlocks>, Res<Options>, Res<Fair>),
     lobbies: Query<&Lobby>,
+    (shown_by, cameras, ui_scale): (DefaultUiCamera, Query<&Camera>, Res<UiScale>),
 ) {
     // What holds a host back from the same seed again, and from a new run.
     let held = |fresh: bool| {
@@ -3223,25 +3313,14 @@ fn game_over(
     let (playtest, team) = run
         .as_ref()
         .map_or((false, 1), |run| (run.playtest, run.team));
-    let mode = match team {
-        _ if playtest => "PLAYTEST".to_string(),
-        1 => "SOLO".to_string(),
-        team => format!("CO-OP \u{b7} {team} PLAYERS"),
-    };
+    let (mode, short) = played(run.as_deref(), playtest, team);
     let league = run.as_ref().map(|run| League::of(run)).unwrap_or_default();
-    let mode = match league.arena {
-        true => format!("{mode} \u{b7} ARENA MODE"),
-        false => mode,
-    };
-    let mode = match league.free {
-        true if !playtest => format!("{mode} \u{b7} FREE MODE"),
-        _ => mode,
-    };
-    let mode = match league.difficulty {
-        Difficulty::Normal => mode,
-        Difficulty::Hard => format!("{mode} \u{b7} HARD MODE"),
-    };
     let blow = run.as_ref().and_then(|run| run.lost_to);
+    let camera = shown_by.get().and_then(|camera| cameras.get(camera).ok());
+    let window = camera.and_then(Camera::logical_viewport_size);
+    let sheet = window.unwrap_or(sheet::LEAST) / ui_scale.0;
+    // A player who has everything is not told what they miss.
+    let wanting = unlocks.wanting() && (!playtest || unlocks.fake);
     commands
         .spawn((
             DespawnOnExit(Screen::GameOver),
@@ -3254,131 +3333,225 @@ fn game_over(
             children![sheet::frame()],
         ))
         .with_children(|root| {
-            root.spawn(Node {
-                position_type: PositionType::Absolute,
-                left: px(120),
-                top: px(90),
-                width: px(560),
-                flex_direction: FlexDirection::Column,
-                align_items: AlignItems::Start,
-                row_gap: px(10),
-                ..default()
-            })
-            .with_children(|parent| {
-                parent.spawn(theme::old::label(
-                    format!("Run report \u{b7} {mode}"),
-                    13.0,
-                    theme::TEXT_DIM,
-                ));
-                parent.spawn(theme::old::title("Game over", 84.0, theme::TEXT));
+            margin(root, REPORT_WIDTH, |parent| {
+                parent.spawn(drawing::key(format!("Run report \u{b7} {mode}")));
+                parent.spawn(theme::label("Game over", theme::HEADING, theme::TEXT));
                 if let Some(run) = &run {
-                    // A stamp across the sheet, as on a drawing that was turned down, and beside
-                    // it one in green for each thing that the run earned.
-                    let kept = !playtest || records.fake;
-                    let earned = earned_stamps(&unlocks.new, kept && outcome.new_record);
-                    parent
-                        .spawn(Node {
-                            column_gap: px(16),
-                            row_gap: px(10),
-                            align_items: AlignItems::Center,
-                            flex_wrap: FlexWrap::Wrap,
-                            margin: UiRect::bottom(px(18)),
-                            ..default()
-                        })
-                        .with_children(|stamps| {
-                            let turned = (theme::DANGER, -3.0);
-                            stamps.spawn(stamp((ending(run), None), turned));
-                            // Each a little turned its own way, as stamps are.
-                            for (index, earned) in earned.into_iter().enumerate() {
-                                let turn = if index % 2 == 0 { 2.0 } else { -1.5 };
-                                stamps.spawn(stamp(earned, (theme::GOOD, turn)));
-                            }
-                        });
+                    parent.spawn(drawing::key("Result"));
                     let seconds = run.ticks / TICK_RATE as u64;
+                    let scored = if run.arena {
+                        "Groups cleared"
+                    } else {
+                        "Sectors cleared"
+                    };
+                    let figures = [
+                        run.cleared.to_string(),
+                        format!("{}:{:02}", seconds / 60, seconds % 60),
+                        run.kills.to_string(),
+                    ];
                     parent
-                        .spawn(ruled(Node {
-                            align_self: AlignSelf::Stretch,
+                        .spawn(drawing::block(Node {
+                            align_self: AlignSelf::Start,
                             ..default()
                         }))
-                        .with_children(|figures| {
-                            let scored = if run.arena {
-                                "GROUPS CLEARED"
-                            } else {
-                                "SECTORS CLEARED"
-                            };
-                            figure(figures, scored, run.cleared.to_string(), false);
-                            let time = format!("{}:{:02}", seconds / 60, seconds % 60);
-                            figure(figures, "TIME", time, false);
-                            figure(figures, "KILLS", run.kills.to_string(), true);
+                        .with_children(|table| {
+                            let names = [scored, "Time", "Kills"];
+                            let columns: Vec<(f32, &str)> =
+                                RESULT_COLUMNS.iter().copied().zip(names).collect();
+                            drawing::header(table, &columns, false);
+                            drawing::row(table, 64.0, false, |row| {
+                                for (column, said) in figures.into_iter().enumerate() {
+                                    let right = column < 2;
+                                    drawing::cell(row, RESULT_COLUMNS[column], right, |cell| {
+                                        cell.spawn(theme::lone(said, theme::LARGE, theme::TEXT));
+                                    });
+                                }
+                            });
                         });
-                    line(parent, level_line(run), theme::TEXT_DIM);
-                }
-                // A new record and what the run unlocked are stamped above.
-                if playtest && !records.fake {
-                    line(parent, "Playtest: no record kept", theme::TEXT_DIM);
-                } else if !outcome.new_record {
-                    let best = record_line(&records, league, team);
-                    line(parent, best, theme::TEXT_DIM);
-                }
-                // A player who has everything is not told what they miss.
-                let wanting = unlocks.wanting() && (!playtest || unlocks.fake);
-                let earned = |run: &Run| unlocks::earns(run, &unlocks, *fair);
-                if wanting && run.as_ref().is_some_and(|run| !earned(run)) {
-                    // In arena mode and in free mode, the next run earns nothing either,
-                    // retry or not.
-                    let why = if league.arena {
-                        "Runs in arena mode earn no achievement."
-                    } else if league.free {
-                        "Runs in free mode earn no achievement."
-                    } else {
-                        "This run earned no achievement: its seed was typed or played again."
-                    };
-                    line(parent, why, theme::TEXT_DIM);
-                }
-                let retry = |buttons: &mut ChildSpawnerCommands| {
-                    primary(buttons, "Retry this seed", Press::Retry);
-                    if wanting && !league.free && !league.arena {
-                        line(buttons, "A retry earns no achievement.", theme::TEXT_DIM);
+                    // What the run earned, stamped as a release, each a little turned its own
+                    // way, as stamps are.
+                    let kept = !playtest || records.fake;
+                    let earned = earned_stamps(&unlocks.new, kept && outcome.new_record);
+                    if !earned.is_empty() {
+                        parent
+                            .spawn(Node {
+                                column_gap: px(16),
+                                row_gap: px(stamp_gap()),
+                                flex_wrap: FlexWrap::Wrap,
+                                align_items: AlignItems::Center,
+                                padding: UiRect::vertical(px(6)),
+                                ..default()
+                            })
+                            .with_children(|stamps| {
+                                for (index, earned) in earned.into_iter().enumerate() {
+                                    let turn = STAMP_TURNS[index % 2];
+                                    let earned = match earned {
+                                        (words, None) if words == "New record" => {
+                                            let unit = League::of(run).unit();
+                                            let said =
+                                                format!("{short} \u{b7} {} {unit}s", run.cleared);
+                                            (words, Some(said))
+                                        }
+                                        earned => earned,
+                                    };
+                                    stamps.spawn(stamp(earned, turn));
+                                }
+                            });
                     }
-                };
+                    // A run that earned nothing says why.
+                    let earned = |run: &Run| unlocks::earns(run, &unlocks, *fair);
+                    if wanting && !earned(run) {
+                        // In arena mode and in free mode, the next run earns nothing either,
+                        // retry or not.
+                        let why = if league.arena {
+                            "Runs in arena mode earn no achievement."
+                        } else if league.free {
+                            "Runs in free mode earn no achievement."
+                        } else {
+                            "This run earned no achievement: its seed was typed or played again."
+                        };
+                        note(parent, why, theme::TEXT_DIM);
+                    }
+                    if blow.is_none() {
+                        note(parent, ending(run), theme::DANGER);
+                    }
+                }
+                // A new record is stamped above.
+                if playtest && !records.fake {
+                    note(parent, "Playtest: no record kept", theme::TEXT_DIM);
+                } else if !outcome.new_record {
+                    note(parent, record_line(&records, league, team), theme::TEXT_DIM);
+                }
+                parent.spawn((
+                    drawing::key("Next"),
+                    Node {
+                        margin: UiRect::top(px(6)),
+                        ..default()
+                    },
+                ));
                 parent
                     .spawn(Node {
-                        width: px(400),
                         flex_direction: FlexDirection::Column,
-                        row_gap: px(10),
-                        margin: UiRect::top(px(14)),
+                        flex_shrink: 0.0,
                         ..default()
                     })
-                    .with_children(|buttons| match *session {
-                        Session::Solo => {
-                            retry(buttons);
-                            button(buttons, "New run", Press::NewRun);
-                            button(buttons, "Menu", Press::Abandon);
-                        }
-                        // A host whom the others have left would go on alone: a run
-                        // that a single player has not unlocked is not offered.
-                        Session::Host => {
-                            let (again, anew) = (held(false), held(true));
-                            if again.is_none() {
-                                retry(buttons);
+                    .with_children(|list| {
+                        let mut number = 0;
+                        let mut next = || {
+                            number += 1;
+                            number
+                        };
+                        let retry = |list: &mut ChildSpawnerCommands, number: usize| {
+                            let said = "Retry this seed".to_string();
+                            if wanting && !league.free && !league.arena {
+                                let note = "Earns no achievement".to_string();
+                                let press = (Press::Retry, Primary);
+                                drawing::noted_row(list, number, (said, note), press, true);
+                            } else {
+                                drawing::list_row(
+                                    list,
+                                    number,
+                                    said,
+                                    (Press::Retry, Primary),
+                                    true,
+                                );
                             }
-                            if anew.is_none() {
-                                button(buttons, "New run", Press::NewRun);
+                        };
+                        match *session {
+                            Session::Solo => {
+                                retry(list, next());
+                                drawing::list_row(list, next(), "New run", Press::NewRun, false);
+                                drawing::list_row(list, next(), "Menu", Press::Abandon, false);
                             }
-                            if let Some(why) = anew.or(again) {
-                                line(buttons, why, theme::TEXT_DIM);
+                            // A host whom the others have left would go on alone: a run that
+                            // a single player has not unlocked is not offered.
+                            Session::Host => {
+                                let (again, anew) = (held(false), held(true));
+                                if again.is_none() {
+                                    retry(list, next());
+                                }
+                                if anew.is_none() {
+                                    let press = Press::NewRun;
+                                    drawing::list_row(list, next(), "New run", press, false);
+                                }
+                                let press = Press::Regroup;
+                                drawing::list_row(list, next(), "Back to the lobby", press, false);
+                                if let Some(why) = anew.or(again) {
+                                    note(list, why, theme::TEXT_DIM);
+                                }
                             }
-                            button(buttons, "Back to the lobby", Press::Regroup);
-                        }
-                        Session::Guest => {
-                            line(buttons, "The host decides what comes next", theme::TEXT);
-                            button(buttons, "Leave the game", Press::Abandon);
+                            Session::Guest => {
+                                note(list, "The host decides what comes next", theme::TEXT);
+                                let press = Press::Abandon;
+                                drawing::list_row(list, next(), "Leave the game", press, false);
+                            }
                         }
                     });
             });
-            if let Some(blow) = &blow {
-                report::panels(root, blow, team == 1);
+            // The tank that ended the run, as an assembly: the title of its view, its parts
+            // list and the title block of the report.
+            if let (Some(blow), Some(run)) = (&blow, &run) {
+                let parts = report::assembly(&blow.genome, blow.team);
+                let (row, _) = report::layout(sheet, parts.len());
+                let (what, did) = report::view_title(run, blow, team == 1);
+                root.spawn(Node {
+                    position_type: PositionType::Absolute,
+                    right: px(SHEET_EDGE),
+                    top: px(report::VIEW_TOP),
+                    width: px(drawing::title_width_of(&PART_COLUMNS)),
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    ..default()
+                })
+                .with_children(|view| {
+                    view.spawn(Node {
+                        flex_direction: FlexDirection::Column,
+                        align_items: AlignItems::Center,
+                        row_gap: px(4),
+                        ..default()
+                    })
+                    .with_children(|title| {
+                        title.spawn(drawing::value(what, theme::TEXT));
+                        title.spawn((
+                            Node {
+                                width: percent(100),
+                                height: px(1),
+                                ..default()
+                            },
+                            BackgroundColor(theme::TEXT),
+                        ));
+                        title.spawn(theme::label(did, theme::LABEL, theme::DANGER));
+                    });
+                });
+                drawing::parts_list(root, &parts, (PART_COLUMNS, row));
             }
+            let span = run.as_ref().map_or(String::new(), |run| {
+                let unit = if run.arena { "Groups" } else { "Sectors" };
+                format!("{unit} 1 to {}", run.sector.max(1))
+            });
+            let seed = run
+                .as_ref()
+                .map_or(String::new(), |run| run.seed_text.clone());
+            let upper = vec![
+                drawing::Field::new(216.0, "Legal owner", Holds::Owner(Some(short.clone()))),
+                drawing::Field::new(206.0, "Title", Holds::Titled("Run report".into(), span)),
+                drawing::Field::new(138.0, "Created by", Holds::Balloon(seat.0)),
+                drawing::Field::new(
+                    153.0,
+                    "Status",
+                    Holds::Value("Released".into(), theme::GOOD),
+                ),
+            ];
+            let lower = vec![
+                drawing::Field::new(254.0, "Seed", Holds::Value(seed, theme::TEXT)),
+                drawing::Field::new(110.0, "Rev", Holds::Value(VERSION.into(), theme::TEXT)),
+                drawing::Field::new(
+                    349.0,
+                    "Date of issue",
+                    Holds::Value(sheet::day_of_issue(), theme::TEXT),
+                ),
+            ];
+            drawing::title_block(root, upper, lower);
         });
 }
 
@@ -5297,7 +5470,7 @@ mod tests {
         assert_eq!(ending(&bay), "DESTROYED IN THE START BAY");
 
         const ARENA: &str = "Runs in arena mode earn no achievement.";
-        const RETRY: &str = "A retry earns no achievement.";
+        const RETRY: &str = "EARNS NO ACHIEVEMENT";
         let report = texts(|app| {
             app.insert_resource(Run {
                 arena: true,
@@ -5308,8 +5481,14 @@ mod tests {
             });
             build(app, game_over);
         });
-        assert!(says(&report, "RUN REPORT \u{b7} SOLO \u{b7} ARENA MODE"));
-        assert!(says(&report, "DESTROYED BY GROUP 7"));
+        assert!(says(
+            &report,
+            "RUN REPORT \u{b7} SOLO \u{b7} NORMAL \u{b7} ARENA"
+        ));
+        assert!(says(
+            &report,
+            "DESTROYED YOU IN GROUP 7, WITH A CRATE THAT IT SET OFF"
+        ));
         assert!(says(&report, "GROUPS CLEARED") && !says(&report, "SECTORS CLEARED"));
         assert!(says(&report, "No run in arena mode yet"));
         // A new run in arena mode earns nothing either: the retry is not singled out.
@@ -5774,14 +5953,15 @@ mod tests {
     fn the_report_of_a_run_says_why_it_earned_nothing() {
         const TYPED: &str = "This run earned no achievement: its seed was typed or played again.";
         const FREE: &str = "Runs in free mode earn no achievement.";
-        const RETRY: &str = "A retry earns no achievement.";
+        // The row of the retry says it.
+        const RETRY: &str = "EARNS NO ACHIEVEMENT";
         // A run that earns says nothing of itself, and warns of a retry.
         let earned = texts(|app| {
             app.insert_resource(lost_run(1));
             build(app, game_over);
         });
         assert!(!says(&earned, TYPED) && !says(&earned, FREE) && says(&earned, RETRY));
-        assert!(says(&earned, "RUN REPORT \u{b7} SOLO"));
+        assert!(says(&earned, "RUN REPORT \u{b7} SOLO \u{b7} NORMAL"));
         let retried = texts(|app| {
             app.insert_resource(Run {
                 earns: false,
@@ -5803,7 +5983,7 @@ mod tests {
         assert!(says(&free, FREE) && !says(&free, TYPED) && !says(&free, RETRY));
         assert!(says(
             &free,
-            "RUN REPORT \u{b7} SOLO \u{b7} FREE MODE \u{b7} HARD MODE"
+            "RUN REPORT \u{b7} SOLO \u{b7} HARD \u{b7} FREE"
         ));
         // A player who has everything is told nothing of what a run earns.
         let complete = texts(|app| {
@@ -6752,7 +6932,7 @@ mod tests {
         assert_eq!(words, "3 unlocked");
         assert_eq!(
             under.as_deref(),
-            Some("Arena mode \u{b7} Chosen seed \u{b7} Free mode")
+            Some("Arena\u{a0}mode\u{a0}\u{b7} Chosen\u{a0}seed\u{a0}\u{b7} Free\u{a0}mode")
         );
     }
 

@@ -30,17 +30,24 @@ const CALLOUT_LINE: f32 = 2.0;
 const DOT: f32 = 8.0;
 const LIT_LINE: f32 = 3.0;
 const LIT_DOT: f32 = 10.0;
-/// How far from the middle of the tank the balloons stand, in meters, and the least angle
-/// between two of them, seen from the middle of the tank.
-const CIRCLE: f32 = 2.0;
-const LEAST_GAP: f32 = 0.42;
+/// How far from the middle of the tank the balloons stand at most, in meters: where the room
+/// of the screen is short, they stand on an ellipse that it holds.
+const CIRCLE: f32 = 2.2;
+/// The least room between the middles of two balloons along their ellipse, and between a
+/// balloon and the edge of the room.
+const LEAST_GAP: f32 = CALLOUT + 8.0;
+const ROOM_EDGE: f32 = CALLOUT / 2.0 + 4.0;
+/// How much longer than the balloons need the ellipse is at least, where the room allows it.
+const CROWDED: f32 = 1.25;
 
 /// What points at the parts of the tank on show: where the tank stands, where each part is in
-/// the world, and the part whose balloon is lit, if one is, by its place in the list.
+/// the world, the room of the screen that the balloons keep inside, in the pixels of the
+/// interface, and the part whose balloon is lit, if one is, by its place in the list.
 #[derive(Resource)]
 pub struct Callouts {
     stand: Stand,
     parts: Vec<Vec3>,
+    room: Rect,
     pub lit: Option<usize>,
 }
 
@@ -116,8 +123,13 @@ pub fn plugin(app: &mut App) {
 }
 
 /// Names the parts of the tank on show, until `screen` is left: a balloon on each one that the
-/// list of anchors gives, numbered in their order.
-pub fn call_out(commands: &mut Commands, stand: Stand, anchors: &[models::Anchor], screen: Screen) {
+/// list of anchors gives, numbered in their order, inside the room of the screen.
+pub fn call_out(
+    commands: &mut Commands,
+    (stand, room): (Stand, Rect),
+    anchors: &[models::Anchor],
+    screen: Screen,
+) {
     let parts = anchors
         .iter()
         .map(|anchor| stand.point(anchor.on_turret, anchor.at))
@@ -125,6 +137,7 @@ pub fn call_out(commands: &mut Commands, stand: Stand, anchors: &[models::Anchor
     commands.insert_resource(Callouts {
         stand,
         parts,
+        room,
         lit: None,
     });
     let piece = |piece: Callout, node: Node| {
@@ -196,22 +209,34 @@ pub fn call_out(commands: &mut Commands, stand: Stand, anchors: &[models::Anchor
         });
 }
 
-/// Moves angles apart until no two are closer than `least`, without changing their order
-/// around the circle.
-fn spread(angles: &[f32], least: f32) -> Vec<f32> {
-    let count = angles.len();
+/// Moves places on a loop this long apart until no two are closer than `least`, without
+/// changing their order around it.
+fn spread(places: &[f32], least: f32, around: f32) -> Vec<f32> {
+    let count = places.len();
     let mut order: Vec<usize> = (0..count).collect();
-    order.sort_by(|&a, &b| angles[a].total_cmp(&angles[b]));
-    let mut sorted: Vec<f32> = order.iter().map(|&index| angles[index]).collect();
-    for _ in 0..64 {
+    order.sort_by(|&a, &b| places[a].total_cmp(&places[b]));
+    let mut sorted: Vec<f32> = order.iter().map(|&index| places[index]).collect();
+    // On a loop too short for them all at that distance, they stand evenly apart in their
+    // order, as near as that lets them to where they were.
+    let crowded = count as f32 * least >= around;
+    if crowded {
+        let step = around / count.max(1) as f32;
+        let ranked = sorted.iter().enumerate();
+        let shift = ranked
+            .map(|(rank, place)| place - rank as f32 * step)
+            .sum::<f32>();
+        let shift = shift / count.max(1) as f32;
+        sorted = (0..count).map(|rank| shift + rank as f32 * step).collect();
+    }
+    for _ in 0..if crowded { 0 } else { 64 } {
         let mut moved = false;
         for here in 0..count {
             let next = (here + 1) % count;
             if next == here {
                 break;
             }
-            // The last one is followed by the first, a turn further.
-            let turn = if next == 0 { TAU } else { 0.0 };
+            // The last one is followed by the first, once around further.
+            let turn = if next == 0 { around } else { 0.0 };
             let gap = sorted[next] + turn - sorted[here];
             if gap < least - 1e-4 {
                 let push = (least - gap) / 2.0;
@@ -231,6 +256,64 @@ fn spread(angles: &[f32], least: f32) -> Vec<f32> {
     spread
 }
 
+/// An ellipse that the balloons stand on, as points along it with how far along it each one
+/// is, from its right end and down.
+struct Ellipse {
+    points: Vec<Vec2>,
+    along: Vec<f32>,
+}
+
+impl Ellipse {
+    /// An ellipse around a point, with these radii.
+    fn new(center: Vec2, radii: Vec2) -> Self {
+        const SAMPLES: usize = 360;
+        let points: Vec<Vec2> = (0..=SAMPLES)
+            .map(|step| center + radii * Vec2::from_angle(step as f32 / SAMPLES as f32 * TAU))
+            .collect();
+        let mut along = Vec::with_capacity(points.len());
+        let mut length = 0.0;
+        for (index, point) in points.iter().enumerate() {
+            if index > 0 {
+                length += point.distance(points[index - 1]);
+            }
+            along.push(length);
+        }
+        Self { points, along }
+    }
+
+    /// How long it is all around.
+    fn around(&self) -> f32 {
+        self.along[self.along.len() - 1]
+    }
+
+    /// How far along it is the point in the way of an angle from its middle.
+    fn at_angle(&self, angle: f32, radii: Vec2) -> f32 {
+        // The angle of the point on the circle that the ellipse is squeezed from.
+        let squeezed = Vec2::from_angle(angle) / radii.max(Vec2::splat(1e-3));
+        let turn = squeezed.to_angle().rem_euclid(TAU);
+        let index = turn / TAU * (self.points.len() - 1) as f32;
+        let (low, high) = (
+            index.floor() as usize,
+            (index.ceil() as usize).min(self.points.len() - 1),
+        );
+        let share = index - index.floor();
+        self.along[low] + (self.along[high] - self.along[low]) * share
+    }
+
+    /// The point that is this far along it.
+    fn point(&self, along: f32) -> Vec2 {
+        let along = along.rem_euclid(self.around());
+        let next = self.along.partition_point(|reach| *reach < along).max(1);
+        let (from, to) = (self.along[next - 1], self.along[next]);
+        let share = if to > from {
+            (along - from) / (to - from)
+        } else {
+            0.0
+        };
+        self.points[next - 1].lerp(self.points[next], share)
+    }
+}
+
 /// Where the pieces of one balloon go on the screen: the ends of its leader, from the ring
 /// to the part.
 struct Pointer {
@@ -238,25 +321,42 @@ struct Pointer {
     part: Vec2,
 }
 
-/// Lays out the balloons around the tank: each one stands on a circle, on the side of its
-/// part, and no two stand on each other.
+/// Lays out the balloons around the tank: each one stands on an ellipse around it, on the side
+/// of its part, inside the room of the screen, and no two stand on each other. The ellipse is
+/// a circle where the room is large enough.
 fn pointers(callouts: &Callouts, screen: &OnScreen) -> Option<Vec<Pointer>> {
     let middle = callouts.stand.point(false, Vec3::Y * models::TURRET_HEIGHT);
     let center = screen.point(middle)?;
-    let radius = screen.point(middle + Vec3::X)?.distance(center) * CIRCLE;
+    let meter = screen.point(middle + Vec3::X)?.distance(center);
+    let room = callouts.room;
+    let reach = (room.half_size() - ROOM_EDGE).max(Vec2::splat(CALLOUT));
+    let mut radii = Vec2::splat(meter * CIRCLE).min(reach);
     let mut parts = Vec::with_capacity(callouts.parts.len());
     for part in &callouts.parts {
         parts.push(screen.point(*part)?);
     }
-    let sides: Vec<f32> = parts
+    let mut ellipse = Ellipse::new(center, radii);
+    // A tank of many parts drawn small gets a wider ellipse, as far as the room holds one, so
+    // that its balloons have room to keep apart and some to spare.
+    let wanted = callouts.parts.len() as f32 * LEAST_GAP * CROWDED;
+    for _ in 0..8 {
+        if ellipse.around() >= wanted || radii == reach {
+            break;
+        }
+        radii = (radii * wanted / ellipse.around()).min(reach);
+        ellipse = Ellipse::new(center, radii);
+    }
+    let places: Vec<f32> = parts
         .iter()
-        .map(|part| (*part - center).to_angle())
+        .map(|part| ellipse.at_angle((*part - center).to_angle(), radii))
         .collect();
-    let pointers = parts.iter().zip(spread(&sides, LEAST_GAP));
+    let places = spread(&places, LEAST_GAP, ellipse.around());
     Some(
-        pointers
-            .map(|(&part, side)| Pointer {
-                ring: center + Vec2::from_angle(side) * radius,
+        parts
+            .iter()
+            .zip(places)
+            .map(|(&part, along)| Pointer {
+                ring: ellipse.point(along),
                 part,
             })
             .collect(),
@@ -466,22 +566,49 @@ mod tests {
             let between = sorted.windows(2).map(|pair| pair[1] - pair[0]);
             between.fold(around, f32::min)
         };
+        let least = 0.42;
         // Parts that are far apart keep their balloons where they are.
         let far = [0.0, 1.5, 3.0, -1.5];
-        assert_eq!(spread(&far, LEAST_GAP), far);
+        assert_eq!(spread(&far, least, TAU), far);
         // Parts on the same side push their balloons apart, in the same order.
         let close = [0.5, 0.52, 0.48, -2.0, 0.51];
-        let spread_out = spread(&close, LEAST_GAP);
-        assert!(apart(&spread_out) > LEAST_GAP - 1e-3);
+        let spread_out = spread(&close, least, TAU);
+        assert!(apart(&spread_out) > least - 1e-3);
         assert!(spread_out[2] < spread_out[0] && spread_out[0] < spread_out[4]);
         assert!(spread_out[4] < spread_out[1]);
         assert_eq!(spread_out[3], -2.0);
-        // A full tank has twelve parts, and its balloons all fit around it.
+        // A tank has twelve parts at most: on a loop that has room for them, their balloons
+        // keep apart.
         let crowded: Vec<f32> = (0..12).map(|part| 0.01 * part as f32).collect();
-        assert!(apart(&spread(&crowded, LEAST_GAP)) > LEAST_GAP - 1e-2);
-        // Two balloons that stand that far apart on their circle don't touch, on a tank drawn
-        // as small as a screen draws one: a meter of 90 pixels.
-        assert!(2.0 * (LEAST_GAP / 2.0).sin() * CIRCLE * 90.0 > CALLOUT);
+        assert!(apart(&spread(&crowded, least, TAU)) > least - 1e-2);
+        // On a loop too short for them, they stand evenly apart, in their order.
+        let evenly = spread(&crowded, TAU / 10.0, TAU);
+        assert!((apart(&evenly) - TAU / 12.0).abs() < 1e-3);
+        assert!(evenly.windows(2).all(|pair| pair[0] < pair[1]));
+    }
+
+    #[test]
+    fn balloons_stand_on_an_ellipse_that_the_room_holds() {
+        let (center, radii) = (Vec2::new(500.0, 300.0), Vec2::new(300.0, 80.0));
+        let ellipse = Ellipse::new(center, radii);
+        // About as long around as Ramanujan has it.
+        let (a, b) = (radii.x, radii.y);
+        let h = ((a - b) / (a + b)).powi(2);
+        let ramanujan =
+            std::f32::consts::PI * (a + b) * (1.0 + 3.0 * h / (10.0 + (4.0 - 3.0 * h).sqrt()));
+        assert!((ellipse.around() - ramanujan).abs() < 1.0);
+        // The points of the ways to the right, down, left and up.
+        for (angle, point) in [
+            (0.0, Vec2::new(800.0, 300.0)),
+            (TAU / 4.0, Vec2::new(500.0, 380.0)),
+            (TAU / 2.0, Vec2::new(200.0, 300.0)),
+            (TAU * 0.75, Vec2::new(500.0, 220.0)),
+        ] {
+            let along = ellipse.at_angle(angle, radii);
+            assert!(ellipse.point(along).distance(point) < 1.0, "{angle}");
+        }
+        // Fifteen balloons fit on an ellipse as flat as a short room leaves.
+        assert!(ellipse.around() > 15.0 * LEAST_GAP);
     }
 
     #[test]

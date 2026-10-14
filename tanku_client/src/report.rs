@@ -1,7 +1,9 @@
 //! The report of a run that is over: the drawing of the tank that ended it.
 //!
-//! The tank stands large on the sheet. Its parts are numbered on the drawing and listed next
-//! to it with what each one gives, so that the player knows that tank the next time.
+//! The tank is drawn as an assembly on the right of the sheet, its view titled over it with its
+//! class, its points and what it did. Its parts are numbered by balloons on the drawing and
+//! listed above the title block with what each one gives, so that the player knows that tank
+//! the next time.
 
 use bevy::prelude::*;
 use tanku_core::{
@@ -11,29 +13,68 @@ use tanku_core::{
 
 use crate::{
     Screen,
-    camera::View,
+    camera::{MainCamera, View},
     drawing,
     exhibit::{self, Exhibit, Show},
+    hud::SHEET_EDGE,
     menu, models,
     scene::Paints,
+    sheet::{self, FRAME_WIDTH},
     theme,
 };
 
-/// Meters of ground that the report shows from the bottom to the top of the screen.
+/// Meters of ground that the report shows from the bottom to the top of the screen when it
+/// has no tank to draw.
 const SPAN: f32 = 9.0;
-/// Where the tank stands on the screen, in meters from its middle.
-const PLACE: Vec2 = Vec2::new(2.6, 0.9);
-/// Where its turret points, from the way its hull faces.
+/// Where the turret of the tank points, from the way its hull faces.
 const TURRET: f32 = 0.45;
+/// Where the right of the sheet starts from its top, and how high the title of the view is,
+/// with the gap under it.
+pub const VIEW_TOP: f32 = 56.0;
+pub const VIEW_TITLE: f32 = 64.0;
+/// The room that the view of the tank keeps, which the rows of its parts list make room for as
+/// far as they can, from 32 px high down to 24.
+const LEAST_VIEW: f32 = 220.0;
+const ROWS: (f32, f32) = (32.0, 24.0);
 
-/// A part of a tank, as the list tells it.
-pub struct Part {
-    /// The stat and its level.
-    pub name: String,
-    /// What that level gives.
-    pub gives: String,
-    /// The points it costs.
-    pub cost: u32,
+/// How the right of the sheet of a report is laid out, for a sheet this large in the pixels of
+/// the interface and a tank of this many parts: how high the rows of its parts list are, and
+/// the room of its view, between its title and the parts list.
+pub fn layout(sheet: Vec2, parts: usize) -> (f32, Rect) {
+    let width = drawing::title_width_of(&menu::PART_COLUMNS);
+    let bottom = sheet.y - SHEET_EDGE - drawing::title_height() + FRAME_WIDTH;
+    let left_for_list = bottom - (VIEW_TOP + VIEW_TITLE + LEAST_VIEW);
+    let row = (left_for_list / (parts + 1) as f32).clamp(ROWS.1, ROWS.0);
+    let top = bottom - drawing::parts_height(parts, row) + FRAME_WIDTH;
+    let right = sheet.x - SHEET_EDGE;
+    let room = Rect::new(right - width, VIEW_TOP + VIEW_TITLE, right, top - 8.0);
+    (row, room)
+}
+
+/// The title of the view of the tank that ended a run: what it was with its points, and what it
+/// did, where and how.
+pub fn view_title(run: &Run, blow: &Blow, solo: bool) -> (String, String) {
+    let genome = &blow.genome;
+    let what = format!(
+        "{} \u{b7} {} of {} points",
+        build(blow, solo),
+        genome.cost(),
+        genome.budget
+    );
+    let place = match (run.arena, run.sector, run.lull) {
+        (false, 0, _) => "in the start bay".to_string(),
+        (false, sector, _) => format!("in sector {sector}"),
+        // Between two groups, a player has only their own shots and mines to fear.
+        (true, cleared, Some(_)) => format!("before group {}", cleared + 1),
+        (true, group, None) => format!("in group {group}"),
+    };
+    let who = if solo {
+        "Destroyed you"
+    } else {
+        "Ended the run"
+    };
+    let did = format!("{who} {place}, {}", means(blow, solo).to_lowercase());
+    (what, did)
 }
 
 pub fn plugin(app: &mut App) {
@@ -172,20 +213,6 @@ fn anchors(blow: &Blow) -> Vec<models::Anchor> {
     named_parts(&blow.genome, blow.team)
 }
 
-/// The list of the parts of the tank behind a blow.
-pub fn parts(blow: &Blow) -> Vec<Part> {
-    let genome = &blow.genome;
-    let listed = |anchor: &models::Anchor| {
-        let stat = anchor.stat;
-        Part {
-            name: format!("{} {}", stat_name(stat), genome.level(stat)),
-            gives: gives(genome, stat),
-            cost: cost(genome, stat),
-        }
-    };
-    anchors(blow).iter().map(listed).collect()
-}
-
 /// The name of a class, as the players read it.
 pub fn class_name(class: Class) -> &'static str {
     match class {
@@ -243,6 +270,7 @@ fn stage(
     paints: Res<Paints>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut view: ResMut<View>,
+    (camera, ui_scale): (Single<&Camera, With<MainCamera>>, Res<UiScale>),
 ) {
     if !exhibits.is_empty() {
         return;
@@ -259,11 +287,15 @@ fn stage(
         );
         return;
     };
+    let sheet = camera.logical_viewport_size().unwrap_or(sheet::LEAST) / ui_scale.0;
+    let anchors = anchors(&blow);
+    let (_, room) = layout(sheet, anchors.len());
+    let (span, place) = menu::stage_in(room, sheet);
     let show = Show {
         genome: blow.genome,
         color: color(&blow),
-        span: SPAN,
-        place: PLACE,
+        span,
+        place,
         turret: TURRET,
         sways: false,
         shield: false,
@@ -276,141 +308,13 @@ fn stage(
         Screen::GameOver,
         &show,
     );
-    exhibit::call_out(&mut commands, stand, &anchors(&blow), Screen::GameOver);
+    exhibit::call_out(&mut commands, (stand, room), &anchors, Screen::GameOver);
 }
 
 /// The game takes the view back.
 fn put_away(mut commands: Commands, mut view: ResMut<View>) {
     commands.remove_resource::<exhibit::Callouts>();
     view.release();
-}
-
-/// One row of the list of parts.
-fn row(list: &mut ChildSpawnerCommands, number: usize, part: &Part) {
-    let cell = |width: f32| Node {
-        width: px(width),
-        ..default()
-    };
-    list.spawn((
-        Node {
-            height: px(32),
-            column_gap: px(10),
-            align_items: AlignItems::Center,
-            border: UiRect::bottom(px(1)),
-            ..default()
-        },
-        BorderColor::all(theme::RULE_DIM),
-        children![
-            (
-                cell(20.0),
-                children![theme::old::figure(number.to_string(), 14.0, theme::TEXT)]
-            ),
-            (
-                Node {
-                    flex_grow: 1.0,
-                    ..default()
-                },
-                children![theme::old::title(part.name.clone(), 15.0, theme::TEXT)],
-            ),
-            theme::old::text(part.gives.clone(), 16.0, theme::TEXT_DIM),
-            (
-                Node {
-                    justify_content: JustifyContent::End,
-                    ..cell(26.0)
-                },
-                children![theme::old::figure(part.cost.to_string(), 14.0, theme::TEXT)],
-            ),
-        ],
-    ));
-}
-
-/// What the report says about the tank next to its drawing: what it was and how it did it,
-/// then the list of its parts. They stand along the right edge of the sheet.
-pub fn panels(sheet: &mut ChildSpawnerCommands, blow: &Blow, solo: bool) {
-    let genome = &blow.genome;
-    let points = format!("{} of {} points", genome.cost(), genome.budget);
-    sheet.spawn((
-        menu::ruled(Node {
-            position_type: PositionType::Absolute,
-            right: px(48),
-            top: px(90),
-            width: px(300),
-            flex_direction: FlexDirection::Column,
-            row_gap: px(6),
-            padding: UiRect::axes(px(14), px(12)),
-            ..default()
-        }),
-        children![
-            theme::old::label("Destroyed by", 12.0, theme::TEXT_DIM),
-            theme::old::title(build(blow, solo), 22.0, theme::TEXT),
-            (
-                Node {
-                    column_gap: px(10),
-                    align_items: AlignItems::Center,
-                    ..default()
-                },
-                children![
-                    (
-                        Node {
-                            width: px(14),
-                            height: px(14),
-                            ..default()
-                        },
-                        BackgroundColor(color(blow)),
-                    ),
-                    theme::old::figure(points, 14.0, theme::TEXT_DIM),
-                ],
-            ),
-            theme::old::text(means(blow, solo), 17.0, theme::TEXT),
-        ],
-    ));
-
-    let parts = parts(blow);
-    // Two columns, read down the first one and then down the second.
-    let half = parts.len().div_ceil(2);
-    sheet
-        .spawn(menu::ruled(Node {
-            position_type: PositionType::Absolute,
-            right: px(48),
-            bottom: px(48),
-            width: px(700),
-            flex_direction: FlexDirection::Column,
-            padding: UiRect::new(px(14), px(14), px(10), px(6)),
-            ..default()
-        }))
-        .with_children(|list| {
-            list.spawn((
-                Node {
-                    justify_content: JustifyContent::SpaceBetween,
-                    margin: UiRect::bottom(px(4)),
-                    ..default()
-                },
-                children![
-                    theme::old::label("Parts and their level", 12.0, theme::TEXT_DIM),
-                    theme::old::label("What they give, and their points", 12.0, theme::TEXT_DIM),
-                ],
-            ));
-            list.spawn(Node {
-                column_gap: px(28),
-                ..default()
-            })
-            .with_children(|columns| {
-                for (first, column) in [(1, &parts[..half]), (half + 1, &parts[half..])] {
-                    columns
-                        .spawn(Node {
-                            flex_grow: 1.0,
-                            flex_basis: px(0),
-                            flex_direction: FlexDirection::Column,
-                            ..default()
-                        })
-                        .with_children(|list| {
-                            for (place, part) in column.iter().enumerate() {
-                                row(list, first + place, part);
-                            }
-                        });
-                }
-            });
-        });
 }
 
 #[cfg(test)]
@@ -445,40 +349,111 @@ mod tests {
 
     #[test]
     fn the_list_tells_each_part_with_what_it_gives_and_costs() {
-        let listed = parts(&blow(Team::Enemies, burster()));
-        let told: Vec<(&str, &str, u32)> = listed
+        let listed = assembly(&burster(), Team::Enemies);
+        let told: Vec<(&str, &str, &str, &str, &str)> = listed
             .iter()
-            .map(|part| (part.name.as_str(), part.gives.as_str(), part.cost))
+            .map(|part| {
+                let words = (
+                    &part.part,
+                    &part.stat,
+                    &part.level,
+                    &part.gives,
+                    &part.points,
+                );
+                (
+                    words.0.as_str(),
+                    words.1.as_str(),
+                    words.2.as_str(),
+                    words.3.as_str(),
+                    words.4.as_str(),
+                )
+            })
             .collect();
         assert_eq!(
             told,
             [
-                ("Engine 3", "4 m/s", 6),
-                ("Tracks 2", "180\u{b0}/s", 2),
-                ("Turret 2", "90\u{b0}/s", 2),
-                ("Muzzle 2", "9 m/s", 3),
-                ("Magazine 2", "3 rounds", 6),
-                ("Loader 3", "2 s", 4),
-                ("Brain 2", "Soldier", 6),
+                ("Tracks", "Engine", "3", "4 m/s", "6"),
+                ("Hull", "Tracks", "2", "180\u{b0}/s", "2"),
+                ("Turret", "Turret", "2", "90\u{b0}/s", "2"),
+                ("Barrel", "Muzzle", "2", "9 m/s", "3"),
+                ("Drum", "Magazine", "2", "3 rounds", "6"),
+                ("Vents", "Loader", "3", "2 s", "4"),
+                ("Antennas", "Brain", "2", "Soldier", "6"),
             ]
         );
         // The list adds up to what the tank spent.
-        let spent: u32 = listed.iter().map(|part| part.cost).sum();
+        let spent: u32 = listed
+            .iter()
+            .map(|part| part.points.parse::<u32>().unwrap())
+            .sum();
         assert_eq!(spent, burster().cost());
     }
 
     #[test]
     fn the_list_of_a_player_s_tank_leaves_its_turret_out() {
-        let listed = parts(&blow(Team::Players, Genome::PLAYER));
-        assert!(listed.iter().all(|part| !part.name.starts_with("Turret")));
-        let spent: u32 = listed.iter().map(|part| part.cost).sum();
+        let listed = assembly(&Genome::PLAYER, Team::Players);
+        assert!(listed.iter().all(|part| part.stat != "Turret"));
+        let spent: u32 = listed
+            .iter()
+            .map(|part| part.points.parse::<u32>().unwrap())
+            .sum();
         assert_eq!(spent, Genome::PLAYER.cost());
         // Its shield is told by what it costs to raise: the wait before the next time.
-        let shield = listed.iter().find(|part| part.name == "Shield 2").unwrap();
-        assert_eq!((shield.gives.as_str(), shield.cost), ("9 s cooldown", 9));
+        let shield = listed.iter().find(|part| part.stat == "Shield").unwrap();
+        assert_eq!(
+            (shield.gives.as_str(), shield.points.as_str()),
+            ("9 s cooldown", "9")
+        );
         // One number on the drawing for each row of the list.
         let own = blow(Team::Players, Genome::PLAYER);
         assert_eq!(anchors(&own).len(), listed.len());
+    }
+
+    #[test]
+    fn the_view_of_the_tank_is_titled_with_what_it_did() {
+        let run = Run {
+            seed_text: "TEST".into(),
+            seed: 1,
+            difficulty: default(),
+            players: 1,
+            team: 1,
+            solo: true,
+            sector: 6,
+            cleared: 5,
+            checkpoint: 5,
+            lives: 0,
+            kills: 0,
+            ticks: 0,
+            phase: tanku_core::sim::RunPhase::Over,
+            lost_to: None,
+            playtest: false,
+            earns: true,
+            free: false,
+            arena: false,
+            lull: None,
+            paused: false,
+        };
+        let (what, did) = view_title(&run, &blow(Team::Enemies, burster()), true);
+        assert_eq!(what, "All-rounder \u{b7} 29 of 34 points");
+        assert_eq!(did, "Destroyed you in sector 6, with a bullet");
+        let (_, did) = view_title(&run, &blow(Team::Enemies, burster()), false);
+        assert_eq!(did, "Ended the run in sector 6, with a bullet");
+    }
+
+    #[test]
+    fn the_view_of_the_tank_keeps_room_over_a_long_parts_list() {
+        // On the least sheet, a tank with every part keeps a room for its view, over rows that
+        // grow as thin as they get.
+        let (row, room) = layout(sheet::LEAST, 15);
+        assert_eq!(row, ROWS.1);
+        assert!(room.height() >= 190.0, "{room:?}");
+        // With fewer parts, the rows give the view the room that it keeps.
+        let (row, room) = layout(sheet::LEAST, 11);
+        assert!(row > ROWS.1 && row < ROWS.0);
+        assert!((room.height() - (LEAST_VIEW - 8.0)).abs() < 4.0, "{room:?}");
+        // A tank of a few parts has rows of their full height.
+        let (row, _) = layout(sheet::LEAST, 6);
+        assert_eq!(row, ROWS.0);
     }
 
     #[test]
