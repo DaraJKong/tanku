@@ -9,11 +9,21 @@
 //! whichever way the view is turned. An angle is dimensioned with an arc. A dimension that
 //! would cross the corridor or another dimension is left out, and so is one that the others
 //! already tell: each length is given once, on the right side of the corridor before its left.
+//! Where a corner of a wall hides under another wall, as where the corridor turns into the
+//! next sector, the dimension ends on the outer face of that wall and gives what it spans.
+//!
+//! A sector gets its margin when it comes, and keeps it until it goes: what the margin keeps
+//! clear of is the sector's neighbors as the seed plans them, whether they are loaded or not,
+//! so nothing in it comes or goes as the players move on. It is all drawn again only when the
+//! view turns, which turns its lettering.
 
 use std::{collections::HashMap, f32::consts::FRAC_PI_2};
 
 use bevy::prelude::*;
-use tanku_core::{map::SectorKind, sim::Sector};
+use tanku_core::{
+    map::{Corridor, SectorKind, SectorPlan},
+    sim::{Run, Sector},
+};
 
 use crate::{
     camera::View,
@@ -52,6 +62,9 @@ const ARC: (f32, f32) = (1.4, 2.6);
 const HATCH: (f32, f32) = (0.45, 0.42);
 /// How far a dimension keeps from the walls and from another dimension.
 const CLEARANCE: f32 = 0.15;
+/// The farthest that a dimension goes out past a step to be in line with the next one: past a
+/// wall that stands out farther, the dimension would be far from the wall that it measures.
+const CHAIN_REACH: f32 = 6.0;
 /// What is kept clear around the tag at the end of a barrier: its balloon stands 1.1 m past
 /// the end, on the line of the barrier.
 const TAG_REACH: f32 = 1.1;
@@ -60,6 +73,16 @@ const TAG_ROOM: f32 = 0.75;
 /// The drawing of the margin of a sector.
 #[derive(Component)]
 struct Annotation;
+
+/// What the margin of a sector drew, kept on the sector while it is loaded, for the margins
+/// that come after it: the room its drawing takes, its extension lines, which the dimensions
+/// of a chain share, and its walls, with whether each slopes and whether its length is given.
+#[derive(Component, Clone, Default, Debug, PartialEq)]
+struct Margined {
+    taken: Vec<([Vec2; 4], Option<(Vec2, Vec2)>)>,
+    extensions: Vec<(Vec2, Vec2)>,
+    told: Vec<((IVec2, IVec2), bool, bool)>,
+}
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<Margin>()
@@ -72,74 +95,72 @@ pub fn plugin(app: &mut App) {
         );
 }
 
-/// Draws the margin of every sector again when a sector comes or goes, when the view turns,
-/// or when the margin is taken away or given back.
+/// Draws the margin of a sector that comes, and the margin of every sector again when the view
+/// turns or when the margin is taken away or given back.
 #[expect(clippy::too_many_arguments, reason = "a system")]
 fn annotate(
     mut commands: Commands,
-    sectors: Query<(Entity, &Sector)>,
-    arrivals: Query<(), Added<Sector>>,
-    mut departures: RemovedComponents<Sector>,
+    sectors: Query<(Entity, &Sector, Option<&Margined>)>,
     drawn: Query<Entity, With<Annotation>>,
     margin: Res<Margin>,
     view: Res<View>,
-    lettering: Res<Lettering>,
-    paints: Res<Paints>,
-    run: Option<Res<tanku_core::sim::Run>>,
+    (lettering, paints): (Res<Lettering>, Res<Paints>),
+    run: Option<Res<Run>>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut last: Local<Option<(Margin, i32)>>,
+    (mut last, mut planned): (Local<Option<(Margin, i32)>>, Local<Option<(u64, Corridor)>>),
 ) {
-    let gone = departures.read().count();
     let now = (*margin, view.turns);
-    if arrivals.is_empty() && gone == 0 && *last == Some(now) {
-        return;
-    }
+    let anew = *last != Some(now);
     *last = Some(now);
-    for entity in &drawn {
-        commands.entity(entity).despawn();
+    if anew {
+        for entity in &drawn {
+            commands.entity(entity).despawn();
+        }
     }
     if !margin.0 {
         return;
     }
-    let mut loaded: Vec<(Entity, &Sector)> = sectors.iter().collect();
-    loaded.sort_by_key(|(_, sector)| sector.layout.plan.index);
-    let mut room = Room::new(&loaded);
-    let mut known = Known::default();
-    for (_, sector) in &loaded {
-        known.outline(&sector.layout.plan.outline);
+    let mut loaded: Vec<(Entity, &Sector, Option<&Margined>)> = sectors.iter().collect();
+    loaded.sort_by_key(|(_, sector, _)| sector.layout.plan.index);
+    if !anew && loaded.iter().all(|(.., margined)| margined.is_some()) {
+        return;
     }
-    for (entity, sector) in &loaded {
+    // What the margins that stay drew, which those that come keep clear of.
+    let mut kept: Vec<Margined> = Vec::new();
+    if !anew {
+        kept.extend(loaded.iter().filter_map(|(.., margined)| margined.cloned()));
+    }
+    // A corridor's sectors have neighbors that the seed plans. The room of arena mode has none.
+    let seed = run.as_ref().filter(|run| !run.arena).map(|run| run.seed);
+    let paper = Paper {
+        lettering: &lettering,
+        turns: view.turns,
+        ink: Ink::new(),
+    };
+    for &(entity, sector, margined) in &loaded {
+        if !anew && margined.is_some() {
+            continue;
+        }
         let plan = &sector.layout.plan;
-        let mut draft = Draft::default();
-        let walls: Vec<(Vec2, Vec2)> = walls(sector);
-        // The outline runs up the left side of the corridor and down its right side: backward,
-        // the right side comes first, and of two walls whose lengths tell the same thing, the
-        // one on the right keeps its dimension.
-        let order: Vec<usize> = (0..walls.len()).rev().collect();
-        let ink = Ink::new();
-        for &wall in &walls {
-            hatch(&mut draft, wall, &room, ink);
-        }
-        let paper = Paper {
-            lettering: &lettering,
-            turns: view.turns,
-            ink,
-        };
-        let mut angled = vec![false; walls.len()];
-        for &index in &order {
-            angled[index] = angle(&mut draft, (&walls, index), &mut room, &paper);
-        }
-        for &index in &order {
-            // In arena mode, the tanks in reserve wait south of the room.
-            let reserve = plan.kind == SectorKind::Room && outward(walls[index]).y < -0.5;
-            let wall = plan.walls[index];
-            if reserve || known.redundant(wall, angled[index]) {
-                known.learn(wall, angled[index], false);
-                continue;
+        let mut around: Vec<SectorPlan> = loaded
+            .iter()
+            .map(|(_, other, _)| other.layout.plan.clone())
+            .filter(|other| other.index != plan.index)
+            .collect();
+        if let Some(seed) = seed {
+            let known = planned.take().filter(|(known, _)| *known == seed);
+            let (seed, mut corridor) = known.unwrap_or_else(|| (seed, Corridor::new(seed)));
+            let neighbors = [plan.index.checked_sub(1), plan.index.checked_add(1)];
+            for neighbor in neighbors.into_iter().flatten() {
+                if around.iter().all(|other| other.index != neighbor) {
+                    around.push(corridor.plan(neighbor).clone());
+                }
             }
-            let drawn = length(&mut draft, (&walls, index), &mut room, &paper);
-            known.learn(wall, angled[index], drawn);
+            *planned = Some((seed, corridor));
         }
+        let (draft, margined) = margin_of(plan, &around, &kept, &paper);
+        kept.push(margined.clone());
+        commands.entity(entity).insert(margined);
         if draft.is_empty() {
             continue;
         }
@@ -150,7 +171,7 @@ fn annotate(
             paints.ink.clone()
         };
         let mesh = meshes.add(draft.build());
-        commands.entity(*entity).with_children(|parent| {
+        commands.entity(entity).with_children(|parent| {
             parent.spawn((
                 Annotation,
                 Ground::ink(plan.index),
@@ -160,6 +181,68 @@ fn annotate(
             ));
         });
     }
+}
+
+/// The margin of a sector among the sectors around it, which it keeps clear of, after the
+/// margins that are drawn already: its drawing, and what it leaves to those that come after.
+fn margin_of(
+    plan: &SectorPlan,
+    around: &[SectorPlan],
+    drawn: &[Margined],
+    paper: &Paper,
+) -> (Draft, Margined) {
+    let mut plans: Vec<&SectorPlan> = around.iter().collect();
+    plans.push(plan);
+    let mut room = Room::new(&plans);
+    let mut known = Known::default();
+    for other in &plans {
+        known.outline(&other.outline);
+    }
+    for margined in drawn {
+        room.taken.extend(margined.taken.iter().copied());
+        room.extensions.extend(margined.extensions.iter().copied());
+        for &(wall, angled, told) in &margined.told {
+            known.learn(wall, angled, told);
+        }
+    }
+    let (taken, extensions) = (room.taken.len(), room.extensions.len());
+    let mut draft = Draft::default();
+    // The walls of the sector first, then those of the sectors around: where a wall meets a
+    // barrier or an entry, the wall of the next sector goes on from its corner, which turns as
+    // that wall does.
+    let own = plan.walls.len();
+    let mut walls: Vec<(Vec2, Vec2)> = walls(plan);
+    walls.extend(around.iter().flat_map(self::walls));
+    // The outline runs up the left side of the corridor and down its right side: backward,
+    // the right side comes first, and of two walls whose lengths tell the same thing, the one
+    // on the right keeps its dimension.
+    let order: Vec<usize> = (0..own).rev().collect();
+    for &wall in &walls[..own] {
+        hatch(&mut draft, wall, &room, paper.ink);
+    }
+    let mut angled = vec![false; own];
+    for &index in &order {
+        angled[index] = angle(&mut draft, (&walls, index), &mut room, paper);
+    }
+    let mut told = Vec::new();
+    for &index in &order {
+        // In arena mode, the tanks in reserve wait south of the room.
+        let reserve = plan.kind == SectorKind::Room && outward(walls[index]).y < -0.5;
+        let wall = plan.walls[index];
+        let drawn = if reserve || known.redundant(wall, angled[index]) {
+            false
+        } else {
+            length(&mut draft, (&walls, index), &mut room, paper)
+        };
+        known.learn(wall, angled[index], drawn);
+        told.push((wall, angled[index], drawn));
+    }
+    let margined = Margined {
+        taken: room.taken[taken..].to_vec(),
+        extensions: room.extensions[extensions..].to_vec(),
+        told,
+    };
+    (draft, margined)
 }
 
 /// The inks of the margin: the lines, and the lettering, which is a little brighter.
@@ -244,8 +327,8 @@ impl Lettered {
 }
 
 /// The walls of a sector on the ground.
-fn walls(sector: &Sector) -> Vec<(Vec2, Vec2)> {
-    let walls = sector.layout.plan.walls.iter();
+fn walls(plan: &SectorPlan) -> Vec<(Vec2, Vec2)> {
+    let walls = plan.walls.iter();
     walls.map(|&(a, b)| (a.as_vec2(), b.as_vec2())).collect()
 }
 
@@ -255,8 +338,8 @@ fn outward((from, to): (Vec2, Vec2)) -> Vec2 {
     (to - from).perp().normalize()
 }
 
-/// What the margin must keep clear of: the floors and the walls of every sector that is
-/// loaded, the tags of the barriers, and what is already drawn there.
+/// What the margin must keep clear of: the floors and the walls of the sectors around, the
+/// tags of their barriers, and what is already drawn there.
 struct Room {
     floors: Vec<Vec<Vec2>>,
     walls: Vec<(Vec2, Vec2)>,
@@ -269,7 +352,7 @@ struct Room {
 }
 
 impl Room {
-    fn new(sectors: &[(Entity, &Sector)]) -> Self {
+    fn new(plans: &[&SectorPlan]) -> Self {
         let mut room = Self {
             floors: Vec::new(),
             walls: Vec::new(),
@@ -277,11 +360,10 @@ impl Room {
             taken: Vec::new(),
             extensions: Vec::new(),
         };
-        for (_, sector) in sectors {
-            let plan = &sector.layout.plan;
+        for plan in plans {
             room.floors
                 .push(plan.outline.iter().map(|point| point.as_vec2()).collect());
-            room.walls.extend(walls(sector));
+            room.walls.extend(walls(plan));
             if plan.kind == SectorKind::Room {
                 continue;
             }
@@ -576,12 +658,14 @@ fn turn_after(walls: &[(Vec2, Vec2)], index: usize) -> (Turn, Option<(Vec2, Vec2
     }
 }
 
-/// A length in meters as a drawing gives it: whole when it is whole, else to the centimeter.
+/// A length in meters as a drawing gives it: whole when it is whole, else to the centimeter,
+/// without the zeros that end it.
 fn meters(length: f32) -> String {
     if (length - length.round()).abs() < 0.005 {
         format!("{}", length.round() as i64)
     } else {
-        format!("{length:.2}")
+        let centimeters = format!("{length:.2}");
+        centimeters.trim_end_matches('0').to_string()
     }
 }
 
@@ -699,7 +783,7 @@ fn stops(walls: &[(Vec2, Vec2)], index: usize, at_end: bool) -> Vec<Stop> {
             });
             let far = if at_end { other.1 } else { other.0 };
             let standing = (far - corner).dot(out);
-            if standing > 0.5 {
+            if standing > 0.5 && standing <= CHAIN_REACH {
                 stops.push(Stop::Extension {
                     foot: far,
                     gap: WALL_THICKNESS + EXTENSION.0,
@@ -712,26 +796,39 @@ fn stops(walls: &[(Vec2, Vec2)], index: usize, at_end: bool) -> Vec<Stop> {
     stops
 }
 
-/// The ways to dimension a wall whose dimension line measures exactly the length of the wall,
-/// the nearest to the wall first: the line's distance from the wall, its stops, and how far
-/// along the wall from its start it ends at each.
+/// The ways to dimension a wall, the nearest to the wall first: the line's distance from the
+/// wall, its stops, and how far along the wall from its start it ends at each. First those
+/// whose dimension line measures exactly the length of the wall, then those that end on the
+/// outer face of another wall, under which a corner of this one hides: they measure what they
+/// span, which their value then says. Every dimension measures exactly its value.
 fn ways(walls: &[(Vec2, Vec2)], index: usize) -> Vec<(f32, [Stop; 2], [f32; 2])> {
     let wall = walls[index];
-    let length = wall.0.distance(wall.1);
-    let mut ways = Vec::new();
+    let (length, along) = (wall.0.distance(wall.1), direction(wall));
+    let (mut exact, mut faced) = (Vec::new(), Vec::new());
     for start in stops(walls, index, false) {
         for end in stops(walls, index, true) {
             let reach = start.reach().max(end.reach());
             let (Some(from), Some(to)) = (start.along(wall, reach), end.along(wall, reach)) else {
                 continue;
             };
+            // A face that is square to the wall: the line then spans the length of the wall
+            // less the thickness of the wall that it ends on.
+            let square = |stop: &Stop| match *stop {
+                Stop::Face { direction, .. } => direction.dot(along).abs() < 0.01,
+                Stop::Extension { .. } => false,
+            };
+            let on_face = [start, end].iter().any(square);
             if (to - from - length).abs() < 0.01 {
-                ways.push((reach, [start, end], [from, to]));
+                exact.push((reach, [start, end], [from, to]));
+            } else if on_face && to - from >= SHORTEST {
+                faced.push((reach, [start, end], [from, to]));
             }
         }
     }
-    ways.sort_by(|a, b| a.0.total_cmp(&b.0));
-    ways
+    exact.sort_by(|a, b| a.0.total_cmp(&b.0));
+    faced.sort_by(|a, b| a.0.total_cmp(&b.0));
+    exact.extend(faced);
+    exact
 }
 
 /// The length of a wall, dimensioned on its outside, the first way that has room. Returns
@@ -790,7 +887,7 @@ fn dimension(
         }
         extensions.push((point(start), line + out * EXTENSION.1));
     }
-    let text = meters(a.distance(b));
+    let text = meters(ends[1] - ends[0]);
     let reading = paper.readable(along);
     let middle = (from + to) / 2.0;
     let lift = reading.perp() * (VALUE_GAP + VALUE_HEIGHT / 2.0);
@@ -935,13 +1032,135 @@ fn angle(
 mod tests {
     use std::f32::consts::TAU;
 
+    use tanku_core::map::Corridor;
+
     use super::*;
+
+    /// A world that draws the margin of the sectors of a seed's corridor, in a run that has
+    /// reached a sector.
+    fn margin_world(seed: &str, sector: u32) -> App {
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<StandardMaterial>>()
+            .init_resource::<Assets<Image>>()
+            .init_resource::<Time>()
+            .init_resource::<View>()
+            .init_resource::<Margin>()
+            .init_resource::<Lettering>()
+            .insert_resource(Run {
+                seed_text: seed.into(),
+                seed: tanku_core::seed::seed_value(seed),
+                difficulty: default(),
+                players: 1,
+                team: 1,
+                solo: true,
+                sector,
+                cleared: 0,
+                checkpoint: 0,
+                lives: 3,
+                kills: 0,
+                ticks: 0,
+                phase: tanku_core::sim::RunPhase::Playing,
+                lost_to: None,
+                playtest: false,
+                earns: true,
+                free: false,
+                arena: false,
+                lull: None,
+                paused: false,
+            })
+            .add_systems(PreStartup, scene::setup)
+            .add_systems(Update, annotate);
+        app
+    }
+
+    /// The margin drawn for a sector, and what it told.
+    fn margin_of_sector(app: &mut App, sector: Entity) -> (Option<Handle<Mesh>>, Margined) {
+        let world = app.world_mut();
+        let mut drawings = world.query_filtered::<(&ChildOf, &Mesh3d), With<Annotation>>();
+        let mesh = drawings
+            .iter(world)
+            .find(|(parent, _)| parent.parent() == sector)
+            .map(|(_, mesh)| mesh.0.clone());
+        let told = world.get::<Margined>(sector).cloned().expect("a margin");
+        (mesh, told)
+    }
+
+    #[test]
+    fn a_sector_keeps_its_margin_when_the_next_one_comes() {
+        // On this seed the left wall of sector 12 ends where the next sector turns west: a
+        // margin drawn without sector 13 measured it with an extension line that the wall of
+        // sector 13 then lay on, and its dimension went when sector 13 came.
+        let seed = "HTVH9SEE";
+        let mut corridor = Corridor::new(tanku_core::seed::seed_value(seed));
+        let mut app = margin_world(seed, 11);
+        let mut load = |app: &mut App, index: u32| {
+            let layout = corridor.layout(index);
+            app.world_mut().spawn(Sector { layout }).id()
+        };
+        load(&mut app, 11);
+        let twelve = load(&mut app, 12);
+        app.update();
+        let before = margin_of_sector(&mut app, twelve);
+        assert!(before.0.is_some());
+        let thirteen = load(&mut app, 13);
+        app.update();
+        // The margin of sector 12 is the very drawing it was, and the next one has its own.
+        assert_eq!(margin_of_sector(&mut app, twelve), before);
+        assert!(margin_of_sector(&mut app, thirteen).0.is_some());
+        // Drawn again, as when the view turns, it is the same.
+        app.world_mut().resource_mut::<View>().turns = 1;
+        app.update();
+        app.world_mut().resource_mut::<View>().turns = 0;
+        app.update();
+        assert_eq!(margin_of_sector(&mut app, twelve).1, before.1);
+    }
 
     #[test]
     fn lengths_are_whole_when_they_are_whole() {
         assert_eq!(meters(24.0), "24");
         assert_eq!(meters(20f32.sqrt()), "4.47");
         assert_eq!(meters(18f32.sqrt()), "4.24");
+        assert_eq!(meters(51.6), "51.6");
+    }
+
+    #[test]
+    fn a_corner_under_the_wall_of_the_next_sector_is_measured_to_its_face() {
+        // Sector 12 of this seed runs north and sector 13 turns west from its barrier: the
+        // corner at the top of the left wall of sector 12 is under the wall of sector 13.
+        let mut corridor = Corridor::new(tanku_core::seed::seed_value("HTVH9SEE"));
+        let (twelve, thirteen) = (corridor.plan(12).clone(), corridor.plan(13).clone());
+        let left = twelve.walls[0];
+        assert_eq!(left, (IVec2::new(-6, 585), IVec2::new(-6, 637)));
+        let mut walls = super::walls(&twelve);
+        walls.extend(super::walls(&thirteen));
+        let ways = ways(&walls, 0);
+        // First the way that measures the 52 m of the wall, with an extension line from the
+        // corner, which the wall of sector 13 lies on: it has no room once that wall is there.
+        let (_, stops, ends) = ways[0];
+        assert!(matches!(stops[1], Stop::Extension { .. }));
+        assert!((ends[1] - ends[0] - 52.0).abs() < 1e-3);
+        // Then a way that ends on the outer face of that wall, and says that it spans 51.6.
+        let faced = ways
+            .iter()
+            .find(|(_, stops, _)| matches!(stops[1], Stop::Face { .. }));
+        let spans = faced.map(|(_, _, ends)| ends[1] - ends[0]);
+        assert!(spans.is_some_and(|span| (span - (52.0 - WALL_THICKNESS)).abs() < 1e-3));
+        // Drawn among its neighbors, the wall has its length.
+        let lettering = Lettering::default();
+        let paper = Paper {
+            lettering: &lettering,
+            turns: 0,
+            ink: Ink::new(),
+        };
+        let around = [corridor.plan(11).clone(), thirteen];
+        let (_, margined) = margin_of(&twelve, &around, &[], &paper);
+        assert!(
+            margined
+                .told
+                .iter()
+                .any(|&(wall, _, told)| wall == left && told)
+        );
     }
 
     #[test]
