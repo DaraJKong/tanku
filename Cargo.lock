@@ -1065,6 +1065,7 @@ dependencies = [
  "slotmap",
  "smallvec",
  "thiserror 2.0.21",
+ "tracing",
  "variadics_please 1.1.0",
 ]
 
@@ -7795,6 +7796,7 @@ name = "tanku_client"
 version = "0.8.0"
 dependencies = [
  "bevy",
+ "bevy_ecs",
  "lightyear",
  "tanku_audio",
  "tanku_core",

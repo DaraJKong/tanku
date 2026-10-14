@@ -12,6 +12,8 @@ bevy = { workspace = true, features = ["3d", "ui", "bevy_audio", "wav"] }
 # Every build joins games of several players. Over WebTransport it joins as a browser must,
 # which a desktop build can do too.
 lightyear = { workspace = true, features = ["client", "netcode", "webtransport"] }
+# Only for the feature `profile`.
+bevy_ecs_spans = { workspace = true, optional = true, features = ["trace"] }
 tanku_audio.workspace = true
 tanku_core.workspace = true
 tanku_server.workspace = true
@@ -56,4 +58,7 @@ development = ["script", "bevy/dynamic_linking"]
 # its own, with `--no-default-features --features script`, it gives a build that stands alone
 # and still takes scripts, to check a release build or one for another system.
 script = []
+# The profile of `profile.rs` with a span for every system and every schedule, which costs a
+# little time of its own: `--no-default-features --features profile` for a release.
+profile = ["script", "dep:bevy_ecs_spans"]
 debug = ["bevy/debug"]

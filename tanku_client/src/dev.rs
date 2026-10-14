@@ -56,6 +56,7 @@ use bevy::{
         ButtonState,
         keyboard::{Key, KeyboardInput, NativeKeyCode},
     },
+    log::LogPlugin,
     prelude::*,
     render::{
         render_resource::TextureFormat,
@@ -90,6 +91,7 @@ use crate::{
     host::{HostPort, WebPort},
     input,
     music::Baton,
+    profile,
     session::{SessionRequest, Sign},
     storage,
     unlocks::Unlocks,
@@ -208,9 +210,15 @@ pub fn scripted() -> bool {
     std::env::var_os("TANKU_DEV_SCRIPT").is_some()
 }
 
-/// Adds the engine for a scripted run: no window, and frames at a steady pace.
+/// Adds the engine for a scripted run: no window, and frames at a steady pace, unless a
+/// profile lets them come as fast as they can (see `profile.rs`).
 pub fn add_engine(app: &mut App) {
     storage::keep_nothing();
+    let pace = if profile::uncapped() {
+        Duration::ZERO
+    } else {
+        Duration::from_secs_f64(1.0 / 60.0)
+    };
     app.add_plugins((
         DefaultPlugins
             .set(WindowPlugin {
@@ -218,11 +226,16 @@ pub fn add_engine(app: &mut App) {
                 exit_condition: ExitCondition::DontExit,
                 ..default()
             })
+            .set(LogPlugin {
+                custom_layer: profile::layer,
+                ..default()
+            })
             .set(crate::task_pools())
             .disable::<WinitPlugin>(),
-        ScheduleRunnerPlugin::run_loop(Duration::from_secs_f64(1.0 / 60.0)),
+        ScheduleRunnerPlugin::run_loop(pace),
     ))
     .insert_resource(Muted);
+    profile::plugin(app);
 }
 
 pub fn plugin(app: &mut App) {

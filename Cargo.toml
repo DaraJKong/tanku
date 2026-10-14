@@ -19,6 +19,10 @@ license = "MIT OR Apache-2.0"
 [workspace.dependencies]
 # Bevy stays on 0.19 until lightyear supports 0.20.
 bevy = { version = "0.19", default-features = false }
+# The crate of the engine's systems, which the client asks for only to give each of them a
+# span in a profile: see the feature `profile` of `tanku_client`. It goes by another name, or
+# the engine's macros would take it for the path to their types and leave `bevy` aside.
+bevy_ecs_spans = { package = "bevy_ecs", version = "0.19", default-features = false }
 # The network of co-op. Each crate picks the sides and the transports it needs.
 lightyear = { version = "0.30", default-features = false }
 # Announces a hosted game on the local network and finds those of others, by multicast DNS.

@@ -28,6 +28,8 @@ mod models;
 mod music;
 mod net;
 mod notices;
+#[cfg(feature = "script")]
+mod profile;
 #[cfg(not(target_arch = "wasm32"))]
 mod quit;
 mod repair;

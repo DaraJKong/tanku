@@ -438,6 +438,34 @@ The command `tape` keeps the music that the run would have played from there on.
 TANKU_DEV_SCRIPT="tape run.wav; wait 4; start TANKU; wait 4; play 0 1 0 0 4; wait 8; clear; wait 8; quit" cargo run -p tanku_client
 ```
 
+## Profiling
+
+A scripted run can measure where the time of its frames goes. `TANKU_PROFILE=SECONDS` turns the profile on and leaves out that many seconds from the start, where the game loads. When the script quits, the game prints lines that start with `PROFILE`: how long the main schedule took in a frame, and from one frame to the next, the frames that were slow with the systems that took the most of them, the time of each pass of the graphics card, how many components changed in a frame, what the interface painted, and the time of every span. A release with the feature `profile` has a span for every system and every schedule:
+
+```bash
+cargo build --release -p tanku_client --no-default-features --features profile
+```
+
+```bash
+TANKU_PROFILE=6 TANKU_DEV_SCRIPT="start TANKU 4 normal teammates expert; wait 1; warp 20; wait 2; cross; play 0 1 0 8 12; wait 12; quit" target/release/tanku_client
+```
+
+`TANKU_PROFILE_UNCAPPED=1` lets the frames come as fast as they can, `TANKU_PROFILE_CSV=FILE` writes every span to a file, and `TANKU_PROFILE_SLOW=MS` tells of the frames that take longer than that, 8 ms unless told. The spans cost time of their own, as much as the frame or more: the fight of the command above took the main schedule 4.3 ms a frame with them, and 1.7 ms without. So they tell where the time goes, and a build with the feature `script` alone tells how long a frame takes.
+
+`tanku_client/dev/profile.sh` builds a release and plays one of four scenes: the main menu, a fight of four players in sector 21, three of whom the game drives, the crossing into that sector, where its group wakes, and the same sector hosted for three guests, on a network of their own that nothing leaves. The variables after the scene go to the game that is profiled, and `SPANS=1` builds the release with the feature `profile`:
+
+```bash
+tanku_client/dev/profile.sh fight
+```
+
+```bash
+SPANS=1 tanku_client/dev/profile.sh fight TANKU_PROFILE_CSV=$PWD/target/profile/spans.csv
+```
+
+A graphics card that has little to do lowers its clocks, and every pass then takes longer. At 60 frames a second, the RTX 4070 of the machine that the game is made on stays at its lowest clocks: 210 MHz, and 405 MHz for its memory, against 3105 and 10501 at most. Where `nvidia-smi` is found, the script reads the clocks twice a second, and its line `clocks` tells their state over the second half of the run. Compare two builds at the same state only.
+
+On 2026-10-14, the fight took the main schedule 1.7 ms a frame at the median and 2.2 ms at the 99th percentile, on that machine's i7-13700F, and took the graphics card 1.2 ms at its lowest clocks.
+
 ## Trials of the balance
 
 The trials measure what the rules of the game make, without anyone at the keyboard, and tell it in reports that can be compared from one change to the next. They are a tool of their own, `tanku_trials`, with a command for each kind of trial. The census counts what the seeds generate, the comparison of the reference players says what the yardstick of every fight is worth, the skirmishes say what each stretch of sectors costs and which tanks the cost comes from, the duels say what each level of a stat adds to the danger of a tank next to what it adds to its price, the trial of the classes draws the curve of the danger of each class over its points, the runs say how far a player gets with three lives, the journal sets the runs that a person played next to the reference players, and the breeding looks for the tank that does the most with its points. A comparison tells what a change to the game moved between two reports. The numbers that the trials are there to judge are in one file: see [Changing the balance](#changing-the-balance).
