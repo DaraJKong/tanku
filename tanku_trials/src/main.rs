@@ -75,7 +75,7 @@ enum Command {
     /// the terrain. It fights nothing, and takes seconds.
     Census(CensusArgs),
     /// Compares the reference players: each of them fights the same groups, on the same
-    /// seeds. It takes about half a minute on every core of the machine.
+    /// seeds. It takes seconds on every core of the machine.
     Players(PlayersArgs),
     /// Fights the group of every sector as the game makes it, with one reference player:
     /// what each stretch of sectors costs, and which tanks the cost comes from. It takes
@@ -83,24 +83,24 @@ enum Command {
     Skirmish(SkirmishArgs),
     /// Fights tanks of one make, with one stat at a time at each of its levels: what a
     /// level adds to the danger of a tank, next to what it adds to its price. It takes
-    /// about a minute on every core of the machine.
+    /// about twenty seconds on every core of the machine.
     Duels(DuelsArgs),
     /// Fights the tanks of each class alone, made as the game makes them, with a budget
-    /// that grows: the curve of the danger of a class over its points. It takes about a
-    /// minute on every core of the machine.
+    /// that grows: the curve of the danger of a class over its points. It takes about
+    /// twenty seconds on every core of the machine.
     Classes(ClassesArgs),
     /// Plays whole runs of a single player, with the lives, the checkpoints and the arenas
     /// of the game: how far each reference player gets, where the tanks are lost and to
-    /// what. It takes minutes on every core of the machine.
+    /// what. It takes seconds on every core of the machine.
     Runs(RunsArgs),
     /// Sets the journal of the runs that were played next to the reference players: where
-    /// a person loses their tanks and to what, and which player they play as. It takes a
-    /// minute or two on every core of the machine.
+    /// a person loses their tanks and to what, and which player they play as. It takes
+    /// about fifteen seconds on every core of the machine.
     Journal(JournalArgs),
     /// Breeds the tank that costs a reference player the most for its points: generations
     /// of tanks that fight, the best of which have children. It tells the best makes next
     /// to the tanks that the game makes with the same points, and where their points go.
-    /// It takes minutes on every core of the machine.
+    /// It takes about a minute on every core of the machine.
     Breed(BreedArgs),
     /// Tells what changed between two reports of the same trial, from their CSV files.
     Compare(CompareArgs),
