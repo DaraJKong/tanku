@@ -238,12 +238,14 @@ struct Ink {
 #[derive(Resource)]
 struct Rings(Handle<Mesh>);
 
-/// What a stamp says: what it is about, what was earned, and a word more.
+/// What a stamp says: what it is about, what was earned, and a word more. A record has a
+/// shorter word too, for the smaller stamp that it takes next to an achievement.
 #[derive(Clone, Debug, PartialEq)]
 struct StampWords {
     about: String,
     earned: String,
     more: String,
+    brief: Option<String>,
 }
 
 /// The stamps of a moment, which come down one after the other, and those that wait for them to
@@ -1138,6 +1140,7 @@ fn unlock_words(unlock: Unlock, solo: bool) -> StampWords {
         ),
         earned: format!("{} unlocked", unlocks::name(unlock)),
         more: more.to_string(),
+        brief: None,
     }
 }
 
@@ -1149,14 +1152,12 @@ fn record_words(run: &Run, best: u32) -> StampWords {
         players => format!("{players} players"),
     };
     let kind = league.words().unwrap_or_else(|| "normal".to_string());
+    let (cleared, unit) = (run.cleared, league.unit());
     StampWords {
         about: format!("{team} \u{b7} {kind}"),
         earned: "New record".to_string(),
-        more: format!(
-            "{} {}s cleared \u{b7} the best was {best}",
-            run.cleared,
-            league.unit()
-        ),
+        more: format!("{cleared} {unit}s cleared \u{b7} the best was {best}"),
+        brief: Some(format!("{cleared} {unit}s \u{b7} the best was {best}")),
     }
 }
 
@@ -1202,21 +1203,32 @@ fn earn(
     }
 }
 
-/// A stamp, which comes down in its column after this many seconds.
-fn card(commands: &mut Commands, column: Entity, said: &StampWords, delay: f32) {
+/// A stamp, which comes down in its column after this many seconds. A record next to an
+/// achievement takes a smaller stamp, on one line.
+fn card(commands: &mut Commands, column: Entity, said: &StampWords, delay: f32, beside: bool) {
+    let brief = said.brief.as_ref().filter(|_| beside);
     let fill = theme::VOID.with_alpha(STAMP_FILL);
     let card = commands
         .spawn((
             ChildOf(column),
             StampCard(delay),
             Notice(0.0),
-            Node {
-                flex_direction: FlexDirection::Column,
-                align_items: AlignItems::Center,
-                row_gap: px(3),
-                border: UiRect::all(px(2)),
-                padding: UiRect::new(px(30), px(26), px(10), px(14)),
-                ..default()
+            match brief {
+                Some(_) => Node {
+                    align_items: AlignItems::Baseline,
+                    column_gap: px(16),
+                    border: UiRect::all(px(2)),
+                    padding: UiRect::new(px(26), px(22), px(7), px(9)),
+                    ..default()
+                },
+                None => Node {
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    row_gap: px(3),
+                    border: UiRect::all(px(2)),
+                    padding: UiRect::new(px(30), px(26), px(10), px(14)),
+                    ..default()
+                },
             },
             BorderColor::all(theme::GOOD),
             BackgroundColor(fill),
@@ -1233,6 +1245,17 @@ fn card(commands: &mut Commands, column: Entity, said: &StampWords, delay: f32) 
         ..Inked::new(card)
     });
     let parts = (card, card);
+    if let Some(brief) = brief {
+        words(
+            commands,
+            parts,
+            (Face::Title, 26.0),
+            &said.earned,
+            theme::GOOD,
+        );
+        words(commands, parts, (Face::Label, 15.0), brief, theme::TEXT);
+        return;
+    }
     words(
         commands,
         parts,
@@ -1298,8 +1321,10 @@ fn stamp(
                         Pickable::IGNORE,
                     ))
                     .id();
+                let beside = waiting.len() > 1;
                 for (index, words) in waiting.iter().enumerate() {
-                    card(&mut commands, column, words, STAMP_STEP * index as f32);
+                    let delay = STAMP_STEP * index as f32;
+                    card(&mut commands, column, words, delay, beside);
                 }
                 stamps.column = Some((column, 0.0, waiting.len()));
                 sounds.write(Sound(Cue::Stamp));
@@ -1311,7 +1336,7 @@ fn stamp(
             Some((column, age, count)) if age < STAMP_STEP => {
                 for (index, words) in waiting.iter().enumerate() {
                     let delay = STAMP_STEP * (count + index) as f32;
-                    card(&mut commands, column, words, delay);
+                    card(&mut commands, column, words, delay, true);
                 }
                 stamps.column = Some((column, age, count + waiting.len()));
             }
@@ -1739,6 +1764,11 @@ mod tests {
         let words = record_words(app.world().resource::<Run>(), 3);
         assert_eq!(words.about, "Solo \u{b7} normal");
         assert_eq!(words.more, "4 sectors cleared \u{b7} the best was 3");
+        // Next to an achievement, it takes a smaller stamp with fewer words.
+        assert_eq!(
+            words.brief.as_deref(),
+            Some("4 sectors \u{b7} the best was 3")
+        );
         // Once a run.
         app.world_mut().resource_mut::<Run>().cleared = 5;
         app.update();
