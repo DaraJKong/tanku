@@ -139,12 +139,14 @@ fn asked(tank: &Tank, drive: Vec2) -> (Vec2, Option<f32>) {
 }
 
 /// The part of a tick that moves a tank, before anything solid pushes it back.
-fn roll(
-    tank: &Tank,
-    (drive, heading): (Vec2, Option<f32>),
-    position: &mut Vec2,
-    motion: &mut Motion,
-) {
+fn roll(tank: &Tank, asked: (Vec2, Option<f32>), position: &mut Vec2, motion: &mut Motion) {
+    let wanted = steer(tank, asked, motion);
+    speed_up(tank, wanted, position, motion);
+}
+
+/// Turns the hull of a tank toward the way it is asked to drive, and tells the velocity that
+/// it wants then.
+fn steer(tank: &Tank, (drive, heading): (Vec2, Option<f32>), motion: &mut Motion) -> Vec2 {
     let top_speed = tank.genome.top_speed();
     // A tank drives along its hull only, forward or in reverse, whichever turns less.
     let mut wanted = Vec2::ZERO;
@@ -157,6 +159,13 @@ fn roll(
             wanted = Vec2::from_angle(motion.hull) * direction * top_speed * drive.length();
         }
     }
+    wanted
+}
+
+/// Changes the velocity of a tank toward the one that it wants, as fast as it can, and moves
+/// it.
+fn speed_up(tank: &Tank, wanted: Vec2, position: &mut Vec2, motion: &mut Motion) {
+    let top_speed = tank.genome.top_speed();
     let acceleration = top_speed / TANK_ACCELERATION_TIME * TICK;
     let change = wanted - motion.velocity;
     motion.velocity += change.clamp_length_max(acceleration);
@@ -216,8 +225,20 @@ impl<'a> Course<'a> {
         let (mut at, mut motion) = (self.from, *motion);
         let mut places = Vec::with_capacity(ticks + 1);
         places.push(at);
+        // A hull that a tick left as it was is steered the same way in the next one: it is
+        // turned to its way, and wants the same velocity.
+        let mut settled: Option<(u32, Vec2)> = None;
         for _ in 0..ticks {
-            roll(self.tank, asked, &mut at, &mut motion);
+            let hull = motion.hull.to_bits();
+            let wanted = match settled {
+                Some((was, wanted)) if was == hull => wanted,
+                _ => {
+                    let wanted = steer(self.tank, asked, &mut motion);
+                    settled = (motion.hull.to_bits() == hull).then_some((hull, wanted));
+                    wanted
+                }
+            };
+            speed_up(self.tank, wanted, &mut at, &mut motion);
             // The nearest collider is at least this much further from the tank than its
             // radius: nothing overlaps it.
             if at.distance(self.from) + TANK_RADIUS + CLEARANCE >= self.clear {
