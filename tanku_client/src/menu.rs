@@ -2909,6 +2909,46 @@ fn ending(run: &Run) -> String {
     }
 }
 
+/// The green stamps of the report of a run: one for each mode or option that it unlocked,
+/// and one for a new record. A run that unlocked more than two at once has them on one stamp,
+/// which names them.
+fn earned_stamps(unlocked: &[Unlock], record: bool) -> Vec<(String, Option<String>)> {
+    let names = unlocked.iter().map(|unlock| unlocks::name(*unlock));
+    let mut stamps: Vec<(String, Option<String>)> = if unlocked.len() <= 2 {
+        names
+            .map(|name| (format!("{name} unlocked"), None))
+            .collect()
+    } else {
+        let listed = names.collect::<Vec<_>>().join(" \u{b7} ");
+        vec![(format!("{} unlocked", unlocked.len()), Some(listed))]
+    };
+    if record {
+        stamps.push(("New record".to_string(), None));
+    }
+    stamps
+}
+
+/// A stamp of the report of a run, with a line under its words if it has one, in a color and
+/// turned a few degrees.
+fn stamp((words, under): (String, Option<String>), (color, turn): (Color, f32)) -> impl Bundle {
+    let under = under.map(|under| theme::label(under, 13.0, theme::TEXT));
+    (
+        Node {
+            flex_direction: FlexDirection::Column,
+            padding: UiRect::axes(px(14), px(6)),
+            border: UiRect::all(px(2)),
+            ..default()
+        },
+        BorderColor::all(color),
+        BackgroundColor(theme::SURFACE),
+        UiTransform::from_rotation(Rot2::degrees(turn)),
+        Children::spawn((
+            Spawn(theme::title(words, 24.0, color)),
+            SpawnIter(under.into_iter()),
+        )),
+    )
+}
+
 /// The report of a run that is over. It is the left margin of a sheet on which the tank that
 /// ended the run is drawn, with the list of its parts.
 fn game_over(
@@ -2977,19 +3017,28 @@ fn game_over(
                 ));
                 parent.spawn(theme::title("Game over", 84.0, theme::TEXT));
                 if let Some(run) = &run {
-                    // A stamp across the sheet, as on a drawing that was turned down.
-                    parent.spawn((
-                        Node {
-                            padding: UiRect::axes(px(14), px(6)),
+                    // A stamp across the sheet, as on a drawing that was turned down, and beside
+                    // it one in green for each thing that the run earned.
+                    let kept = !playtest || records.fake;
+                    let earned = earned_stamps(&unlocks.new, kept && outcome.new_record);
+                    parent
+                        .spawn(Node {
+                            column_gap: px(16),
+                            row_gap: px(10),
+                            align_items: AlignItems::Center,
+                            flex_wrap: FlexWrap::Wrap,
                             margin: UiRect::bottom(px(18)),
-                            border: UiRect::all(px(2)),
                             ..default()
-                        },
-                        BorderColor::all(theme::DANGER),
-                        BackgroundColor(theme::SURFACE),
-                        UiTransform::from_rotation(Rot2::degrees(-3.0)),
-                        children![theme::title(ending(run), 24.0, theme::DANGER)],
-                    ));
+                        })
+                        .with_children(|stamps| {
+                            let turned = (theme::DANGER, -3.0);
+                            stamps.spawn(stamp((ending(run), None), turned));
+                            // Each a little turned its own way, as stamps are.
+                            for (index, earned) in earned.into_iter().enumerate() {
+                                let turn = if index % 2 == 0 { 2.0 } else { -1.5 };
+                                stamps.spawn(stamp(earned, (theme::GOOD, turn)));
+                            }
+                        });
                     let seconds = run.ticks / TICK_RATE as u64;
                     parent
                         .spawn(ruled(Node {
@@ -3009,17 +3058,12 @@ fn game_over(
                         });
                     line(parent, level_line(run), theme::TEXT_DIM);
                 }
+                // A new record and what the run unlocked are stamped above.
                 if playtest && !records.fake {
                     line(parent, "Playtest: no record kept", theme::TEXT_DIM);
-                } else if outcome.new_record {
-                    line(parent, "New record", theme::GOOD);
-                } else {
+                } else if !outcome.new_record {
                     let best = record_line(&records, league, team);
                     line(parent, best, theme::TEXT_DIM);
-                }
-                for &unlock in &unlocks.new {
-                    let name = unlocks::name(unlock);
-                    line(parent, format!("Unlocked: {name}"), theme::GOOD);
                 }
                 // A player who has everything is not told what they miss.
                 let wanting = unlocks.wanting() && (!playtest || unlocks.fake);
@@ -6254,6 +6298,27 @@ mod tests {
         go(&mut app, Screen::Lobby);
         let next = lobby_of(&mut app);
         assert!(next.seed != "MINE" && !next.seed.is_empty() && !next.typed);
+    }
+
+    #[test]
+    fn the_report_stamps_what_a_run_earned() {
+        let one = earned_stamps(&[Unlock::ArenaMode], true);
+        assert_eq!(
+            one,
+            [
+                ("Arena mode unlocked".to_string(), None),
+                ("New record".to_string(), None)
+            ]
+        );
+        assert!(earned_stamps(&[], false).is_empty());
+        // More than two unlocks at once are named on one stamp.
+        let many = [Unlock::ArenaMode, Unlock::ChosenSeed, Unlock::FreeMode];
+        let (words, under) = &earned_stamps(&many, false)[0];
+        assert_eq!(words, "3 unlocked");
+        assert_eq!(
+            under.as_deref(),
+            Some("Arena mode \u{b7} Chosen seed \u{b7} Free mode")
+        );
     }
 
     #[test]
