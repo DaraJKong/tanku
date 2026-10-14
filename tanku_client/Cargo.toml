@@ -46,7 +46,8 @@ web-sys = { workspace = true, features = [
 tanku_core = { workspace = true, features = ["testing"] }
 
 # Development conveniences, enabled by default.
-# Build releases with `--no-default-features`.
+# Build releases with `--no-default-features`: `build.rs` refuses a release that has
+# `development`.
 [features]
 default = ["development", "debug"]
 # A development build links the engine dynamically, which compiles faster, and takes scripts.

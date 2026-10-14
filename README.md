@@ -162,6 +162,8 @@ Development builds link Bevy dynamically. A release build leaves the development
 cargo build --release --no-default-features -p tanku_client
 ```
 
+Cargo can't leave a feature out for a profile by itself, so the build of the client refuses a release that has them: `cargo build --release` and `cargo run --release` alone stop early and name the command above. Such a program would start on the machine that built it and nowhere else. The refusal comes within seconds once a release was built before, and about half a minute into a build from nothing.
+
 A release build takes no script (see [Looking at the game without playing](#looking-at-the-game-without-playing)). With `--features script` on top, it does, and still stands alone.
 
 ### Windows
