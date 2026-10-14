@@ -206,9 +206,14 @@ pub fn bank_shot(
     bounces: u8,
     turret: f32,
 ) -> Option<f32> {
-    let mut best: Option<f32> = None;
-    for step in 0..BANK_SHOT_STEPS {
-        let angle = step as f32 * TAU / BANK_SHOT_STEPS as f32;
+    let angle = |step: u32| step as f32 * TAU / BANK_SHOT_STEPS as f32;
+    // The directions are tried from the one nearest to the turret, and of two that are as
+    // near, the one of the first step: the first that reaches the target is the one.
+    let mut steps: Vec<(f32, u32)> = (0..BANK_SHOT_STEPS)
+        .map(|step| (geom::angle_difference(turret, angle(step)).abs(), step))
+        .collect();
+    steps.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+    let reaches = |angle: f32| {
         let mut direction = Vec2::from_angle(angle);
         let mut from = origin;
         for leg in 0..=bounces {
@@ -216,25 +221,22 @@ pub fn bank_shot(
             let hit = field.cast(from, delta, BULLET_RADIUS);
             let to = from + delta * hit.map_or(1.0, |(hit, _)| hit.t);
             if leg > 0 && geom::distance_to_segment(target, from, to) < TANK_RADIUS * 0.7 {
-                let closer = best.is_none_or(|best| {
-                    geom::angle_difference(turret, angle).abs()
-                        < geom::angle_difference(turret, best).abs()
-                });
-                if closer {
-                    best = Some(angle);
-                }
-                break;
+                return true;
             }
             match hit {
                 Some((hit, solid)) if solid.bounces() => {
                     direction = geom::reflect(direction, hit.normal);
                     from = to;
                 }
-                _ => break,
+                _ => return false,
             }
         }
-    }
-    best
+        false
+    };
+    steps
+        .into_iter()
+        .map(|(_, step)| angle(step))
+        .find(|&angle| reaches(angle))
 }
 
 /// A direction close to the wanted one that isn't blocked right ahead.
