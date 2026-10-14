@@ -121,7 +121,7 @@ pub fn plugin(app: &mut App) {
 
 /// Gives the player what their run has earned, as soon as it has, and keeps it. A run of
 /// several players gives it to each of them, on their own machine.
-fn earn(
+pub fn earn(
     run: Option<Res<Run>>,
     mut events: MessageReader<SimEvent>,
     mut unlocks: ResMut<Unlocks>,

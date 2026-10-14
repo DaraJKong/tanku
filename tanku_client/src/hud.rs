@@ -23,8 +23,7 @@ use crate::{
     notices::Alarms,
     repair, scene,
     settings::{Action, Settings},
-    theme,
-    unlocks::{self, Unlocked},
+    theme, unlocks,
 };
 
 /// Seconds a message stays on screen.
@@ -1032,7 +1031,6 @@ fn toasts(
     time: Res<Time>,
     run: Option<Res<Run>>,
     mut events: MessageReader<SimEvent>,
-    mut unlocked: MessageReader<Unlocked>,
     mut toast: Single<(&mut Toast, &mut Text, &mut TextColor)>,
     mut shown: Local<u8>,
     mut counted: Local<Option<u8>>,
@@ -1079,10 +1077,6 @@ fn toasts(
         if news.as_ref().is_none_or(|(shown, _)| weight >= *shown) {
             news = Some((weight, message));
         }
-    }
-    // Nothing matters more than what a run has just unlocked.
-    if let Some(Unlocked(unlock)) = unlocked.read().last() {
-        news = Some((4, format!("Unlocked - {}", unlocks::name(*unlock))));
     }
     // A message stays until its time is over, unless one that matters as much comes.
     if toast.0 == 0.0 {

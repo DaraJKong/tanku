@@ -4,12 +4,17 @@
 //! tank that the player at this screen watches, where their eyes are: few words, no panel that
 //! would hide a bullet, and gone in 2.2 s. The frame of the sheet flashes red with a loss, the
 //! circle of the wreck is inked in red for a moment, the squares of the display blink, and a
-//! loss that leaves one tank running, or one life, has a cue of its own. The routine news of a
-//! run stays on the line at the top of the screen.
+//! loss that leaves one tank running, or one life, has a cue of its own.
+//!
+//! What a run earns, an achievement or a record, is stamped on the sheet above the tank, as the
+//! game over screen stamps a run that is lost, with a cue and a green flash of the frame. It
+//! comes with the last kill of a sector, when the fight is over. The routine news of a run stays
+//! on the line at the top of the screen.
 
 use bevy::prelude::*;
 use tanku_audio::cues::Cue;
 use tanku_core::{
+    modes::Unlock,
     rules::{MAX_PLAYERS, REPAIR_RADIUS},
     sim::{Blow, Player, Playtest, Position, Run, SimEvent, Team, Weapon, Wreck},
 };
@@ -22,7 +27,9 @@ use crate::{
     draft::{Draft, LIFT},
     hud::{self, SHEET_EDGE},
     report, scene,
+    settings::{League, Records},
     theme::{self, Face},
+    unlocks::{self, Unlocked},
 };
 
 /// How long an alert shows, and the end of that time over which it fades.
@@ -51,6 +58,23 @@ const RING_TIME: f32 = 0.6;
 const RING_GROWTH: f32 = 0.22;
 /// The width of the line of that circle, in meters.
 const INK_WIDTH: f32 = 0.1;
+/// How long a stamp shows, how long it takes to land, and the end of its time over which it
+/// fades.
+const STAMP_TIME: f32 = 4.2;
+const STAMP_LANDING: f32 = 0.15;
+const STAMP_FADE: f32 = 0.5;
+/// How much larger a stamp is as it comes down, and how far it is turned: as the stamp of the
+/// game over screen.
+const STAMP_DROP: f32 = 1.4;
+const STAMP_TURN: f32 = -3.0;
+/// Where the middle of the stamps stands, as a share of the height of the screen: above the
+/// tank that the view follows, which is in the middle.
+const STAMP_HEIGHT: f32 = 28.0;
+/// Each stamp of a moment lands this long after the one before it.
+const STAMP_STEP: f32 = 0.25;
+/// How dark the inside of a stamp is: enough to read it over a block, little enough to see a
+/// bullet through it.
+const STAMP_FILL: f32 = 0.5;
 
 /// The losses that the display tells for a moment: how long ago the tank of each seat was
 /// destroyed, and which life of a single player was lost, with how long ago.
@@ -200,17 +224,56 @@ struct Ink {
 #[derive(Resource)]
 struct Rings(Handle<Mesh>);
 
+/// What a stamp says: what it is about, what was earned, and a word more.
+#[derive(Clone, Debug, PartialEq)]
+struct StampWords {
+    about: String,
+    earned: String,
+    more: String,
+}
+
+/// The stamps of a moment, which come down one after the other, and those that wait for them to
+/// be gone.
+#[derive(Resource, Default)]
+struct Stamps {
+    waiting: Vec<StampWords>,
+    /// The column that holds the stamps on the screen, how long ago the first one came, and
+    /// how many there are.
+    column: Option<(Entity, f32, usize)>,
+}
+
+/// A stamp on the screen, and how long after the first of its moment it comes.
+#[derive(Component)]
+struct StampCard(f32);
+
+/// The record that a run started with, for its league and the size of its team, and whether
+/// the run has gone past it yet.
+#[derive(Resource, Default)]
+struct Best {
+    run: Option<(u64, u64)>,
+    sector: Option<u32>,
+    told: bool,
+}
+
 pub fn plugin(app: &mut App) {
     app.init_resource::<Shown>()
         .init_resource::<Alarms>()
         .init_resource::<Flash>()
+        .init_resource::<Stamps>()
+        .init_resource::<Best>()
         .add_systems(Startup, setup)
         .add_systems(OnEnter(Screen::Playing), (build, forget))
         .add_systems(
             Update,
             (
                 tell.before(audio::Playing),
-                (place, fade).chain().after(tell).after(camera::follow),
+                // An achievement is told in the frame that earns it, before the record that
+                // comes with it.
+                (earn.after(unlocks::earn), stamp)
+                    .chain()
+                    .before(audio::Playing),
+                place.after(tell).after(camera::follow),
+                fade.after(place).after(stamp),
                 flash,
                 ink,
             )
@@ -249,10 +312,15 @@ fn build(mut commands: Commands) {
 }
 
 /// A run that starts has nothing to tell yet.
-fn forget(mut shown: ResMut<Shown>, mut alarms: ResMut<Alarms>, mut flash: ResMut<Flash>) {
+fn forget(
+    (mut shown, mut alarms, mut flash): (ResMut<Shown>, ResMut<Alarms>, ResMut<Flash>),
+    (mut stamps, mut best): (ResMut<Stamps>, ResMut<Best>),
+) {
     shown.0 = None;
     *alarms = Alarms::default();
     *flash = Flash::default();
+    *stamps = Stamps::default();
+    *best = Best::default();
 }
 
 /// The cue of a loss of the players, by the tanks that still run after it: one more loss ends
@@ -968,6 +1036,227 @@ fn ink(
     }
 }
 
+/// The words of the stamp of an achievement: the sector that earned it, what it unlocks, and
+/// where to find it. The host of a game has every option already: an achievement is for solo.
+fn unlock_words(unlock: Unlock, solo: bool) -> StampWords {
+    let hard = if unlock.in_hard_mode() {
+        " in hard mode"
+    } else {
+        ""
+    };
+    let more = if !unlocks::built(unlock) {
+        "Not in the game yet"
+    } else if solo {
+        "New on the solo screen"
+    } else {
+        "For your solo runs"
+    };
+    StampWords {
+        about: format!(
+            "Achievement \u{b7} sector {} cleared{hard}",
+            unlock.sector()
+        ),
+        earned: format!("{} unlocked", unlocks::name(unlock)),
+        more: more.to_string(),
+    }
+}
+
+/// The words of the stamp of a record: its league, and how far past the best the run is.
+fn record_words(run: &Run, best: u32) -> StampWords {
+    let league = League::of(run);
+    let team = match run.team {
+        1 => "Solo".to_string(),
+        players => format!("{players} players"),
+    };
+    let kind = league.words().unwrap_or_else(|| "normal".to_string());
+    StampWords {
+        about: format!("{team} \u{b7} {kind}"),
+        earned: "New record".to_string(),
+        more: format!(
+            "{} {}s cleared \u{b7} the best was {best}",
+            run.cleared,
+            league.unit()
+        ),
+    }
+}
+
+/// Whether a run is past the record that it started with. A first run has none to beat: every
+/// sector it clears would be one.
+fn past(best: Option<u32>, cleared: u32) -> bool {
+    best.is_some_and(|best| cleared > best)
+}
+
+/// Finds what a run earns: each achievement that it unlocks, and the first sector that it
+/// clears past its record. A playtest keeps no record.
+fn earn(
+    run: Option<Res<Run>>,
+    records: Res<Records>,
+    mut unlocked: MessageReader<Unlocked>,
+    mut best: ResMut<Best>,
+    mut stamps: ResMut<Stamps>,
+) {
+    let Some(run) = run else {
+        unlocked.clear();
+        return;
+    };
+    // A new run, or the same seed again, starts from the record as it stands.
+    let this = (run.seed, run.ticks);
+    let new = best
+        .run
+        .is_none_or(|(seed, ticks)| seed != this.0 || ticks > this.1);
+    best.run = Some(this);
+    if new {
+        let record = records.best(League::of(&run), run.team);
+        best.sector = record.map(|record| record.sector);
+        best.told = false;
+    }
+    for Unlocked(unlock) in unlocked.read() {
+        stamps.waiting.push(unlock_words(*unlock, run.solo));
+    }
+    if !best.told && !run.playtest && past(best.sector, run.cleared) {
+        best.told = true;
+        let words = record_words(&run, best.sector.unwrap_or_default());
+        stamps.waiting.push(words);
+    }
+}
+
+/// A stamp, which comes down in its column after this many seconds.
+fn card(commands: &mut Commands, column: Entity, said: &StampWords, delay: f32) {
+    let fill = theme::VOID.with_alpha(STAMP_FILL);
+    let card = commands
+        .spawn((
+            ChildOf(column),
+            StampCard(delay),
+            Notice(0.0),
+            Node {
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                row_gap: px(3),
+                border: UiRect::all(px(2)),
+                padding: UiRect::new(px(30), px(26), px(10), px(14)),
+                ..default()
+            },
+            BorderColor::all(theme::GOOD),
+            BackgroundColor(fill),
+            UiTransform {
+                scale: Vec2::splat(STAMP_DROP),
+                rotation: Rot2::degrees(STAMP_TURN),
+                ..UiTransform::IDENTITY
+            },
+        ))
+        .id();
+    commands.entity(card).insert(Inked {
+        back: Some(fill),
+        border: Some(theme::GOOD),
+        ..Inked::new(card)
+    });
+    let parts = (card, card);
+    words(
+        commands,
+        parts,
+        (Face::Label, 13.0),
+        &said.about,
+        theme::GOOD,
+    );
+    words(
+        commands,
+        parts,
+        (Face::Title, 40.0),
+        &said.earned,
+        theme::GOOD,
+    );
+    words(
+        commands,
+        parts,
+        (Face::Label, 15.0),
+        &said.more,
+        theme::TEXT,
+    );
+}
+
+/// Brings the stamps down: what waits comes once the stamps on the screen are gone, all of it
+/// at once, or joins them if they have only just come. Each moment of stamps has its cue and
+/// flashes the frame green.
+fn stamp(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut stamps: ResMut<Stamps>,
+    mut flash: ResMut<Flash>,
+    mut sounds: MessageWriter<Sound>,
+    mut cards: Query<(&StampCard, &mut Notice, &mut UiTransform)>,
+) {
+    let seconds = time.delta_secs();
+    if let Some((column, age, count)) = stamps.column {
+        let age = age + seconds;
+        if age >= STAMP_TIME + STAMP_STEP * count.saturating_sub(1) as f32 {
+            commands.entity(column).despawn();
+            stamps.column = None;
+        } else {
+            stamps.column = Some((column, age, count));
+        }
+    }
+    if !stamps.waiting.is_empty() {
+        let waiting = std::mem::take(&mut stamps.waiting);
+        match stamps.column {
+            None => {
+                let column = commands
+                    .spawn((
+                        DespawnOnExit(Screen::Playing),
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left: percent(50),
+                            top: percent(STAMP_HEIGHT),
+                            flex_direction: FlexDirection::Column,
+                            align_items: AlignItems::Center,
+                            row_gap: px(14),
+                            ..default()
+                        },
+                        // Its middle on that point.
+                        UiTransform::from_translation(Val2::percent(-50.0, -50.0)),
+                        Pickable::IGNORE,
+                    ))
+                    .id();
+                for (index, words) in waiting.iter().enumerate() {
+                    card(&mut commands, column, words, STAMP_STEP * index as f32);
+                }
+                stamps.column = Some((column, 0.0, waiting.len()));
+                sounds.write(Sound(Cue::Stamp));
+                *flash = Flash {
+                    color: theme::GOOD,
+                    age: 0.0,
+                };
+            }
+            Some((column, age, count)) if age < STAMP_STEP => {
+                for (index, words) in waiting.iter().enumerate() {
+                    let delay = STAMP_STEP * (count + index) as f32;
+                    card(&mut commands, column, words, delay);
+                }
+                stamps.column = Some((column, age, count + waiting.len()));
+            }
+            Some(_) => stamps.waiting = waiting,
+        }
+    }
+    let age = stamps.column.map_or(0.0, |(_, age, _)| age);
+    for (card, mut notice, mut transform) in &mut cards {
+        let (shown, scale) = landing(age - card.0);
+        notice.0 = shown;
+        transform.scale = Vec2::splat(scale);
+    }
+}
+
+/// How much of a stamp shows, and how large it is, this long after it starts to come down: it
+/// lands, holds, and fades.
+fn landing(since: f32) -> (f32, f32) {
+    if since < 0.0 {
+        (0.0, STAMP_DROP)
+    } else if since < STAMP_LANDING {
+        let landed = since / STAMP_LANDING;
+        (landed, STAMP_DROP - (STAMP_DROP - 1.0) * landed)
+    } else {
+        (((STAMP_TIME - since) / STAMP_FADE).clamp(0.0, 1.0), 1.0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use tanku_core::{
@@ -1243,5 +1532,124 @@ mod tests {
         app.world_mut().write_message(enemy);
         app.update();
         assert_eq!(heard(&mut app).0, []);
+    }
+
+    #[test]
+    fn an_achievement_is_stamped_with_where_to_find_it() {
+        let solo = unlock_words(Unlock::ArenaMode, true);
+        assert_eq!(solo.about, "Achievement \u{b7} sector 10 cleared");
+        assert_eq!(solo.earned, "Arena mode unlocked");
+        assert_eq!(solo.more, "New on the solo screen");
+        // Among several players, the host has every option already.
+        assert_eq!(
+            unlock_words(Unlock::FreeMode, false).more,
+            "For your solo runs"
+        );
+        // What the game doesn't have yet is said so.
+        let impossible = unlock_words(Unlock::ImpossibleMode, true);
+        assert!(impossible.about.ends_with("in hard mode"));
+        assert_eq!(impossible.more, "Not in the game yet");
+    }
+
+    #[test]
+    fn a_stamp_lands_holds_and_fades() {
+        assert_eq!(landing(-0.1), (0.0, STAMP_DROP));
+        assert_eq!(landing(0.0), (0.0, STAMP_DROP));
+        let (shown, scale) = landing(STAMP_LANDING / 2.0);
+        assert!((shown - 0.5).abs() < 1e-5 && scale < STAMP_DROP && scale > 1.0);
+        assert_eq!(landing(STAMP_LANDING), (1.0, 1.0));
+        assert_eq!(landing(STAMP_TIME - STAMP_FADE), (1.0, 1.0));
+        assert_eq!(landing(STAMP_TIME), (0.0, 1.0));
+    }
+
+    /// A run with the records of this machine, as far as its stamps go without a screen.
+    fn earning(records: Records) -> App {
+        let mut app = App::new();
+        app.init_resource::<Stamps>()
+            .init_resource::<Best>()
+            .init_resource::<Flash>()
+            .init_resource::<Time>()
+            .insert_resource(records)
+            .add_message::<Unlocked>()
+            .add_message::<Sound>()
+            .insert_resource(Run {
+                seed_text: "TEST".into(),
+                seed: 1,
+                difficulty: default(),
+                players: 1,
+                team: 1,
+                solo: true,
+                sector: 3,
+                cleared: 2,
+                checkpoint: 2,
+                lives: 3,
+                kills: 0,
+                ticks: 0,
+                phase: RunPhase::Playing,
+                lost_to: None,
+                playtest: false,
+                earns: true,
+                free: false,
+                arena: false,
+                lull: None,
+                paused: false,
+            })
+            .add_systems(Update, (earn, stamp).chain());
+        app
+    }
+
+    /// What the stamps say, those on the screen and those that wait, and the cues asked for.
+    fn stamped(app: &mut App) -> (usize, Vec<StampWords>, Vec<Cue>) {
+        let world = app.world_mut();
+        let shown = world.query::<&StampCard>().iter(world).count();
+        let waiting = world.resource::<Stamps>().waiting.clone();
+        let mut asked = world.resource_mut::<Messages<Sound>>();
+        let cues: Vec<Cue> = asked.drain().map(|Sound(cue)| cue).collect();
+        (shown, waiting, cues)
+    }
+
+    #[test]
+    fn a_record_is_stamped_once_past_the_best_that_the_run_started_with() {
+        let mut records = Records::default();
+        records.submit(League::default(), 1, 3, "OLD");
+        let mut app = earning(records);
+        app.update();
+        assert_eq!(stamped(&mut app), (0, vec![], vec![]));
+        // Level with the record is no record.
+        app.world_mut().resource_mut::<Run>().cleared = 3;
+        app.update();
+        assert_eq!(stamped(&mut app).0, 0);
+        // Past it, the stamp comes with its cue, and says by how much.
+        app.world_mut().resource_mut::<Run>().cleared = 4;
+        app.update();
+        assert_eq!(stamped(&mut app), (1, vec![], vec![Cue::Stamp]));
+        let words = record_words(app.world().resource::<Run>(), 3);
+        assert_eq!(words.about, "Solo \u{b7} normal");
+        assert_eq!(words.more, "4 sectors cleared \u{b7} the best was 3");
+        // Once a run.
+        app.world_mut().resource_mut::<Run>().cleared = 5;
+        app.update();
+        assert_eq!(stamped(&mut app), (1, vec![], vec![]));
+        // An achievement in the same moment joins the stamp on the screen.
+        app.world_mut().write_message(Unlocked(Unlock::ArenaMode));
+        app.update();
+        assert_eq!(stamped(&mut app), (2, vec![], vec![]));
+    }
+
+    #[test]
+    fn a_first_run_and_a_playtest_beat_no_record() {
+        assert!(!past(None, 7));
+        assert!(past(Some(6), 7) && !past(Some(7), 7));
+        let mut app = earning(Records::default());
+        app.world_mut().resource_mut::<Run>().cleared = 9;
+        app.update();
+        assert_eq!(stamped(&mut app), (0, vec![], vec![]));
+        let mut records = Records::default();
+        records.submit(League::default(), 1, 3, "OLD");
+        let mut app = earning(records);
+        app.world_mut().resource_mut::<Run>().playtest = true;
+        app.world_mut().resource_mut::<Run>().cleared = 9;
+        app.update();
+        assert_eq!(stamped(&mut app), (0, vec![], vec![]));
     }
 }
