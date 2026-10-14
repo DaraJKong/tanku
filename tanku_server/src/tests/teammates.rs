@@ -2,6 +2,8 @@
 
 use tanku_core::{geom, reference::Reference};
 
+use crate::field::Solid;
+
 use super::*;
 
 /// Starts a run of so many players, of which the game drives the last ones, in a playtest or
@@ -314,4 +316,42 @@ fn teams_of_teammates_on_many_seeds() {
             }
         }
     }
+}
+
+/// The x of the wall on the west side of the start bay, where it passes the start.
+fn west_wall(app: &mut App) -> f32 {
+    let field = app.world().resource::<Field>();
+    let upright = field.colliders.iter().filter(|collider| {
+        let spans =
+            collider.a.y.min(collider.b.y) <= START.y && collider.a.y.max(collider.b.y) >= START.y;
+        collider.solid == Solid::Wall
+            && collider.a.x == collider.b.x
+            && collider.a.x < START.x
+            && spans
+    });
+    upright
+        .map(|collider| collider.a.x)
+        .fold(f32::MIN, f32::max)
+}
+
+#[test]
+fn a_teammate_repairs_a_wreck_in_a_gap_that_a_tank_just_fits_in() {
+    // A scene that a playtest found: the wreck of the player lies between a wall and a column
+    // of three blocks 2 m from it, and the teammate stands on the other side of the column. It
+    // found no way into the gap, and turned one way along the column and then the other.
+    let mut app = playtest();
+    let (player, mate) = (seat(&mut app, 0), seat(&mut app, 1));
+    let west = west_wall(&mut app);
+    for y in [5.0, 7.0, 9.0] {
+        let at = Vec2::new(west + 3.0, y);
+        app.world_mut()
+            .spawn((Block { sector: 0 }, Position(at), InSector(0)));
+    }
+    app.world_mut().resource_mut::<Field>().stale = true;
+    teleport(&mut app, player, Vec2::new(west + 1.0, 8.0));
+    teleport(&mut app, mate, Vec2::new(west + 5.0, 8.0));
+    tick(&mut app, 2);
+    destroy(&mut app, player);
+    assert!(is_wreck(&app, player));
+    assert!(within(&mut app, 20.0, |app| !is_wreck(app, player)));
 }

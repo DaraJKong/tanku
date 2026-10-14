@@ -337,7 +337,7 @@ After a change to the [teammates](#teammates) of a playtest, one more test sends
 cargo test -p tanku_server teams_of_teammates -- --ignored --nocapture
 ```
 
-On 2026-10-14, regular teammates cleared 16.0 sectors on average in teams of two, 20.6 in teams of three and 21.5 in teams of four, and no run stopped. The regular player alone, with three lives, clears about 16. Teams of reference players tell little of what people do together, and twelve seeds are few.
+On 2026-10-14, regular teammates cleared 15.8 sectors on average in teams of two, 20.2 in teams of three and 25.1 in teams of four, and no run stopped. The regular player alone, with three lives, clears about 16. Teams of reference players tell little of what people do together, and twelve seeds are few.
 
 This prints what the groups of each mode are made of, by stretch of sectors: which brains they have, and how many points they can't spend:
 

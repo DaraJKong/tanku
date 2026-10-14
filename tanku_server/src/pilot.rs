@@ -483,6 +483,10 @@ impl Pilot {
             self.waypoint = route(field, tank, me, foe);
         }
         match self.waypoint {
+            // A way that was just found again and ends where the tank stands: the tank is as
+            // near as it gets, and stays. Driving at the middle of its square, it would go
+            // past it, and back, without end.
+            Some(waypoint) if there(waypoint) => Way::Found(Vec2::ZERO),
             Some(waypoint) => Way::Found(waypoint - me),
             None => Way::Meant(foe - me),
         }
@@ -624,12 +628,40 @@ fn sound_shot(
     true
 }
 
+/// Where the squares of a grid of ways are centered: between the points of the lattice that
+/// walls and blocks are laid on, or on them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Squares {
+    Between,
+    On,
+}
+
 /// Where a tank drives to get to a place that it doesn't see: the furthest point that it
 /// can drive straight to on the shortest way there, around what is solid. The way is found
 /// on a grid of one meter, among the squares that a tank fits in.
+///
+/// The squares are centered between the points of the lattice that walls and blocks are laid
+/// on. A gap of two meters, which a tank 1.8 m across fits in, has none down its middle then,
+/// so a place that no way reaches on that grid is looked for again on one whose squares are
+/// centered on those points, where such a gap has a row of them. If no way reaches it there
+/// either, it is drawn near to: the way leads to the square nearest to it that the tank gets
+/// to. A tank that found no way used to steer at the place from behind what hid it, and
+/// turned one way along it and then the other.
 fn route(field: &Field, tank: &Tank, from: Vec2, to: Vec2) -> Option<Vec2> {
-    let low = (from.min(to) - Vec2::splat(ROUTE_MARGIN)).floor();
-    let size = ((from.max(to) + Vec2::splat(ROUTE_MARGIN)).ceil() - low).as_uvec2();
+    let first = search(field, tank, (from, to), Squares::Between);
+    first.or_else(|| search(field, tank, (from, to), Squares::On))
+}
+
+/// The way of `route` on one grid. Squares centered on the lattice are the last that are
+/// tried: on them, a place that no way reaches is drawn near to.
+fn search(field: &Field, tank: &Tank, (from, to): (Vec2, Vec2), squares: Squares) -> Option<Vec2> {
+    let shift = match squares {
+        Squares::Between => Vec2::ZERO,
+        Squares::On => Vec2::splat(0.5),
+    };
+    let low = (from.min(to) - Vec2::splat(ROUTE_MARGIN)).floor() - shift;
+    let high = (from.max(to) + Vec2::splat(ROUTE_MARGIN)).ceil() + shift;
+    let size = (high - low).as_uvec2();
     let (width, height) = (size.x as usize, size.y as usize);
     let center = |cell: usize| low + Vec2::new((cell % width) as f32, (cell / width) as f32) + 0.5;
     let cell = |at: Vec2| {
@@ -664,10 +696,16 @@ fn route(field: &Field, tank: &Tank, from: Vec2, to: Vec2) -> Option<Vec2> {
     let mut open = std::collections::VecDeque::from([start]);
     before[start] = Some(start);
     let mut end = None;
+    // The square nearest to the goal that the tank gets to, and how far from the goal it is.
+    let mut nearest = (start, f32::MAX);
     while let Some(here) = open.pop_front() {
-        if center(here).distance(goal) < ROUTE_REACH {
+        let away = center(here).distance(goal);
+        if away < ROUTE_REACH {
             end = Some(here);
             break;
+        }
+        if away < nearest.1 {
+            nearest = (here, away);
         }
         let (x, y) = (here % width, here / width);
         let next = [
@@ -684,7 +722,11 @@ fn route(field: &Field, tank: &Tank, from: Vec2, to: Vec2) -> Option<Vec2> {
         }
     }
     // Back from the end of the way to the first square that the tank can drive straight to.
-    let mut here = end?;
+    let mut here = match (end, squares) {
+        (Some(end), _) => end,
+        (None, Squares::On) => nearest.0,
+        (None, Squares::Between) => return None,
+    };
     let mut first = here;
     while here != start {
         let stopped = field
@@ -1091,6 +1133,59 @@ mod tests {
         assert!(fired(north / 2.0, Vec2::new(20.0, 4.0)));
     }
 
+    /// A wall that runs north at x = -7, and a column of three blocks 2 m east of it: the gap
+    /// between them is 2 m wide, and a tank, 1.8 m across, fits in it.
+    fn gap() -> ([(Vec2, Vec2); 1], [Vec2; 3]) {
+        let walls = [(Vec2::new(-7.0, -10.0), Vec2::new(-7.0, 30.0))];
+        let blocks = [
+            Vec2::new(-5.0, 4.0),
+            Vec2::new(-5.0, 6.0),
+            Vec2::new(-5.0, 8.0),
+        ];
+        (walls, blocks)
+    }
+
+    /// Where a player who drives to a place stands after so many seconds, on a field where
+    /// nothing flies: driven tick after tick as the game drives a tank.
+    fn drive_to(field: &Field, from: Vec2, goal: Goal, seconds: f32) -> Vec2 {
+        let tank = player();
+        let mut pilot = Pilot::new(Reference::Regular);
+        let (mut at, mut motion) = (from, Motion::default());
+        for _ in 0..(seconds / TICK) as usize {
+            let command = TankCommand {
+                drive: pilot.toward(field, &tank, at, goal),
+                aim: at,
+                ..default()
+            };
+            tanks::step_among(
+                &field.colliders,
+                &tank,
+                true,
+                &command,
+                &mut at,
+                &mut motion,
+            );
+        }
+        at
+    }
+
+    #[test]
+    fn a_player_finds_the_way_into_a_gap_as_wide_as_a_tank_needs() {
+        // The place lies in the gap, at the height of the middle block, and the tank stands
+        // east of the column: it goes around the column and down the gap.
+        let (walls, blocks) = gap();
+        let (me, goal) = (Vec2::new(-1.7, 8.0), Vec2::new(-6.0, 8.0));
+        let (world, ..) = fight(&walls, &blocks, me, goal);
+        let field = world.resource::<Field>();
+        assert!(route(field, &player(), me, goal).is_some());
+        let goal = Goal {
+            at: goal,
+            within: 1.0,
+        };
+        let at = drive_to(field, me, goal, 20.0);
+        assert!(at.distance(goal.at) < 1.1, "{at:?}");
+    }
+
     #[test]
     fn a_player_finds_the_way_around_a_wall() {
         // A wall from west to east, with its east end at x = 6: the enemy is behind it.
@@ -1106,7 +1201,8 @@ mod tests {
         // The way goes east, around the end of the wall, and the tank can drive there.
         assert!(waypoint.x > 6.0 + TANK_RADIUS, "{waypoint:?}");
         assert!(field.cast(me, waypoint - me, TANK_RADIUS).is_none());
-        // No way leads into a place that is closed all around.
+        // A place that is closed all around is drawn near to: the way leads as close to it as a
+        // tank gets, here 4 m, along one side of the box.
         for (a, b) in [
             ((-3.0, 12.0), (3.0, 12.0)),
             ((3.0, 12.0), (3.0, 18.0)),
@@ -1119,7 +1215,17 @@ mod tests {
                 solid: Solid::Wall,
             });
         }
-        assert_eq!(route(&field, &player(), me, foe), None);
+        let near = route(&field, &player(), me, foe).expect("a way near to the place");
+        assert!(field.cast(me, near - me, TANK_RADIUS).is_none());
+        let goal = Goal {
+            at: foe,
+            within: 1.0,
+        };
+        let at = drive_to(&field, me, goal, 20.0);
+        assert!(at.distance(foe) < 4.5, "{at:?}");
+        // There it stays.
+        let later = drive_to(&field, me, goal, 22.0);
+        assert!(later.distance(at) < 0.05, "{at:?} and then {later:?}");
     }
 
     #[test]
