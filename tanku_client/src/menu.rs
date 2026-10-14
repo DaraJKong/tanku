@@ -3629,16 +3629,23 @@ fn pause_menu(
                         BorderColor::all(theme::RULE_DIM),
                     ))
                     .with_children(|foot| {
-                        let fields = [
-                            ("Seed", run.seed_text.clone()),
-                            ("Rev", VERSION.to_string()),
-                            ("Run", run_kind(run)),
+                        // A run in normal mode, in the corridor, says nothing of how it is
+                        // played: the seed then takes the room.
+                        let [seed, rev, kind] = HOLD_FOOT;
+                        let mut fields = vec![
+                            (seed, "Seed", run.seed_text.clone()),
+                            (rev, "Rev", VERSION.to_string()),
                         ];
+                        if run.difficulty != Difficulty::Normal || run.arena {
+                            fields.push((kind, "Run", run_kind(run)));
+                        } else {
+                            fields[0].0 += kind;
+                        }
                         let last = fields.len() - 1;
-                        for (index, (label, value)) in fields.into_iter().enumerate() {
+                        for (index, (width, label, value)) in fields.into_iter().enumerate() {
                             foot.spawn((
                                 Node {
-                                    width: px(HOLD_FOOT[index]),
+                                    width: px(width),
                                     flex_shrink: 0.0,
                                     flex_direction: FlexDirection::Column,
                                     row_gap: px(4),
