@@ -1,0 +1,5 @@
+# Every text file keeps LF line endings in every checkout, Windows included. The balance and
+# the music are read byte for byte while the game is compiled, and their tests find a line by
+# its `\n`: a checkout that turned them into CRLF failed three tests of the balance on
+# Windows.
+* text=auto eol=lf
