@@ -162,6 +162,8 @@ A playtest can also choose its seed without unlocking that option: `--seed` foll
 
 It can bring a tank of its own too: `--tank` followed by the stats of a tank with their levels starts every run in free mode, in that tank, under the rules of the [garage](#garage). A tank is tried that way without building it in the garage, and the tank of the garage stays as it is.
 
+It can bring teammates as well, so that one person can try a game of several players. On the solo screen of a playtest, the player picks up to three tanks that the game drives beside theirs, and how well they play: novice, regular or expert, which differ in how soon they see a bullet coming, whether they follow it off a wall and whether they shield. The run is then one of several players, with its wrecks, its repairs and the groups of as many players. A teammate fights the nearest enemy of its sector, and holds a shot that would take a teammate. The one nearest to a wreck repairs it. Once a sector is cleared, the teammates wait in front of its barrier and cross it after the player, never first. Otherwise they keep near the player.
+
 A playtest says on screen that it is one. It sets no record and earns no achievement, but fake ones. A playtest can host a game: the cheats are the host's alone, and the run sets no record for anyone in it, but fake ones for its host.
 
 ## Controls
@@ -684,7 +686,7 @@ The interface is the margin of the drawing: ruled panels with square corners, la
 | Screen | Content |
 |---|---|
 | Main menu | Solo, host, join, achievements, settings, quit, and the best runs of one difficulty at a time, in the corridor or in arena mode, in the standard tank or in free mode |
-| Solo | Difficulty, seed, arena mode, free mode with its garage, what unlocks each of them while it is locked, a note when the run will earn no achievement, start |
+| Solo | Difficulty, seed, arena mode, free mode with its garage, what unlocks each of them while it is locked, a note when the run will earn no achievement, the teammates of a playtest and how well they play, start |
 | Host | The name of the game, its password, open |
 | Join | The games of the local network with their names and which of them have a password, the address of the host, the password of a game that has one, join. In a browser: how to join by the link of a host, and that link again once it was followed. |
 | Lobby | The name of the game, the players with who is ready, the difficulty, the seed, arena mode and free mode, which the host sets, the garage in free mode, a note when the run will earn no achievement, ready and the countdown to the run, the address to join at or the link for browsers with a button that copies it (host) |
