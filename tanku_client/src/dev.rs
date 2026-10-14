@@ -20,7 +20,8 @@
 //! its sector,
 //! `bubble`, `die`, `pause`,
 //! `settings`, `resume`,
-//! `lose ENEMY`, `blast X Y`, which sets off a mine at a point of the map, `warn X Y`, which
+//! `lose ENEMY`, `blast X Y`, which sets off a mine at a point of the map, `rout`, which sets
+//! one off under each enemy of the sector of the player, `warn X Y`, which
 //! sounds the warning of a mine there without any mine, `shot PATH` and
 //! `quit`, plus `play DX DY AX AY SECONDS`, which drives the tank in a direction while it fires
 //! at a point relative to itself, `aim AX AY`, which turns the turret to such a point without
@@ -677,6 +678,30 @@ fn run_script(
                     Position(Vec2::new(number(1), number(2))),
                     InSector(run.sector),
                 ));
+            }
+        }
+        // Sets off a mine of the player under each enemy of the sector the player is in: the
+        // tanks that are there are destroyed, as the player would destroy them. In arena mode,
+        // a tank that waits in reserve comes for each of them, as in any fight, and needs a
+        // `rout` of its own.
+        "rout" => {
+            if let (Ok((owner, _)), Some(run)) = (player.single(), run.as_ref()) {
+                let foes = enemies
+                    .iter()
+                    .filter(|(_, tank, _)| tank.sector == run.sector);
+                for (_, _, at) in foes {
+                    commands.spawn((
+                        Mine {
+                            owner,
+                            team: Team::Players,
+                            sector: run.sector,
+                            state: MineState::Triggered(0.0),
+                        },
+                        Maker(Genome::PLAYER),
+                        Position(at.0),
+                        InSector(run.sector),
+                    ));
+                }
             }
         }
         // Sounds the warning of a mine at a point of the map. Nothing blows up.
