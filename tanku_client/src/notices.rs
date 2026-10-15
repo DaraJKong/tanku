@@ -198,9 +198,9 @@ enum Told {
 enum Anchor {
     /// The tank that the view follows, wherever it goes on the screen: a dot on it.
     Watched,
-    /// The place on the screen where the player's own tank was destroyed: a dot on it. The
-    /// view leaves that place, and the alert stays there.
-    Pinned { ground: Vec2, screen: Option<Vec2> },
+    /// The place on the ground where the player's own tank was destroyed: a dot on it, which
+    /// stays on that place as the view moves.
+    Pinned(Vec2),
     /// The balloon of the player of a seat, over its tank or at the edge of the screen. Where
     /// it doesn't show, the alert stands under the tank that the view follows, headed by a
     /// balloon of its own.
@@ -581,10 +581,7 @@ fn tell(
                 alarms.life = Some((lives + 1, 0.0));
             }
             cue = cue.or(life_cue(lives));
-            let anchor = Anchor::Pinned {
-                ground: at,
-                screen: None,
-            };
+            let anchor = Anchor::Pinned(at);
             let own = Told::Own {
                 blow: run.lost_to,
                 solo: true,
@@ -664,10 +661,7 @@ fn tell(
             lives: None,
             menders,
         };
-        let anchor = Anchor::Pinned {
-            ground,
-            screen: None,
-        };
+        let anchor = Anchor::Pinned(ground);
         told.push((own, anchor));
     }
     if !told.is_empty() {
@@ -1253,17 +1247,15 @@ fn place(
         *flip = clear_flip(at, screen, words, tags, *flip);
         pointing(at, screen, *flip)
     };
-    let layout = match &mut alert.anchor {
+    let layout = match alert.anchor {
         Anchor::Watched => watched
             .and_then(seen)
             .map(|(at, _)| pointed(at, &mut alert.flip)),
-        Anchor::Pinned { ground, screen: at } => {
-            if at.is_none() {
-                *at = seen(scene::to_world(*ground, 0.0)).map(|(at, _)| at);
-            }
-            at.map(|at| pointed(at, &mut alert.flip))
+        Anchor::Pinned(ground) => {
+            let at = seen(scene::to_world(ground, 0.0));
+            at.map(|(at, _)| pointed(at, &mut alert.flip))
         }
-        Anchor::Balloon(seat) => match heads.of(*seat) {
+        Anchor::Balloon(seat) => match heads.of(seat) {
             Some((head, way)) => Some(hanging(head, way, false)),
             // Under the tank that the view follows, with a balloon of its own.
             None => watched.and_then(seen).map(|(at, meter)| {
