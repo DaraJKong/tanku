@@ -848,7 +848,7 @@ fn build(mut commands: Commands) {
                     ..default()
                 },
                 // The heading of a general note: its words over a rule as long as they are.
-                // Over the game, which may have a block or a crate there: it has a dark edge.
+                // Over the game, which may have a block or a crate there: it has a shadow.
                 children![(
                     Node {
                         flex_direction: FlexDirection::Column,
@@ -856,7 +856,7 @@ fn build(mut commands: Commands) {
                         ..default()
                     },
                     children![
-                        theme::edged(
+                        theme::shaded(
                             Toast(0.0),
                             theme::Face::Title,
                             "",
@@ -890,7 +890,7 @@ fn build(mut commands: Commands) {
                         + 8.0),
                     ..default()
                 },
-                children![theme::edged(
+                children![theme::shaded(
                     (Readout::Earning, Note),
                     theme::Face::Label,
                     "",

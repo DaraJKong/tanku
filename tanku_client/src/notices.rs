@@ -228,8 +228,9 @@ struct Inked {
     text: Option<Color>,
     back: Option<Color>,
     border: Option<Color>,
-    outline: Option<Color>,
     line: Option<Color>,
+    /// Whether it casts the shadow of what is written over the game.
+    shadow: bool,
 }
 
 impl Inked {
@@ -239,8 +240,8 @@ impl Inked {
             text: None,
             back: None,
             border: None,
-            outline: None,
             line: None,
+            shadow: false,
         }
     }
 
@@ -740,7 +741,7 @@ fn row(commands: &mut Commands, column: Entity, gap: f32) -> Entity {
     commands.spawn((ChildOf(column), row)).id()
 }
 
-/// Words of an alert, with their dark edge.
+/// Words of an alert, with their shadow.
 fn words(
     commands: &mut Commands,
     (parent, root): (Entity, Entity),
@@ -748,11 +749,12 @@ fn words(
     content: impl Into<String>,
     color: Color,
 ) {
-    let edged = theme::edged(Inked::text(root, color), face, content, size, color);
-    commands.spawn((ChildOf(parent), edged));
+    let shaded = theme::shaded(Inked::text(root, color), face, content, size, color);
+    commands.spawn((ChildOf(parent), shaded));
 }
 
-/// A small square of a color, with a dark edge: the color of the tank behind a blow, or a life.
+/// A small square of a color, with the shadow of the words beside it: the color of the tank
+/// behind a blow, or a life.
 fn square(
     commands: &mut Commands,
     (parent, root): (Entity, Entity),
@@ -765,7 +767,7 @@ fn square(
         Inked {
             back: Some(fill),
             border,
-            outline: Some(theme::VOID),
+            shadow: true,
             ..Inked::new(root)
         },
         Node {
@@ -776,7 +778,7 @@ fn square(
         },
         BackgroundColor(fill),
         BorderColor::all(border.unwrap_or(Color::NONE)),
-        Outline::new(px(2), px(0), theme::VOID),
+        theme::shadow(1.0),
     ));
 }
 
@@ -917,7 +919,7 @@ fn spawn(commands: &mut Commands, told: &Told) -> Entity {
     match told {
         Told::Lost { last, .. } => {
             let first = row(commands, column, 9.0);
-            let distance = theme::edged(
+            let distance = theme::shaded(
                 (Distance, Inked::text(root, theme::LINE)),
                 Face::Label,
                 "",
@@ -1313,11 +1315,11 @@ fn fade(
         Option<&mut TextColor>,
         Option<&mut BackgroundColor>,
         Option<&mut BorderColor>,
-        Option<&mut Outline>,
+        Option<&mut BoxShadow>,
         Option<&mut Line>,
     )>,
 ) {
-    for (inked, text, back, border, outline, line) in &mut parts {
+    for (inked, text, back, border, shadow, line) in &mut parts {
         let shown = notices.get(inked.root).map_or(0.0, |notice| notice.0);
         let faded = |color: Color| color.with_alpha(color.alpha() * shown);
         if let (Some(color), Some(mut text)) = (inked.text, text) {
@@ -1329,8 +1331,8 @@ fn fade(
         if let (Some(color), Some(mut border)) = (inked.border, border) {
             border.set_if_neq(BorderColor::all(faded(color)));
         }
-        if let (Some(color), Some(mut outline)) = (inked.outline, outline) {
-            outline.color = faded(color);
+        if let (true, Some(mut shadow)) = (inked.shadow, shadow) {
+            shadow.set_if_neq(theme::shadow(shown));
         }
         if let (Some(color), Some(mut line)) = (inked.line, line) {
             let ink = faded(color);
