@@ -338,7 +338,7 @@ A price should reflect how much more dangerous a level makes a tank, and not eve
 | Share of budget | Brain, Ballistics | Software multiplies the value of the hardware it drives: the same brain is worth more in a better tank. |
 | Prerequisite | Tracks, Mines, Shield, Seeking, Ballistics 2 and 3 | The stat is worthless alone, so the generator never buys it alone. |
 | Cap by sector | Muzzle, Piercing, Seeking, Splitting, Exploding | A sniper puts its points into its gun, and one enemy in eight is a sniper, more in the first sectors. The cap decides how fast that gun is in each sector, and the price decides what else such a tank can afford. Each special bullet waits for a sector of its own, so the classes that fire them come one after another. |
-| Kept for a class | Piercing, Seeking, Splitting, Exploding, Ricochet above level 1, Ballistics 3 | The special bullets and the bullets that bounce twice are the hardest to read. Each belongs to a class, and the color of the tank announces it. |
+| Kept for a class | Piercing, Seeking, Splitting, Exploding, Ricochet above level 1, Ballistics 3, the fastest gun of a sector, Engine 7, Magazine 5, Mines 4 | The special bullets and the bullets that bounce twice are the hardest to read. Each belongs to a class, and the color of the tank announces it. The highest level of what a class is about is its own too, so that its color promises it. |
 
 The prerequisites are: Tracks need Engine 1. On enemies, Mines and Shield need Brain 1. Ballistics 2 needs Ricochet 1, and Ballistics 3 needs Ricochet 2. Seeking needs Ricochet 1: a bullet that doesn't bounce never seeks.
 
@@ -401,7 +401,8 @@ The bright blue is the players'. The blue of a flanker is darker and of another 
 Some stats are kept for the classes that are about them:
 
 - Each special bullet is one class's alone: only a lancer has Piercing, only a seeker Seeking, only a flanker Splitting and only a grenadier Exploding.
-- Only a trickster, a tactician and a seeker have Ricochet above level 1. Only the first two have Ballistics 3, which needs it.
+- Five classes keep the highest level of a stat that they favor, so that their color promises it: only a sniper has the fastest gun that its sector allows, only a scout Engine 7, only a gunner Magazine 5, only a sapper Mines 4 and only a trickster Ricochet 3. A tank of another class stops one level below. An all-rounder favors nothing and keeps nothing.
+- Only a trickster, a tactician and a seeker have Ricochet above level 1. Only the first two have Ballistics 3, which needs Ricochet 2.
 - A seeker, a flanker and a grenadier have Ballistics 1 at most. The bank shots of the higher tiers are no use to them: a seeker's bullet finds its own way off a wall, and the bullets of the other two don't bounce.
 - A grenadier has no Ricochet, which its bullets couldn't use.
 - A tactician has the highest Brain and Ballistics tiers that its sector allows.
@@ -425,7 +426,7 @@ Each tank then spends its budget, from the seed, its sector and its index in the
 4. Spend the remaining points one level at a time, at random, respecting prerequisites, the sector's cap on Muzzle and what its class allows, until nothing affordable is left. The favorite stats weigh 15 together, and every other stat weighs 1.
 5. If points are left, raise its brain by a tier, or else its ballistics with the bounce that the tier needs, within the sector's tier caps and what its class allows, and go back to step 4: a first brain opens mines and a shield. The tank is done when what is left pays for neither.
 
-The last step is for the tanks that have more points than their hardware can take. A tank without a brain has neither mines nor a shield, and most classes have neither a special bullet nor a second bounce, which leaves it 100 points of hardware to buy. A leader can have more than that from sector 22 on and the other tanks from sector 34 on, and both sooner in hard mode. What such a tank has left makes it smarter, and what stays unspent is less than a tier costs it.
+The last step is for the tanks that have more points than their hardware can take. A tank without a brain has neither mines nor a shield, and most classes have neither a special bullet nor a second bounce. The highest level of the stats that other classes keep isn't theirs either, which leaves 86 points of hardware to buy to an all-rounder, and up to 94 to a class that keeps one. A leader can have more than that from sector 18 to 20 on, by its class, and the other tanks from sector 25 to 30 on, and both sooner in hard mode. What such a tank has left makes it smarter, and what stays unspent is less than a tier costs it.
 
 Specialization matters more than balance. A tank with a few strong stats has a recognizable shape and asks the players a clear question. In a group of six, four or five classes stand side by side.
 
@@ -444,7 +445,7 @@ The price list can express the enemy roster of Tanks!, in roughly the order in w
 | Raider (purple) | 6 m/s, 5 rounds, 2 mines, brain 3 | 72 | 14 |
 | Hunter (black) | 8 m/s, 17 m/s bullets, 2 mines, brain 4 | 109 | 26 |
 
-A build is possible in a sector whose caps allow its tiers and its gun, and where a tank of a solo group in a corridor can have as many points. The Burster, the Miner, the Raider and the Hunter first come as the leader of their group: no other tank can have their budget before sectors 7, 8, 18 and 40. The Banker is a trickster or a tactician, the two classes that have Ballistics 3.
+A build is possible in a sector whose caps allow its tiers and its gun, and where a tank of a solo group in a corridor can have as many points. The Burster, the Miner, the Raider and the Hunter first come as the leader of their group: no other tank can have their budget before sectors 7, 8, 18 and 40. The Banker is a trickster or a tactician, the two classes that have Ballistics 3. The Miner is a sapper and the Hunter a scout, whose fourth mine and fastest engine are theirs alone, and the Sentry and the Rover are snipers before sector 5, where their gun is the fastest that a sector allows.
 
 ### Appearance
 
@@ -502,7 +503,7 @@ The number of enemies in a sector is $N(n) = \min(6,\ 1 + \lfloor n/4 \rfloor)$ 
 
 Experience is $E(n) = 1 - e^{-(n-1)/20}$, where 0 is a novice and 1 a flawless brain. It keeps closing in on flawless play without ever reaching it. The software tiers come by steps. The tank of sector 1 has no brain: the highest brain tier allowed is 0 there, and it goes up by one at sectors 2, 6, 14 and 22. The highest ballistics tier is 0 at first, and goes up by one at sectors 3, 10 and 15.
 
-The highest Muzzle level an enemy can have is the level of the player tank in the first four sectors, then one more at sectors 5, 7, 13, 18 and 25. The cap is for enemies only.
+The highest Muzzle level an enemy can have is the level of the player tank in the first four sectors, then one more at sectors 5, 7, 13, 18 and 25. The cap is for enemies only, and it is a sniper's alone: the gun of a tank of another class is one level slower.
 
 The special bullets come one at a time: piercing from sector 9, splitting from sector 11, exploding from sector 17 and seeking from sector 19. The class that fires each of them comes with it (see [Classes](#classes)).
 
