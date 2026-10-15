@@ -698,10 +698,20 @@ Every screen is a sheet of one set, as a set of drawings is: a frame with its zo
 | Garage | Every stat of the player's tank with its level, what it gives, its price and the price of one more level, the type of its bullets as one choice among five, the points that are spent and those that are left, the tank as it will look, back to the standard tank |
 | Heads-up display | The parts list of the player's tank, in the bottom left corner: rounds and reload progress, mines left, shield state. The title block, in the bottom right corner: sector number, lives (solo) or the balloon of each player of the team, which tells how their tank is (multiplayer), seed, difficulty and version, a scale and a north arrow. Around them: a note on a run that earns no achievement, a ruler along the edge of the screen that gives the distance to the barrier, the number of each wave of an arena as it is announced, a caption over a life on the floor (solo), a balloon over each teammate's tank, one at the screen edge for each teammate out of view, and what to do about a wreck (multiplayer). Rounds, reload and mines are also on an arc under the player's own tank. In arena mode: the number of the group in place of the sector number, the next one during a lull with its last two seconds counted down, a message when a group comes, and no ruler. |
 | Menu | Resume, settings, quit, and the seed with its version and the difficulty of a run that isn't in normal mode. In multiplayer, the host goes back to the lobby or closes the game, and the others leave it. |
-| Game over | Sectors cleared, or groups in arena mode, time, kills, seed and version, the difficulty of a run that isn't in normal mode, the tank that ended the run with its class and the list of its parts, a note on a run that earned no achievement, retry with a note that it will earn none, new run. In multiplayer, the choice is the host's. |
+| Game over | Sectors cleared, or groups in arena mode, time, kills, seed and version, the difficulty of a run that isn't in normal mode, the tank that ended the run with its class and the list of its parts, the stamps of what the run earned (see [Messages](#messages)), a note on a run that earned no achievement, retry with a note that it will earn none, new run. In multiplayer, the choice is the host's. |
 | Settings | Controls, video, audio, accessibility |
 
 The game opens in full screen the first time. After that, it opens the way the player left it.
+
+### Messages
+
+What a run tells its players stands in one of three places, by how much it matters:
+
+- **The line at the top of the screen** carries the routine news: a sector or a group cleared, a barrier unlocked, a wave of an arena or a group of arena mode that comes, an arena that leaves a life, a life taken, the last seconds of a lull, a barrier that waits for a teammate, and a run that the host paused. Of the news that comes at once, the one that matters most shows.
+- **An alert** tells what changes the stakes: a player's tank that is destroyed or repaired, and a teammate who leaves the game. It stands where the player looks, and is drawn as the leader note of a drawing: a leader from a dot on what it tells of, on a tank or on the place where the player's own tank was lost, or from the balloon of a teammate, to a reference line with a few words over it and under it. It has no panel that would hide a bullet, is gone in 2.2 s, and is red for a loss, blue for a tank that is back and plain for a teammate who leaves. The loss of the player's own tank says what destroyed it, and what is left: the lives of a single player, or the teammates who can repair it. The loss of a teammate's tank says how far its wreck is, and names the tank that runs when only one is left. A teammate who leaves is told with the number of players that the next sectors are for. Two losses less than a second apart are told by one alert. With a loss, the frame of the sheet flashes red, the circle of the wreck is inked in red for a moment, and the display blinks the balloon of its player, or the life that a single player lost.
+- **A stamp** tells what a run earns: an achievement or a record. It is stamped above the tank, as a drawing that is released is stamped: a double frame in green, turned a little, with the day of its release. It comes when the fight of a sector or of a group is over, with a green flash of the frame, and stays 4.2 s. An achievement says the sector that earned it and what it unlocks. A record says its league, the sectors or groups cleared and the best that the run started with: it is stamped once, past that best, and never in a first run, which has no record to beat. The game over screen stamps both again.
+
+A loss after which one more ends the run has a cue of its own: the loss that leaves a single player one life, and the one that leaves one tank running among several players. Other losses are told by what shows and by their blast. A stamp has a cue too. What an achievement unlocks is tagged as new on the solo screen until it is first used, and on the screen of the achievements until that screen is seen.
 
 ### Audio
 
@@ -711,7 +721,7 @@ The music is one piece that never stops, made by the game as it plays, the same 
 
 ### Accessibility
 
-Color is never the only carrier of information. Camera shake can be turned off, the interface can be scaled, and all controls can be rebound.
+Color is never the only carrier of information. Camera shake and the flash of the frame of the sheet can be turned off, the interface can be scaled, and all controls can be rebound.
 
 ## Achievements and persistence
 
