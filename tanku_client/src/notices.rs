@@ -121,6 +121,8 @@ const HEAD_REACH: f32 = hud::HEAD_WIDTH / 2.0 + 7.0;
 /// the left, or points up from under what it tells of.
 const TURN_LEFT: f32 = 0.6;
 const TURN_UP: f32 = 0.62;
+/// How far the words and the leader of an alert keep from a tag of a barrier or its caption.
+const TAG_CLEARANCE: f32 = 8.0;
 
 /// The losses that the display tells for a moment: how long ago the tank of each seat was
 /// destroyed, and which life of a single player was lost, with how long ago. And the life
@@ -209,6 +211,8 @@ struct Shown(Option<Alert>);
 struct Alert {
     told: Told,
     anchor: Anchor,
+    /// The way that it stands from the way it prefers, if it points at a place.
+    flip: Flip,
     age: f32,
     root: Entity,
 }
@@ -704,12 +708,13 @@ fn tell(
     let Some((told, anchor)) = told.pop() else {
         return;
     };
-    let (told, anchor) = match &shown.0 {
+    // An alert that joins the one on the screen stands where that one stood.
+    let (told, anchor, flip) = match &shown.0 {
         Some(alert) => match merged(&alert.told, alert.age, &told) {
-            Some(joined) => (joined, alert.anchor),
-            None => (told, anchor),
+            Some(joined) => (joined, alert.anchor, alert.flip),
+            None => (told, anchor, Flip::default()),
         },
-        None => (told, anchor),
+        None => (told, anchor, Flip::default()),
     };
     if let Some(alert) = shown.0.take() {
         commands.entity(alert.root).despawn();
@@ -718,6 +723,7 @@ fn tell(
     shown.0 = Some(Alert {
         told,
         anchor,
+        flip,
         age: 0.0,
         root,
     });
@@ -1001,16 +1007,50 @@ struct Layout {
     way: f32,
 }
 
+/// Which way an alert that points at a place stands, from the way that it prefers there:
+/// turned over, up instead of down or down instead of up, and to the other side.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Flip {
+    over: bool,
+    aside: bool,
+}
+
+impl Flip {
+    /// Every way, the one that an alert prefers first. Turned over comes before turned aside:
+    /// the two tags of a barrier stand level with each other at its two ends, unless the view
+    /// is turned.
+    const ALL: [Flip; 4] = [
+        Flip {
+            over: false,
+            aside: false,
+        },
+        Flip {
+            over: true,
+            aside: false,
+        },
+        Flip {
+            over: false,
+            aside: true,
+        },
+        Flip {
+            over: true,
+            aside: true,
+        },
+    ];
+}
+
 /// The layout of an alert with a dot on a point of the screen: its leader goes down at 60°
 /// to the right of it, or to the left past the most of the screen, and up from the bottom of
-/// the screen.
-fn pointing(at: Vec2, screen: Vec2) -> Layout {
+/// the screen, unless it is flipped.
+fn pointing(at: Vec2, screen: Vec2, flip: Flip) -> Layout {
     let way = if at.x > screen.x * TURN_LEFT {
         -1.0
     } else {
         1.0
     };
     let down = if at.y > screen.y * TURN_UP { -1.0 } else { 1.0 };
+    let way = if flip.aside { -way } else { way };
+    let down = if flip.over { -down } else { down };
     let bend = at + Vec2::new(LEADER.x * way, LEADER.y * down);
     Layout {
         leader: Some((at, bend)),
@@ -1031,6 +1071,63 @@ fn hanging(head: Vec2, way: f32, drawn: bool) -> Layout {
     }
 }
 
+/// How far the top of the words of an alert stands over its reference line.
+fn words_over() -> f32 {
+    theme::capitals_height(HEADLINE.1) + OVER_LINE - REFERENCE / 2.0 - capitals_room(HEADLINE.1)
+}
+
+/// The room that the words of an alert take in a layout, when they are this large.
+fn words_room(layout: &Layout, words: Vec2) -> Rect {
+    let top = layout.start.y - words_over();
+    let left = if layout.way > 0.0 {
+        layout.start.x
+    } else {
+        layout.start.x - words.x
+    };
+    Rect::new(left, top, left + words.x, top + words.y)
+}
+
+/// Whether an alert keeps clear of the tags of the barriers and of their captions: its words,
+/// and its leader past its dot, which stays on what the alert tells of.
+fn keeps_clear(layout: &Layout, words: Rect, tags: &[Rect]) -> bool {
+    let tags: Vec<Rect> = tags.iter().map(|tag| tag.inflate(TAG_CLEARANCE)).collect();
+    let leader = layout.leader.is_none_or(|(dot, bend)| {
+        let steps = (dot.distance(bend) / 4.0).ceil().max(1.0) as usize;
+        (1..=steps).all(|step| {
+            let point = dot.lerp(bend, step as f32 / steps as f32);
+            tags.iter().all(|tag| !tag.contains(point))
+        })
+    });
+    leader && tags.iter().all(|tag| tag.intersect(words).is_empty())
+}
+
+/// Whether words stay on the screen: inside the frame of the sheet, and over the blocks at
+/// the bottom of the display.
+fn on_sheet(words: Rect, screen: Vec2) -> bool {
+    let room = Rect::new(
+        SHEET_EDGE,
+        SHEET_EDGE,
+        screen.x - SHEET_EDGE,
+        screen.y - hud::BLOCKS_HIGH,
+    );
+    room.contains(words.min) && room.contains(words.max)
+}
+
+/// The way of an alert that points at a point of the screen, and whose words take this room:
+/// the way that it has, as long as it keeps clear of the tags of the barriers, or else the
+/// first of the others that does, from the way that it prefers. A way that it doesn't prefer
+/// must keep its words on the sheet too. Where none is clear, it keeps the way that it has.
+fn clear_flip(at: Vec2, screen: Vec2, words: Vec2, tags: &[Rect], now: Flip) -> Flip {
+    let clear = |flip: Flip| {
+        let layout = pointing(at, screen, flip);
+        let room = words_room(&layout, words);
+        let shown = flip == Flip::default() || on_sheet(room, screen);
+        shown && keeps_clear(&layout, room, tags)
+    };
+    let mut ways = std::iter::once(now).chain(Flip::ALL);
+    ways.find(|flip| clear(*flip)).unwrap_or(now)
+}
+
 /// Ages the alert, and lays it out around what it tells of: a dot on the tank that the view
 /// follows or on the place where the player's own tank was destroyed, or the balloon of a
 /// teammate. An alert of a teammate's loss says how far the wreck is.
@@ -1040,6 +1137,7 @@ fn place(
     camera: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
     tanks: Query<(&Player, &GlobalTransform, Has<Own>, Has<Wreck>)>,
     heads: Res<Heads>,
+    marks: Option<Res<TagMarks>>,
     mut shown: ResMut<Shown>,
     mut alarms: ResMut<Alarms>,
     mut roots: Query<(&mut Notice, &mut Visibility), Without<Piece>>,
@@ -1050,6 +1148,7 @@ fn place(
         &mut UiTransform,
         &mut Visibility,
         Option<&Line>,
+        &ComputedNode,
     )>,
     mut distances: Query<&mut Text, With<Distance>>,
     mut commands: Commands,
@@ -1100,13 +1199,30 @@ fn place(
     };
     let watched = watched.map(|at| at.translation());
     let seen = |point: Vec3| on_screen((camera, transform), scale, point);
+    // The room that the words take, once they are laid out: a frame after the alert comes.
+    let words = pieces
+        .iter()
+        .find(|(piece, parent, ..)| **piece == Piece::Words && parent.parent() == alert.root)
+        .map(|(.., computed)| computed.size() * computed.inverse_scale_factor())
+        .unwrap_or_default();
+    let tags = marks.as_deref().map_or(&[][..], |marks| &marks.0[..]);
+    // An alert that points at a place shows once it knows whether its words keep clear of the
+    // tags of the barriers there.
+    let pointed = |at: Vec2, flip: &mut Flip| {
+        (words != Vec2::ZERO).then(|| {
+            *flip = clear_flip(at, screen, words, tags, *flip);
+            pointing(at, screen, *flip)
+        })
+    };
     let layout = match &mut alert.anchor {
-        Anchor::Watched => watched.and_then(seen).map(|(at, _)| pointing(at, screen)),
+        Anchor::Watched => watched
+            .and_then(seen)
+            .and_then(|(at, _)| pointed(at, &mut alert.flip)),
         Anchor::Pinned { ground, screen: at } => {
             if at.is_none() {
                 *at = seen(scene::to_world(*ground, 0.0)).map(|(at, _)| at);
             }
-            at.map(|at| pointing(at, screen))
+            at.and_then(|at| pointed(at, &mut alert.flip))
         }
         Anchor::Balloon(seat) => match heads.of(*seat) {
             Some((head, way)) => Some(hanging(head, way, false)),
@@ -1122,7 +1238,7 @@ fn place(
         return;
     };
     *visibility = Visibility::Inherited;
-    for (piece, parent, mut node, mut moved, mut shows, line) in &mut pieces {
+    for (piece, parent, mut node, mut moved, mut shows, line, _) in &mut pieces {
         if parent.parent() != alert.root {
             continue;
         }
@@ -1146,9 +1262,6 @@ fn place(
             Piece::Words => {
                 // The reference line runs through the point where it starts, and the words
                 // stand on the side it runs to.
-                let over = theme::capitals_height(HEADLINE.1) + OVER_LINE
-                    - REFERENCE / 2.0
-                    - capitals_room(HEADLINE.1);
                 let (align, left) = if layout.way > 0.0 {
                     (AlignItems::Start, percent(0))
                 } else {
@@ -1161,7 +1274,7 @@ fn place(
                 if moved.translation.x != held.x {
                     moved.translation.x = held.x;
                 }
-                (layout.start - Vec2::Y * over, 0.0, true)
+                (layout.start - Vec2::Y * words_over(), 0.0, true)
             }
         };
         let (left, top) = (px(at.x.round()), px(at.y.round()));
@@ -1726,13 +1839,13 @@ mod tests {
     fn an_alert_points_at_what_it_tells_of_from_a_note_that_stays_on_the_screen() {
         let screen = Vec2::new(1920.0, 1080.0);
         // Down at 60° to the right of the dot, as a leader note is drawn.
-        let middle = pointing(Vec2::new(800.0, 400.0), screen);
+        let middle = pointing(Vec2::new(800.0, 400.0), screen, Flip::default());
         let (dot, bend) = middle.leader.unwrap();
         assert_eq!(bend - dot, LEADER);
         assert!(((bend - dot).to_angle().to_degrees() - 60.0).abs() < 0.2);
         assert_eq!((middle.start, middle.way), (bend, 1.0));
         // To the left past the most of the screen, and up from its bottom.
-        let low_right = pointing(Vec2::new(1700.0, 900.0), screen);
+        let low_right = pointing(Vec2::new(1700.0, 900.0), screen, Flip::default());
         let (dot, bend) = low_right.leader.unwrap();
         assert_eq!(bend - dot, Vec2::new(-LEADER.x, -LEADER.y));
         assert_eq!(low_right.way, -1.0);
@@ -1741,6 +1854,54 @@ mod tests {
         assert_eq!(hung.start, Vec2::new(500.0 - HEAD_REACH, 500.0));
         assert_eq!((hung.leader, hung.head), (None, None));
         const { assert!(HEAD_REACH > hud::HEAD_WIDTH / 2.0 + balloons::LINE) };
+    }
+
+    #[test]
+    fn an_alert_turns_to_keep_clear_of_the_tags_of_a_barrier() {
+        let screen = Vec2::new(1920.0, 1080.0);
+        let (at, words) = (Vec2::new(960.0, 540.0), Vec2::new(380.0, 70.0));
+        let room = |flip: Flip| words_room(&pointing(at, screen, flip), words);
+        let level = Flip::default();
+        // Nothing in the way: the way that it prefers, down to the right.
+        assert_eq!(clear_flip(at, screen, words, &[], level), level);
+        // The tag at the east end of a barrier just under the tank, as when the tank was lost
+        // right past it: the alert turns over, up from its dot.
+        let under = room(level);
+        let east = Rect::from_center_half_size(under.max - Vec2::splat(30.0), Vec2::splat(30.0));
+        let over = clear_flip(at, screen, words, &[east], level);
+        assert_eq!(over, Flip::ALL[1]);
+        assert!(room(over).max.y < at.y);
+        // A tag over the tank too: it turns aside instead, and down.
+        let north = Rect::from_center_half_size(room(over).center(), Vec2::splat(30.0));
+        assert_eq!(
+            clear_flip(at, screen, words, &[east, north], level),
+            Flip::ALL[2]
+        );
+        // Once turned, it stays so while it keeps clear, even when the tag is gone, and it
+        // keeps the way that it has where none is clear.
+        assert_eq!(clear_flip(at, screen, words, &[], over), over);
+        let everywhere = Rect::from_center_half_size(at, Vec2::splat(1000.0));
+        assert_eq!(clear_flip(at, screen, words, &[everywhere], over), over);
+        // Its leader keeps clear too.
+        let layout = pointing(at, screen, level);
+        let (dot, bend) = layout.leader.unwrap();
+        let on_leader = Rect::from_center_half_size(dot.lerp(bend, 0.5), Vec2::splat(4.0));
+        assert!(!keeps_clear(&layout, room(level), &[on_leader]));
+    }
+
+    #[test]
+    fn an_alert_that_turns_keeps_its_words_over_the_blocks_of_the_display() {
+        // A tank low on the screen: its alert points up from it. Turned over, its words would
+        // stand on the parts list or the title block.
+        let screen = Vec2::new(1920.0, 1080.0);
+        let (at, words) = (Vec2::new(960.0, 860.0), Vec2::new(380.0, 70.0));
+        let room = |flip: Flip| words_room(&pointing(at, screen, flip), words);
+        let level = Flip::default();
+        assert!(room(level).max.y < at.y);
+        assert!(!on_sheet(room(Flip::ALL[1]), screen));
+        assert!(on_sheet(room(Flip::ALL[2]), screen));
+        let tag = Rect::from_center_half_size(room(level).center(), Vec2::splat(30.0));
+        assert_eq!(clear_flip(at, screen, words, &[tag], level), Flip::ALL[2]);
     }
 
     #[test]

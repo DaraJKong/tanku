@@ -81,8 +81,8 @@ struct Caption {
 #[derive(Component)]
 struct CaptionText;
 
-/// Where the tags of the barriers stand on the screen, in the pixels of the interface: what the
-/// stamps of the notices keep clear of.
+/// Where the tags of the barriers and their captions stand on the screen, in the pixels of the
+/// interface: what the stamps and the alerts of the notices keep clear of.
 #[derive(Resource, Default)]
 pub struct TagMarks(pub Vec<Rect>);
 
@@ -412,7 +412,7 @@ fn place(
         (Without<Balloon>, Without<Part>, Without<CaptionText>),
     >,
     mut texts: Query<
-        (&mut Text, &mut TextColor, &mut UiTransform),
+        (&mut Text, &mut TextColor, &mut UiTransform, &ComputedNode),
         (
             With<CaptionText>,
             Without<Part>,
@@ -446,9 +446,6 @@ fn place(
             let reach = reach + ARROW.0 + ARROW.1;
             taken.push(Rect::from_center_half_size(spot.at, Vec2::splat(reach)));
         }
-    }
-    if marks.0 != taken {
-        marks.0 = taken;
     }
 
     for (balloon, mut transform, mut visibility, children) in &mut balloons {
@@ -553,13 +550,16 @@ fn place(
         });
         let placed = placed.filter(|(_, at, _)| in_view(*at));
         show(placed.map(|(_, at, _)| at), &mut transform, &mut visibility);
-        let Some((barrier, _, side)) = placed else {
+        let Some((barrier, at, side)) = placed else {
             continue;
         };
         for child in children.iter() {
-            let Ok((mut text, mut text_color, mut hold)) = texts.get_mut(child) else {
+            let Ok((mut text, mut text_color, mut hold, computed)) = texts.get_mut(child) else {
                 continue;
             };
+            // As large as it was laid out the frame before.
+            let size = computed.size() * computed.inverse_scale_factor();
+            taken.push(caption_room(at, side, size));
             let arena = sectors.iter().any(|sector| {
                 let plan = &sector.layout.plan;
                 plan.index == barrier.sector + 1 && plan.kind == SectorKind::Arena
@@ -590,11 +590,46 @@ fn place(
             }
         }
     }
+    if marks.0 != taken {
+        marks.0 = taken;
+    }
+}
+
+/// The room that a caption this large takes on the screen, from the point that it stands on
+/// and the side of that point that it stands on: it ends at a point on its left, and stands
+/// centered over a point under it.
+fn caption_room(at: Vec2, side: Vec2, size: Vec2) -> Rect {
+    if side == Vec2::NEG_X {
+        Rect::new(
+            at.x - size.x,
+            at.y - size.y / 2.0,
+            at.x,
+            at.y + size.y / 2.0,
+        )
+    } else {
+        Rect::new(
+            at.x - size.x / 2.0,
+            at.y - size.y,
+            at.x + size.x / 2.0,
+            at.y,
+        )
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_caption_takes_the_room_beside_its_point() {
+        let (at, size) = (Vec2::new(300.0, 200.0), Vec2::new(160.0, 20.0));
+        // On the left of its point, which it ends at.
+        let left = caption_room(at, Vec2::NEG_X, size);
+        assert_eq!(left, Rect::new(140.0, 190.0, 300.0, 210.0));
+        // Over its point, which it stands centered on.
+        let over = caption_room(at, Vec2::NEG_Y, size);
+        assert_eq!(over, Rect::new(220.0, 180.0, 380.0, 200.0));
+    }
 
     fn barrier(sector: u32, unlocked: bool) -> Barrier {
         Barrier {

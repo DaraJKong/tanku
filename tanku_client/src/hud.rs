@@ -54,6 +54,9 @@ const SCALE: f32 = 2.0;
 /// its rows, its header too.
 const PARTS_COLUMNS: [f32; 2] = [112.0, 286.0];
 const PARTS_ROW: f32 = 42.0;
+/// How high the blocks at the bottom of the display reach from the bottom of the screen: the
+/// parts list, the higher of the two, with its four parts and its header.
+pub const BLOCKS_HIGH: f32 = SHEET_EDGE + 5.0 * PARTS_ROW + 2.0 * FRAME_WIDTH;
 /// How wide the name of what a part reads is, so that the gauges line up.
 const READS: f32 = 78.0;
 /// The title block: the widths of the fields of its upper row (the legal owner, the title,
