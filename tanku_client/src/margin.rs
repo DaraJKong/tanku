@@ -21,7 +21,7 @@ use std::{collections::HashMap, f32::consts::FRAC_PI_2};
 
 use bevy::prelude::*;
 use tanku_core::{
-    map::{Corridor, SectorKind, SectorPlan},
+    map::{Corridor, SectorKind, SectorPlan, reserve_ground},
     sim::{Run, Sector},
 };
 
@@ -132,6 +132,7 @@ fn annotate(
     }
     // A corridor's sectors have neighbors that the seed plans. The room of arena mode has none.
     let seed = run.as_ref().filter(|run| !run.arena).map(|run| run.seed);
+    let solo = run.as_ref().is_none_or(|run| run.solo);
     let paper = Paper {
         lettering: &lettering,
         turns: view.turns,
@@ -158,7 +159,7 @@ fn annotate(
             }
             *planned = Some((seed, corridor));
         }
-        let (draft, margined) = margin_of(plan, &around, &kept, &paper);
+        let (draft, margined) = margin_of(plan, &around, &kept, &paper, solo);
         kept.push(margined.clone());
         commands.entity(entity).insert(margined);
         if draft.is_empty() {
@@ -185,15 +186,18 @@ fn annotate(
 
 /// The margin of a sector among the sectors around it, which it keeps clear of, after the
 /// margins that are drawn already: its drawing, and what it leaves to those that come after.
+/// The room of arena mode keeps clear of its reserve too, which takes more ground among
+/// several players than for a single one.
 fn margin_of(
     plan: &SectorPlan,
     around: &[SectorPlan],
     drawn: &[Margined],
     paper: &Paper,
+    solo: bool,
 ) -> (Draft, Margined) {
     let mut plans: Vec<&SectorPlan> = around.iter().collect();
     plans.push(plan);
-    let mut room = Room::new(&plans);
+    let mut room = Room::new(&plans, solo);
     let mut known = Known::default();
     for other in &plans {
         known.outline(&other.outline);
@@ -339,12 +343,15 @@ fn outward((from, to): (Vec2, Vec2)) -> Vec2 {
 }
 
 /// What the margin must keep clear of: the floors and the walls of the sectors around, the
-/// tags of their barriers, and what is already drawn there.
+/// tags of their barriers, the tanks in reserve of arena mode, and what is already drawn there.
 struct Room {
     floors: Vec<Vec<Vec2>>,
     walls: Vec<(Vec2, Vec2)>,
     /// Where the tags of the barriers stand.
     tags: Vec<Vec2>,
+    /// The ground that the tanks in reserve take, from its south-west corner to its north-east
+    /// one: they are outlines in the void, which a dimension would run through.
+    reserve: Option<(Vec2, Vec2)>,
     /// The room that what is drawn takes, with the line drawn there, if it is a line.
     taken: Vec<([Vec2; 4], Option<(Vec2, Vec2)>)>,
     /// The extension lines drawn, which the dimensions of a chain share.
@@ -352,11 +359,12 @@ struct Room {
 }
 
 impl Room {
-    fn new(plans: &[&SectorPlan]) -> Self {
+    fn new(plans: &[&SectorPlan], solo: bool) -> Self {
         let mut room = Self {
             floors: Vec::new(),
             walls: Vec::new(),
             tags: Vec::new(),
+            reserve: None,
             taken: Vec::new(),
             extensions: Vec::new(),
         };
@@ -365,6 +373,7 @@ impl Room {
                 .push(plan.outline.iter().map(|point| point.as_vec2()).collect());
             room.walls.extend(walls(plan));
             if plan.kind == SectorKind::Room {
+                room.reserve = Some(reserve_ground(plan, solo));
                 continue;
             }
             let (a, b) = (plan.gate.0.as_vec2(), plan.gate.1.as_vec2());
@@ -378,6 +387,12 @@ impl Room {
     /// Whether a point is under the tag of a barrier.
     fn tagged(&self, point: Vec2) -> bool {
         self.tags.iter().any(|tag| tag.distance(point) < TAG_ROOM)
+    }
+
+    /// Whether a point is among the tanks in reserve.
+    fn in_reserve(&self, point: Vec2) -> bool {
+        self.reserve
+            .is_some_and(|(low, high)| point.cmpge(low).all() && point.cmple(high).all())
     }
 
     /// Whether a point is clear of the floors and the walls, and of what is drawn.
@@ -398,7 +413,7 @@ impl Room {
                 matches!((line, drawn), (Some(line), Some(drawn)) if collinear(line, *drawn));
             !shared && in_quad(quad, point)
         });
-        !floor && !wall && !taken && !self.tagged(point)
+        !floor && !wall && !taken && !self.tagged(point) && !self.in_reserve(point)
     }
 
     /// Whether every point of a line, every quarter of a meter, is clear.
@@ -1154,7 +1169,7 @@ mod tests {
             ink: Ink::new(),
         };
         let around = [corridor.plan(11).clone(), thirteen];
-        let (_, margined) = margin_of(&twelve, &around, &[], &paper);
+        let (_, margined) = margin_of(&twelve, &around, &[], &paper, true);
         assert!(
             margined
                 .told
@@ -1298,6 +1313,34 @@ mod tests {
             matches!(stops[0], Stop::Extension { foot, .. } if foot == step).then_some(reach)
         });
         assert_eq!(reach, Some(2.0 + WALL_THICKNESS + OFFSET));
+    }
+
+    #[test]
+    fn the_margin_of_the_room_keeps_clear_of_the_reserve() {
+        // On these seeds, a stretch of the south wall that sloped had its angle drawn among
+        // the tanks in reserve.
+        let lettering = Lettering::default();
+        let paper = Paper {
+            lettering: &lettering,
+            turns: 0,
+            ink: Ink::new(),
+        };
+        let seeds = ["LOGBOOK", "85GVTHQA", "3ZXHW3M8", "HTVH9SEE"];
+        let seeds = seeds.map(tanku_core::seed::seed_value).into_iter();
+        for seed in seeds.chain(0..40) {
+            let room = tanku_core::map::Room::new(seed);
+            for solo in [true, false] {
+                let (low, high) = reserve_ground(room.plan(), solo);
+                let (_, margined) = margin_of(room.plan(), &[], &[], &paper, solo);
+                for (quad, _) in &margined.taken {
+                    let middle = (quad[0] + quad[2]) / 2.0;
+                    for point in quad.iter().chain([&middle]) {
+                        let among = point.cmpgt(low).all() && point.cmplt(high).all();
+                        assert!(!among, "seed {seed}, solo {solo}: {point} in the reserve");
+                    }
+                }
+            }
+        }
     }
 
     #[test]

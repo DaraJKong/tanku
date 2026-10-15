@@ -12,6 +12,7 @@ use crate::{
     balance::BALANCE,
     progression,
     rng::{Purpose, Stream},
+    rules::TANK_RADIUS,
 };
 
 /// Parts of the corridor that aren't neighbors stay at least this far apart.
@@ -97,6 +98,24 @@ pub const fn reserve_depth(solo: bool) -> f32 {
     } else {
         RESERVE_DEPTH.1
     }
+}
+
+/// The ground that the tanks in reserve take south of the room of arena mode, from its
+/// south-west corner to its north-east one: from the wall to as deep as the rows of a single
+/// player or of several go, and as wide as the fullest row and a tank on each of its ends.
+pub fn reserve_ground(plan: &SectorPlan, solo: bool) -> (Vec2, Vec2) {
+    let middle = reserve_middle(plan);
+    let half = RESERVE_SPAN / 2.0 + TANK_RADIUS;
+    let wall = plan.min.y as f32;
+    (
+        Vec2::new(middle - half, wall - reserve_depth(solo)),
+        Vec2::new(middle + half, wall),
+    )
+}
+
+/// Where the rows of the reserve are centered, from west to east.
+fn reserve_middle(plan: &SectorPlan) -> f32 {
+    (plan.min.x + plan.max.x) as f32 / 2.0 - RESERVE_WEST
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -1172,14 +1191,13 @@ impl Room {
     /// between its parts. A larger one stands a part to a row, the first part nearest the
     /// wall, and a part that is too large for a row takes the next one too.
     pub fn reserve(&self, parts: &[u32]) -> Vec<Vec2> {
-        let (min, max) = (self.plan.min.as_vec2(), self.plan.max.as_vec2());
+        let min = self.plan.min.as_vec2();
         // The place of a tank in a row of this many places.
         let place = |row: u32, place: u32, places: u32| {
             let along = place as f32 - (places - 1) as f32 / 2.0;
             let spacing = RESERVE_SPACING.min(RESERVE_SPAN / (places.max(2) - 1) as f32);
             let behind = RESERVE_ROW + row as f32 * RESERVE_ROWS_APART;
-            let middle = (min.x + max.x) / 2.0 - RESERVE_WEST;
-            Vec2::new(middle + along * spacing, min.y - behind)
+            Vec2::new(reserve_middle(&self.plan) + along * spacing, min.y - behind)
         };
         let tanks: u32 = parts.iter().sum();
         let gaps = parts.len().saturating_sub(1) as u32;
@@ -1791,10 +1809,21 @@ mod room_tests {
                 // The ground that the reserve takes: a single player never calls for more
                 // than one row.
                 let depth = reserve_depth(rows(&parts).len() == 1);
+                let ground = reserve_ground(room.plan(), rows(&parts).len() == 1);
                 for (number, place) in places.iter().enumerate() {
                     // Outside the room, and a tank is 2 m long.
                     assert!(place.y <= min.y - 2.0 && place.y >= min.y - depth + 1.5);
                     assert!((place.x - middle).abs() <= 6.0, "seed {seed}: {parts:?}");
+                    // The ground of the reserve holds the whole tank.
+                    let reach = Vec2::new(TANK_RADIUS, 1.0);
+                    assert!(
+                        (place - reach).cmpge(ground.0).all(),
+                        "seed {seed}: {parts:?}"
+                    );
+                    assert!(
+                        (place + reach).cmple(ground.1).all(),
+                        "seed {seed}: {parts:?}"
+                    );
                     // A tank is 1.6 m wide. The fullest rows, those of four players, have
                     // their tanks 1.7 m apart, and a single player's 2 m at least.
                     let least = if parts.iter().sum::<u32>() > 6 {
