@@ -29,7 +29,7 @@ use crate::{
     exhibit::{self, Exhibit, Show},
     garage::{self, Garage},
     hud::SHEET_EDGE,
-    models, net, report,
+    lines, models, net, report,
     scene::Paints,
     session::{Asked, Drawn, Found, Game, Invitation, Notice, Session, SessionRequest, Shut, Sign},
     settings::{Action, Binding, League, Records, Settings},
@@ -2108,9 +2108,11 @@ fn released() -> impl Bundle {
             padding: UiRect::axes(px(10), px(2)),
             ..default()
         },
-        BorderColor::all(theme::GOOD),
         UiTransform::from_rotation(Rot2::degrees(-3.0)),
-        children![theme::label("Released", theme::LABEL, theme::GOOD)],
+        children![
+            lines::border([2.0; 4], theme::GOOD, ()),
+            theme::label("Released", theme::LABEL, theme::GOOD)
+        ],
     )
 }
 
@@ -3069,9 +3071,11 @@ fn sign(cell: &mut ChildSpawnerCommands, seat: usize) {
             margin: UiRect::left(px(6)),
             ..default()
         },
-        BorderColor::all(theme::ACCENT),
         UiTransform::from_rotation(Rot2::degrees(-4.0)),
-        children![theme::label("Ready", theme::LABEL, theme::ACCENT)],
+        children![
+            lines::border([2.0; 4], theme::ACCENT, ()),
+            theme::label("Ready", theme::LABEL, theme::ACCENT)
+        ],
     ));
 }
 
@@ -3745,46 +3749,48 @@ fn stamp((words, under): (String, Option<String>), turn: f32) -> impl Bundle {
             padding: UiRect::all(px(3)),
             ..default()
         },
-        BorderColor::all(ink),
         BackgroundColor(theme::VOID.with_alpha(0.6)),
         UiTransform::from_rotation(Rot2::degrees(turn)),
-        children![(
-            Node {
-                border: UiRect::all(px(1)),
-                ..default()
-            },
-            BorderColor::all(ink),
-            children![
-                (
-                    Node {
-                        flex_direction: FlexDirection::Column,
-                        justify_content: JustifyContent::Center,
-                        row_gap: px(6),
-                        padding: UiRect::new(px(16), px(16), px(8), px(9)),
-                        border: UiRect::right(px(1)),
-                        ..default()
-                    },
-                    BorderColor::all(ink),
-                    Children::spawn((
-                        Spawn(theme::label(words, theme::ALERT, ink)),
-                        SpawnIter(under.into_iter()),
-                    )),
-                ),
-                (
-                    Node {
-                        flex_direction: FlexDirection::Column,
-                        justify_content: JustifyContent::Center,
-                        row_gap: px(8),
-                        padding: UiRect::axes(px(14), px(8)),
-                        ..default()
-                    },
-                    children![
-                        theme::label("Released", theme::LABEL, ink),
-                        theme::figure(sheet::day_of_issue(), theme::VALUE, ink),
-                    ],
-                ),
-            ],
-        )],
+        children![
+            lines::border([3.0; 4], ink, ()),
+            (
+                Node {
+                    border: UiRect::all(px(1)),
+                    ..default()
+                },
+                children![
+                    lines::border([1.0; 4], ink, ()),
+                    (
+                        Node {
+                            flex_direction: FlexDirection::Column,
+                            justify_content: JustifyContent::Center,
+                            row_gap: px(6),
+                            padding: UiRect::new(px(16), px(16), px(8), px(9)),
+                            border: UiRect::right(px(1)),
+                            ..default()
+                        },
+                        Children::spawn((
+                            Spawn(lines::border([0.0, 1.0, 0.0, 0.0], ink, ())),
+                            Spawn(theme::label(words, theme::ALERT, ink)),
+                            SpawnIter(under.into_iter()),
+                        )),
+                    ),
+                    (
+                        Node {
+                            flex_direction: FlexDirection::Column,
+                            justify_content: JustifyContent::Center,
+                            row_gap: px(8),
+                            padding: UiRect::axes(px(14), px(8)),
+                            ..default()
+                        },
+                        children![
+                            theme::label("Released", theme::LABEL, ink),
+                            theme::figure(sheet::day_of_issue(), theme::VALUE, ink),
+                        ],
+                    ),
+                ],
+            ),
+        ],
     )
 }
 

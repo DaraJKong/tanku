@@ -30,7 +30,7 @@ use crate::{
     crew::Own,
     draft::{Draft, LIFT},
     hud::{self, Heads, SHEET_EDGE},
-    lines::Line,
+    lines::{self, Line},
     report, scene,
     settings::{League, Records, Settings},
     sheet,
@@ -1491,7 +1491,6 @@ fn card(commands: &mut Commands, column: Entity, said: &StampWords, delay: f32, 
                 padding: UiRect::all(px(STAMP_FRAME.1)),
                 ..default()
             },
-            BorderColor::all(theme::GOOD),
             BackgroundColor(fill),
             UiTransform {
                 scale: Vec2::splat(STAMP_DROP),
@@ -1502,22 +1501,32 @@ fn card(commands: &mut Commands, column: Entity, said: &StampWords, delay: f32, 
         .id();
     commands.entity(card).insert(Inked {
         back: Some(fill),
-        border: Some(theme::GOOD),
         ..Inked::new(card)
     });
-    let ruled = |commands: &mut Commands, parent: Entity, node: Node| {
-        commands
-            .spawn((
-                ChildOf(parent),
-                Inked {
-                    border: Some(theme::GOOD),
-                    ..Inked::new(card)
-                },
-                node,
-                BorderColor::all(theme::GOOD),
-            ))
-            .id()
+    // The frames are turned with the card: each is drawn in lines over the border that holds
+    // its room, and fades with the card.
+    let line = Inked {
+        line: Some(theme::GOOD),
+        ..Inked::new(card)
     };
+    let ruled = |commands: &mut Commands, parent: Entity, node: Node| {
+        let widths = [
+            node.border.top,
+            node.border.right,
+            node.border.bottom,
+            node.border.left,
+        ]
+        .map(|width| match width {
+            Val::Px(width) => width,
+            _ => 0.0,
+        });
+        let ruled = commands.spawn((ChildOf(parent), node)).id();
+        let border = lines::border(widths, theme::GOOD, line);
+        commands.spawn((ChildOf(ruled), border));
+        ruled
+    };
+    let border = lines::border([STAMP_FRAME.0; 4], theme::GOOD, line);
+    commands.spawn((ChildOf(card), border));
     let inner = ruled(
         commands,
         card,
