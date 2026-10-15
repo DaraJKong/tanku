@@ -3423,10 +3423,11 @@ fn offer_the_next_sector(run: Option<Res<Run>>, mut destination: ResMut<Destinat
 }
 
 /// The width of the note block of the pause menu, and the columns of its cheats and of its
-/// foot.
-const HOLD_WIDTH: f32 = 600.0;
-const CHEAT_COLUMNS: [f32; 2] = [236.0, 328.0];
-const HOLD_FOOT: [f32; 3] = [228.0, 120.0, 248.0];
+/// foot. The names of the cheats stand on one line, FAKE ACHIEVEMENTS the longest, and the
+/// steps of the sector to skip to on one row.
+const HOLD_WIDTH: f32 = 656.0;
+const CHEAT_COLUMNS: [f32; 2] = [302.0, 318.0];
+const HOLD_FOOT: [f32; 3] = [256.0, 120.0, 276.0];
 /// The steps of the sector that a playtest skips to.
 const SKIP_STEP: f32 = 56.0;
 
