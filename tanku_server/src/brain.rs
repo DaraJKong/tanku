@@ -17,8 +17,8 @@ use tanku_core::{
         TICK,
     },
     sim::{
-        Bullet, Enemy, ExplosiveCrate, Gun, Mine, Motion, Player, Position, Shield, ShieldState,
-        Tank, TankCommand, Team, Wreck,
+        Bullet, Enemy, ExplosiveCrate, Gun, Kind, Mine, Motion, Player, Position, Shield,
+        ShieldState, Tank, TankCommand, Team, Wreck,
     },
     stats::Ammo,
 };
@@ -82,7 +82,8 @@ const SIGHT: Option<f32> = ENEMY.sight;
 /// How far a shot is followed to find where it ends.
 const SHOT_RANGE: f32 = 80.0;
 /// A tank whose bullets explode holds its fire while its own tank or an ally is this close to
-/// where its shot would end: within the blast, and a little more, since tanks move.
+/// where its shot would end, and while a bullet that explodes is this close to its gun: within
+/// the blast, and a little more, since tanks move and guns turn.
 const BLAST_CLEARANCE: f32 = BLAST_RADIUS + 0.5;
 
 #[derive(Component)]
@@ -994,12 +995,19 @@ pub fn think(
         }
 
         // A blast spares nobody. A tank whose bullets explode holds its fire while the blast
-        // of its shot would reach its own tank or another enemy.
+        // of its shot would reach its own tank or another enemy. It also holds it while a
+        // bullet that explodes is so near its gun that a blast of one would set off the
+        // other: a burst of them went off one after the other, back to the gun that fired
+        // them.
         if fire && genome.ammo() == Ammo::Exploding {
             let tanks = rivals.iter().map(|rival| rival.3).chain(others());
             let end = shot_end(&field, me, motion.turret, tanks);
             let clear = |ally: &(Entity, Vec2, Option<u32>)| ally.1.distance(end) > BLAST_CLEARANCE;
-            fire = allies.iter().all(clear);
+            let muzzle = me + Vec2::from_angle(motion.turret) * MUZZLE_DISTANCE;
+            let near = |(_, bullet, at): (Entity, &Bullet, &Position)| {
+                bullet.kind == Kind::Exploding && at.0.distance(muzzle) <= BLAST_CLEARANCE
+            };
+            fire = allies.iter().all(clear) && !bullets.iter().any(near);
         }
 
         let can_shield = shield.state == ShieldState::Ready && shield.cooldown == 0.0;

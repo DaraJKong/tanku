@@ -478,6 +478,48 @@ fn a_tank_whose_bullets_explode_holds_its_fire_while_the_blast_would_reach_its_s
 }
 
 #[test]
+fn a_burst_of_exploding_bullets_never_goes_off_back_to_the_gun_that_fired_it() {
+    // A sentry with the slowest gun, five rounds and bullets that explode, and a player 6.5 m
+    // in front of it whom nothing destroys. Fired as fast as the gun goes, its bullets would
+    // fly 1.5 m apart: the first would go off on the player, and set off the next, and so on
+    // back to the third, which would still be within the blast's reach of the sentry.
+    let mut app = start("TEST");
+    let entity = player(&mut app).unwrap();
+    teleport(&mut app, entity, Vec2::new(0.0, 6.5));
+    shelter(&mut app);
+    let levels = [(Stat::Turret, 6), (Stat::Magazine, 4), (Stat::Exploding, 1)];
+    let grenadier = spawn_awake(&mut app, Vec2::new(0.0, 13.0), &levels);
+    let mut shots = 0;
+    for _ in 0..seconds(3.0) {
+        tick(&mut app, 1);
+        let fired = |event: &SimEvent| {
+            matches!(
+                event,
+                SimEvent::Shot {
+                    team: Team::Enemies,
+                    ..
+                }
+            )
+        };
+        shots += count(&events(&mut app), fired);
+        // No two of its bullets are ever within the reach of each other's blast.
+        let world = app.world_mut();
+        let mut bullets = world.query::<(&Bullet, &Position)>();
+        let flying = bullets
+            .iter(world)
+            .filter(|(bullet, _)| bullet.kind == Kind::Exploding);
+        let places: Vec<Vec2> = flying.map(|(_, at)| at.0).collect();
+        for (index, one) in places.iter().enumerate() {
+            for other in &places[index + 1..] {
+                assert!(one.distance(*other) > BLAST_RADIUS, "{one} and {other}");
+            }
+        }
+    }
+    assert!(shots > 2, "{shots} shots");
+    assert!(alive(&app, grenadier));
+}
+
+#[test]
 fn a_grunt_stays_out_of_the_blast_that_an_exploding_bullet_marks() {
     let mut app = start("TEST");
     let entity = player(&mut app).unwrap();
