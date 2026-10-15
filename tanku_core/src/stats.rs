@@ -174,6 +174,22 @@ impl Class {
             _ => stat.max_level(),
         }
     }
+
+    /// Whether another class keeps a stat: the highest level of it that a sector allows is
+    /// then that class's alone, and a tank of this one stops a level below.
+    pub const fn kept_from(self, stat: Stat) -> bool {
+        if CLASSES[self as usize].keeps(stat) {
+            return false;
+        }
+        let mut index = 0;
+        while index < CLASSES.len() {
+            if CLASSES[index].keeps(stat) {
+                return true;
+            }
+            index += 1;
+        }
+        false
+    }
 }
 
 impl Stat {
@@ -749,7 +765,7 @@ mod tests {
         }
         // A bullet that explodes never bounces, and a bullet seeks at each of its bounces.
         assert_eq!(Class::Grenadier.highest(Stat::Ricochet), 0);
-        assert_eq!(Class::Seeker.highest(Stat::Ricochet), 3);
+        assert_eq!(Class::Seeker.highest(Stat::Ricochet), 2);
         assert_eq!(Class::Flanker.highest(Stat::Ricochet), 1);
         for class in [Class::Seeker, Class::Flanker, Class::Grenadier] {
             assert_eq!(class.highest(Stat::Ballistics), 1, "{class:?}");

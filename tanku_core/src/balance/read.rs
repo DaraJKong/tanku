@@ -468,6 +468,7 @@ const NO_CLASS: ClassRule = ClassRule {
     favored: 0,
     ricochet: 0,
     ballistics: 0,
+    kept: 0,
 };
 
 /// A balance before its file is read.
@@ -1284,8 +1285,8 @@ const fn cap(words: &mut Words, stat: Stat) -> Result<u8, &'static str> {
     Ok(most as u8)
 }
 
-/// A class: its weight in the draw, the stats that it favors and the most that it has of
-/// the stats that are kept for some.
+/// A class: its weight in the draw, the stats that it favors, the most that it has of the
+/// stats that are kept for some, and the stats whose highest level is its alone.
 const fn class(
     balance: &mut Balance,
     found: &mut Found,
@@ -1320,6 +1321,30 @@ const fn class(
     }
     rule.ricochet = tried!(cap(words, Stat::Ricochet));
     rule.ballistics = tried!(cap(words, Stat::Ballistics));
+    // What it keeps comes last, after `keeps`: stats that it favors.
+    if let Some(word) = words.ahead()
+        && same(word, b"keeps")
+    {
+        words.next();
+        if stat_named(words.ahead()).is_none() {
+            return Err(
+                "`keeps` is followed by the stats that the class keeps, as in `keeps muzzle`",
+            );
+        }
+        while let Some(stat) = stat_named(words.ahead()) {
+            words.next();
+            if !rule.favors(stat) {
+                return Err("a class keeps a stat that it favors");
+            }
+            if stat.levels() <= 2 {
+                return Err(
+                    "a special bullet is its class's already: a class keeps a stat that has \
+                            more than one level",
+                );
+            }
+            rule.kept |= 1 << stat as u32;
+        }
+    }
     let (mut types, mut ammo) = (0, 0);
     while ammo < Ammo::STATS.len() {
         types += rule.favors(Ammo::STATS[ammo]) as u32;
@@ -1570,8 +1595,12 @@ mod tests {
         assert_eq!(seeker.favorites(), [Stat::Ricochet, Stat::Seeking]);
         assert_eq!(
             (seeker.weight, seeker.ricochet, seeker.ballistics),
-            (1, 3, 1)
+            (1, 2, 1)
         );
+        // Each of five classes keeps the highest level of a stat that it favors.
+        let keeps = |class: Class, stat: Stat| balance.classes[class as usize].keeps(stat);
+        assert!(keeps(Class::Sniper, Stat::Muzzle) && keeps(Class::Trickster, Stat::Ricochet));
+        assert!(!keeps(Class::Sniper, Stat::Turret) && !seeker.keeps(Stat::Ricochet));
         let all_rounder = balance.classes[Class::None as usize];
         assert!(all_rounder.favorites().is_empty());
         assert_eq!(all_rounder.weight, 3);
@@ -1966,6 +1995,24 @@ mod tests {
                 "class knight",
                 "class knight",
                 "followed by a class",
+            ),
+            (
+                "keeps muzzle",
+                "keeps engine",
+                "class sniper",
+                "keeps a stat that it favors",
+            ),
+            (
+                "keeps muzzle",
+                "keeps",
+                "class sniper",
+                "the stats that the class keeps",
+            ),
+            (
+                "piercing            ricochet<=1  ballistics<=2",
+                "piercing            ricochet<=1  ballistics<=2  keeps piercing",
+                "class lancer",
+                "its class's already",
             ),
             (
                 "harshest 30",

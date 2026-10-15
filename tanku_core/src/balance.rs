@@ -302,6 +302,8 @@ pub struct ClassRule {
     /// The highest level of Ricochet that it has, and the highest tier of ballistics.
     pub ricochet: u8,
     pub ballistics: u8,
+    /// The stats that it keeps, a bit for each.
+    kept: u32,
 }
 
 impl ClassRule {
@@ -320,6 +322,12 @@ impl ClassRule {
             index += 1;
         }
         false
+    }
+
+    /// Whether it keeps a stat: the highest level of it that a sector allows is this class's,
+    /// and a tank of a class that doesn't keep it stops a level below.
+    pub const fn keeps(&self, stat: Stat) -> bool {
+        self.kept & (1 << stat as u32) != 0
     }
 }
 
@@ -438,7 +446,7 @@ mod tests {
     use super::*;
 
     /// The fingerprint of the balance that `docs/PROJECT.md` describes.
-    const SPECIFIED: u64 = 0xd7ff_b2ee_ea92_f9d6;
+    const SPECIFIED: u64 = 0x3f63_8d4b_0a96_91aa;
 
     #[test]
     fn the_balance_of_the_game_is_the_one_that_the_specification_describes() {

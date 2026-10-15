@@ -170,14 +170,16 @@ How a group shares its points. The shares are in percent of the budget of its se
 
 ```
 class all-rounder  3                      ricochet<=1  ballistics<=2
-class seeker       1  ricochet seeking    ricochet<=3  ballistics<=1
+class sniper       3  muzzle turret       ricochet<=1  ballistics<=2  keeps muzzle
+class seeker       1  ricochet seeking    ricochet<=2  ballistics<=1
 ```
 
-A `class` line names a class, then says three things:
+A `class` line names a class, then says three things, and a fourth for some classes:
 
 - **Its weight** when a tank draws its class. A class of weight 2 comes twice as often as one of weight 1, and one of weight 0 never comes.
 - **The stats that it favors**, two at most, the one that it takes first in front. A class that favors one of the four special bullets is the one class that fires it.
 - **The most that it has** of ricochet and of ballistics, the two stats that are kept for some classes.
+- **What it keeps**, after `keeps`: stats that it favors, whose highest level is its alone. That level is the highest that the sector allows, which a `step` line may hold back. `keeps muzzle` gives the sniper the fastest gun of every sector, and a tank of another class has a gun one level slower. A special bullet is its class's already, and is kept by no line.
 
 Ballistics 2 needs a bounce and ballistics 3 needs two, so a class has no more ballistics than its ricochet and one. A class that favors `seeking` has a bounce.
 

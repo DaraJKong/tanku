@@ -61,16 +61,17 @@ hard    budget +30  ahead 20
 group   mean 70%..90%  least 30%  leader 125%  weights 1 1 2 2 3 8  favorite 15
 
 # A class: its weight when a tank draws its class, the stats that it favors, the one it
-# takes first in front, and the most that it has of ricochet and of ballistics.
+# takes first in front, and the most that it has of ricochet and of ballistics. The
+# highest level that a sector allows of a stat that a class keeps is that class's alone.
 class all-rounder  3                      ricochet<=1  ballistics<=2
-class sniper       3  muzzle turret       ricochet<=1  ballistics<=2
-class scout        3  engine tracks       ricochet<=1  ballistics<=2
-class tactician    2  brain ballistics    ricochet<=3  ballistics<=3
-class trickster    2  ricochet            ricochet<=3  ballistics<=3
+class sniper       3  muzzle turret       ricochet<=1  ballistics<=2  keeps muzzle
+class scout        3  engine tracks       ricochet<=1  ballistics<=2  keeps engine
+class tactician    2  brain ballistics    ricochet<=2  ballistics<=3
+class trickster    2  ricochet            ricochet<=3  ballistics<=3  keeps ricochet
 class lancer       2  piercing            ricochet<=1  ballistics<=2
-class sapper       3  mines shield        ricochet<=1  ballistics<=2
-class gunner       3  magazine loader     ricochet<=1  ballistics<=2
-class seeker       1  ricochet seeking    ricochet<=3  ballistics<=1
+class sapper       3  mines shield        ricochet<=1  ballistics<=2  keeps mines
+class gunner       3  magazine loader     ricochet<=1  ballistics<=2  keeps magazine
+class seeker       1  ricochet seeking    ricochet<=2  ballistics<=1
 class flanker      1  splitting           ricochet<=1  ballistics<=1
 class grenadier    1  exploding           ricochet<=0  ballistics<=1
 

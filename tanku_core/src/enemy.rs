@@ -88,8 +88,13 @@ fn draw_class(rng: &mut Stream, sector: u32) -> Class {
 /// The highest level of a stat that an enemy of a class can have in a sector.
 pub(crate) fn highest_level(stat: Stat, difficulty: Difficulty, sector: u32, class: Class) -> u8 {
     // Fast bullets, good brains and good aim wait for later sectors, and so does whatever
-    // else the balance holds back.
+    // else the balance holds back. The highest level that a sector allows of a stat that a
+    // class keeps is that class's alone: the others stop a level below.
     let allowed = progression::cap(stat, sector, difficulty);
+    let allowed = match class.kept_from(stat) {
+        true => allowed.saturating_sub(1),
+        false => allowed,
+    };
     allowed.min(class.highest(stat))
 }
 
@@ -343,7 +348,7 @@ mod tests {
         let tanks = group(crate::seed::seed_value("TANKU"), Normal, 20, 6);
         assert_eq!(
             format!("{:?}", tanks[0]),
-            "Genome { levels: [5, 6, 6, 6, 5, 4, 1, 0, 0, 0, 0, 0, 0, 0, 0], budget: 77, class: None }"
+            "Genome { levels: [5, 6, 6, 5, 4, 7, 1, 0, 0, 0, 0, 0, 0, 0, 0], budget: 77, class: None }"
         );
         let classes: Vec<Class> = tanks.iter().map(|tank| tank.class).collect();
         assert_eq!(format!("{classes:?}"), CLASSES);
@@ -360,7 +365,7 @@ mod tests {
 
     const CLASSES: &str = "[None, Trickster, Tactician, None, Sapper, Gunner]";
     const BUDGETS: &str = "[77, 96, 44, 49, 36, 49]";
-    const HARD_TANK: &str = "Genome { levels: [7, 6, 6, 7, 5, 7, 1, 0, 0, 0, 0, 0, 0, 0, 1], budget: 107, class: None }";
+    const HARD_TANK: &str = "Genome { levels: [6, 6, 6, 6, 4, 7, 1, 2, 1, 0, 0, 0, 0, 1, 0], budget: 107, class: None }";
     const HARD_BUDGETS: &str = "[107, 133, 59, 69, 51, 69]";
 
     #[test]
@@ -642,19 +647,19 @@ mod tests {
         assert!(idle * 50 < all, "{idle} of {all}");
         // A tank that has more points than everything that a tank without a brain may have
         // has a brain: without one, it could use neither mines nor a shield. A trickster has
-        // the most without one, 114 points of hardware and the best aim, which is 15% of
-        // its budget: from 149 points on, what is left pays for a brain.
-        let rich = everyone().filter(|(_, tank)| tank.budget > 148);
+        // the most without one, 100 points of hardware and the best aim, which is 15% of
+        // its budget: from 131 points on, what is left pays for a brain.
+        let rich = everyone().filter(|(_, tank)| tank.budget > 130);
         assert!(rich.count() > 20);
         for (sector, tank) in everyone() {
             assert!(
-                tank.budget <= 148 || tank.brain() > 0,
+                tank.budget <= 130 || tank.brain() > 0,
                 "sector {sector}: {tank:?}"
             );
         }
         // Two leaders of late sectors, each with every part that a tank without a brain
-        // may have. One has enough left for a brain, which opens mines and a shield to
-        // it. The other has too little for a brain, and sharpens its aim.
+        // may have, under the levels that other classes keep. What is left buys each a
+        // brain, which opens mines and a shield to them.
         let leader = |seed: &str, sector: u32, index: usize| {
             let count = progression::enemy_count(sector, 1, false);
             group(crate::seed::seed_value(seed), Normal, sector, count)[index]
@@ -664,15 +669,52 @@ mod tests {
             (scout.class, scout.budget, scout.cost()),
             (Class::Scout, 133, 133)
         );
-        assert_eq!((scout.brain(), scout.mines()), (1, 2));
-        assert_eq!(scout.shield_cooldown(), Some(9.0));
+        assert_eq!((scout.brain(), scout.mines()), (1, 3));
+        assert_eq!(scout.shield_cooldown(), Some(6.0));
         // An all-rounder stops at the second tier of ballistics, the best that its class has.
         let plain = leader("ALPHA", 29, 0);
         assert_eq!(
             (plain.class, plain.budget, plain.cost()),
-            (Class::None, 117, 112)
+            (Class::None, 117, 117)
         );
-        assert_eq!((plain.brain(), plain.ballistics()), (0, 2));
+        assert_eq!((plain.brain(), plain.ballistics()), (1, 2));
+    }
+
+    #[test]
+    fn the_highest_level_of_a_kept_stat_is_the_one_of_its_class() {
+        // Five classes keep the highest level that a sector allows of a stat that they favor.
+        let keepers = [
+            (Stat::Muzzle, Class::Sniper),
+            (Stat::Engine, Class::Scout),
+            (Stat::Magazine, Class::Gunner),
+            (Stat::Mines, Class::Sapper),
+            (Stat::Ricochet, Class::Trickster),
+        ];
+        for (stat, keeper) in keepers {
+            assert!(!keeper.kept_from(stat));
+            let others = Class::ALL.into_iter().filter(|class| *class != keeper);
+            assert!(
+                others.into_iter().all(|class| class.kept_from(stat)),
+                "{stat:?}"
+            );
+        }
+        // A stat that a class favors and doesn't keep is open to every class.
+        assert!(!Class::Gunner.kept_from(Stat::Turret) && !Class::Sniper.kept_from(Stat::Loader));
+        for difficulty in Difficulty::ALL {
+            let mut reached = [false; 5];
+            for (sector, tank) in sample(difficulty) {
+                for (index, (stat, keeper)) in keepers.into_iter().enumerate() {
+                    let highest =
+                        progression::cap(stat, sector, difficulty).min(keeper.highest(stat));
+                    if highest > 0 && tank.level(stat) == highest {
+                        assert_eq!(tank.class, keeper, "sector {sector}: {tank:?}");
+                        reached[index] = true;
+                    }
+                }
+            }
+            // The fastest gun of a sector is a sniper's, and some snipers have it: and so on.
+            assert_eq!(reached, [true; 5], "{difficulty:?}");
+        }
     }
 
     #[test]
