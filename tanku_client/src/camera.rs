@@ -5,6 +5,9 @@
 //!
 //! In arena mode, the view stays on the room and on the tanks that wait in reserve south of
 //! it: on a screen that is wide enough, all of it shows at once.
+//!
+//! When the tank that the view follows is lost among several players, the view stays on the
+//! loss for a moment, then goes over to the tank that it follows next, easing in and out.
 
 use std::f32::consts::FRAC_PI_2;
 
@@ -49,6 +52,9 @@ const ROOM_MARGIN: f32 = 1.0;
 const RESERVE_LEAN: f32 = 6.0;
 /// The shape of a screen whose size isn't known: as wide as most are.
 const USUAL_SHAPE: f32 = 16.0 / 9.0;
+/// When the tank that the view follows is lost and the view follows another one: how long
+/// it stays on the loss, and how long it then takes to go over to the other one.
+const GOING_OVER: (f32, f32) = (1.2, 0.9);
 
 #[derive(Component)]
 pub struct MainCamera;
@@ -67,6 +73,11 @@ pub struct View {
     past: Vec2,
     /// Time during which the view stays where it was told to look.
     hold: f32,
+    /// The tank that the view follows.
+    following: Option<Entity>,
+    /// Where the view was when the tank that it followed was lost, and the seconds since:
+    /// it goes over from there to the tank that it follows now.
+    going_over: Option<(Vec2, f32)>,
     shake: f32,
     noise: u32,
 }
@@ -301,7 +312,7 @@ pub fn follow(
     settings: Res<Settings>,
     run: Option<Res<Run>>,
     mut view: ResMut<View>,
-    players: Query<(&Transform, &Player, Has<Own>, Has<Wreck>), Without<MainCamera>>,
+    players: Query<(Entity, &Transform, &Player, Has<Own>, Has<Wreck>), Without<MainCamera>>,
     barriers: Query<&Barrier>,
     enemies: Query<&Tank, With<Enemy>>,
     bullets: Query<&Bullet>,
@@ -312,16 +323,26 @@ pub fn follow(
     view.hold = (view.hold - seconds).max(0.0);
     // The view follows the tank of the player at this screen. While that tank is a wreck, it
     // follows a teammate whose tank still runs.
-    let own = players.iter().find(|(_, _, own, _)| *own);
+    let own = players.iter().find(|(_, _, _, own, _)| *own);
     let running = players.iter().filter(|(.., wreck)| !wreck);
     let watched = match own {
-        Some((transform, _, _, false)) => Some(transform),
+        Some((entity, transform, _, _, false)) => Some((entity, transform)),
         _ => {
-            let teammate = running.min_by_key(|(_, player, ..)| player.seat);
-            teammate.or(own).map(|(transform, ..)| transform)
+            let teammate = running.min_by_key(|(_, _, player, ..)| player.seat);
+            let watched = teammate.or(own);
+            watched.map(|(entity, transform, ..)| (entity, transform))
         }
     };
-    if let Some(player) = watched
+    // The tank that the view followed is lost, and the view goes over to another one.
+    if let Some((entity, _)) = watched
+        && view.following != Some(entity)
+    {
+        let before = view.following.and_then(|before| players.get(before).ok());
+        let lost = before.is_some_and(|(.., wreck)| wreck);
+        view.going_over = lost.then_some((view.focus, 0.0));
+        view.following = Some(entity);
+    }
+    if let Some((_, player)) = watched
         && view.hold == 0.0
     {
         let at = scene::to_ground(player.translation);
@@ -367,11 +388,17 @@ pub fn follow(
             }
             None => target,
         };
-        // A jump means a new run or a respawn: go there at once.
-        view.focus = if view.focus.distance(target) > 40.0 {
-            target
-        } else {
-            view.focus.lerp(target, 1.0 - (-8.0 * seconds).exp())
+        view.focus = match view.going_over {
+            // It stays on the loss, and then goes over, easing in and out.
+            Some((from, since)) => {
+                let since = since + seconds;
+                let share = ((since - GOING_OVER.0) / GOING_OVER.1).clamp(0.0, 1.0);
+                view.going_over = (share < 1.0).then_some((from, since));
+                from.lerp(target, share * share * (3.0 - 2.0 * share))
+            }
+            // A jump means a new run or a respawn: go there at once.
+            None if view.focus.distance(target) > 40.0 => target,
+            None => view.focus.lerp(target, 1.0 - (-8.0 * seconds).exp()),
         };
     }
     let target_yaw = view.turns as f32 * FRAC_PI_2;
@@ -748,6 +775,50 @@ mod tests {
         }
         wait(&mut app, A_WHILE);
         assert!(ahead(&app).abs() < 0.05);
+    }
+
+    #[test]
+    fn the_view_stays_on_a_lost_tank_and_then_goes_over_to_a_teammate() {
+        let mut app = App::new();
+        app.init_resource::<Time>()
+            .init_resource::<View>()
+            .insert_resource(Settings::default())
+            .add_systems(Update, follow);
+        app.world_mut().spawn((MainCamera, Transform::default()));
+        let place = |at: Vec2| Transform::from_translation(scene::to_world(at, 0.0));
+        let own = (Player { seat: 0 }, Own, place(TANK));
+        let own = app.world_mut().spawn(own).id();
+        let mate = TANK + Vec2::new(24.0, 6.0);
+        app.world_mut().spawn((Player { seat: 1 }, place(mate)));
+        // The cursor is on the teammate, so that the view doesn't lean away from it.
+        app.world_mut().resource_mut::<View>().aim = mate;
+        let focus = |app: &App| app.world().resource::<View>().focus();
+        wait(&mut app, A_WHILE);
+        assert!(focus(&app).distance(TANK) < 1.0);
+        // The player's tank is destroyed: the view stays on it for a moment.
+        app.world_mut().entity_mut(own).insert(Wreck::default());
+        wait(&mut app, GOING_OVER.0 - 0.1);
+        assert!(focus(&app).distance(TANK) < 1.0);
+        // Then it goes over, slowly at first and at the end, however far the teammate is.
+        wait(&mut app, 0.1 + GOING_OVER.1 / 4.0);
+        let gone = focus(&app).distance(TANK) / mate.distance(TANK);
+        assert!(gone > 0.05 && gone < 0.3, "{gone}");
+        wait(&mut app, GOING_OVER.1 / 4.0);
+        let gone = focus(&app).distance(TANK) / mate.distance(TANK);
+        assert!(gone > 0.4 && gone < 0.6, "{gone}");
+        wait(&mut app, GOING_OVER.1 / 2.0);
+        assert!(focus(&app).distance(mate) < 0.1);
+        // And it follows the teammate from there on.
+        let moved = mate + Vec2::X * 3.0;
+        let mut tanks = app.world_mut().query::<(&Player, &mut Transform)>();
+        for (player, mut transform) in tanks.iter_mut(app.world_mut()) {
+            if player.seat == 1 {
+                *transform = place(moved);
+            }
+        }
+        app.world_mut().resource_mut::<View>().aim = moved;
+        wait(&mut app, 1.0);
+        assert!(focus(&app).distance(moved) < 0.1);
     }
 
     #[test]
