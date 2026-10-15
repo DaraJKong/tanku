@@ -533,8 +533,10 @@ The terrain gets harsher along four levers:
 |---|---|---|
 | Corridor width | 14–20 m | 8–14 m |
 | Cover blocks | Plentiful | Sparse |
-| Explosive crates per sector | 0–1 | 3–6 |
+| Explosive crates that a sector draws | 0–1 | 3–6 |
 | Angled walls | Rare | Common |
+
+Fewer crates stand than a sector draws. Its blocks are placed first and its crates after them, each away from what was placed before it, and a crate that finds no room is left out. Then, while no way leads through the sector (see [Map](#map)), what was placed last is taken away: its crates go first. From sector 30 on, a corridor keeps 2.4 crates on average, about half of what it draws.
 
 The room of arena mode follows the two levers that are about what stands on the floor: for group $n$, it has the crates of sector $n$, and half as much cover again as that sector, because it has more floor. Its walls don't change.
 

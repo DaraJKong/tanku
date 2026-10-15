@@ -206,7 +206,7 @@ What gets harsher goes from its value in sector 1 to its value in the harshest s
 | `terrain harshest` | The sector from which the terrain is as harsh as it gets, 2 at least |
 | `terrain width` | The narrowest that a corridor gets, and how much wider than that it gets |
 | `terrain cover` | The groups of cover blocks of a sector |
-| `terrain crates` | The fewest and the most explosive crates of a sector |
+| `terrain crates` | The fewest and the most explosive crates that a sector draws. Fewer stand: a crate that finds no room, or that closes the way through, is left out (see [the progression](PROJECT.md#progression)). |
 | `terrain angled` | The chance that a change of width is an angled wall and not a square step |
 | `terrain spawn` | How far from the entry of their sector the enemies start at least, and how far from its barrier |
 | `corridor` | The shortest and the longest that a sector of the corridor gets |
