@@ -11,10 +11,12 @@ use bevy::{
     ui::{AngularColorStop, BorderGradient, ConicGradient, UiPosition, UiSystems},
 };
 
-use crate::theme;
+use crate::{lines::Line, theme};
 
 /// The width of the line of a balloon: the wide line of the interface.
 pub const LINE: f32 = 2.0;
+/// The line that strikes a balloon out.
+const STRIKE: Line = Line::new(LINE, theme::TEXT_DIM);
 /// The gap after each dash of a balloon in dashes, in pixels. Each dash is an eighth of the
 /// width of the balloon: 6 px on one of 48.
 const GAP: f32 = 3.0;
@@ -90,10 +92,10 @@ pub fn balloon(seat: u8, width: f32, figure: f32) -> impl Bundle {
                 Node {
                     position_type: PositionType::Absolute,
                     width: px(width * 0.9),
-                    height: px(LINE),
+                    height: px(STRIKE.across()),
                     ..default()
                 },
-                BackgroundColor(theme::TEXT_DIM),
+                STRIKE,
                 UiTransform::from_rotation(Rot2::degrees(-45.0)),
                 Visibility::Hidden,
             ),

@@ -342,6 +342,17 @@ impl Settings {
         }
     }
 
+    /// Whether the interface smooths the edges of what is round in it: the balloons, the
+    /// dots and the rings. The samples of the drawing never reach the interface, and the
+    /// lines of the interface that slope are smoothed by [`crate::lines`].
+    pub fn ui_anti_alias(&self) -> UiAntiAlias {
+        if self.anti_aliasing {
+            UiAntiAlias::On
+        } else {
+            UiAntiAlias::Off
+        }
+    }
+
     pub fn bindings(&self, action: Action) -> [Option<Binding>; 2] {
         self.bindings
             .iter()
@@ -643,7 +654,7 @@ fn apply(
     mut volume: ResMut<GlobalVolume>,
     muted: Option<Res<Muted>>,
     window: Option<Single<&mut Window, With<PrimaryWindow>>>,
-    mut cameras: Query<&mut Msaa, With<MainCamera>>,
+    mut cameras: Query<(&mut Msaa, &mut UiAntiAlias), With<MainCamera>>,
     mut loaded: Local<bool>,
 ) {
     let loudness = if muted.is_some() {
@@ -657,8 +668,9 @@ fn apply(
         window.mode = settings.window_mode();
         window.present_mode = settings.present_mode();
     }
-    for mut samples in &mut cameras {
+    for (mut samples, mut smooth) in &mut cameras {
         samples.set_if_neq(settings.msaa());
+        smooth.set_if_neq(settings.ui_anti_alias());
     }
     if *loaded {
         storage::save(SETTINGS_FILE, &settings.to_pairs());
@@ -708,14 +720,15 @@ mod tests {
         let mut world = World::new();
         world.insert_resource(Settings::default());
         world.insert_resource(GlobalVolume::default());
-        let camera = world.spawn((MainCamera, Msaa::Off)).id();
+        let camera = world.spawn((MainCamera, Msaa::Off, UiAntiAlias::Off)).id();
         let samples = |world: &mut World| {
             world.run_system_once(apply).unwrap();
-            *world.get::<Msaa>(camera).unwrap()
+            let smooth = *world.get::<UiAntiAlias>(camera).unwrap();
+            (*world.get::<Msaa>(camera).unwrap(), smooth)
         };
-        assert_eq!(samples(&mut world), Msaa::Sample4);
+        assert_eq!(samples(&mut world), (Msaa::Sample4, UiAntiAlias::On));
         world.resource_mut::<Settings>().anti_aliasing = false;
-        assert_eq!(samples(&mut world), Msaa::Off);
+        assert_eq!(samples(&mut world), (Msaa::Off, UiAntiAlias::Off));
     }
 
     #[test]

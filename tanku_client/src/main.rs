@@ -25,6 +25,7 @@ mod input;
 mod journal;
 mod lettering;
 mod life;
+mod lines;
 mod margin;
 mod menu;
 mod mirror;
@@ -192,7 +193,7 @@ fn main() {
             repair::plugin,
         ))
         .add_plugins((audio::plugin, music::plugin, notices::plugin))
-        .add_plugins((margin::plugin, balloons::plugin));
+        .add_plugins((margin::plugin, balloons::plugin, lines::plugin));
     // A browser joins games and hosts none.
     app.add_plugins(net::NetPlugin);
     // A page keeps no journal: nothing outside the browser could read it. And a page is

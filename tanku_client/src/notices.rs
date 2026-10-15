@@ -30,6 +30,7 @@ use crate::{
     crew::Own,
     draft::{Draft, LIFT},
     hud::{self, Heads, SHEET_EDGE},
+    lines::Line,
     report, scene,
     settings::{League, Records, Settings},
     sheet,
@@ -224,6 +225,7 @@ struct Inked {
     back: Option<Color>,
     border: Option<Color>,
     outline: Option<Color>,
+    line: Option<Color>,
 }
 
 impl Inked {
@@ -234,6 +236,7 @@ impl Inked {
             back: None,
             border: None,
             outline: None,
+            line: None,
         }
     }
 
@@ -820,19 +823,20 @@ fn spawn(commands: &mut Commands, told: &Told) -> Entity {
             Visibility::Hidden,
         )
     };
+    let leader = Line::new(REFERENCE, ink);
     commands.spawn((
         piece(Piece::Leader),
         Inked {
-            back: Some(ink),
+            line: Some(ink),
             ..Inked::new(root)
         },
         Node {
             position_type: PositionType::Absolute,
             width: px(LEADER.length()),
-            height: px(REFERENCE),
+            height: px(leader.across()),
             ..default()
         },
-        BackgroundColor(ink),
+        leader,
     ));
     commands.spawn((
         piece(Piece::Dot),
@@ -1045,6 +1049,7 @@ fn place(
         &mut Node,
         &mut UiTransform,
         &mut Visibility,
+        Option<&Line>,
     )>,
     mut distances: Query<&mut Text, With<Distance>>,
     mut commands: Commands,
@@ -1117,19 +1122,18 @@ fn place(
         return;
     };
     *visibility = Visibility::Inherited;
-    for (piece, parent, mut node, mut moved, mut shows) in &mut pieces {
+    for (piece, parent, mut node, mut moved, mut shows, line) in &mut pieces {
         if parent.parent() != alert.root {
             continue;
         }
         let (at, turn, wanted) = match *piece {
-            Piece::Leader => match layout.leader {
-                Some((dot, bend)) => {
+            Piece::Leader => match (layout.leader, line) {
+                (Some((dot, bend)), Some(line)) => {
                     let along = bend - dot;
-                    let middle = (dot + bend) / 2.0;
-                    let corner = middle - Vec2::new(along.length(), REFERENCE) / 2.0;
+                    let corner = line.corner((dot + bend) / 2.0, along.length());
                     (corner, along.to_angle(), true)
                 }
-                None => (Vec2::ZERO, 0.0, false),
+                _ => (Vec2::ZERO, 0.0, false),
             },
             Piece::Dot => match layout.leader {
                 Some((dot, _)) => (dot - Vec2::splat(DOT / 2.0), 0.0, true),
@@ -1197,9 +1201,10 @@ fn fade(
         Option<&mut BackgroundColor>,
         Option<&mut BorderColor>,
         Option<&mut Outline>,
+        Option<&mut Line>,
     )>,
 ) {
-    for (inked, text, back, border, outline) in &mut parts {
+    for (inked, text, back, border, outline, line) in &mut parts {
         let shown = notices.get(inked.root).map_or(0.0, |notice| notice.0);
         let faded = |color: Color| color.with_alpha(color.alpha() * shown);
         if let (Some(color), Some(mut text)) = (inked.text, text) {
@@ -1213,6 +1218,12 @@ fn fade(
         }
         if let (Some(color), Some(mut outline)) = (inked.outline, outline) {
             outline.color = faded(color);
+        }
+        if let (Some(color), Some(mut line)) = (inked.line, line) {
+            let ink = faded(color);
+            if line.ink != ink {
+                line.ink = ink;
+            }
         }
     }
 }

@@ -189,6 +189,7 @@ fn setup(mut commands: Commands, settings: Res<Settings>) {
         Camera3d::default(),
         Tonemapping::None,
         settings.msaa(),
+        settings.ui_anti_alias(),
         // The lights of the engine are sorted into clusters of the view: there is no light,
         // and one cluster does.
         ClusterConfig::Single,

@@ -21,7 +21,9 @@ use crate::{
     Screen,
     camera::{self, OnScreen},
     crew::LocalSeat,
-    hud, scene, theme,
+    hud,
+    lines::Line,
+    scene, theme,
 };
 
 /// Barriers that can be loaded at once: one at the end of each of three sectors, and the one
@@ -274,11 +276,11 @@ fn build(mut commands: Commands) {
                         Part::Divider,
                         Node {
                             width: px(2.0 * RADIUS + LEAD),
-                            height: px(LINE),
+                            height: px(Line::new(LINE, line).across()),
                             ..divider
                         },
                         divider_place,
-                        BackgroundColor(line),
+                        Line::new(LINE, line),
                     ),
                     (
                         Part::Near,
@@ -400,7 +402,7 @@ fn place(
             Option<&mut Text>,
             Option<&mut TextColor>,
             Option<&mut BorderColor>,
-            Option<&mut BackgroundColor>,
+            Option<&mut Line>,
             Option<&mut BackgroundGradient>,
         ),
         (Without<Balloon>, Without<Caption>, Without<CaptionText>),
@@ -463,7 +465,7 @@ fn place(
         };
         let (line, (near, far)) = (color(barrier), numbers(barrier));
         for child in children.iter() {
-            let Ok((part, mut node, mut turn, text, text_color, border, background, cone)) =
+            let Ok((part, mut node, mut turn, text, text_color, border, divider, cone)) =
                 parts.get_mut(child)
             else {
                 continue;
@@ -521,12 +523,12 @@ fn place(
             {
                 text_color.0 = line;
             }
-            match (part, border, background, cone) {
+            match (part, border, divider, cone) {
                 (Part::Ring, Some(mut border), ..) if *border != BorderColor::all(line) => {
                     *border = BorderColor::all(line);
                 }
-                (Part::Divider, _, Some(mut background), _) if background.0 != line => {
-                    background.0 = line;
+                (Part::Divider, _, Some(mut divider), _) if divider.ink != line => {
+                    divider.ink = line;
                 }
                 (Part::Arrow, .., Some(mut cone)) => {
                     let wanted = BackgroundGradient::from(arrow(line));

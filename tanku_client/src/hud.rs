@@ -28,6 +28,7 @@ use crate::{
     camera::{MainCamera, View},
     crew::{LocalSeat, Own},
     draft::{Draft, LIFT},
+    lines::Line,
     notices::Alarms,
     repair, scene,
     settings::{Action, Settings},
@@ -205,6 +206,8 @@ enum TagPart {
 const TAG_BALLOON: f32 = 48.0;
 const TAG_LEAD: f32 = 110.0;
 const TAG_DOT: f32 = 8.0;
+/// The leader from the balloon of a teammate to its tank, in the line of the balloon.
+const LEADER: Line = Line::new(balloons::LINE, theme::PLAYER);
 /// The room that a tank takes on the screen around its middle, which no balloon covers.
 const TAG_TANK: f32 = 40.0;
 
@@ -931,10 +934,10 @@ fn build(mut commands: Commands) {
                     Node {
                         position_type: PositionType::Absolute,
                         width: px(TAG_LEAD - TAG_BALLOON / 2.0),
-                        height: px(balloons::LINE),
+                        height: px(LEADER.across()),
                         ..default()
                     },
-                    BackgroundColor(theme::PLAYER),
+                    LEADER,
                 ),
                 (
                     part(TagPart::Dot),
@@ -1677,7 +1680,7 @@ fn tag_players(
         (
             &TagPart,
             &mut UiTransform,
-            Option<&mut BackgroundColor>,
+            Option<&mut Line>,
             Option<&mut BorderColor>,
         ),
         Without<PlayerTag>,
@@ -1739,7 +1742,7 @@ fn tag_players(
             theme::PLAYER
         };
         for child in children.iter() {
-            let Ok((part, mut transform, fill, edge)) = parts.get_mut(child) else {
+            let Ok((part, mut transform, line, edge)) = parts.get_mut(child) else {
                 continue;
             };
             let (place, turn) = match part {
@@ -1748,10 +1751,7 @@ fn tag_players(
                 TagPart::Leader => {
                     let length = TAG_LEAD - TAG_BALLOON / 2.0;
                     let middle = way * length / 2.0;
-                    (
-                        middle - Vec2::new(length / 2.0, balloons::LINE / 2.0),
-                        way.to_angle(),
-                    )
+                    (LEADER.corner(middle, length), way.to_angle())
                 }
                 TagPart::Dot => (Vec2::ZERO, 0.0),
                 TagPart::Head => (way * TAG_LEAD - Vec2::splat(TAG_BALLOON / 2.0), 0.0),
@@ -1764,9 +1764,9 @@ fn tag_players(
             if transform.rotation != turn {
                 transform.rotation = turn;
             }
-            match (part, fill, edge) {
-                (TagPart::Leader, Some(mut fill), _) => {
-                    fill.set_if_neq(BackgroundColor(ink));
+            match (part, line, edge) {
+                (TagPart::Leader, Some(mut line), _) => {
+                    line.set_if_neq(Line { ink, ..LEADER });
                 }
                 (TagPart::Dot, _, Some(mut edge)) => {
                     edge.set_if_neq(BorderColor::all(ink));

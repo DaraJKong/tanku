@@ -18,6 +18,7 @@ use crate::{
     Screen,
     camera::{self, OnScreen, View},
     draft::{Draft, LIFT, LINE},
+    lines::Line,
     models,
     scene::{self, Paints},
     theme,
@@ -188,14 +189,12 @@ pub fn call_out(
         .with_children(|sheet| {
             // The leaders lie under the dots, and the dots under the rings.
             for index in 0..anchors.len() {
-                let line = Node {
-                    height: px(CALLOUT_LINE),
+                let line = Line::new(CALLOUT_LINE, theme::LINE);
+                let node = Node {
+                    height: px(line.across()),
                     ..default()
                 };
-                sheet.spawn((
-                    piece(Callout::Leader(index), line),
-                    BackgroundColor(theme::LINE),
-                ));
+                sheet.spawn((piece(Callout::Leader(index), node), line));
             }
             for index in 0..anchors.len() {
                 let dot = Node {
@@ -402,6 +401,7 @@ fn point(
         &mut Visibility,
         &mut BackgroundColor,
         Option<&mut BorderColor>,
+        Option<&mut Line>,
         Option<&Children>,
     )>,
     mut figures: Query<&mut TextColor>,
@@ -412,7 +412,8 @@ fn point(
         .next()
         .map_or(resting, |turret| turret.rotation);
     let pointers = pointers(&callouts, &screen, turret);
-    for (piece, mut node, mut transform, mut visibility, mut fill, border, children) in &mut pieces
+    for (piece, mut node, mut transform, mut visibility, mut fill, border, drawn, children) in
+        &mut pieces
     {
         let index = match *piece {
             Callout::Leader(index) | Callout::Dot(index) | Callout::Ring(index) => index,
@@ -460,22 +461,25 @@ fn point(
                 pointer.part - Vec2::splat(size / 2.0)
             }
             Callout::Leader(_) => {
-                fill.set_if_neq(BackgroundColor(ink));
+                let line = Line::new(if lit { LIT_LINE } else { CALLOUT_LINE }, ink);
+                if let Some(mut drawn) = drawn {
+                    drawn.set_if_neq(line);
+                }
                 // A line from the edge of the ring to the part, turned around its middle to lie
                 // along that way.
                 let along = pointer.part - pointer.ring;
                 let start = pointer.ring + along.normalize_or_zero() * CALLOUT / 2.0;
                 let along = pointer.part - start;
-                let width = if lit { LIT_LINE } else { CALLOUT_LINE };
-                let length = px(along.length().round());
-                if node.width != length || node.height != px(width) {
-                    (node.width, node.height) = (length, px(width));
+                let length = along.length().round();
+                let (wide, high) = (px(length), px(line.across()));
+                if node.width != wide || node.height != high {
+                    (node.width, node.height) = (wide, high);
                 }
                 let turn = Rot2::radians(along.to_angle());
                 if transform.rotation != turn {
                     transform.rotation = turn;
                 }
-                (start + pointer.part) / 2.0 - Vec2::new(along.length(), width) / 2.0
+                line.corner((start + pointer.part) / 2.0, length)
             }
         };
         let held = Val2::px(corner.x.round(), corner.y.round());
