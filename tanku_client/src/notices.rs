@@ -264,7 +264,10 @@ enum Piece {
     Dot,
     /// The balloon that heads an alert whose player has none on the screen.
     Head,
-    /// The words, with the reference line between them.
+    /// The reference line, from the bend of the leader as far as the words go: it is placed
+    /// where the leader ends, so that the two meet however the words are laid out.
+    Reference,
+    /// The words, over and under the room of the reference line.
     Words,
 }
 
@@ -826,12 +829,16 @@ fn spawn(commands: &mut Commands, told: &Told) -> Entity {
         ))
         .id();
     let (said, ink) = headline(told);
+    // The leader, its dot and the reference line stand over the words, whose shadows would
+    // dim them.
     let piece = |piece: Piece| {
+        let over = matches!(piece, Piece::Leader | Piece::Dot | Piece::Reference);
         (
             ChildOf(root),
             piece,
             UiTransform::IDENTITY,
             Visibility::Hidden,
+            ZIndex(i32::from(over)),
         )
     };
     let leader = Line::new(REFERENCE, ink);
@@ -864,6 +871,20 @@ fn spawn(commands: &mut Commands, told: &Told) -> Entity {
         },
         BackgroundColor(ink),
     ));
+    commands.spawn((
+        piece(Piece::Reference),
+        Inked {
+            back: Some(ink),
+            ..Inked::new(root)
+        },
+        Node {
+            position_type: PositionType::Absolute,
+            width: px(0),
+            height: px(REFERENCE),
+            ..default()
+        },
+        BackgroundColor(ink),
+    ));
     if let Some((seat, state)) = head_state(told) {
         let head = commands
             .spawn((
@@ -877,7 +898,8 @@ fn spawn(commands: &mut Commands, told: &Told) -> Entity {
         let balloon = balloons::balloon(seat, hud::HEAD_WIDTH, theme::VALUE);
         commands.spawn((ChildOf(head), balloon)).insert(state);
     }
-    // The words, with the reference line between them, as long as the longest of them.
+    // The words, with the room of the reference line between them: as long as the longest of
+    // them, and the line as long as they are.
     let column = commands
         .spawn((
             piece(Piece::Words),
@@ -907,17 +929,11 @@ fn spawn(commands: &mut Commands, told: &Told) -> Entity {
     words(commands, (over, root), HEADLINE, said, ink);
     commands.spawn((
         ChildOf(column),
-        Inked {
-            back: Some(ink),
-            ..Inked::new(root)
-        },
         Node {
-            width: percent(100),
             height: px(REFERENCE),
             margin: UiRect::bottom(px(UNDER_LINE - REFERENCE / 2.0 - capitals_room(LINE.1))),
             ..default()
         },
-        BackgroundColor(ink),
     ));
     match told {
         Told::Lost { last, .. } => {
@@ -1048,6 +1064,9 @@ impl Flip {
 /// to the right of it, or to the left past the most of the screen, and up from the bottom of
 /// the screen, unless it is flipped.
 fn pointing(at: Vec2, screen: Vec2, flip: Flip) -> Layout {
+    // On whole pixels, as the leader is: the reference line, laid out on whole pixels, then
+    // runs through the end of the leader.
+    let at = at.round();
     let way = if at.x > screen.x * TURN_LEFT {
         -1.0
     } else {
@@ -1076,9 +1095,21 @@ fn hanging(head: Vec2, way: f32, drawn: bool) -> Layout {
     }
 }
 
-/// How far the top of the words of an alert stands over its reference line.
+/// Where the reference line of an alert goes, by its top left corner, when it is this long:
+/// from where it starts, the way that it runs, with its middle on that point.
+fn reference_corner(layout: &Layout, length: f32) -> Vec2 {
+    let left = if layout.way > 0.0 {
+        layout.start.x
+    } else {
+        layout.start.x - length
+    };
+    Vec2::new(left, layout.start.y - REFERENCE / 2.0)
+}
+
+/// How far the top of the words of an alert stands over the middle of its reference line: the
+/// box of the headline, and from its capitals down to the middle of the line.
 fn words_over() -> f32 {
-    theme::capitals_height(HEADLINE.1) + OVER_LINE - REFERENCE / 2.0 - capitals_room(HEADLINE.1)
+    theme::capitals_height(HEADLINE.1) + OVER_LINE - capitals_room(HEADLINE.1)
 }
 
 /// The room that the words of an alert take in a layout, when they are this large.
@@ -1210,24 +1241,27 @@ fn place(
         .find(|(piece, parent, ..)| **piece == Piece::Words && parent.parent() == alert.root)
         .map(|(.., computed)| computed.size() * computed.inverse_scale_factor())
         .unwrap_or_default();
+    // An alert shows once its words are laid out: an alert that points at a place must know
+    // whether they keep clear of the tags of the barriers there, and its reference line is as
+    // long as they are.
+    if words == Vec2::ZERO {
+        *visibility = Visibility::Hidden;
+        return;
+    }
     let tags = marks.as_deref().map_or(&[][..], |marks| &marks.0[..]);
-    // An alert that points at a place shows once it knows whether its words keep clear of the
-    // tags of the barriers there.
     let pointed = |at: Vec2, flip: &mut Flip| {
-        (words != Vec2::ZERO).then(|| {
-            *flip = clear_flip(at, screen, words, tags, *flip);
-            pointing(at, screen, *flip)
-        })
+        *flip = clear_flip(at, screen, words, tags, *flip);
+        pointing(at, screen, *flip)
     };
     let layout = match &mut alert.anchor {
         Anchor::Watched => watched
             .and_then(seen)
-            .and_then(|(at, _)| pointed(at, &mut alert.flip)),
+            .map(|(at, _)| pointed(at, &mut alert.flip)),
         Anchor::Pinned { ground, screen: at } => {
             if at.is_none() {
                 *at = seen(scene::to_world(*ground, 0.0)).map(|(at, _)| at);
             }
-            at.and_then(|at| pointed(at, &mut alert.flip))
+            at.map(|at| pointed(at, &mut alert.flip))
         }
         Anchor::Balloon(seat) => match heads.of(*seat) {
             Some((head, way)) => Some(hanging(head, way, false)),
@@ -1264,6 +1298,14 @@ fn place(
                 Some(head) => (head - Vec2::splat(hud::HEAD_WIDTH / 2.0), 0.0, true),
                 None => (Vec2::ZERO, 0.0, false),
             },
+            Piece::Reference => {
+                // On whole pixels, as the leader is, so that its end stays on the bend.
+                let length = words.x.round();
+                if node.width != px(length) {
+                    node.width = px(length);
+                }
+                (reference_corner(&layout, length), 0.0, true)
+            }
             Piece::Words => {
                 // The reference line runs through the point where it starts, and the words
                 // stand on the side it runs to.
@@ -1883,6 +1925,29 @@ mod tests {
         assert_eq!(hung.start, Vec2::new(500.0 - HEAD_REACH, 500.0));
         assert_eq!((hung.leader, hung.head), (None, None));
         const { assert!(HEAD_REACH > hud::HEAD_WIDTH / 2.0 + balloons::LINE) };
+    }
+
+    #[test]
+    fn the_reference_line_of_an_alert_runs_on_from_the_end_of_its_leader() {
+        let screen = Vec2::new(1920.0, 1080.0);
+        let length = 380.0;
+        // A dot between pixels, each way that an alert can stand.
+        for at in [Vec2::new(800.3, 400.6), Vec2::new(1700.7, 900.2)] {
+            for flip in Flip::ALL {
+                let layout = pointing(at, screen, flip);
+                let (_, bend) = layout.leader.unwrap();
+                // The leader ends on whole pixels, where the line starts, and the line runs
+                // through that point by its middle.
+                assert_eq!(bend, bend.round());
+                let corner = reference_corner(&layout, length);
+                let start = if layout.way > 0.0 {
+                    corner
+                } else {
+                    corner + Vec2::X * length
+                };
+                assert_eq!(start + Vec2::Y * REFERENCE / 2.0, bend);
+            }
+        }
     }
 
     #[test]
