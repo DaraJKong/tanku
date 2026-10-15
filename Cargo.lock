@@ -5426,7 +5426,7 @@ dependencies = [
 
 [[package]]
 name = "music_editor"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "bevy",
  "tanku_audio",
@@ -7786,14 +7786,14 @@ dependencies = [
 
 [[package]]
 name = "tanku_audio"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "criterion 0.8.2",
 ]
 
 [[package]]
 name = "tanku_client"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "bevy",
  "bevy_ecs",
@@ -7806,7 +7806,7 @@ dependencies = [
 
 [[package]]
 name = "tanku_core"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "bevy",
  "criterion 0.8.2",
@@ -7818,7 +7818,7 @@ dependencies = [
 
 [[package]]
 name = "tanku_server"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "bevy",
  "criterion 0.8.2",
@@ -7829,14 +7829,14 @@ dependencies = [
 
 [[package]]
 name = "tanku_simd"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "fearless_simd",
 ]
 
 [[package]]
 name = "tanku_trials"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "bevy",
  "clap",

@@ -1,6 +1,6 @@
 # The balance that the tests of Tanku are written for: a balance of their own, so that a
 # change to game.balance fails none of them. A test that holds a number holds one of these.
-# These are the numbers that the game had at version 0.8.0. docs/BALANCE.md says more.
+# These are the numbers that the game had at version 0.9.0. docs/BALANCE.md says more.
 tanku-balance 1
 
 # What each level of a stat gives, from level 0 on, and what the level costs in all.

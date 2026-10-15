@@ -291,7 +291,7 @@ A change that is kept is written down in two more places:
 
 ## Tests
 
-The tests of the rules have a balance of their own, `tanku_core/test.balance`: the numbers that the game had at version 0.8.0, in the same notation. `tanku_core` is compiled with that file for its own tests and for those of the other crates, which ask for it with the feature `testing`. A test that says that group 12 has four tanks, or that a tank of 58 points fits the garage, holds numbers of that file. So a change to the balance of the game fails no test of a rule: it fails the one test that watches the file, and nothing else.
+The tests of the rules have a balance of their own, `tanku_core/test.balance`: the numbers that the game had at version 0.9.0, in the same notation. `tanku_core` is compiled with that file for its own tests and for those of the other crates, which ask for it with the feature `testing`. A test that says that group 12 has four tanks, or that a tank of 58 points fits the garage, holds numbers of that file. So a change to the balance of the game fails no test of a rule: it fails the one test that watches the file, and nothing else.
 
 What the tests then don't say is that the rules hold with the numbers of the game. Three things say it:
 
