@@ -435,7 +435,9 @@ fn title_field(row: &mut ChildSpawnerCommands, field: Field, right: bool) {
         BorderColor::all(theme::RULE_DIM),
     ))
     .with_children(|holds| {
-        holds.spawn(key(field.label));
+        // A field is as wide as its label: where the interface is drawn smaller, the letters
+        // come out a hair wider and must not break the label.
+        holds.spawn((key(field.label), TextLayout::no_wrap()));
         match field.holds {
             Holds::Owner(line) => {
                 holds.spawn(theme::label("Tanku", theme::ALERT, theme::TEXT));

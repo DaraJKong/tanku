@@ -1584,7 +1584,7 @@ fn solo_screen(
                     frees && new(Unlock::FreeMode),
                     Box::new(|cell: &mut ChildSpawnerCommands| {
                         if brought {
-                            let told = "On, in the tank of this playtest";
+                            let told = "On, in the playtest's tank";
                             cell.spawn(drawing::value(told, theme::TEXT));
                         } else if frees {
                             for (name, on) in switch {
@@ -2803,7 +2803,7 @@ fn copy_label(copied: &Copied) -> &'static str {
     match copied.0 {
         None => "Copy",
         Some((true, _)) => "Copied",
-        Some((false, _)) => "Not copied",
+        Some((false, _)) => "Failed",
     }
 }
 
@@ -4890,6 +4890,7 @@ mod tests {
     use bevy::{
         ecs::{message::Messages, system::RunSystemOnce},
         platform::collections::HashMap,
+        text::LineHeight,
     };
     use tanku_core::{
         sim::{Blow, Team, Weapon},
@@ -5488,6 +5489,10 @@ mod tests {
         marks: bool,
         /// Whether it has an edge that the engine laid out as no line at all.
         lost_an_edge: bool,
+        /// Whether it is words in capitals that the engine laid out on more than one line:
+        /// labels, titles and values stand on one, as sentences need not, nor what a player
+        /// typed, which may break anywhere and run on.
+        wrapped: bool,
         /// The pieces that it is inside of, from the nearest one to the screen itself.
         inside: Vec<Entity>,
     }
@@ -5563,7 +5568,7 @@ mod tests {
         let mut nodes = world.query::<(
             Entity,
             (&Node, &ComputedNode, &UiGlobalTransform),
-            Option<&Text>,
+            (Option<&Text>, Option<(&TextFont, &LineHeight, &TextLayout)>),
             (Has<Button>, Has<sheet::Frame>),
             Option<&ChildOf>,
         )>();
@@ -5585,13 +5590,13 @@ mod tests {
         };
         let texts: Vec<(Entity, String)> = nodes
             .iter(world)
-            .filter_map(|(entity, .., text, _, _)| Some((entity, text?.0.clone())))
+            .filter_map(|(entity, _, (text, _), _, _)| Some((entity, text?.0.clone())))
             .filter(|(_, text)| !text.is_empty())
             .collect();
         nodes
             .iter(world)
             .map(
-                |(entity, (node, computed, transform), text, (button, _), _)| {
+                |(entity, (node, computed, transform), (text, lettered), (button, _), _)| {
                     // A piece goes by its own words, or by the first words inside it.
                     let words = texts
                         .iter()
@@ -5611,6 +5616,17 @@ mod tests {
                         ]
                         .into_iter()
                         .any(|(drawn, laid_out)| drawn != Val::ZERO && laid_out < 1.0),
+                        wrapped: text.is_some_and(|text| !text.0.is_empty())
+                            && lettered.is_some_and(|(font, pitch, layout)| {
+                                let (FontSize::Px(size), LineHeight::RelativeToFont(pitch)) =
+                                    (font.font_size, *pitch)
+                                else {
+                                    return false;
+                                };
+                                let runs_on = layout.linebreak == LineBreak::WordOrCharacter;
+                                let high = computed.size.y * computed.inverse_scale_factor;
+                                !runs_on && pitch < 1.5 && high > 1.5 * size * pitch
+                            }),
                         inside: inside(entity),
                     }
                 },
@@ -5708,6 +5724,13 @@ mod tests {
                 for piece in pieces.iter().filter(|piece| piece.lost_an_edge) {
                     faults.push(format!("{name}, {pixels}: {} lost an edge", piece.name));
                 }
+                // Words in capitals stand on one line.
+                for piece in pieces.iter().filter(|piece| piece.wrapped) {
+                    faults.push(format!(
+                        "{name}, {pixels}: {} runs over two lines",
+                        piece.name
+                    ));
+                }
                 // No text or button lies on another, unless one holds the other. Two rows of
                 // a list share the pixel of their rule.
                 for (index, piece) in marks.iter().enumerate() {
@@ -5762,7 +5785,7 @@ mod tests {
     fn the_button_that_copies_the_link_says_how_the_copy_went() {
         assert_eq!(copy_label(&Copied(None)), "Copy");
         assert_eq!(copy_label(&Copied(Some((true, COPY_SHOWN)))), "Copied");
-        assert_eq!(copy_label(&Copied(Some((false, COPY_SHOWN)))), "Not copied");
+        assert_eq!(copy_label(&Copied(Some((false, COPY_SHOWN)))), "Failed");
         // A machine without a clipboard that the game can reach copies nothing, and the
         // game says so.
         assert!(!copy(None, "#192.168.0.21:28406/0123".to_string()));
