@@ -87,6 +87,9 @@ const STAMP_FRAME: (f32, f32, f32) = (3.0, 3.0, 1.0);
 /// How far over a tag of a barrier the stamps stand, when one is under where they stand, and
 /// how far from the top of the screen they keep at least.
 const STAMP_CLEAR: (f32, f32) = (16.0, 80.0);
+/// How far down the screen the stamps reach at most, as a share of its height, when they stand
+/// under the tags of a barrier: over the tank that the view follows, which is in the middle.
+const STAMP_LOWEST: f32 = 44.0;
 
 /// What an alert says, in these faces and sizes: its headline over its reference line, and its
 /// lines under it.
@@ -1625,7 +1628,8 @@ fn stamp(
         let half = computed.size / scale / 2.0;
         let screen = screen / scale;
         let home = Vec2::new(at.translation.x / scale, screen.y * STAMP_HEIGHT / 100.0);
-        let wanted = clear_of(home, half, &marks.0);
+        let lowest = screen.y * STAMP_LOWEST / 100.0;
+        let wanted = clear_of(home, half, &marks.0, lowest);
         if node.top != wanted {
             node.top = wanted;
         }
@@ -1692,28 +1696,42 @@ fn stamp(
 
 /// Where the middle of the stamps stands from the top of the screen, from where they stand when
 /// nothing is in their way: there, or over the tags of barriers that stand under them, by
-/// their middle and half their size. They keep clear of the top of the screen.
-fn clear_of(home: Vec2, half: Vec2, tags: &[Rect]) -> Val {
-    let room = |top: f32| Rect::from_center_half_size(Vec2::new(home.x, top), half);
-    let mut top = home.y;
-    // A tag that the stamps are moved over may be in the way of another one.
-    for _ in 0..tags.len() {
-        let mut moved = false;
-        for tag in tags {
-            if !room(top).inflate(STAMP_CLEAR.0).intersect(*tag).is_empty() {
-                top = tag.min.y - STAMP_CLEAR.0 - half.y - 0.5;
-                moved = true;
-            }
+/// their middle and half their size. They keep clear of the top of the screen. Where that
+/// leaves them on a tag, they stand under the tags instead, if their bottom stays over
+/// `lowest`.
+fn clear_of(home: Vec2, half: Vec2, tags: &[Rect], lowest: f32) -> Val {
+    let room = |middle: f32| Rect::from_center_half_size(Vec2::new(home.x, middle), half);
+    let in_way = |middle: f32| {
+        let room = room(middle).inflate(STAMP_CLEAR.0);
+        tags.iter()
+            .filter(move |tag| !room.intersect(**tag).is_empty())
+            .copied()
+    };
+    // A tag that the stamps are moved past may be in the way of another one.
+    let past = |toward: f32| {
+        let mut middle = home.y;
+        for _ in 0..tags.len() {
+            let edges = in_way(middle).map(|tag| if toward < 0.0 { tag.min.y } else { tag.max.y });
+            let Some(edge) = edges.reduce(|a, b| if toward < 0.0 { a.min(b) } else { a.max(b) })
+            else {
+                break;
+            };
+            middle = edge + toward * (STAMP_CLEAR.0 + half.y + 0.5);
         }
-        if !moved {
-            break;
-        }
-    }
-    let top = top.max(STAMP_CLEAR.1 + half.y);
-    if top >= home.y {
+        middle
+    };
+    let over = past(-1.0).max(STAMP_CLEAR.1 + half.y);
+    let middle = if in_way(over).next().is_none() {
+        over
+    } else {
+        let under = past(1.0);
+        let clear = in_way(under).next().is_none() && under + half.y <= lowest;
+        if clear { under } else { over }
+    };
+    if (middle - home.y).abs() < 0.5 {
         percent(STAMP_HEIGHT)
     } else {
-        px(top.round())
+        px(middle.round())
     }
 }
 
@@ -1917,23 +1935,31 @@ mod tests {
 
     #[test]
     fn stamps_stand_over_the_tags_of_barriers_that_are_under_them() {
-        let (home, half) = (Vec2::new(960.0, 300.0), Vec2::new(300.0, 60.0));
+        let (home, half, lowest) = (Vec2::new(960.0, 300.0), Vec2::new(300.0, 60.0), 475.0);
         // Nothing in the way: where they stand.
-        assert_eq!(clear_of(home, half, &[]), percent(STAMP_HEIGHT));
+        assert_eq!(clear_of(home, half, &[], lowest), percent(STAMP_HEIGHT));
         let far = Rect::from_center_half_size(Vec2::new(200.0, 300.0), Vec2::splat(40.0));
-        assert_eq!(clear_of(home, half, &[far]), percent(STAMP_HEIGHT));
+        assert_eq!(clear_of(home, half, &[far], lowest), percent(STAMP_HEIGHT));
         // A tag under them: over it, by a gap.
         let under = Rect::from_center_half_size(Vec2::new(960.0, 330.0), Vec2::splat(40.0));
-        let Val::Px(top) = clear_of(home, half, &[under]) else {
+        let Val::Px(middle) = clear_of(home, half, &[under], lowest) else {
             panic!("the stamps don't move");
         };
-        assert!(top + half.y + STAMP_CLEAR.0 <= under.min.y);
-        // Never into the top of the screen.
+        assert!(middle + half.y + STAMP_CLEAR.0 <= under.min.y);
+        // Never into the top of the screen: a tag that leaves them no room over it has them
+        // under it, by a gap.
         let high = Rect::from_center_half_size(Vec2::new(960.0, 120.0), Vec2::splat(40.0));
-        let Val::Px(top) = clear_of(Vec2::new(960.0, 150.0), half, &[high]) else {
+        let home = Vec2::new(960.0, 150.0);
+        let Val::Px(middle) = clear_of(home, half, &[high], lowest) else {
             panic!("the stamps don't move");
         };
-        assert_eq!(top, STAMP_CLEAR.1 + half.y);
+        assert!(middle - half.y - STAMP_CLEAR.0 >= high.max.y);
+        // Unless that would bring them down onto the tank in the middle of the screen: they
+        // stay as high as they go.
+        let Val::Px(middle) = clear_of(home, half, &[high], 250.0) else {
+            panic!("the stamps don't move");
+        };
+        assert_eq!(middle, STAMP_CLEAR.1 + half.y);
     }
 
     /// A run of several players with the tanks of these seats, the one of the first seat being
