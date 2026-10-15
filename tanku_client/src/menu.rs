@@ -3506,10 +3506,9 @@ fn pause_menu(
     destination: Res<Destination>,
     session: Res<Session>,
 ) {
-    // A single player's run stands still while the menu is open, and so does the run of a
-    // host, for everyone in it. A guest's menu holds nothing.
+    // A run stands still while the menu is open, but for a guest's.
     let solo = run.as_ref().is_none_or(|run| run.solo);
-    let paused = solo || *session == Session::Host;
+    let paused = stops(run.as_deref(), *session) != Stops::Nothing;
     let what = if solo {
         "Run of a single player"
     } else {
@@ -3517,7 +3516,7 @@ fn pause_menu(
     };
     let said = if !paused {
         Some("The run goes on meanwhile.")
-    } else if *session == Session::Host && !solo {
+    } else if !solo {
         Some("The run waits for everyone.")
     } else {
         None
@@ -4782,14 +4781,38 @@ fn hover(
 }
 
 /// In solo, an open menu pauses the game. A run of several players goes on.
+/// What the menu stops while it is open during a run.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Stops {
+    /// The clock of this machine stops: the player is alone at the run, with the teammates
+    /// that a playtest drives or without.
+    Clock,
+    /// The host holds the run for everyone in it: the simulation stops, and the guests are
+    /// told. The clock of the machine goes on, which the network counts on.
+    Run,
+    /// A guest's menu holds nothing.
+    Nothing,
+}
+
+fn stops(run: Option<&Run>, session: Session) -> Stops {
+    match session {
+        _ if run.is_none_or(|run| run.solo) => Stops::Clock,
+        Session::Solo => Stops::Clock,
+        Session::Host => Stops::Run,
+        Session::Guest => Stops::Nothing,
+    }
+}
+
+/// Stops the clock while the menu is open, for a player who is alone at the run.
 fn pause_time(
     screen: Res<State<Screen>>,
     overlay: Res<State<Overlay>>,
+    session: Res<Session>,
     run: Option<Res<Run>>,
     mut time: ResMut<Time<Virtual>>,
 ) {
-    let solo = run.is_none_or(|run| run.solo);
-    let paused = solo && *screen.get() == Screen::Playing && *overlay.get() != Overlay::None;
+    let open = *screen.get() == Screen::Playing && *overlay.get() != Overlay::None;
+    let paused = open && stops(run.as_deref(), *session) == Stops::Clock;
     if paused && !time.is_paused() {
         time.pause();
     } else if !paused && time.is_paused() {
@@ -4797,16 +4820,14 @@ fn pause_time(
     }
 }
 
-/// The menu of a host holds the run of several players, for everyone in it: the simulation
-/// stops, and the guests are told. The clock of the machine goes on, which the network counts
-/// on. A guest's menu holds nothing.
+/// Holds the run of a host's game while the host's menu is open, for everyone in it.
 fn hold_run(
     screen: Res<State<Screen>>,
     overlay: Res<State<Overlay>>,
     session: Res<Session>,
     run: Option<ResMut<Run>>,
 ) {
-    let Some(mut run) = run.filter(|run| !run.solo && *session == Session::Host) else {
+    let Some(mut run) = run.filter(|run| stops(Some(run), *session) == Stops::Run) else {
         return;
     };
     let held = *screen.get() == Screen::Playing && *overlay.get() != Overlay::None;
@@ -7704,6 +7725,41 @@ mod tests {
         let mut records = Records::default();
         assert!(!keep_record(&mut records, &run));
         assert_eq!(records, Records::default());
+    }
+
+    #[test]
+    fn the_menu_stops_a_run_but_a_guest_s() {
+        let run = |players: u32| Run {
+            seed_text: "TEST".into(),
+            seed: 1,
+            difficulty: default(),
+            players,
+            team: players,
+            solo: players == 1,
+            sector: 3,
+            cleared: 2,
+            checkpoint: 2,
+            lives: 3,
+            kills: 0,
+            ticks: 0,
+            phase: RunPhase::Playing,
+            lost_to: None,
+            playtest: false,
+            earns: true,
+            free: false,
+            arena: false,
+            lull: None,
+            paused: false,
+        };
+        // A single player stops the clock of their machine, a host who started alone too.
+        assert_eq!(stops(Some(&run(1)), Session::Solo), Stops::Clock);
+        assert_eq!(stops(Some(&run(1)), Session::Host), Stops::Clock);
+        // So does the player of a playtest with teammates that the game drives: nobody else
+        // is at the run.
+        assert_eq!(stops(Some(&run(4)), Session::Solo), Stops::Clock);
+        // A host holds the run for everyone in it, and a guest holds nothing.
+        assert_eq!(stops(Some(&run(2)), Session::Host), Stops::Run);
+        assert_eq!(stops(Some(&run(2)), Session::Guest), Stops::Nothing);
     }
 
     #[test]
