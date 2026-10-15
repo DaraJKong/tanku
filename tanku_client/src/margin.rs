@@ -201,6 +201,11 @@ fn margin_of(
     let mut known = Known::default();
     for other in &plans {
         known.outline(&other.outline);
+        // The walls on each side of a notch lie on one line, as the line across its mouth
+        // shows: the depth of the notch is given once.
+        for (from, to) in mouths(other) {
+            known.tie(usize::from(from.y == to.y), from, to);
+        }
     }
     for margined in drawn {
         room.taken.extend(margined.taken.iter().copied());
@@ -223,6 +228,19 @@ fn margin_of(
     let order: Vec<usize> = (0..own).rev().collect();
     for &wall in &walls[..own] {
         hatch(&mut draft, wall, &room, paper.ink);
+    }
+    // The line across the mouth of a notch, from the outer corner of the wall on one side of
+    // it to the other's: it goes on along their outer faces, as an extension line.
+    for (from, to) in mouths(plan) {
+        let (from, to) = (from.as_vec2(), to.as_vec2());
+        let along = (to - from).normalize();
+        let out = outward((from - along, from));
+        let ends = (
+            from + (along + out) * WALL_THICKNESS,
+            to + (out - along) * WALL_THICKNESS,
+        );
+        draft.line(at(ends.0), at(ends.1), NARROW, paper.ink.line);
+        room.extensions.push(ends);
     }
     let mut angled = vec![false; own];
     for &index in &order {
@@ -334,6 +352,54 @@ impl Lettered {
 fn walls(plan: &SectorPlan) -> Vec<(Vec2, Vec2)> {
     let walls = plan.walls.iter();
     walls.map(|&(a, b)| (a.as_vec2(), b.as_vec2())).collect()
+}
+
+/// The mouths of the notches of a sector, each by its two corners: where the outline leaves a
+/// square wall for the floor, around two or three walls, and comes back to the line of that
+/// wall to go on along it.
+fn mouths(plan: &SectorPlan) -> Vec<(IVec2, IVec2)> {
+    let walls = &plan.walls;
+    let mut found = Vec::new();
+    for (index, &(a, b)) in walls.iter().enumerate() {
+        let level = a.y == b.y;
+        if !level && a.x != b.x {
+            continue;
+        }
+        let out = outward((a.as_vec2(), b.as_vec2()));
+        for around in 2..=3 {
+            let (Some(notch), Some(&(c, d))) = (
+                walls.get(index + 1..=index + around),
+                walls.get(index + around + 1),
+            ) else {
+                continue;
+            };
+            // One wall after another, from the end of the first to the start of the last.
+            let joined = notch[0].0 == b
+                && notch[around - 1].1 == c
+                && notch.windows(2).all(|pair| pair[0].1 == pair[1].0);
+            let line = |point: IVec2| {
+                if level {
+                    point.y == b.y
+                } else {
+                    point.x == b.x
+                }
+            };
+            let onward = (d - c)
+                .as_vec2()
+                .normalize()
+                .dot((b - a).as_vec2().normalize())
+                > 0.99;
+            let into_floor = notch.iter().all(|&(p, q)| {
+                [p, q]
+                    .iter()
+                    .all(|point| (*point - b).as_vec2().dot(out) <= 0.0)
+            });
+            if joined && line(c) && line(d) && onward && into_floor {
+                found.push((b, c));
+            }
+        }
+    }
+    found
 }
 
 /// The direction away from the corridor on the outside of a wall. The outline of a sector runs
@@ -1313,6 +1379,42 @@ mod tests {
             matches!(stops[0], Stop::Extension { foot, .. } if foot == step).then_some(reach)
         });
         assert_eq!(reach, Some(2.0 + WALL_THICKNESS + OFFSET));
+    }
+
+    #[test]
+    fn the_depth_of_a_notch_is_given_once() {
+        // The north side of sector 10 of this seed has a notch 6 m wide and 4 m deep, between
+        // a wall of 26 m and one of 14 m on one line.
+        let mut corridor = Corridor::new(tanku_core::seed::seed_value("TONARINOTO"));
+        let ten = corridor.plan(10).clone();
+        let around = [corridor.plan(9).clone(), corridor.plan(11).clone()];
+        let corner = |x: i32, y: i32| IVec2::new(x, y);
+        let sides = [
+            (corner(-37, 496), corner(-37, 492)),
+            (corner(-31, 492), corner(-31, 496)),
+        ];
+        assert!(sides.iter().all(|side| ten.walls.contains(side)));
+        assert_eq!(mouths(&ten), [(corner(-37, 496), corner(-31, 496))]);
+        let lettering = Lettering::default();
+        let paper = Paper {
+            lettering: &lettering,
+            turns: 0,
+            ink: Ink::new(),
+        };
+        let (_, margined) = margin_of(&ten, &around, &[], &paper, true);
+        let told = |side: (IVec2, IVec2)| {
+            let told = margined.told.iter().find(|(wall, ..)| *wall == side);
+            told.map(|&(_, _, drawn)| drawn)
+        };
+        // One side of the notch has its length, and the other follows from it.
+        assert!(told(sides[0]) != told(sides[1]), "{:?}", sides.map(told));
+        // The line across its mouth goes on along the outer faces of the walls on each side.
+        let mouth = (Vec2::new(-36.6, 496.4), Vec2::new(-31.4, 496.4));
+        let drawn = margined
+            .extensions
+            .iter()
+            .any(|&(from, to)| from.distance(mouth.0) < 1e-4 && to.distance(mouth.1) < 1e-4);
+        assert!(drawn, "{:?}", margined.extensions);
     }
 
     #[test]
