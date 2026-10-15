@@ -762,9 +762,10 @@ Each milestone is playable and answers a question. From M1 on, the game runs as 
 | M4, Solo loop | Lives, checkpoints, progression curves, heads-up display, main menu, settings, game over, records, basic sound cues, first web build | Is a 20-minute run fun? This is the first real playtest. |
 | M5, Co-op | Lobby, hosting, joining, local discovery, repair, enemy scaling, joining from a browser | Is it fun with friends at 100 ms of latency? |
 | M6, Modes | Achievements, the solo screen, chosen seed, free mode with its garage, hard mode, the name, the password and the options of a hosted game, the ready check of its lobby, brain tiers 3 and 4 | Do the unlocks give reasons to come back? |
+| Early access | Reports that a player writes from the menu or that a crash leaves, release builds made on GitHub, a page on itch.io whose app updates the game that it installed, and a first run on Windows itself | Do players who didn't make the game come back to it, and what breaks on their machines? |
 | M7, Impossible mode | An experiment: enemies bred from the tanks that did best against the players | Do players feel the enemies adapting to them, and is it fun? |
 
-The question of M5 waits for more players than the project has now. An early access release will bring them. It needs two things that the game doesn't have yet: a way for players to update the game, and a way for them to report bugs and feedback.
+The questions of M5, M6 and M7 wait for more players than the project has now. The early access release is there to bring them, before M7. It needs two things that the game doesn't have yet: a way for players to update the game, which the app of itch.io gives without code of ours, and a way for them to report bugs and feedback, which the game writes for them.
 
 Arena mode came after M6 and is on no milestone: it is an experiment, which answers whether the fights of the game hold a run without the corridor between them. It is also where M7 can be tried first, since what changes there from one group to the next is the enemies alone.
 
@@ -774,13 +775,14 @@ Later, in no fixed order: controller support, local co-op on one screen (split s
 
 ## Open questions
 
-- How do internet games connect for hosts who can't open a port, before the official server exists?
+- How do internet games connect for hosts who can't open a port, before the official server exists? Steam's relays would answer it for a build on Steam: lightyear connects players through them by their Steam ID. Browsers would still need a host who can open a port.
 - In impossible mode, how exactly are enemies scored, and can brains learn fast enough within one run to matter?
 - Which exact shades do the hues of the classes take? The players' blue and the white of the bullets are settled.
 - Are the classes that fire a special bullet still too many? Piercing alone was on one tank in eight. The classes are now drawn with weights, and those four weigh less and come late: five tanks in 24 are of them once all have come, at sector 19.
 - Are the prices of the special bullets right? They were set by rank at first, and raised after the trials and after play: 6 points for piercing, 9 for splitting, 10 for seeking and for exploding.
 - Do the three dark classes read on the dark sheet? A dark body has a pale frame, and their outlines in dashes take a pale tint. Whether a dormant flanker in that tint is told from a teammate's wreck is to be checked in a game of several players.
-- How is the game distributed, at which secure address is its page published, and is the name free to use?
-- How do the players of an early access release update the game, and how do they report bugs and feedback?
+- At which secure address is the page published? itch.io runs a page in a frame of its own site, where the link that a host hands out may not reach the game, though pasting it into the page that is open works. A copy of the page on GitHub Pages would give the link an address of its own.
+- Is the name free to use? Steam's store has no game of that name, and a search of the web found [Tankiu](https://www.devuego.es/en/presskit/tankiu), a game of 2016 in which a blue tank fights red ones. No register of trademarks has been searched: that comes before the game is sold, or put on Steam.
+- Where do the reports of the players go: the community pages of itch.io, a form, or the issues of the repository on GitHub?
 - Is a tank from the garage so much better than the standard tank, in the hands of a good player, that free mode becomes the easy way through? Its runs earn no achievement and keep records of their own, which limits the harm. The prices were set for enemies, whose danger also depends on their brains. The check comes before the garage is built: a playtest that takes its tank from the command line, and the same seed played with the standard tank and with two or three extreme ones.
 - In arena mode, is a life for every fifth group enough for a single player, and are the eight tanks that four players face at once too many for one screen? A room that is kept full is harder than the corridor: the same groups land about 30% more shots in a minute on a crude player there.
