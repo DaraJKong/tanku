@@ -4736,6 +4736,9 @@ fn escape(
     }
 }
 
+/// Colors a button by what the pointer does to it. The rows of a list share their rules, and a
+/// row whose edge stands out is drawn over the rows next to it, so that the rule it shares
+/// with them takes its edge: the row under the pointer first, then a row that is filled or on.
 fn hover(
     mut buttons: Query<
         (
@@ -4744,11 +4747,18 @@ fn hover(
             Has<Lit>,
             &mut BackgroundColor,
             &mut BorderColor,
+            &mut ZIndex,
         ),
         (Changed<Interaction>, With<Press>),
     >,
 ) {
-    for (interaction, primary, lit, mut color, mut border) in &mut buttons {
+    for (interaction, primary, lit, mut color, mut border, mut over) in &mut buttons {
+        let raised = match interaction {
+            Interaction::Hovered | Interaction::Pressed => 2,
+            Interaction::None if primary || lit => 1,
+            Interaction::None => 0,
+        };
+        over.set_if_neq(ZIndex(raised));
         let (fill, edge) = match (interaction, primary) {
             // A button that is on keeps the edge that says so.
             (Interaction::Hovered, false) if lit => (theme::SURFACE_HOVERED, theme::ACCENT),
@@ -7688,5 +7698,43 @@ mod tests {
         let mut records = Records::default();
         assert!(!keep_record(&mut records, &run));
         assert_eq!(records, Records::default());
+    }
+
+    #[test]
+    fn a_row_that_stands_out_is_drawn_over_the_rows_next_to_it() {
+        let mut app = App::new();
+        build(&mut app, |mut commands: Commands| {
+            commands.spawn(Node::default()).with_children(|list| {
+                drawing::list_row(list, 1, "Resume", (Press::Resume, Primary), true);
+                drawing::list_row(list, 2, "Settings", Press::OpenSettings, false);
+                drawing::list_row(list, 3, "Quit to the menu", Press::Abandon, false);
+            });
+        });
+        // How high each row is drawn among the rows, once the pointer is on one of them.
+        let mut point = |at: Option<Press>| -> Vec<i32> {
+            let world = app.world_mut();
+            let mut rows = world.query::<(&Press, &mut Interaction)>();
+            for (press, mut interaction) in rows.iter_mut(world) {
+                *interaction = if Some(*press) == at {
+                    Interaction::Hovered
+                } else {
+                    Interaction::None
+                };
+            }
+            build(&mut app, hover);
+            let world = app.world_mut();
+            let mut rows = world.query::<(&Press, &ZIndex)>();
+            [Press::Resume, Press::OpenSettings, Press::Abandon]
+                .map(|wanted| {
+                    let mut rows = rows.iter(world);
+                    rows.find(|(press, _)| **press == wanted).unwrap().1.0
+                })
+                .to_vec()
+        };
+        // The filled row is drawn over the row after it, and the row under the pointer over
+        // both of its neighbors.
+        assert_eq!(point(None), [1, 0, 0]);
+        assert_eq!(point(Some(Press::OpenSettings)), [1, 2, 0]);
+        assert_eq!(point(Some(Press::Resume)), [2, 0, 0]);
     }
 }
